@@ -1,0 +1,617 @@
+/* ====================================================================
+   RALBAD deck — mobile-fit compactions + RTL tweaks + template styles.
+   A paged deck cannot scroll: on phones every slide must fit ONE screen
+   and clear the floating dock (last ~101px). Keep AFTER base.css.
+   ==================================================================== */
+
+/* Dock clearance on phones — nothing under the floating dock. */
+@media (max-width: 900px) {
+  :root {
+    --gutter-y: clamp(22px, 4.5vh, 44px);
+  }
+  .slide {
+    padding-bottom: max(var(--gutter-y), 116px);
+  }
+  /* Headlines/leads: smaller floors so Hebrew titles don't eat the screen. */
+  .headline {
+    font-size: clamp(26px, 6.4vw, 62px);
+    margin-bottom: 14px !important; /* beats component inline clamps */
+  }
+  .display {
+    font-size: clamp(34px, 8.5vw, 116px);
+  }
+  .lead {
+    font-size: clamp(15.5px, 4vw, 25px);
+  }
+  .cover-foot {
+    bottom: 124px; /* clear the dock regardless of gutter-y */
+  }
+
+  /* Bento: 2-up for ALL tiles (no full-width hero) — 6 tiles = 3 rows. */
+  .bento {
+    gap: 8px;
+  }
+  .bento > :first-child {
+    grid-column: auto;
+  }
+  .btile {
+    min-height: 84px;
+    padding: 12px 14px;
+    gap: 7px;
+    border-radius: var(--radius);
+  }
+  .btile h3 {
+    font-size: 15.5px;
+  }
+  .btile p {
+    font-size: 12.5px;
+    line-height: 1.3;
+  }
+  .btile-k {
+    font-size: 10px;
+    letter-spacing: 0.1em;
+  }
+  .btile-fig {
+    font-size: clamp(26px, 7.5vw, 40px);
+  }
+
+  /* Stats: 2×2 grid, compact cards, source captions off. */
+  .stat-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 9px;
+  }
+  .stat-card {
+    padding: 13px 14px;
+    gap: 4px;
+    border-radius: var(--radius-sm);
+  }
+  .stat-card .tick {
+    margin-bottom: 2px;
+  }
+  .stat-value {
+    font-size: clamp(27px, 8.5vw, 34px);
+  }
+  .stat-label {
+    font-size: 13px;
+    margin-top: 4px;
+  }
+  .stat-caption {
+    display: none;
+  }
+
+  /* Pricing: tighter stacked tiers. */
+  .tier {
+    padding: 14px 16px;
+  }
+  .tier-amount {
+    font-size: 29px;
+  }
+  .tier-price {
+    margin: 6px 0 2px;
+  }
+  .tier-name {
+    font-size: 14.5px;
+  }
+  .tier-blurb {
+    font-size: 12.5px;
+  }
+  .tier-list {
+    gap: 5px;
+    margin-top: 8px;
+    padding-top: 8px;
+  }
+  .tier-feat {
+    font-size: 12px;
+  }
+
+  /* Steps: tighter stacked steps. */
+  .steps {
+    gap: 10px;
+  }
+  .step {
+    gap: 7px;
+  }
+  .step-no {
+    width: 30px;
+    height: 30px;
+    font-size: 12px;
+  }
+  .step h3 {
+    font-size: 15.5px;
+  }
+  .step p {
+    font-size: 12.5px;
+    line-height: 1.35;
+  }
+
+  /* Timeline: tight items. */
+  .tl-items {
+    gap: 12px;
+  }
+  .tl-time {
+    margin-bottom: 4px;
+  }
+  .tl-content h3 {
+    font-size: 16px;
+  }
+  .tl-content p {
+    font-size: 13px;
+    line-height: 1.4;
+  }
+}
+
+/* Short phones: squeeze a little further. */
+@media (max-width: 900px) and (max-height: 740px) {
+  .btile p {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .tl-items {
+    gap: 9px;
+  }
+  .tl-content p {
+    font-size: 12.5px;
+    line-height: 1.32;
+  }
+  .tier-blurb {
+    display: none;
+  }
+  .tier {
+    padding: 12px 14px;
+  }
+  .tier-amount {
+    font-size: 27px;
+  }
+  .tier-feat {
+    font-size: 11.5px;
+  }
+}
+
+/* Official RALBAD logo (cover) — transparent PNG, from Omer's brand file. */
+.ralbad-logo {
+  display: block;
+  width: clamp(150px, 17vw, 210px);
+  height: auto;
+  margin: 0 auto clamp(16px, 2.5vh, 26px);
+}
+
+/* RTL: prices / ranges keep LTR visual order inside Hebrew sentences. */
+.ltr {
+  direction: ltr;
+  unicode-bidi: isolate;
+  display: inline-block;
+}
+
+/* RTL decks: the costs table's first column (labels) sits at the RTL start —
+   neutralizes the engine's LTR-biased `th/td:first-child { text-align: left }`. */
+.dtable th:first-child,
+.dtable td:first-child {
+  text-align: right;
+}
+
+/* Caption under the costs table (FX / procurement note) — one notch louder. */
+.dtable-caption {
+  font-size: 13px;
+  color: var(--fg-muted);
+}
+
+/* Source citation line under the pricing tiers (slide #4). */
+.price-src {
+  width: 100%;
+  max-width: 980px;
+  margin: 0 auto;
+  text-align: center;
+  font-size: 13px;
+  color: var(--fg-muted);
+  margin-top: clamp(10px, 1.8vh, 18px);
+  line-height: 1.45;
+}
+@media (max-width: 900px) {
+  .price-src {
+    font-size: 12px;
+    margin-top: 8px;
+  }
+}
+
+/* Tables on narrow screens: tighten cell padding so 5 columns fit. */
+@media (max-width: 640px) {
+  .dtable th,
+  .dtable td {
+    padding-left: 8px;
+    padding-right: 8px;
+    font-size: 13px;
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   RALBAD TEMPLATE ALIGNMENT (Oct 2026) — adopted from the official
+   "מצגת רלב״ד" template deck: persistent footer, navy section dividers,
+   split cover (logo + right-aligned text + art), date pill.
+   ══════════════════════════════════════════════════════════════════ */
+
+/* Persistent template footer — desktop/presentation viewports only.
+   Below ~900px width or ~750px height the footer would collide with dense
+   content (phones, landscape, small windows), so it stays off there.
+   KEY: the ::after anchors to .container (its positioned ancestor), so the
+   container is stretched to the slide's full height — otherwise the footer
+   renders at the CONTENT's bottom edge, inside the last row of cards. */
+@media (min-width: 901px) and (min-height: 768px) {
+  .slide {
+    padding-bottom: max(var(--gutter-y), 60px);
+  }
+  .slide > .container {
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+  }
+  .container::after {
+    content: 'הרשות הלאומית לבטיחות בדרכים · הוכן על-ידי עומר נשר · אוקטובר 2026';
+    position: absolute;
+    left: var(--gutter);
+    right: var(--gutter);
+    /* Sits in the slide's bottom padding zone — below the container box, so
+       content (bounded by the container) can never reach it. */
+    bottom: calc(14px - max(var(--gutter-y), 60px));
+    padding-top: 7px;
+    border-top: 1px solid var(--hair-2);
+    font-size: 11.5px;
+    color: var(--fg-faint);
+    text-align: right;
+    pointer-events: none;
+    z-index: 3;
+  }
+  .slide:has(.cover-bg) .container::after,
+  .slide:has(.rf-div-mark) .container::after {
+    content: none;
+  }
+}
+
+/* Phone landscape / short windows: lighter bottom reserve. */
+@media (max-width: 950px) and (max-height: 560px) {
+  .slide {
+    padding-bottom: max(var(--gutter-y), 92px);
+  }
+}
+
+/* Section divider slides — navy, template-style, no footer. */
+.slide.rf-divider {
+  background: linear-gradient(160deg, #2d3487 0%, #282f78 46%, #1d2361 100%);
+  box-shadow: none;
+}
+.slide.rf-divider::before {
+  opacity: 0.55;
+}
+.rf-div-num {
+  font-size: clamp(58px, 9.5vw, 124px);
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: -0.03em;
+  color: #6ba0e6;
+}
+.slide.rf-divider .rf-div-title {
+  color: #ffffff;
+}
+.slide.rf-divider .rf-div-sub {
+  color: #d9e3f8;
+  font-size: clamp(14px, 1.9vw, 20px);
+  font-weight: 500;
+}
+
+/* Cover — full-bleed template cover art + right-aligned text block. */
+.cover-bg {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 100vw;
+  height: 100vh;
+  transform: translate(-50%, -50%);
+  overflow: hidden;
+  pointer-events: none;
+}
+.cover-bg img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.cover-bg::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    to left,
+    rgba(242, 243, 246, 0.95) 0%,
+    rgba(242, 243, 246, 0.66) 40%,
+    rgba(242, 243, 246, 0) 70%
+  );
+}
+.slide.center .cover-content {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  text-align: right;
+  width: min(100%, 620px);
+  margin-inline-end: auto;
+  position: relative;
+  z-index: 1;
+}
+.cover-content .ralbad-logo {
+  margin: 0 0 clamp(14px, 2.6vh, 26px);
+  width: clamp(140px, 12vw, 190px);
+}
+.cover-content .display,
+.cover-content .subhead {
+  text-align: right;
+  margin-inline: 0;
+}
+.rf-datepill {
+  display: inline-block;
+  background: #ffffff;
+  border-radius: 999px;
+  padding: 8px 22px;
+  color: #4584d0;
+  font-weight: 600;
+  font-size: clamp(13px, 1.2vw, 15px);
+  margin-top: clamp(14px, 2.6vh, 24px);
+  box-shadow: 0 16px 34px -20px rgba(40, 47, 120, 0.45);
+}
+
+/* ── RTL geometry fixes for engine components (they assume LTR) ── */
+/* Timeline: dots render on the right in RTL, so the connector must too. */
+html[dir="rtl"] .tl-line {
+  left: auto;
+  right: 9px;
+}
+html[dir="rtl"] .tl {
+  text-align: right;
+}
+
+@media (max-width: 900px) {
+  .cover-bg::after {
+    background: linear-gradient(
+      to left,
+      rgba(242, 243, 246, 0.97) 0%,
+      rgba(242, 243, 246, 0.86) 55%,
+      rgba(242, 243, 246, 0.55) 100%
+    );
+  }
+  .slide.center .cover-content {
+    width: 100%;
+  }
+}
+
+/* ────────────────────────────────────────────────────────────────
+   Rendezvous deck — mobile compactions (dark, dense slides)
+   ──────────────────────────────────────────────────────────────── */
+@media (max-width: 900px) {
+  /* Slide 2 — stat grid foot line */
+  .stat-foot {
+    margin-top: 12px !important;
+    font-size: clamp(13px, 3.6vw, 17px) !important;
+    line-height: 1.35 !important;
+  }
+  .stat-card {
+    padding: 12px 13px;
+  }
+  .stat-card .stat-value {
+    font-size: clamp(24px, 6.8vw, 38px);
+  }
+  .stat-card .stat-label {
+    font-size: 12.5px;
+  }
+  .stat-card .stat-caption {
+    font-size: 11px;
+    line-height: 1.3;
+  }
+
+  /* Slide 4 — contrast panels (4 longer bullets) */
+  .con-panel {
+    padding: 12px 14px !important;
+    gap: 5px !important;
+  }
+  .con-panel h3 {
+    font-size: 14.5px;
+    margin-bottom: 2px;
+  }
+  .con-points {
+    gap: 5px !important;
+  }
+  .con-point {
+    font-size: 11.5px;
+    line-height: 1.28;
+    gap: 7px;
+  }
+
+  /* Slides 6 & 11 — steps */
+  .steps {
+    gap: 10px;
+  }
+  .step {
+    gap: 5px;
+  }
+  .step h3 {
+    font-size: 14px;
+  }
+  .step p {
+    font-size: 11.5px;
+    line-height: 1.32;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .step-no {
+    width: 30px;
+    height: 30px;
+  }
+  .step-no-row {
+    margin-bottom: 2px;
+  }
+
+  /* Slide 7 — chat */
+  .chat-body {
+    padding: 10px !important;
+    gap: 6px !important;
+  }
+  .msg {
+    padding: 7px 11px !important;
+    font-size: 12px !important;
+    line-height: 1.35 !important;
+    border-radius: 12px;
+  }
+}
+
+/* ────────────────────────────────────────────────────────────────
+   Rendezvous deck — SHORT screens (max-height 720): hard squeeze.
+   Slides 2, 4, 6, 7, 8 overflowed 390x700 / 375x667 in sweeps.
+   ──────────────────────────────────────────────────────────────── */
+@media (max-width: 900px) and (max-height: 720px) {
+  .slide {
+    padding-bottom: max(var(--gutter-y), 104px); /* dock is ~101px; 116 was overshooting the sweep limit */
+  }
+  .headline {
+    font-size: clamp(23px, 5.9vw, 44px);
+    margin-bottom: 10px !important;
+  }
+  .stat-grid {
+    gap: 6px;
+  }
+  .stat-card {
+    padding: 8px 10px;
+  }
+  .stat-card .stat-value {
+    font-size: clamp(19px, 5.5vw, 28px);
+  }
+  .stat-card .stat-label {
+    font-size: 11px;
+  }
+  .stat-card .stat-caption {
+    display: none; /* captions are the long text — cut on short screens */
+  }
+  .stat-foot {
+    margin-top: 4px !important;
+    font-size: 11.5px !important;
+    line-height: 1.18 !important;
+  }
+
+  .con-panel {
+    padding: 6px 9px !important;
+    gap: 3px !important;
+  }
+  .con-panel h3 {
+    font-size: 12px;
+    margin-bottom: 1px;
+  }
+  .con-label {
+    font-size: 9.5px;
+    letter-spacing: 0.12em;
+  }
+  .con-points {
+    gap: 3px !important;
+  }
+  .con-point {
+    font-size: 10.5px;
+    line-height: 1.2;
+    gap: 6px;
+  }
+
+  .steps {
+    gap: 3px;
+  }
+  .step {
+    gap: 1px;
+  }
+  .step h3 {
+    font-size: 11px;
+    line-height: 1.25;
+  }
+  .step p {
+    display: none; /* titles-only on short screens */
+  }
+  .step-no {
+    width: 22px;
+    height: 22px;
+    font-size: 10.5px;
+  }
+
+  .chat-head {
+    padding: 8px 10px !important;
+    margin-bottom: 2px !important;
+  }
+  .chat-body {
+    padding: 7px !important;
+    gap: 4px !important;
+  }
+  .msg {
+    padding: 4px 9px !important;
+    font-size: 10.5px !important;
+    line-height: 1.26 !important;
+    border-radius: 10px;
+  }
+
+  .btile {
+    min-height: 74px;
+    padding: 9px 11px;
+  }
+  .btile h3 {
+    font-size: 14px;
+  }
+  .btile p {
+    font-size: 11.5px;
+  }
+}
+
+/* Short screens: the chip labels duplicate the kicker/title — drop them. */
+@media (max-width: 900px) and (max-height: 680px) {
+  .con-label {
+    display: none;
+  }
+}
+
+/* ────────────────────────────────────────────────────────────────
+   Rendezvous (.rdv) — nested component roots (.slide inside .slide:
+   Bento / Chat / Contrast / StatGrid / Steps) inherit the .slide
+   dock-clearance padding as dead height, inflating the slide and
+   pushing content under the phone dock. Neutralize it here; the
+   OUTER .slide already clears the dock. Scoped to .rdv markers so
+   every other deck's mobile layout is untouched.
+   ──────────────────────────────────────────────────────────────── */
+@media (max-width: 900px) {
+  .slide.rdv .slide {
+    padding-bottom: 0;
+  }
+}
+
+/* Rendezvous — restore full copy on phones. The generic <=900 step clamp and
+   the <=740 tile clamp silently cut 3-line bodies (mandated spec text).
+   Neutralize them for .rdv slides; the low-height titles-only rule for steps
+   (<=720) is untouched. Fit is verified by the mobile sweeps. */
+@media (max-width: 900px) {
+  .slide.rdv .btile p {
+    -webkit-line-clamp: unset;
+    display: block;
+    overflow: visible;
+  }
+}
+@media (max-width: 900px) and (min-height: 721px) {
+  .slide.rdv .step p {
+    -webkit-line-clamp: unset;
+    display: block;
+    overflow: visible;
+  }
+}
+
+/* Rendezvous — the shared RALBAD template footer (Hebrew road-safety text,
+   injected via .container::after on desktop viewports) is not this deck's
+   chrome, and the nested-container copy makes it appear twice. Remove it
+   for .rdv slides only; RALBAD decks keep their template footer as-is. */
+@media (min-width: 901px) and (min-height: 768px) {
+  .slide.rdv .container::after {
+    content: none;
+  }
+}
