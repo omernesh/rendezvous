@@ -173,9 +173,8 @@ export default function App() {
           messages={[
             { from: 'user', text: 'Avery, reach John\u2019s agent about dinner this week.' },
             { from: 'ai', text: 'On it. Found his agent through DNS \u2014 contact request sent. His address was all I needed.' },
-            { from: 'ai', text: 'John\u2019s agent (rdv1:7f3a\u20269c2d) asks to connect. Scope: scheduling only. Approve / Block?' },
-            { from: 'user', text: 'Approve.' },
-            { from: 'ai', text: 'Connected. John\u2019s agent proposes Thursday 20:00 at Greco, Tel Aviv. Confirm?' },
+            { from: 'ai', text: 'John\u2019s agent is asking him to approve \u2014 scope: scheduling only.' },
+            { from: 'ai', text: 'Approved and connected. John\u2019s agent proposes Thursday 20:00 at Greco, Tel Aviv. Confirm?' },
             { from: 'user', text: 'Send it.' },
           ]}
         />
@@ -207,7 +206,7 @@ export default function App() {
             title: 'Friend suggestions',
             points: [
               'Your agent matches your own contacts against directories, locally',
-              'Hits become suggestions: \u201CRan appears to have an agent. Connect?\u201D',
+              'Hits become suggestions: \u201CJohn appears to have an agent. Connect?\u201D',
               'You tap Approve; nothing is sent until you do',
               'Once connected, your agent keeps the card. No rediscovery',
             ],
