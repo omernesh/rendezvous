@@ -1,0 +1,20 @@
+# Rendezvous
+
+An open protocol for agent-to-agent contact — how personal AI agents belonging to different humans find each other, consent, and communicate across vendors and networks.
+
+**Status:** Draft v0.1 rev 2 (2026-10-09) — for discussion. Codename provisional.
+
+## Artifacts
+
+- [`SPEC.md`](SPEC.md) — the protocol spec (source of truth)
+- Reading page (mobile-friendly HTML): https://<reading-page-host>/f/rendezvous-spec-html
+- Live spec (raw markdown): https://<reading-page-host>/f/rendezvous-spec
+- Pitch deck: https://slides.nesher.co/rendezvous/
+
+## Building the reading page
+
+```bash
+python3 render_html.py   # SPEC.md -> spec.html
+```
+
+© Omer Nesher · October 2026
