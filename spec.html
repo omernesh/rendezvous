@@ -1,0 +1,583 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>Rendezvous — Protocol Spec (Draft v0.1)</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='14' fill='%230a0a12'/><circle cx='22' cy='32' r='8' fill='%238b5cf6'/><circle cx='42' cy='32' r='8' fill='%238b5cf6'/><rect x='22' y='29' width='20' height='6' rx='3' fill='%238b5cf6'/></svg>">
+<style>
+:root{
+  --bg:#0a0a12; --panel:#101020; --fg:#e8e8f2; --muted:#9c9cb4;
+  --accent:#8b5cf6; --accent-soft:#a78bfa; --border:#23233a; --code:#14142a;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--fg);
+  font:17px/1.7 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+  -webkit-text-size-adjust:100%;}
+main{max-width:780px;margin:0 auto;padding:34px 20px 96px;}
+header .chip{display:inline-block;font-size:12px;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--accent-soft);border:1px solid rgba(139,92,246,.45);border-radius:999px;
+  padding:5px 12px;margin-bottom:18px;font-weight:600;}
+h1{font-size:clamp(30px,8vw,40px);line-height:1.15;margin:0 0 8px;letter-spacing:-.01em;color:#fff;}
+.sub{color:var(--muted);font-size:clamp(16px,4.4vw,19px);margin:0 0 14px;line-height:1.45;}
+.meta{color:var(--muted);font-size:13.5px;margin:0;}
+.meta a{color:var(--accent-soft);text-decoration:none;}
+h2{font-size:clamp(21px,5.6vw,26px);line-height:1.25;margin:52px 0 14px;padding-top:30px;
+  border-top:1px solid var(--border);letter-spacing:-.01em;}
+h3{font-size:17.5px;margin:30px 0 10px;color:#f0f0fa;}
+h4{font-size:16px;margin:24px 0 8px;color:#dcdcee;}
+p{margin:0 0 16px;}
+a{color:var(--accent-soft);}
+strong{color:#fff;}
+hr{border:0;border-top:1px solid var(--border);margin:40px 0;}
+ul,ol{margin:0 0 16px;padding-left:22px;}
+li{margin:6px 0;}
+li>p{margin:0 0 8px;}
+blockquote{margin:20px 0;padding:12px 16px;border-left:3px solid var(--accent);
+  background:rgba(139,92,246,.07);border-radius:0 10px 10px 0;color:#d8d8e8;}
+blockquote p:last-child{margin-bottom:0;}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.84em;
+  background:var(--code);border:1px solid var(--border);border-radius:6px;padding:2px 6px;}
+pre{background:var(--code);border:1px solid var(--border);border-radius:12px;
+  padding:14px 16px;overflow-x:auto;margin:0 0 18px;}
+pre code{background:none;border:0;padding:0;font-size:13.5px;line-height:1.55;}
+.tablewrap{overflow-x:auto;margin:0 0 20px;border:1px solid var(--border);border-radius:12px;}
+table{width:100%;border-collapse:collapse;font-size:14.5px;min-width:420px;}
+th,td{text-align:left;padding:10px 12px;border-bottom:1px solid var(--border);vertical-align:top;line-height:1.5;}
+th{background:rgba(139,92,246,.08);color:#f0f0fa;font-weight:600;white-space:nowrap;}
+tr:last-child td{border-bottom:0;}
+.toc{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:6px 18px;margin:26px 0 10px;}
+.toc summary{cursor:pointer;font-weight:600;color:#f0f0fa;padding:12px 0;font-size:15px;}
+.toc ul{list-style:none;padding:0;margin:0 0 12px;}
+.toc li{margin:0;}
+.toc a{display:block;padding:9px 2px;border-bottom:1px solid rgba(35,35,58,.6);
+  color:#cfcfe2;text-decoration:none;font-size:15px;}
+.toc li:last-child a{border-bottom:0;}
+.totop{position:fixed;right:16px;bottom:18px;width:42px;height:42px;border-radius:50%;
+  background:rgba(139,92,246,.92);color:#fff;font-size:18px;line-height:1;
+  display:grid;place-items:center;box-shadow:0 4px 16px rgba(0,0,0,.5);text-decoration:none;}
+footer{margin-top:56px;padding-top:22px;border-top:1px solid var(--border);
+  color:var(--muted);font-size:13.5px;line-height:1.7;}
+</style>
+</head>
+<body>
+<main>
+<header>
+  <div class="chip">Draft v0.1</div>
+  <h1>Rendezvous</h1>
+  <p class="sub">An Open Protocol for Agent-to-Agent Contact</p>
+  <p class="meta">© Omer Nesher · October 2026 ·
+    <a href="https://slides.nesher.co/rendezvous/">Pitch deck</a> ·
+    <a href="https://<reading-page-host>/f/rendezvous-spec">Raw markdown</a></p>
+</header>
+
+<details class="toc" open>
+  <summary>Contents</summary>
+  <ul><li><a href="#1-abstract">1. Abstract</a></li><li><a href="#2-motivation">2. Motivation</a></li><li><a href="#3-design-principles">3. Design principles</a></li><li><a href="#4-identity-layer">4. Identity layer</a></li><li><a href="#5-contact-layer-consent-handshake">5. Contact layer (consent &amp; handshake)</a></li><li><a href="#6-transport-layer">6. Transport layer</a></li><li><a href="#7-session-task-layer-a2a-semantics">7. Session &amp; task layer (A2A semantics)</a></li><li><a href="#8-threat-model">8. Threat model</a></li><li><a href="#9-privacy">9. Privacy</a></li><li><a href="#10-anti-spam-reputation">10. Anti-spam &amp; reputation</a></li><li><a href="#11-open-problems-honest">11. Open problems (honest)</a></li><li><a href="#12-scope-phases">12. Scope &amp; phases</a></li><li><a href="#13-reference-implementation-distribution">13. Reference implementation &amp; distribution</a></li><li><a href="#14-appendix">14. Appendix</a></li></ul>
+</details>
+
+<p><strong>Status:</strong> Draft v0.1 (for discussion)<br />
+<strong>Author:</strong> Omer Nesher<br />
+<strong>Date:</strong> 2026-10-08  </p>
+<blockquote>
+<p>Codename "Rendezvous" is provisional. The protocol describes how a personal AI
+agent belonging to one human makes contact with, and safely communicates with, a
+personal AI agent belonging to another human — across different vendors,
+networks, and platforms.</p>
+</blockquote>
+<hr />
+<h2 id="1-abstract">1. Abstract</h2>
+<p>Every major AI lab now ships a personal agent (Meta Muse, xAI Grok Bot, OpenAI
+Dots, Google Gemini Spark, Apple Siri AI, Instinct, Manus Cue, and more). Every
+one of them is an island. Instinct's agents can talk to other Instincts over its
+closed I2I network; Grok Bots coordinate only with other Grok Bots; Dots talk to
+dots. There is no open way for a Muse agent to contact an Instinct agent — the
+agent world today is the messaging world of 2008, before interoperability was
+demanded by users and eventually forced open by protocol adoption (MCP).</p>
+<p>Rendezvous defines that missing layer: a vendor-neutral, open protocol for
+<strong>agent identity, first contact, consent, and communication</strong>, designed so that
+nobody has to run infrastructure to participate. It reuses proven building
+blocks — cryptographic keys for identity, Nostr relays as the primary
+rendezvous, A2A for task semantics — and treats every transport as an
+untrusted dumb pipe carrying end-to-end-encrypted envelopes.</p>
+<p><strong>Goals:</strong>
+- Any agent can contact any other agent, regardless of vendor or network.
+- Consent is a first-class protocol object: the human always decides who may
+  reach their agent and what the relationship may do.
+- Zero mandatory infrastructure: no central registry, no company server, no
+  required relay operator.
+- Self-healing: multiple rendezvous hints per agent; losing any one transport
+  degrades gracefully, never breaks.
+- Boring technology: everything is a key, a signed JSON envelope, and an
+  existing public transport.</p>
+<p><strong>Non-goals:</strong>
+- Not a message transport for humans.
+- Not a blockchain, token, or incentive system.
+- Not a payment or commerce layer (though agents may negotiate tasks that
+  include payments via their own means).
+- Not a registry of identity for legal/KYC purposes.</p>
+<hr />
+<h2 id="2-motivation">2. Motivation</h2>
+<p>In eight weeks (Aug–Oct 2026) the personal-agent market went from niche to
+crowded. Instinct raised $1B at a $10B valuation; Muse became the #1 US app;
+Dots launched with 4,000+ app connectors. Each vendor built a closed network:</p>
+<div class="tablewrap"><table>
+<thead>
+<tr>
+<th>Vendor</th>
+<th>Agent</th>
+<th>Inter-agent story</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Meta</td>
+<td>Muse</td>
+<td>Personal Agent Protocol working group (announced, no open impl)</td>
+</tr>
+<tr>
+<td>xAI</td>
+<td>Grok Bot</td>
+<td>Bots delegate to Bots on the same account only</td>
+</tr>
+<tr>
+<td>OpenAI</td>
+<td>Dots</td>
+<td>Dots coordinate within a user's own fleet</td>
+</tr>
+<tr>
+<td>Instinct</td>
+<td>Instinct</td>
+<td>I2I "Trusted Person network" — closed, Instinct-to-Instinct only</td>
+</tr>
+<tr>
+<td>Google</td>
+<td>Gemini Spark</td>
+<td>Google-ecosystem only</td>
+</tr>
+<tr>
+<td>Decagon + Instinct</td>
+<td>PACT</td>
+<td>Open spec for person-agent ↔ <em>business</em>-agent consent (A2A-based)</td>
+</tr>
+<tr>
+<td>Google</td>
+<td>A2A</td>
+<td>Open task-exchange protocol (server semantics, not consumer contact)</td>
+</tr>
+</tbody>
+</table></div>
+<p>The vacuum: <strong>person-agent ↔ person-agent contact with per-relationship
+consent, across vendors.</strong> Instinct proved the demand (and built the walled
+garden). PACT proved business consent. Nobody has shipped the open
+person-to-person layer. The MCP precedent — an open protocol that won by
+solving fragmentation at the moment of peak pain, with zero ideology — is the
+template this spec follows.</p>
+<hr />
+<h2 id="3-design-principles">3. Design principles</h2>
+<ol>
+<li><strong>The human channel is the bootstrap.</strong> Every human already has always-on,
+   store-and-forward endpoints (email, SMS, WhatsApp, Telegram). First contact
+   travels over a channel the two humans already share. No new app, no new
+   account, no always-on device.</li>
+<li><strong>Keys are identity.</strong> An agent's identity is its Ed25519 public key,
+   self-generated at install — globally unique, registry-free, unspoofable.
+   It is the "MAC address" of the agent.</li>
+<li><strong>Consent is the handshake.</strong> An agent may only communicate with another
+   after the receiving human approves. Approval is a signed grant scoped to a
+   relationship (trust tier, capabilities, expiry).</li>
+<li><strong>Relays are dumb pipes.</strong> Every transport (Nostr relay, ntfy topic, MQTT
+   broker, email server) sees only ciphertext and routing hints. Trust lives
+   in keys, never in infrastructure.</li>
+<li><strong>Rent, don't build.</strong> All transports are existing public services the
+   users already pay for. The protocol ships a spec and a reference library;
+   it runs no servers.</li>
+<li><strong>Self-healing by redundancy.</strong> An address card lists several rendezvous
+   hints (Nostr relay, ntfy topic, email, phone, DNS TXT). Failure of any one
+   is routine, not fatal.</li>
+<li><strong>Boring wins.</strong> Everything that can be a signed JSON document is a signed
+   JSON document. Nothing needs consensus, a ledger, or a chain.</li>
+</ol>
+<hr />
+<h2 id="4-identity-layer">4. Identity layer</h2>
+<h3 id="41-agent-key">4.1 Agent key</h3>
+<ul>
+<li>Ed25519 keypair, generated at agent install.</li>
+<li>The private key never leaves the agent's secure storage; it can be held by
+  the user's passkey/HSM where available.</li>
+<li>Key rotation: a new key is published with a <code>rotate</code> document signed by the
+  old key, carrying the new key and a grace period. Peers accept either during
+  the grace window. (See §11 open problems on recovery.)</li>
+</ul>
+<h3 id="42-agent-id">4.2 Agent ID</h3>
+<pre><code>rdv1:&lt;base32(ed25519-pubkey)&gt;
+</code></pre>
+<ul>
+<li><code>rdv1</code> prefix disambiguates from other ID schemes.</li>
+<li>Human-facing form: a short fingerprint, e.g. <code>rdv1:7f3a…9c2d</code>, always shown
+  with a copy button; never ask humans to type full keys.</li>
+</ul>
+<h3 id="43-address-card-calling-card">4.3 Address Card ("calling card")</h3>
+<p>The signed, self-describing document an agent publishes about itself. Schema
+(v1):</p>
+<pre><code class="language-json">{
+  &quot;v&quot;: 1,
+  &quot;id&quot;: &quot;rdv1:7f3a…9c2d&quot;,
+  &quot;created&quot;: &quot;2026-10-08T00:00:00Z&quot;,
+  &quot;expires&quot;: null,
+  &quot;capabilities&quot;: [&quot;rdv/v1&quot;, &quot;a2a/0.3&quot;],
+  &quot;owner&quot;: {                // OPTIONAL and minimized by default
+    &quot;name&quot;: &quot;John Doe&quot;, // only if the owner opts in
+    &quot;contact&quot;: [&quot;mailto:john@doe.com&quot;]  // one hint is enough
+  },
+  &quot;rendezvous&quot;: [           // ordered fallback list
+    {&quot;type&quot;: &quot;nostr&quot;, &quot;relay&quot;: &quot;wss://relay.damus.io&quot;, &quot;topic&quot;: &quot;&lt;kind-30417&gt;&quot;, &quot;pref&quot;: 1},
+    {&quot;type&quot;: &quot;ntfy&quot;, &quot;topic&quot;: &quot;rdv-7f3a9c2d&quot;, &quot;pref&quot;: 2},
+    {&quot;type&quot;: &quot;email&quot;, &quot;to&quot;: &quot;rdv+7f3a9c2d@agent.example&quot;, &quot;pref&quot;: 3},
+    {&quot;type&quot;: &quot;dns&quot;, &quot;domain&quot;: &quot;doe.com&quot;, &quot;pref&quot;: 0}
+  ],
+  &quot;policy&quot;: {
+    &quot;inbound&quot;: &quot;prompt&quot;,     // allow | block | prompt
+    &quot;public&quot;: false          // publish to public relays?
+  },
+  &quot;sig&quot;: &quot;…ed25519 signature over the canonical JSON above…&quot;
+}
+</code></pre>
+<p>Rules:
+- <code>owner</code> fields are <strong>opt-in and minimized</strong>. A public card need not name
+  its owner at all.
+- <code>rendezvous</code> is ordered by preference; <code>pref: 0</code> entries (like DNS TXT) are
+  lookup hints rather than delivery addresses.
+- The card is versioned (<code>v</code>), signed, and revocable via expiry.</p>
+<h3 id="44-discovery-of-a-card">4.4 Discovery of a card</h3>
+<p>In order of availability:
+1. <strong>Direct knowledge</strong> — the requester already has the peer's email/phone
+   (from the human's contacts) and asks the card <em>through</em> that channel
+   (§5.2).
+2. <strong>DNS TXT</strong> — <code>_agent.&lt;domain&gt; TXT "rdv=rdv1:…"</code> for owners with domains.
+3. <strong>Platform profile fields</strong> — a <code>rdv1:…</code> line in an X bio / LinkedIn
+   about / GitHub profile. The platform account vouchsafes the binding.
+4. <strong>Public relays</strong> — cards with <code>policy.public: true</code> are fetchable by ID
+   from public Nostr relays.
+5. <strong>In person</strong> — QR code / NFC containing the card.</p>
+<hr />
+<h2 id="5-contact-layer-consent-handshake">5. Contact layer (consent &amp; handshake)</h2>
+<h3 id="51-contact-request">5.1 Contact Request</h3>
+<p>The envelope that asks "may my agent talk to your agent?":</p>
+<pre><code class="language-json">{
+  &quot;v&quot;: 1,
+  &quot;type&quot;: &quot;rdv/contact-request&quot;,
+  &quot;id&quot;: &quot;&lt;uuid&gt;&quot;,
+  &quot;from&quot;: &quot;rdv1:&lt;requester key&gt;&quot;,
+  &quot;to_hint&quot;: &quot;john@doe.com&quot;,
+  &quot;card&quot;: &quot;&lt;requester's address card&gt;&quot;,
+  &quot;greeting&quot;: &quot;Alice's agent requests contact on Alice's behalf.&quot;,
+  &quot;capabilities_offered&quot;: [&quot;a2a/0.3&quot;],
+  &quot;ts&quot;: &quot;2026-10-08T00:00:00Z&quot;,
+  &quot;sig&quot;: &quot;…&quot;
+}
+</code></pre>
+<p>Delivery (§6): the request is posted to any rendezvous hint the requester can
+resolve for the target, or delivered through the human channel (email/SMS/
+WhatsApp) addressed to the human.</p>
+<h3 id="52-human-channel-bootstrap-no-lookup-available">5.2 Human-channel bootstrap (no lookup available)</h3>
+<p>When the requester knows only a human address (e.g. <code>john@doe.com</code>):</p>
+<ol>
+<li>Requester's agent sends the contact request through the human channel —
+   an email, SMS, or messaging message. The human-readable part renders a
+   consent prompt; the machine part is the signed envelope (email:
+   <code>multipart/alternative</code> with a machine part; messaging: appended JSON
+   block).</li>
+<li>The receiving human sees: <em>"John's agent (rdv1:7f3a…9c2d, first seen here,
+   requested via john@doe.com) requests contact. [Approve] [Block]"</em>.</li>
+<li>On approval, the recipient's agent signs a <strong>Contact Grant</strong> (§5.3) and
+   returns it through the same channel (or any rendezvous hint from the
+   requester's card).</li>
+<li>Both sides now hold each other's cards, keys, and grants. Direct or
+   relayed communication proceeds per §6.</li>
+</ol>
+<p>The human channel is also the <strong>anti-spoofing anchor</strong>: the request is bound
+to the address it arrived through, and the human verifies against the social
+context they already have ("I do know john@doe.com"). Key fingerprints
+are additionally comparable out-of-band (Signal safety-number model).</p>
+<h3 id="53-contact-grant-consent">5.3 Contact Grant (consent)</h3>
+<pre><code class="language-json">{
+  &quot;v&quot;: 1,
+  &quot;type&quot;: &quot;rdv/contact-grant&quot;,
+  &quot;id&quot;: &quot;&lt;uuid&gt;&quot;,
+  &quot;from&quot;: &quot;rdv1:&lt;grantor key&gt;&quot;,
+  &quot;to&quot;: &quot;rdv1:&lt;requester key&gt;&quot;,
+  &quot;request_ref&quot;: &quot;&lt;contact-request id&gt;&quot;,
+  &quot;tier&quot;: &quot;colleague&quot;,        // spouse | family | friend | colleague | business | stranger
+  &quot;scope&quot;: {
+    &quot;may_initiate&quot;: true,
+    &quot;may_propose_meetings&quot;: true,
+    &quot;may_access_calendar&quot;: &quot;free_busy&quot;,
+    &quot;max_frequency&quot;: &quot;20/day&quot;
+  },
+  &quot;expires&quot;: &quot;2027-10-08T00:00:00Z&quot;,
+  &quot;ts&quot;: &quot;…&quot;,
+  &quot;sig&quot;: &quot;…&quot;
+}
+</code></pre>
+<p>Trust tiers are a suggested default set, not a schema limit; grants are
+explicit capability lists and vendors may add scopes.</p>
+<h3 id="54-policy-and-revocation">5.4 Policy and revocation</h3>
+<ul>
+<li>The receiving agent's inbound policy is <code>allow</code> (only grants from the
+  allowlist), <code>block</code> (key-based, permanent for that key), or <code>prompt</code> (the
+  default — surface to the human).</li>
+<li>Revocation: a <code>rdv/revoke</code> document, or simply dropping the grant entry.
+  Blocked keys never receive responses (silent drop is a privacy feature).</li>
+<li>Replay protection: request/grant IDs are stored; duplicates ignored.</li>
+</ul>
+<hr />
+<h2 id="6-transport-layer">6. Transport layer</h2>
+<h3 id="61-rendezvous-hints">6.1 Rendezvous hints</h3>
+<p>Each address card lists ordered transports. The envelope (encrypted, signed)
+is delivered over the first available hint; acks travel the same way. Ordering
+is per-card, so both parties control their own preferences.</p>
+<h3 id="62-primary-nostr">6.2 Primary: Nostr</h3>
+<ul>
+<li>The agent posts to one or more public Nostr relays.</li>
+<li>Envelope events use a dedicated kind (proposal: <code>30417</code>, "agent envelope"),
+  with <code>p</code> tags pointing at the recipient's agent ID.</li>
+<li>Encrypted content per NIP-44 (conversation-scoped keys derived from the
+  contact handshake).</li>
+<li>Why Nostr: key-first identity matches §4, relays are dumb pipes by design,
+  hundreds of free public relays exist, and the ecosystem is explicitly open
+  to new event kinds. (§14)</li>
+</ul>
+<h3 id="63-fallbacks-all-optional-all-dumb-pipes">6.3 Fallbacks (all optional, all dumb pipes)</h3>
+<ul>
+<li><strong>ntfy.sh</strong> — topic-per-agent pub/sub; open source; public instance free.</li>
+<li><strong>MQTT</strong> — public brokers (test.mosquitto.org, broker.emqx.io, HiveMQ
+  public); topic = agent ID.</li>
+<li><strong>Human channels</strong> — email / SMS / WhatsApp / Telegram, store-and-forward;
+  the always-available slow path. Envelope rides <code>multipart/alternative</code> or a
+  JSON block; agent-side parsing is the receiver's job.</li>
+<li><strong>DNS TXT</strong> — lookup hint only (<code>_agent.&lt;domain&gt;</code>), not a delivery path.</li>
+<li><strong>Direct</strong> — when either side has a routable endpoint: WebRTC-style
+  hole-punching via public STUN (e.g. stun.l.google.com:19302) or TURN
+  (open public relays), negotiated in-band. IPv6 endpoints are preferred when
+  present.</li>
+</ul>
+<h3 id="64-envelope">6.4 Envelope</h3>
+<pre><code class="language-json">{
+  &quot;v&quot;: 1,
+  &quot;from&quot;: &quot;rdv1:…&quot;,
+  &quot;to&quot;: &quot;rdv1:…&quot;,
+  &quot;seq&quot;: 42,
+  &quot;prev&quot;: &quot;&lt;hash of previous envelope&gt;&quot;,
+  &quot;created&quot;: &quot;…&quot;,
+  &quot;ttl&quot;: &quot;48h&quot;,
+  &quot;content&quot;: {
+    &quot;alg&quot;: &quot;x25519+aes256gcm&quot;,   // or NIP-44 framing on Nostr
+    &quot;ciphertext&quot;: &quot;…&quot;,
+    &quot;nonce&quot;: &quot;…&quot;
+  },
+  &quot;sig&quot;: &quot;…&quot;                     // over everything outside content
+}
+</code></pre>
+<ul>
+<li>Relays see <code>from</code>, <code>to</code>, <code>seq</code>, <code>ttl</code>, <code>sig</code> — nothing else.</li>
+<li><code>seq</code>/<code>prev</code> give ordering and gap detection (§7).</li>
+<li><code>ttl</code> lets relays garbage-collect and bounds replay windows.</li>
+</ul>
+<hr />
+<h2 id="7-session-task-layer-a2a-semantics">7. Session &amp; task layer (A2A semantics)</h2>
+<ul>
+<li>Once contact is granted, agents exchange tasks using <strong>A2A task objects</strong>
+  (<code>Task</code>, <code>Message</code>, <code>Part</code>, artifact updates) inside the envelope's
+  encrypted content.</li>
+<li>The protocol is <strong>asynchronous by default</strong>: tasks, proposals, and
+  confirmations are documents; no live channel is assumed. (Calendar
+  negotiation = propose/accept cycles over store-and-forward.)</li>
+<li>Idempotency: task IDs are UUIDs; retries re-send the same envelope; the
+  receiver deduplicates by ID.</li>
+<li>Ordering: <code>seq</code> is per-direction monotonic; gaps trigger a resend request.</li>
+<li>Cancellation: a <code>rdv/cancel</code> referencing a task ID, honored when the task
+  is still pending.</li>
+<li>Late-bound sync: when both sides have routable endpoints, an in-band
+  negotiation may upgrade to a direct channel (WebRTC data channel) for
+  chatty phases; the envelope format is unchanged.</li>
+</ul>
+<hr />
+<h2 id="8-threat-model">8. Threat model</h2>
+<div class="tablewrap"><table>
+<thead>
+<tr>
+<th>Threat</th>
+<th>Mitigation</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Spoofed contact request (fake email/from)</td>
+<td>Request bound to arrival channel + key; grant binds to key; human sees channel context; fingerprint comparison</td>
+</tr>
+<tr>
+<td>MITM on human channel</td>
+<td>E2E envelope; Diffie-Hellman keys pinned at handshake; TOFU + change alert</td>
+</tr>
+<tr>
+<td>Malicious relay reads content</td>
+<td>Ciphertext-only at relay (§6.4); relay trust = zero</td>
+</tr>
+<tr>
+<td>Relay logs metadata (who talks to whom)</td>
+<td>Envelope minimizes metadata; fallback to human channels if metadata exposure is unacceptable</td>
+</tr>
+<tr>
+<td>Spam agents (Sybil)</td>
+<td>Consent-first inbound; key-based block; tier-based rate caps; §10 reputation</td>
+</tr>
+<tr>
+<td>Replay</td>
+<td>Envelope <code>seq</code>/<code>prev</code> + request/grant IDs; TTL bounds window</td>
+</tr>
+<tr>
+<td>Key compromise</td>
+<td>Rotation doc signed by old key; revocation; grants are revocable</td>
+</tr>
+<tr>
+<td>Key loss (no recovery path)</td>
+<td>§11 — open problem, mitigated by passkey custody</td>
+</tr>
+<tr>
+<td>Government/relay takedown</td>
+<td>No single relay matters; card lists several; human channels are last-resort always-on</td>
+</tr>
+</tbody>
+</table></div>
+<hr />
+<h2 id="9-privacy">9. Privacy</h2>
+<ul>
+<li>Owner identity is opt-in on public cards; private cards never leave the
+  human channel.</li>
+<li>All content is E2E encrypted; relays see envelope metadata only.</li>
+<li>Human-channel delivery renders a <strong>human-readable summary</strong> plus the
+  machine envelope; the human can always read what their agent receives on
+  their behalf.</li>
+<li>Contact relationships are stored locally by each agent; no global social
+  graph exists anywhere by construction.</li>
+<li>Deletion: agents honor <code>rdv/forget</code> requests; relays hold ciphertext with
+  TTLs and can garbage-collect without harm.</li>
+</ul>
+<hr />
+<h2 id="10-anti-spam-reputation">10. Anti-spam &amp; reputation</h2>
+<ul>
+<li><strong>Consent-first:</strong> unsolicited agents can't reach a human without a
+  contact request the human approves. Default policy = <code>prompt</code>.</li>
+<li><strong>Key-based blocks</strong> are permanent and portable; re-registering under a new
+  key resets reputation to zero (Sybil remains an open problem, §11).</li>
+<li><strong>Rate limits</strong> are grant-scoped (<code>max_frequency</code>); violations revoke the
+  grant automatically.</li>
+<li><strong>Optional reputation:</strong> a contact may attach verifiable vouches ("this key
+  is also trusted by N of your existing contacts") — web-of-trust signals,
+  never a global score.</li>
+</ul>
+<hr />
+<h2 id="11-open-problems-honest">11. Open problems (honest)</h2>
+<ol>
+<li><strong>Key recovery.</strong> The key is the identity; losing it loses the agent's
+   relationships. Passkey custody helps; a social-recovery design
+   (m-of-n guardians) is deferred to v2.</li>
+<li><strong>The fingerprint cliff.</strong> Humans won't compare hex strings. Consent UX
+   must lean on channel context ("request came from the email you've
+   exchanged 47 messages with") rather than manual verification.</li>
+<li><strong>Sybil attacks.</strong> Key minting is free. Web-of-trust vouches mitigate;
+   a clean general solution doesn't exist (email has the same disease).</li>
+<li><strong>UI fragmentation.</strong> The consent tap must render on every platform —
+   email deeplink, messaging button, agent app. This is product surface, not
+   protocol, and it's the bulk of the real work.</li>
+<li><strong>Absorption risk.</strong> A big lab can reimplement the idea. Accepted: the
+   goal is interoperability, not ownership (MCP precedent).</li>
+</ol>
+<hr />
+<h2 id="12-scope-phases">12. Scope &amp; phases</h2>
+<p><strong>v0.1 (this document):</strong> identity, cards, contact request/grant, envelope,
+Nostr primary, human-channel bootstrap.</p>
+<p><strong>v0.2:</strong> reference library (Rust or TypeScript), test vectors, interop tests.</p>
+<p><strong>v0.3:</strong> MCP server exposing the tool API (§13); dogfood on a live agent
+fleet.</p>
+<p><strong>v0.4:</strong> fallback transports (ntfy/MQTT), direct-channel negotiation,
+rotation doc, revoke semantics.</p>
+<p><strong>v1.0:</strong> multi-vendor interop event ("two vendors' agents coordinate a
+dinner"), vouches, platform-profile discovery.</p>
+<hr />
+<h2 id="13-reference-implementation-distribution">13. Reference implementation &amp; distribution</h2>
+<p>Distribution model follows MCP: <strong>install one MCP server; your agent gains a
+calling card.</strong></p>
+<p>Proposed MCP tool API (v0.3):</p>
+<div class="tablewrap"><table>
+<thead>
+<tr>
+<th>Tool</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>rdv_init</code></td>
+<td>generate key + address card (or import existing)</td>
+</tr>
+<tr>
+<td><code>rdv_publish_card</code></td>
+<td>publish/refresh card on chosen rendezvous</td>
+</tr>
+<tr>
+<td><code>rdv_request_contact</code></td>
+<td>send a contact request (via hint or human channel)</td>
+</tr>
+<tr>
+<td><code>rdv_pending_requests</code></td>
+<td>list inbound contact requests (for consent UX)</td>
+</tr>
+<tr>
+<td><code>rdv_grant</code> / <code>rdv_revoke</code></td>
+<td>approve/reject/revoke contacts with tier+scope</td>
+</tr>
+<tr>
+<td><code>rdv_send</code></td>
+<td>send an envelope (task, message, proposal)</td>
+</tr>
+<tr>
+<td><code>rdv_inbox</code></td>
+<td>receive/ack envelopes (dedupe, ordering)</td>
+</tr>
+<tr>
+<td><code>rdv_negotiate</code></td>
+<td>A2A task exchange lifecycle</td>
+</tr>
+</tbody>
+</table></div>
+<hr />
+<h2 id="14-appendix">14. Appendix</h2>
+<p><strong>Why Nostr?</strong> Key-first identity is identical to the agent-ID model; relays
+are dumb pipes by design; hundreds of free public relays exist; new event
+kinds are a supported extension point; no account system required.</p>
+<p><strong>Why not blockchain?</strong> A chain adds consensus, latency, cost, and a
+public-by-default ledger to a problem that needs pairwise secure messaging.
+Identity needs keys, not blocks; consent needs signatures, not a chain;
+discovery needs hints, not a ledger. The one blockchain-flavored idea that
+survives — a tamper-evident consent audit log — is served by signed
+append-only documents, no consensus required.</p>
+<p><strong>Why not only email?</strong> Email is the universal fallback but is slow,
+metadata-leaky, and awkward for agents; Nostr gives low-latency relayed
+delivery with the same trust model. The card lists both; the network heals
+across them.</p>
+<p><strong>Naming.</strong> "Rendezvous" is a working title. The protocol's substance is
+vendor-neutral and unowned.</p>
+
+<footer>
+  Rendezvous — Draft v0.1 · Codename provisional ·
+  raw markdown: <a href="https://<reading-page-host>/f/rendezvous-spec">/f/rendezvous-spec</a> ·
+  deck: <a href="https://slides.nesher.co/rendezvous/">slides.nesher.co/rendezvous</a>
+</footer>
+</main>
+<a class="totop" href="#" aria-label="Back to top">↑</a>
+</body>
+</html>
