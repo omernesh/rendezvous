@@ -84,11 +84,11 @@ export default function App() {
           kicker="The gaps"
           title="Four gaps. Four answers."
           left={{
-            label: 'Why agents can\u2019t talk',
+            label: 'Why agents can’t talk',
             title: 'Four missing layers',
             points: [
               'No address — nothing to dial, nothing to verify',
-              'No consent — humans can\u2019t approve or revoke relationships',
+              'No consent — humans can’t approve or revoke relationships',
               'No transport — every vendor runs a closed relay',
               'No standard — A2A covers servers, PACT covers business. Person-to-person: nobody',
             ],
@@ -144,7 +144,7 @@ export default function App() {
           items={[
             { title: 'Key', body: 'The agent generates an Ed25519 identity at install. No registry, no ceremony.' },
             { title: 'Card', body: 'A signed address card lists rendezvous hints — Nostr relay, ntfy, MQTT, email, DNS TXT.' },
-            { title: 'Find', body: 'Hint servers first. Not there? A mailbox probe. Still nothing? An invite, like WhatsApp\u2019s.' },
+            { title: 'Find', body: 'Hint servers first. Not there? A mailbox probe. Still nothing? An invite, like WhatsApp’s.' },
             { title: 'Approve', body: 'The human taps Approve. The agent signs a scoped grant — tier, capabilities, expiry.' },
             { title: 'Talk', body: 'Keys exchanged and pinned. Every future conversation is immediately P2P — no rediscovery, relays only as fallback.' },
           ]}
@@ -159,7 +159,7 @@ export default function App() {
             { k: 'FIRST', title: 'Hint servers', body: 'Nostr, ntfy, MQTT, DNS TXT: silent, instant, nobody emailed. STUN upgrades to a direct link once you are talking.', c: 6, r: 1, variant: 'accent' },
             { k: 'OPTIONAL', title: 'Directories', body: 'Blinded lookup by contact point. Opt-in listings. No browsing, no name search.', c: 6, r: 1 },
             { k: 'MAILBOX', title: 'Probe', body: 'A signed email to their address. Their mail rule hands it to their bot: a three-way handshake, like TCP.', c: 6, r: 1 },
-            { k: 'LAST', title: 'Invite', body: 'Nobody home? One tap sends a premade invite \u2014 the WhatsApp \u201Cinvite\u201D moment, for agents.', c: 6, r: 1 },
+            { k: 'LAST', title: 'Invite', body: 'Nobody home? One tap sends a premade invite — the WhatsApp “invite” moment, for agents.', c: 6, r: 1 },
           ]}
         />
       </Slide>
@@ -171,10 +171,10 @@ export default function App() {
           title="Two humans, two vendors, one handshake."
           name="Avery"
           messages={[
-            { from: 'user', text: 'Avery, reach John\u2019s agent about dinner this week.' },
-            { from: 'ai', text: 'On it. Found his agent through DNS \u2014 contact request sent. His address was all I needed.' },
-            { from: 'ai', text: 'John\u2019s agent is asking him to approve \u2014 scope: scheduling only.' },
-            { from: 'ai', text: 'Approved and connected. John\u2019s agent proposes Thursday 20:00 at Greco, Tel Aviv. Confirm?' },
+            { from: 'user', text: 'Avery, reach John’s agent about dinner this week.' },
+            { from: 'ai', text: 'On it. Found his agent through DNS — contact request sent. His address was all I needed.' },
+            { from: 'ai', text: 'John’s agent is asking him to approve — scope: scheduling only.' },
+            { from: 'ai', text: 'Approved and connected. John’s agent proposes Thursday 20:00 at Greco, Tel Aviv. Confirm?' },
             { from: 'user', text: 'Send it.' },
           ]}
         />
@@ -188,10 +188,10 @@ export default function App() {
           name="Avery"
           messages={[
             { from: 'user', text: 'Avery, set dinner with Dana this week.' },
-            { from: 'ai', text: 'I checked Nostr, ntfy, MQTT and DNS \u2014 I couldn\u2019t find an agent for Dana.' },
+            { from: 'ai', text: 'I checked the public directories — I couldn’t find an agent for Dana.' },
             { from: 'ai', text: 'Send her an invite? It reads as a note from you, and her agent will recognize it if she has one.' },
             { from: 'user', text: 'Send.' },
-            { from: 'ai', text: 'Sent. When her agent connects, I\u2019ll ask you to confirm the scope.' },
+            { from: 'ai', text: 'Sent. When her agent connects, I’ll ask you to confirm the scope.' },
           ]}
         />
       </Slide>
@@ -206,7 +206,7 @@ export default function App() {
             title: 'Friend suggestions',
             points: [
               'Your agent matches your own contacts against directories, locally',
-              'Hits become suggestions: \u201CJohn appears to have an agent. Connect?\u201D',
+              'Hits become suggestions: “John appears to have an agent. Connect?”',
               'You tap Approve; nothing is sent until you do',
               'Once connected, your agent keeps the card. No rediscovery',
             ],
@@ -233,7 +233,7 @@ export default function App() {
             { k: 'DUMB PIPES', title: 'Zero trust in infra', body: 'Every transport is untrusted by design — Nostr, ntfy, email, all of it.', c: 6, r: 1 },
             { k: 'CONSENT', title: 'Prompt · allow · block', body: 'No unsolicited agents. The human decides who reaches them, always.', c: 6, r: 1 },
             { k: 'BLOCKS', title: 'Ban the key, not the sender', body: 'A spam agent is blocked by identity — permanently, across every channel.', c: 6, r: 1 },
-            { k: 'TOFU', title: 'Signal\u2019s model, for agents', body: 'Trust-on-first-use plus change alerts; fingerprints comparable out-of-band.', c: 6, r: 1 },
+            { k: 'TOFU', title: 'Signal’s model, for agents', body: 'Trust-on-first-use plus change alerts; fingerprints comparable out-of-band.', c: 6, r: 1 },
             { k: 'MINIMAL', title: 'No global graph', body: 'Owner name is opt-in. Relationships live only on the agents that hold them.', c: 6, r: 1 },
           ]}
         />
@@ -264,7 +264,7 @@ export default function App() {
         </Build>
         <Build at={4}>
           <p className="lead" style={{ marginInline: 'auto' }}>
-            <span className="accent-text">Privacy is the wedge — consent-first openness is what closed networks can\u2019t copy.</span>
+            <span className="accent-text">Privacy is the wedge — consent-first openness is what closed networks can’t copy.</span>
           </p>
         </Build>
       </Slide>
@@ -333,7 +333,7 @@ export default function App() {
             { time: 'v0.2', title: 'Reference library', body: 'Test vectors and interop tests.' },
             { time: 'v0.3', title: 'MCP server', body: 'Discovery, probe and invite tools. Dogfood on a live agent fleet.' },
             { time: 'v0.4', title: 'Fallbacks + directories', body: 'ntfy, MQTT, direct channels, key rotation, optional directories.' },
-            { time: 'v1.0', title: 'The demo', body: 'Two vendors\u2019 agents coordinate a dinner — without a human relay.' },
+            { time: 'v1.0', title: 'The demo', body: 'Two vendors’ agents coordinate a dinner — without a human relay.' },
           ]}
         />
       </Slide>
