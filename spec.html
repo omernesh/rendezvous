@@ -88,7 +88,7 @@ personal AI agent belonging to another human — across different vendors,
 networks, and platforms.</p>
 <p><strong>Rev 2 (2026-10-09)</strong> adds machine-first discovery: hint-server topics
 (Nostr / ntfy / MQTT), the mailbox probe, the invite, and optional discovery
-directories with opt-in friend suggestions. Rev 1 defined identity, consent
+directories with friend suggestions (on by default). Rev 1 defined identity, consent
 and transport; rev 2 defines how two agents <em>find each other</em> in the first
 place.</p>
 </blockquote>
@@ -355,12 +355,16 @@ self-asserted (<code>claimed</code>); the server verifies only the request signa
   match — and only exact-contact matches are ever returned. There is no
   browsing, no name search, no enumeration.</li>
 <li><strong>Listing is opt-in</strong> per the card's <code>policy</code>, separate from <code>public</code>.</li>
-<li><strong>Suggestions ("people you may know").</strong> With a second, separate opt-in,
-  the agent can run its owner's own contact list against configured
-  directories — locally — and surface hits: <em>"John appears to have an agent.
+<li><strong>Suggestions ("people you may know").</strong> On by default — switch it off
+  anytime. The agent runs its owner's own contact list against configured
+  directories, locally, and surfaces hits: <em>"John appears to have an agent.
   Connect?"</em> Nothing is sent until the owner taps. On connect, the agent
-  keeps the peer's card; no rediscovery, forever.</li>
-<li><strong>Two switches, both off by default:</strong> <em>list me</em> and <em>suggest friends</em>.</li>
+  keeps the peer's card; no rediscovery, forever. Suggestions can only
+  surface owners who opted into a listing — a suggestion is a lead,
+  confirmed by the handshake.</li>
+<li><strong>Two switches:</strong> <em>suggest friends</em> is on by default (owner-facing,
+  computed locally; switch it off anytime). <em>list me</em> in a given directory
+  is opt-in — a publishing act, off by default.</li>
 <li><strong>No federation, no authority.</strong> Directories are shards, not a registry:
   anyone may run one, clients choose which to trust, and skipping directories
   entirely never breaks anything.</li>
@@ -622,7 +626,7 @@ is per-card, so both parties control their own preferences.</p>
 </tr>
 <tr>
 <td>Suggestion privacy leak</td>
-<td>Suggestions computed locally on the owner's agent; both switches off by default; OPRF hides queries from the server</td>
+<td>Suggestions computed locally on the owner's agent; <em>list me</em> stays opt-in; OPRF hides queries from the server</td>
 </tr>
 <tr>
 <td>MITM on human channel</td>
@@ -665,8 +669,8 @@ is per-card, so both parties control their own preferences.</p>
   human channel.</li>
 <li>Discovery topics derive from contact points: a listener learns only that
   someone who holds the address is asking — never identity, never content.</li>
-<li>Directories see neither queries nor matches (OPRF); <em>list me</em> and
-  <em>suggest friends</em> are separate opt-ins, both off by default.</li>
+<li>Directories see neither queries nor matches (OPRF); <em>suggest friends</em>
+  is on by default and switchable off; <em>list me</em> is opt-in per directory.</li>
 <li>Probes and invites are owner-initiated and rate-limited; received probes
   are archived with the consent record as an audit trail.</li>
 <li>All content is E2E encrypted; relays see envelope metadata only.</li>

@@ -12,7 +12,7 @@
 
 > **Rev 2 (2026-10-09)** adds machine-first discovery: hint-server topics
 > (Nostr / ntfy / MQTT), the mailbox probe, the invite, and optional discovery
-> directories with opt-in friend suggestions. Rev 1 defined identity, consent
+> directories with friend suggestions (on by default). Rev 1 defined identity, consent
 > and transport; rev 2 defines how two agents *find each other* in the first
 > place.
 
@@ -248,12 +248,16 @@ self-asserted (`claimed`); the server verifies only the request signature.
   match — and only exact-contact matches are ever returned. There is no
   browsing, no name search, no enumeration.
 - **Listing is opt-in** per the card's `policy`, separate from `public`.
-- **Suggestions ("people you may know").** With a second, separate opt-in,
-  the agent can run its owner's own contact list against configured
-  directories — locally — and surface hits: *"John appears to have an agent.
+- **Suggestions ("people you may know").** On by default — switch it off
+  anytime. The agent runs its owner's own contact list against configured
+  directories, locally, and surfaces hits: *"John appears to have an agent.
   Connect?"* Nothing is sent until the owner taps. On connect, the agent
-  keeps the peer's card; no rediscovery, forever.
-- **Two switches, both off by default:** *list me* and *suggest friends*.
+  keeps the peer's card; no rediscovery, forever. Suggestions can only
+  surface owners who opted into a listing — a suggestion is a lead,
+  confirmed by the handshake.
+- **Two switches:** *suggest friends* is on by default (owner-facing,
+  computed locally; switch it off anytime). *list me* in a given directory
+  is opt-in — a publishing act, off by default.
 - **No federation, no authority.** Directories are shards, not a registry:
   anyone may run one, clients choose which to trust, and skipping directories
   entirely never breaks anything.
@@ -527,7 +531,7 @@ is per-card, so both parties control their own preferences.
 | Probe flooding | Owner-initiated only; ≤1/address/30 days; global caps; agent-side filtering; key-based block |
 | Invite abuse / spam | Owner confirms each invite; 1 pending per address; 30-day cooldowns; opt-out honored; disclosure inside the message |
 | Directory harvesting | Exact-contact match only, blinded via OPRF (RFC 9497); rate limits; directories swappable |
-| Suggestion privacy leak | Suggestions computed locally on the owner's agent; both switches off by default; OPRF hides queries from the server |
+| Suggestion privacy leak | Suggestions computed locally on the owner's agent; *list me* stays opt-in; OPRF hides queries from the server |
 | MITM on human channel | E2E envelope; Diffie-Hellman keys pinned at handshake; TOFU + change alert |
 | Malicious relay reads content | Ciphertext-only at relay (§6.4); relay trust = zero |
 | Relay logs metadata (who talks to whom) | Envelope minimizes metadata; fallback to human channels if metadata exposure is unacceptable |
@@ -545,8 +549,8 @@ is per-card, so both parties control their own preferences.
   human channel.
 - Discovery topics derive from contact points: a listener learns only that
   someone who holds the address is asking — never identity, never content.
-- Directories see neither queries nor matches (OPRF); *list me* and
-  *suggest friends* are separate opt-ins, both off by default.
+- Directories see neither queries nor matches (OPRF); *suggest friends*
+  is on by default and switchable off; *list me* is opt-in per directory.
 - Probes and invites are owner-initiated and rate-limited; received probes
   are archived with the consent record as an audit trail.
 - All content is E2E encrypted; relays see envelope metadata only.
