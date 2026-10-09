@@ -223,7 +223,9 @@ with zero ideology — is the template this spec follows.</p>
   the user's passkey/HSM where available.</li>
 <li>Key rotation: a new key is published with a <code>rotate</code> document signed by the
   old key, carrying the new key and a grace period. Peers accept either during
-  the grace window. (See §11 open problems on recovery.)</li>
+  the grace window. A key change <strong>outside</strong> a signed <code>rotate</code> document is a
+  trust event: change alert + fresh consent handshake. (See §11 open problems
+  on recovery.)</li>
 </ul>
 <h3 id="42-agent-id">4.2 Agent ID</h3>
 <pre><code>rdv1:&lt;base32(ed25519-pubkey)&gt;
@@ -523,9 +525,17 @@ explicit capability lists and vendors may add scopes. A grant from a
 <p>Each address card lists ordered transports. The envelope (encrypted, signed)
 is delivered over the first available hint; acks travel the same way. Ordering
 is per-card, so both parties control their own preferences.</p>
-<h3 id="62-primary-nostr">6.2 Primary: Nostr</h3>
+<p><strong>Direct-first — permanently.</strong> Keys are pinned once exchanged (TOFU; a change
+outside a signed rotation triggers the alert and a fresh handshake). Every
+later conversation between the two agents opens a direct channel immediately
+when both sides are reachable — no rediscovery, no relay hop to set up. Relays
+cover only what direct can't: offline peers (store-and-forward) and networks
+where hole-punching fails (TURN relays carry the ciphertext).</p>
+<h3 id="62-primary-relay-nostr">6.2 Primary relay: Nostr</h3>
 <ul>
-<li>The agent posts to one or more public Nostr relays.</li>
+<li>The agent posts to one or more public Nostr relays. Relayed delivery covers
+  first contact, offline peers, and failed hole-punching — everything a
+  direct channel can't reach.</li>
 <li>Envelope events use a dedicated kind (proposal: <code>30417</code>, "agent envelope"),
   with <code>p</code> tags pointing at the recipient's agent ID. Discovery topics ride
   the same kind as <code>t</code> tags (§4.4).</li>
@@ -546,9 +556,11 @@ is per-card, so both parties control their own preferences.</p>
   JSON block; agent-side parsing is the receiver's job. Carries the probe
   (§5.2.1) and invite (§5.2.2).</li>
 <li><strong>DNS TXT</strong> — lookup hint only (<code>_agent.&lt;domain&gt;</code>), not a delivery path.</li>
-<li><strong>Direct</strong> — when either side has a routable endpoint: ICE (RFC 8445) with
-  STUN (RFC 8489) hole-punching, negotiated in-band after discovery. IPv6
-  endpoints are preferred when present.</li>
+<li><strong>Direct (the default after contact)</strong> — once keys are pinned, every
+  conversation attempts direct first: ICE (RFC 8445) with STUN (RFC 8489)
+  hole-punching, negotiated in-band. IPv6 endpoints are preferred when
+  present. Relays and TURN carry traffic only as fallback (offline peers,
+  failed punch-through).</li>
 </ul>
 <h3 id="64-envelope">6.4 Envelope</h3>
 <pre><code class="language-json">{
@@ -586,9 +598,11 @@ is per-card, so both parties control their own preferences.</p>
 <li>Ordering: <code>seq</code> is per-direction monotonic; gaps trigger a resend request.</li>
 <li>Cancellation: a <code>rdv/cancel</code> referencing a task ID, honored when the task
   is still pending.</li>
-<li>Late-bound sync: when both sides have routable endpoints, an in-band
-  negotiation may upgrade to a direct channel (WebRTC data channel) for
-  chatty phases; the envelope format is unchanged.</li>
+<li>Direct-first operation: once both sides have routable endpoints, the
+  in-band negotiation opens a direct channel (WebRTC data channel)
+  immediately — the default mode of every subsequent session, not an
+  upgrade. Relays resume only for offline peers and NAT failures. The
+  envelope format is unchanged.</li>
 </ul>
 <hr />
 <h2 id="8-threat-model">8. Threat model</h2>

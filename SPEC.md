@@ -125,7 +125,9 @@ with zero ideology — is the template this spec follows.
   the user's passkey/HSM where available.
 - Key rotation: a new key is published with a `rotate` document signed by the
   old key, carrying the new key and a grace period. Peers accept either during
-  the grace window. (See §11 open problems on recovery.)
+  the grace window. A key change **outside** a signed `rotate` document is a
+  trust event: change alert + fresh consent handshake. (See §11 open problems
+  on recovery.)
 
 ### 4.2 Agent ID
 
@@ -449,9 +451,18 @@ Each address card lists ordered transports. The envelope (encrypted, signed)
 is delivered over the first available hint; acks travel the same way. Ordering
 is per-card, so both parties control their own preferences.
 
-### 6.2 Primary: Nostr
+**Direct-first — permanently.** Keys are pinned once exchanged (TOFU; a change
+outside a signed rotation triggers the alert and a fresh handshake). Every
+later conversation between the two agents opens a direct channel immediately
+when both sides are reachable — no rediscovery, no relay hop to set up. Relays
+cover only what direct can't: offline peers (store-and-forward) and networks
+where hole-punching fails (TURN relays carry the ciphertext).
 
-- The agent posts to one or more public Nostr relays.
+### 6.2 Primary relay: Nostr
+
+- The agent posts to one or more public Nostr relays. Relayed delivery covers
+  first contact, offline peers, and failed hole-punching — everything a
+  direct channel can't reach.
 - Envelope events use a dedicated kind (proposal: `30417`, "agent envelope"),
   with `p` tags pointing at the recipient's agent ID. Discovery topics ride
   the same kind as `t` tags (§4.4).
@@ -472,9 +483,11 @@ is per-card, so both parties control their own preferences.
   JSON block; agent-side parsing is the receiver's job. Carries the probe
   (§5.2.1) and invite (§5.2.2).
 - **DNS TXT** — lookup hint only (`_agent.<domain>`), not a delivery path.
-- **Direct** — when either side has a routable endpoint: ICE (RFC 8445) with
-  STUN (RFC 8489) hole-punching, negotiated in-band after discovery. IPv6
-  endpoints are preferred when present.
+- **Direct (the default after contact)** — once keys are pinned, every
+  conversation attempts direct first: ICE (RFC 8445) with STUN (RFC 8489)
+  hole-punching, negotiated in-band. IPv6 endpoints are preferred when
+  present. Relays and TURN carry traffic only as fallback (offline peers,
+  failed punch-through).
 
 ### 6.4 Envelope
 
@@ -515,9 +528,11 @@ is per-card, so both parties control their own preferences.
 - Ordering: `seq` is per-direction monotonic; gaps trigger a resend request.
 - Cancellation: a `rdv/cancel` referencing a task ID, honored when the task
   is still pending.
-- Late-bound sync: when both sides have routable endpoints, an in-band
-  negotiation may upgrade to a direct channel (WebRTC data channel) for
-  chatty phases; the envelope format is unchanged.
+- Direct-first operation: once both sides have routable endpoints, the
+  in-band negotiation opens a direct channel (WebRTC data channel)
+  immediately — the default mode of every subsequent session, not an
+  upgrade. Relays resume only for offline peers and NAT failures. The
+  envelope format is unchanged.
 
 ---
 

@@ -146,7 +146,7 @@ export default function App() {
             { title: 'Card', body: 'A signed address card lists rendezvous hints — Nostr relay, ntfy, MQTT, email, DNS TXT.' },
             { title: 'Find', body: 'Hint servers first. Not there? A mailbox probe. Still nothing? An invite, like WhatsApp\u2019s.' },
             { title: 'Approve', body: 'The human taps Approve. The agent signs a scoped grant — tier, capabilities, expiry.' },
-            { title: 'Talk', body: 'Keys exchanged. Encrypted envelopes flow over relays — or plain email, if that\u2019s all there is.' },
+            { title: 'Talk', body: 'Keys exchanged and pinned. Every future conversation is immediately P2P — no rediscovery, relays only as fallback.' },
           ]}
         />
       </Slide>
