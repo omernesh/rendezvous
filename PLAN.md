@@ -1,6 +1,6 @@
 # Rendezvous: implementation plan (two-agent dinner demo)
 
-**Owner:** Omer Nesher · **Written:** 2026-10-24 · **Status:** step 1 done; step 2 tasks 2.1, 2.2 and 2.5 (in-memory) done on `impl/step-2-cli`; 2.3, 2.4, 2.5 live runs and steps 3–4 open
+**Owner:** Omer Nesher · **Written:** 2026-10-24 · **Status:** step 1 done; step 2 (2.1–2.5) done on `impl/step-2-cli`; relay.nesher.co Cloudflare step and steps 3–4 open
 
 This is the working plan for turning the Rendezvous spec ([SPEC.md](SPEC.md))
 into running code. It is meant to be picked up in a local Claude Code session:
@@ -344,12 +344,12 @@ Update the reading page with `python3 render_html.py` after editing SPEC.md.
 - [x] Merge PR #1 (CI workflow removed)
 - [x] Step 2.1: workspace and pre-push hook
 - [x] Step 2.2: `rdv` CLI
-- [ ] Step 2.3: strfry on relay-host via Cloudflare Tunnel
-- [ ] Step 2.4: public relay survey → NOTES.md
-- [ ] Step 2.5: scripted contact scenario (in-memory, relay-host, public)
+- [x] Step 2.3: strfry on relay-host via Cloudflare Tunnel (relay deployed on relay-host, `ws://<relay-host>:7777` over Tailscale; public hostname relay.nesher.co pending the owner's Cloudflare dashboard step)
+- [x] Step 2.4: public relay survey → NOTES.md (item 11a)
+- [x] Step 2.5: scripted contact scenario (in-memory, relay-host, public)
   - [x] in-memory relay, part of `npm test`
-  - [ ] relay-host relay, two machines
-  - [ ] two public relays via `test:live` (first runs passed on nos.lol and relay.damus.io; NOTES.md item 27)
+  - [x] relay-host relay, two machines (`scenarios/two-machine.ps1`, passed twice 2026-10-25)
+  - [x] two public relays via `test:live` (nos.lol, relay.primal.net, nostr.mom pass; NOTES.md item 11a)
 - [ ] Step 3: `@rendezvous/a2a` engine, calendar adapter, CLI integration
 - [ ] Step 4: `@rendezvous/mcp`, demo script, recording, deck slide
 - [ ] Spec rev 3 with the follow-ups in §7

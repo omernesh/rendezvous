@@ -52,6 +52,36 @@ into SPEC.md before v0.2.
     key of the recipient.
 11. **Discovery on Nostr**: topic documents use the same kind, with a `t` tag
     holding `dtopic` and `d` = hash of the content.
+11a. **Public relay survey (2026-10-25, PLAN §4.4 / step 2.4).** Per relay:
+    publish two 30417 events (~2 KB, distinct `d`), read back by `#p` and `#t`
+    on a new connection; same for regular kind 4417. Two runs, 5 min apart.
+
+    | relay | software | 30417 + `#p`/`#t` + 2 `d` kept | live scenario (2.5) | note |
+    |---|---|---|---|---|
+    | nos.lol | strfry 1.1.3 | yes | pass | clean |
+    | relay.primal.net | strfry 1.1.3 | yes | pass | max 20 subscriptions |
+    | nostr.mom | strfry 1.1.3 | yes | pass | clean |
+    | offchain.pub | strfry 1.1.0 | yes | not run | clean; spare |
+    | relay.damus.io | strfry 1.1.0 | yes | passed once, failed once | intermittent HTTP 503 on connect, readback alternates full/empty |
+    | relay.snort.social | memlay (in-memory) | yes | not run | events lost on restart; 10 s idle timeout |
+    | relay.nostr.band | n/a | n/a | n/a | unreachable in both runs |
+
+    No relay wanted auth or payment, restricted the kind, or rejected 2 KB
+    content (smallest `max_message_length` is 128 KB). **Recommendation:**
+    demo on `wss://nos.lol`, `wss://relay.primal.net`, `wss://nostr.mom`
+    (`offchain.pub` as a fourth); damus only as an extra. **No relay-side
+    difference between 30417 and a regular kind** (4417 behaved identically,
+    including damus's 503s), so item 9's case for a regular kind is
+    semantic (no `d` fragility), not empirical. Not tested: same-`d`
+    overwrite, long-term retention.
+
+    **Step 2.5 live results (2026-10-25).** `npm run test:live`, contact
+    scenario: `ws://<relay-host>:7777` (own strfry on relay-host) pass;
+    `nos.lol` + `relay.primal.net` together pass; `nos.lol`,
+    `relay.primal.net`, `nostr.mom` each alone pass (about 5 s each). Two
+    machines (John on relay-host, Omer on Windows) via the relay-host relay: pass twice
+    (`packages/cli/scenarios/two-machine.md`). Raw survey data and script were
+    kept outside the repo.
 
 ## Contact flow
 
