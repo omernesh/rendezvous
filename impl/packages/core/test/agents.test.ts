@@ -315,3 +315,34 @@ describe('gap buffer bounds (security regression)', () => {
   });
 });
 
+describe('relay drops', () => {
+  it('re-subscribes after the relay goes away and comes back', async () => {
+    let relay = await startTestRelay();
+    const port = Number(new URL(relay.url).port);
+    const url = relay.url;
+    const make = (email: string) => {
+      const a = Agent.create((key: AgentKey) => new NostrTransport({ key, relays: [url], reconnectBaseMs: 100 }), {
+        rendezvous: [{ type: 'nostr', relay: url, pref: 1 }],
+        discovery: { addresses: [{ type: 'email', value: email }], public_pointer: false },
+      });
+      a.start();
+      return a;
+    };
+    const omer = make('omer@example.com');
+    const john = make('john@doe.com');
+    try {
+      await new Promise((r) => setTimeout(r, 200));
+      await relay.close(); // drops every socket
+      relay = await startTestRelay(port);
+      await new Promise((r) => setTimeout(r, 1000)); // backoff + resubscribe
+      const pending = waitFor<{ request: { id: string } }>(john, 'request', 5000);
+      await omer.requestContact('john@doe.com', 'after the restart');
+      expect((await pending).request.id).toBeTruthy();
+    } finally {
+      omer.close();
+      john.close();
+      await relay.close();
+    }
+  });
+});
+

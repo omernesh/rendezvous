@@ -7,6 +7,7 @@
 import { hkdf } from '@noble/hashes/hkdf';
 import { sha256 } from '@noble/hashes/sha256';
 import { utf8ToBytes } from '@noble/hashes/utils';
+import type { Filter } from 'nostr-tools/filter';
 import { SimplePool, useWebSocketImplementation } from 'nostr-tools/pool';
 import { type Event, finalizeEvent, getPublicKey } from 'nostr-tools/pure';
 import WebSocket from 'ws';
@@ -32,6 +33,8 @@ export interface NostrTransportOptions {
   relays: string[];
   /** How far back to fetch stored events on subscribe (seconds). Default 2 days. */
   lookbackSeconds?: number;
+  /** First re-subscribe delay after a relay drops us; doubles up to 30 s. Default 1000. */
+  reconnectBaseMs?: number;
 }
 
 export function nostrCarrierKey(key: AgentKey): Uint8Array {
@@ -55,6 +58,42 @@ export class NostrTransport implements Transport {
 
   get relays(): string[] {
     return this.opts.relays;
+  }
+
+  private destroyed = false;
+  private timers = new Set<ReturnType<typeof setTimeout>>();
+
+  /**
+   * A subscription that comes back after its relays drop it (public relays
+   * close idle sockets). Re-subscribing replays the lookback window; the agent
+   * drops the duplicates.
+   */
+  private subscribe(filter: () => Filter, onevent: (ev: Event) => void): () => void {
+    let closed = false;
+    let attempt = 0;
+    let sub: { close(): void } | undefined;
+    const open = () => {
+      sub = this.pool.subscribeMany(this.opts.relays, filter(), {
+        onevent,
+        oneose: () => {
+          attempt = 0;
+        },
+        onclose: () => {
+          if (closed || this.destroyed) return;
+          const delay = Math.min(30_000, (this.opts.reconnectBaseMs ?? 1000) * 2 ** attempt++);
+          const t = setTimeout(() => {
+            this.timers.delete(t);
+            if (!closed && !this.destroyed) open();
+          }, delay);
+          this.timers.add(t);
+        },
+      });
+    };
+    open();
+    return () => {
+      closed = true;
+      sub?.close();
+    };
   }
 
   private since(): number {
@@ -87,12 +126,10 @@ export class NostrTransport implements Transport {
   }
 
   onEnvelopes(me: string, handler: (envelope: unknown) => void): () => void {
-    const sub = this.pool.subscribeMany(
-      this.opts.relays,
-      { kinds: [ENVELOPE_KIND], '#p': [agentTag(me)], since: this.since() },
-      { onevent: (ev) => handler(safeParse(ev.content)) },
+    return this.subscribe(
+      () => ({ kinds: [ENVELOPE_KIND], '#p': [agentTag(me)], since: this.since() }),
+      (ev) => handler(safeParse(ev.content)),
     );
-    return () => sub.close();
   }
 
   async publishTopic(topic: string, doc: object, extraRelays: string[] = []): Promise<void> {
@@ -114,17 +151,13 @@ export class NostrTransport implements Transport {
 
   onTopics(topics: string[], handler: (doc: unknown, topic: string) => void): () => void {
     if (topics.length === 0) return () => {};
-    const sub = this.pool.subscribeMany(
-      this.opts.relays,
-      { kinds: [ENVELOPE_KIND], '#t': topics, since: this.since() },
-      {
-        onevent: (ev) => {
-          const topic = ev.tags.find((t) => t[0] === 't' && topics.includes(t[1]))?.[1];
-          if (topic) handler(safeParse(ev.content), topic);
-        },
+    return this.subscribe(
+      () => ({ kinds: [ENVELOPE_KIND], '#t': topics, since: this.since() }),
+      (ev) => {
+        const topic = ev.tags.find((t) => t[0] === 't' && topics.includes(t[1]))?.[1];
+        if (topic) handler(safeParse(ev.content), topic);
       },
     );
-    return () => sub.close();
   }
 
   /** One-shot fetch of documents already stored on a topic (public pointers). */
@@ -136,6 +169,9 @@ export class NostrTransport implements Transport {
   }
 
   close(): void {
+    this.destroyed = true;
+    for (const t of this.timers) clearTimeout(t);
+    this.timers.clear();
     this.pool.destroy();
   }
 }
