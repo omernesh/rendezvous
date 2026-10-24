@@ -84,6 +84,7 @@ describe('two agents over a Nostr relay', () => {
     await john.grant(req.request.id);
     await contact;
     expect(john.contacts()[0].tier).toBe('stranger'); // claimed binding default
+    expect(omer.contacts()[0].binding).toBe('claimed'); // a public pointer is self-asserted
 
     const revoked = waitFor(omer, 'revoked');
     await john.revoke(omer.id);
@@ -170,6 +171,79 @@ describe('ordering over a lossy pipe', () => {
       await john.idle();
       await omer.idle();
     }
+    expect(texts).toEqual(['two', 'three']);
+  });
+});
+
+describe('requester-side binding and restart safety', () => {
+  // A shared in-memory bus; `hold` decides which deliveries to swallow.
+  function makeBus(hold: (e: Envelope) => boolean) {
+    const handlers = new Map<string, (e: unknown) => void>();
+    const bus = (): Transport => ({
+      async sendEnvelope(e) {
+        if (hold(e)) return;
+        queueMicrotask(() => handlers.get(e.to)?.(structuredClone(e)));
+      },
+      onEnvelopes(me, h) {
+        handlers.set(me, h);
+        return () => handlers.delete(me);
+      },
+      async publishTopic() {},
+      onTopics: () => () => {},
+      fetchTopic: async () => [],
+      close() {},
+    });
+    return { bus, handlers };
+  }
+  const card = { rendezvous: [{ type: 'nostr' as const, relay: 'ws://unused', pref: 1 }] };
+
+  async function connect(omer: Agent, john: Agent, binding?: 'in-person') {
+    const pending = waitFor<{ request: { id: string } }>(john, 'request');
+    await omer.requestContact(john.card, 'hi', { binding });
+    const contact = waitFor(omer, 'contact');
+    await john.grant((await pending).request.id);
+    await contact;
+  }
+
+  it('records the binding the requester actually used', async () => {
+    const { bus } = makeBus(() => false);
+    const omer = Agent.create(bus, card);
+    const john = Agent.create(bus, card);
+    omer.start();
+    john.start();
+    await connect(omer, john, 'in-person');
+    expect(omer.book.contact(john.id)?.binding).toBe('in-person');
+  });
+
+  it('keeps buffered out-of-order envelopes across save/restore', async () => {
+    let holdSeq2 = true;
+    let johnId = '';
+    const { bus, handlers } = makeBus((e) => holdSeq2 && e.to === johnId && e.seq === 2);
+    const omer = Agent.create(bus, card);
+    const john = Agent.create(bus, card);
+    johnId = john.id;
+    omer.start();
+    john.start();
+    await connect(omer, john);
+
+    await omer.send(john.id, { type: 'a2a/message', text: 'two' }); // seq 2, held
+    await omer.send(john.id, { type: 'a2a/message', text: 'three' }); // seq 3, buffered by john
+    await new Promise((r) => setTimeout(r, 20));
+    await john.idle();
+    expect(john.toJSON().buffer?.[omer.id]?.map((e) => e.seq)).toEqual([3]);
+
+    const saved = JSON.parse(JSON.stringify(john.toJSON()));
+    john.stop();
+    const restored = Agent.fromJSON(saved, bus);
+    const texts: string[] = [];
+    restored.on('message', (_p, payload) => texts.push(String(payload.text)));
+    restored.start();
+
+    holdSeq2 = false;
+    const seq2 = omer.toJSON().outbox[john.id].find((e) => e.seq === 2)!;
+    handlers.get(john.id)?.(structuredClone(seq2));
+    await new Promise((r) => setTimeout(r, 20));
+    await restored.idle();
     expect(texts).toEqual(['two', 'three']);
   });
 });

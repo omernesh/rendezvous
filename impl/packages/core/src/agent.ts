@@ -33,6 +33,8 @@ export interface AgentState {
   book: ContactBookState;
   channels: Record<string, ChannelState>;
   outbox: Record<string, Envelope[]>;
+  /** Out-of-order envelopes waiting for a gap to fill (kept so a restart doesn't lose them). */
+  buffer?: Record<string, Envelope[]>;
 }
 
 export interface AgentEvents {
@@ -48,7 +50,7 @@ export class Agent extends EventEmitter<AgentEvents> {
   readonly book: ContactBook;
   readonly channels: Channels;
   private outbox: Record<string, Envelope[]>;
-  private buffer: Record<string, Envelope[]> = {};
+  private buffer: Record<string, Envelope[]>;
   private unsubscribers: Array<() => void> = [];
   private queue: Promise<void> = Promise.resolve();
 
@@ -56,12 +58,13 @@ export class Agent extends EventEmitter<AgentEvents> {
     readonly key: AgentKey,
     public card: AddressCard,
     readonly transport: Transport,
-    state?: Partial<Pick<AgentState, 'book' | 'channels' | 'outbox'>>,
+    state?: Partial<Pick<AgentState, 'book' | 'channels' | 'outbox' | 'buffer'>>,
   ) {
     super();
     this.book = new ContactBook({ policy: card.policy.inbound, ...state?.book });
     this.channels = new Channels(state?.channels ?? {});
     this.outbox = state?.outbox ?? {};
+    this.buffer = state?.buffer ?? {};
   }
 
   static create(transport: (key: AgentKey) => Transport, card: CardOptions, key: AgentKey = generateKey()): Agent {
@@ -80,6 +83,7 @@ export class Agent extends EventEmitter<AgentEvents> {
       book: this.book.toJSON(),
       channels: this.channels.state,
       outbox: this.outbox,
+      buffer: this.buffer,
     };
   }
 
@@ -136,11 +140,21 @@ export class Agent extends EventEmitter<AgentEvents> {
    * Ask for contact. With a card, the request goes straight to the peer in an
    * envelope; with only an address, it is posted on the address's discovery
    * topic for a listening agent to pick up.
+   *
+   * `binding` records how we got the peer's card (§4.4) and is stored on the
+   * contact once the grant arrives. A topic probe is always `claimed`; a card
+   * defaults to `claimed` unless the caller knows better (e.g. `in-person`
+   * for a card scanned from a QR code).
    */
-  async requestContact(target: AddressCard | string, greeting: string): Promise<ContactRequest> {
+  async requestContact(
+    target: AddressCard | string,
+    greeting: string,
+    opts: { binding?: Binding } = {},
+  ): Promise<ContactRequest> {
     const toHint = typeof target === 'string' ? target : target.id;
+    const binding: Binding = typeof target === 'string' ? 'claimed' : (opts.binding ?? 'claimed');
     const req = createContactRequest(this.key, this.card, { toHint, greeting });
-    this.book.trackOutstanding(req);
+    this.book.trackOutstanding(req, binding);
     if (typeof target === 'string') {
       const topic = topicForHint(target);
       if (!topic) throw new Error(`cannot derive a discovery topic from "${target}"`);

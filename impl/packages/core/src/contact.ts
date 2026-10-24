@@ -164,8 +164,8 @@ export interface ContactBookState {
   policy: InboundPolicy;
   contacts: Record<string, Contact>;
   pending: Record<string, PendingRequest>;
-  /** Outbound requests awaiting a grant: request id -> target hint. */
-  outstanding: Record<string, { to_hint: string; sent: string }>;
+  /** Outbound requests awaiting a grant: request id -> target hint and how we found the peer. */
+  outstanding: Record<string, { to_hint: string; sent: string; binding?: Binding }>;
   blocked: string[];
   allowlist: Record<string, { tier: Tier; scope: GrantScope }>;
   seenIds: string[];
@@ -215,8 +215,8 @@ export class ContactBook {
     return c;
   }
 
-  trackOutstanding(req: ContactRequestBody): void {
-    this.state.outstanding[req.id] = { to_hint: req.to_hint, sent: req.ts };
+  trackOutstanding(req: ContactRequestBody, binding: Binding = 'claimed'): void {
+    this.state.outstanding[req.id] = { to_hint: req.to_hint, sent: req.ts, binding };
   }
 
   /** Inbound contact request: verify, dedupe, apply policy (§5.4). */
@@ -256,7 +256,8 @@ export class ContactBook {
   receiveGrant(input: unknown, me: string, now = new Date()): Contact | null {
     if (!verifyGrant(input, now)) return null;
     const g = input;
-    if (g.to !== me || !this.state.outstanding[g.request_ref]) return null;
+    const outstanding = this.state.outstanding[g.request_ref];
+    if (g.to !== me || !outstanding) return null;
     if (!this.markSeen(g.id) || this.isBlocked(g.from)) return null;
     delete this.state.outstanding[g.request_ref];
     // We initiated, so we accept the grantor contacting us within the same scope.
@@ -266,7 +267,7 @@ export class ContactBook {
       tier: g.tier,
       inboundScope: { ...g.scope, may_initiate: true },
       outboundScope: g.scope,
-      binding: 'claimed',
+      binding: outstanding.binding ?? 'claimed',
       grantId: g.id,
       expires: g.expires,
       since: now.toISOString(),
