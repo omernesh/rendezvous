@@ -148,6 +148,11 @@ export const MAX_ROUNDS = 3;
 /** Terminal tasks kept for replay detection before the oldest are pruned. */
 const KEEP_TERMINAL = 500;
 const KEEP_TERMINAL_MS = 30 * 86_400_000;
+/** Tasks (pending and finished, tombstones included) kept per peer. */
+export const MAX_TASKS_PER_PEER = 32;
+/** `expires` for tasks a peer creates: default when absent, and the latest we accept. */
+export const PEER_EXPIRES_DEFAULT_MS = 48 * 3_600_000;
+export const PEER_EXPIRES_MAX_MS = 7 * 86_400_000;
 
 /** Does the grant let us exchange meeting verbs at all? */
 export function checkScope(scope: MeetingScope | null | undefined): { ok: true } | { ok: false; reason: string } {
@@ -313,6 +318,29 @@ class Run {
     return true;
   }
 
+  /**
+   * Make room for one more task with `peer`: evict its oldest finished tasks
+   * (tombstones first) down to the per-peer cap. False if all are pending.
+   */
+  makeRoom(peer: string): boolean {
+    const mine = Object.values(this.state.tasks).filter((t) => t.peer === peer);
+    if (mine.length < MAX_TASKS_PER_PEER) return true;
+    const finished = mine
+      .filter((t) => isTerminal(t.state))
+      .sort((a, b) => Number(b.round === 0) - Number(a.round === 0) || a.updated.localeCompare(b.updated));
+    const excess = mine.length - MAX_TASKS_PER_PEER + 1;
+    if (finished.length < excess) return false; // all pending: refuse, change nothing
+    for (const t of finished.slice(0, excess)) delete this.state.tasks[t.id];
+    return true;
+  }
+
+  /** Default and clamp a peer-supplied `expires`. */
+  peerExpires(expires: string | undefined): string {
+    const max = this.now + PEER_EXPIRES_MAX_MS;
+    const want = expires === undefined ? this.now + PEER_EXPIRES_DEFAULT_MS : Date.parse(expires);
+    return new Date(Math.min(want, max)).toISOString();
+  }
+
   prune(): void {
     const terminal = Object.values(this.state.tasks)
       .filter((t) => isTerminal(t.state))
@@ -345,6 +373,7 @@ export function propose(
   if (!(Date.parse(expires) > run.now)) throw new NegotiationError('expires must be in the future');
   const slots = run.pickSlots(minutes, []);
   if (slots.length === 0) throw new NegotiationError('no free slot in the window');
+  if (!run.makeRoom(peer)) throw new NegotiationError(`too many open negotiations with ${peer} (max ${MAX_TASKS_PER_PEER})`);
   const task: NegotiationTask = {
     id: run.newId(),
     contextId: run.newId(),
@@ -372,10 +401,16 @@ export function propose(
 /** Handle one decrypted payload from `from`. Invalid input changes nothing and sends nothing. */
 export function receive(state: NegotiationState, from: string, payload: unknown, ctx: Ctx): Step {
   const run = new Run(state, ctx);
+  handle(run, from, payload, ctx);
+  run.prune();
+  return run.result();
+}
+
+function handle(run: Run, from: string, payload: unknown, ctx: Ctx): void {
   const parsed = parsePayload(payload);
   if (!parsed.ok) {
     run.event({ kind: 'invalid', taskId: null, peer: from, reason: parsed.reason });
-    return run.result();
+    return;
   }
 
   if (parsed.value.kind === 'update') {
@@ -383,30 +418,30 @@ export function receive(state: NegotiationState, from: string, payload: unknown,
     const task = run.state.tasks[u.taskId];
     if (!task || task.peer !== from || task.contextId !== u.contextId) {
       run.event({ kind: 'ignored', taskId: u.taskId, peer: from, reason: 'status update for an unknown task' });
-      return run.result();
+      return;
     }
     // Informational: the peer's view never overrides ours.
     if (task.peerState !== u.status.state) {
       task.peerState = u.status.state;
       run.event({ kind: 'status', taskId: task.id, peer: from, state: task.state, reason: `peer reports ${u.status.state}` });
     }
-    return run.result();
+    return;
   }
 
   const { message: m, data, text } = parsed.value;
   const existing = run.state.tasks[m.taskId];
-  const invalid = (reason: string) => {
+  const invalid = (reason: string): void => {
     run.event({ kind: 'invalid', taskId: m.taskId, peer: from, reason });
-    return run.result();
   };
   if (existing && existing.peer !== from) return invalid('task belongs to another peer');
   if (existing && existing.contextId !== m.contextId) return invalid('contextId does not match the task');
   if (existing?.seen.includes(m.messageId)) {
     run.event({ kind: 'duplicate', taskId: m.taskId, peer: from, state: existing.state });
-    return run.result();
+    return;
   }
-  // Cancel only ever reduces what happens, so it needs no meeting scope.
-  if (data.rdv !== 'rdv/cancel') {
+  // Only a meeting-capable grant may create or advance tasks. A cancel of an
+  // existing task only reduces what happens, so it is honored regardless.
+  if (!(data.rdv === 'rdv/cancel' && existing)) {
     const allowed = checkScope(ctx.scope);
     if (!allowed.ok) return invalid(allowed.reason);
   }
@@ -414,6 +449,7 @@ export function receive(state: NegotiationState, from: string, payload: unknown,
   if (data.rdv === 'rdv/cancel') {
     if (!existing) {
       // Cancel overtook the proposal: keep a tombstone so the proposal is refused when it lands.
+      if (!run.makeRoom(from)) return invalid(`too many open negotiations with this peer (max ${MAX_TASKS_PER_PEER})`);
       const task: NegotiationTask = {
         id: m.taskId,
         contextId: m.contextId,
@@ -434,19 +470,19 @@ export function receive(state: NegotiationState, from: string, payload: unknown,
       run.state.tasks[task.id] = task;
       run.statusUpdate(task);
       run.event({ kind: 'canceled', taskId: task.id, peer: from, state: task.state, reason: task.reason, peerText: text });
-      return run.result();
+      return;
     }
     existing.seen.push(m.messageId);
     if (isTerminal(existing.state)) {
       // Not pending any more: not honored. Tell the peer how it actually ended.
       run.statusUpdate(existing);
       run.event({ kind: 'ignored', taskId: existing.id, peer: from, state: existing.state, reason: `cancel after ${existing.state}` });
-      return run.result();
+      return;
     }
     run.setState(existing, 'canceled', data.reason ?? 'canceled by peer');
     run.statusUpdate(existing);
     run.event({ kind: 'canceled', taskId: existing.id, peer: from, state: existing.state, reason: existing.reason, peerText: text });
-    return run.result();
+    return;
   }
 
   if (data.rdv === 'meeting/propose') {
@@ -455,10 +491,11 @@ export function receive(state: NegotiationState, from: string, payload: unknown,
         existing.seen.push(m.messageId);
         run.statusUpdate(existing);
         run.event({ kind: 'ignored', taskId: existing.id, peer: from, state: existing.state, reason: `proposal for a ${existing.state} task` });
-        return run.result();
+        return;
       }
       return invalid('a second proposal for the same task (use meeting/counter)');
     }
+    if (!run.makeRoom(from)) return invalid(`too many open negotiations with this peer (max ${MAX_TASKS_PER_PEER})`);
     const first = toSpan(data.slots[0]);
     const task: NegotiationTask = {
       id: m.taskId,
@@ -472,7 +509,7 @@ export function receive(state: NegotiationState, from: string, payload: unknown,
       turn: 'us',
       minutes: Math.round((first.end - first.start) / 60_000),
       ...(data.place ? { place: data.place } : {}),
-      expires: data.expires ?? null,
+      expires: run.peerExpires(data.expires),
       seen: [m.messageId],
       created: run.nowIso,
       updated: run.nowIso,
@@ -480,8 +517,7 @@ export function receive(state: NegotiationState, from: string, payload: unknown,
     run.state.tasks[task.id] = task;
     run.event({ kind: 'offer-received', taskId: task.id, peer: from, state: task.state, slots: data.slots, round: 1, peerText: text });
     if (!run.expireIfDue(task)) run.respond(task);
-    run.prune();
-    return run.result();
+    return;
   }
 
   // counter / accept / decline need a pending task where the peer has the turn.
@@ -490,13 +526,13 @@ export function receive(state: NegotiationState, from: string, payload: unknown,
     existing.seen.push(m.messageId);
     run.statusUpdate(existing);
     run.event({ kind: 'ignored', taskId: existing.id, peer: from, state: existing.state, reason: `${data.rdv} after ${existing.state}` });
-    return run.result();
+    return;
   }
   if (data.rdv === 'meeting/decline') {
     existing.seen.push(m.messageId);
     run.setState(existing, 'rejected', data.reason);
     run.event({ kind: 'rejected', taskId: existing.id, peer: from, state: existing.state, reason: data.reason, peerText: text });
-    return run.result();
+    return;
   }
   if (existing.turn !== 'peer') return invalid(`${data.rdv} out of turn`);
 
@@ -508,7 +544,7 @@ export function receive(state: NegotiationState, from: string, payload: unknown,
     existing.turn = 'us';
     run.event({ kind: 'offer-received', taskId: existing.id, peer: from, state: existing.state, slots: data.slots, round: existing.round, peerText: text });
     if (!run.expireIfDue(existing)) run.respond(existing);
-    return run.result();
+    return;
   }
 
   // meeting/accept: the slot must be one of our latest offer (same instants; the offset may differ).
@@ -523,7 +559,7 @@ export function receive(state: NegotiationState, from: string, payload: unknown,
   run.effects.push({ kind: 'hold', taskId: existing.id, peer: from, slot: ours, place: existing.place });
   run.statusUpdate(existing);
   run.event({ kind: 'completed', taskId: existing.id, peer: from, state: existing.state, slot: ours, round: existing.round, peerText: text });
-  return run.result();
+  return;
 }
 
 /** The owner cancels a pending task (`rdv/cancel`). */

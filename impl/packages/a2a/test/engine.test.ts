@@ -6,6 +6,7 @@ import {
   emptyState,
   expire,
   type MeetingScope,
+  MAX_TASKS_PER_PEER,
   MemoryCalendar,
   type NegotiationEvent,
   type NegotiationState,
@@ -37,7 +38,7 @@ const evening = (d: number, from = 19, to = 23): Slot => {
 
 function ids(prefix: number) {
   let n = 0;
-  return () => `00000000-0000-4000-8${prefix}00-${String(++n).padStart(12, '0')}`;
+  return () => `00000000-0000-4000-8${prefix.toString(16).padStart(3, '0')}-${String(++n).padStart(12, '0')}`;
 }
 
 interface Side {
@@ -395,6 +396,88 @@ describe('negotiation', () => {
     const r = receive(deepFreeze(john.state), OMER, deepFreeze(p.outgoing[0].payload), ctxOf(john));
     expect(Object.keys(r.state.tasks)).toHaveLength(1);
     expect(john.state.tasks).toEqual({});
+  });
+
+  describe('peer-created state is bounded', () => {
+    const cancelFor = (n: number, id = ids(9)): A2APayload => ({
+      type: 'a2a/message',
+      message: {
+        kind: 'message',
+        messageId: id(),
+        taskId: `00000000-0000-4000-8a00-${String(n).padStart(12, '0')}`,
+        contextId: `00000000-0000-4000-8b00-${String(n).padStart(12, '0')}`,
+        role: 'agent',
+        parts: [{ kind: 'data', data: { rdv: 'rdv/cancel' } }],
+      },
+    });
+
+    it('a peer without a meeting grant cannot create tombstones', () => {
+      const john = side(JOHN, 2, { scope: { may_initiate: true } });
+      const r = receive(john.state, MALLORY, cancelFor(1), ctxOf(john));
+      expect(r.state.tasks).toEqual({});
+      expect(r.outgoing).toEqual([]);
+      expect(r.events[0]).toMatchObject({ kind: 'invalid', reason: expect.stringMatching(/may_propose_meetings/) });
+    });
+
+    it('a cancel of an existing task is honored even after the grant lost meetings', () => {
+      const omer = side(OMER, 1);
+      const john = side(JOHN, 2, { busy: [0, 1, 2].map((d) => evening(d)) });
+      const p = propose(omer.state, JOHN, ctxOf(omer));
+      apply(john, receive(john.state, OMER, p.outgoing[0].payload, ctxOf(john)));
+      const c = cancel(p.state, p.taskId, ctxOf(omer));
+      const r = receive(john.state, OMER, c.outgoing[0].payload, { ...ctxOf(john), scope: {} });
+      expect(r.state.tasks[p.taskId].state).toBe('canceled');
+    });
+
+    it('caps tasks per peer, evicting tombstones first, and refuses when all are pending', () => {
+      const john = side(JOHN, 2);
+      const newId = ids(9);
+      let state = john.state;
+      for (let n = 1; n <= MAX_TASKS_PER_PEER + 40; n++) state = receive(state, MALLORY, cancelFor(n, newId), ctxOf(john)).state;
+      const mallory = Object.values(state.tasks).filter((t) => t.peer === MALLORY);
+      expect(mallory).toHaveLength(MAX_TASKS_PER_PEER);
+      // The newest tombstones survive.
+      expect(mallory.some((t) => t.id.endsWith(String(MAX_TASKS_PER_PEER + 40).padStart(12, '0')))).toBe(true);
+
+      // 32 pending proposals from one peer: the 33rd is refused and nothing is evicted.
+      const omer = side(OMER, 1);
+      let js = emptyState();
+      for (let i = 0; i < MAX_TASKS_PER_PEER; i++) {
+        const p = propose(emptyState(), JOHN, { ...ctxOf(omer), newId: ids(i + 10) });
+        js = receive(js, OMER, p.outgoing[0].payload, { ...ctxOf(john), busy: [0, 1, 2].map((d) => evening(d)) }).state;
+      }
+      expect(Object.values(js.tasks).filter((t) => t.state === 'input-required')).toHaveLength(MAX_TASKS_PER_PEER);
+      const extra = propose(emptyState(), JOHN, { ...ctxOf(omer), newId: ids(99) });
+      const r = receive(js, OMER, extra.outgoing[0].payload, ctxOf(john));
+      expect(r.state).toEqual(js);
+      expect(r.outgoing).toEqual([]);
+      expect(r.events[0]).toMatchObject({ kind: 'invalid', reason: expect.stringMatching(/too many/) });
+      // Another peer is unaffected.
+      expect(Object.keys(receive(js, MALLORY, cancelFor(1), ctxOf(john)).state.tasks)).toHaveLength(MAX_TASKS_PER_PEER + 1);
+    });
+
+    it('prunes finished tasks older than 30 days on any receive', () => {
+      const john = side(JOHN, 2);
+      const old = receive(john.state, MALLORY, cancelFor(1), ctxOf(john)).state;
+      const later = new Date(NOW.getTime() + 31 * 86_400_000);
+      // Even a garbage payload triggers the prune.
+      const r = receive(old, MALLORY, { nonsense: true }, { ...ctxOf(john, later) });
+      expect(r.state.tasks).toEqual({});
+    });
+
+    it('defaults and clamps peer-supplied expires', () => {
+      const omer = side(OMER, 1);
+      const john = side(JOHN, 2, { busy: [0, 1, 2].map((d) => evening(d)) });
+      const p = propose(omer.state, JOHN, ctxOf(omer), { expires: '2027-06-01T00:00:00Z' });
+      const r = receive(john.state, OMER, p.outgoing[0].payload, ctxOf(john));
+      expect(r.state.tasks[p.taskId].expires).toBe(new Date(NOW.getTime() + 7 * 86_400_000).toISOString());
+      // Without expires: 48 h.
+      const m = structuredClone(p.outgoing[0].payload) as Extract<A2APayload, { type: 'a2a/message' }>;
+      delete (m.message.parts[1] as { data: { expires?: string } }).data.expires;
+      m.message.taskId = '00000000-0000-4000-8c00-000000000001';
+      const r2 = receive(john.state, OMER, m, ctxOf(john));
+      expect(r2.state.tasks[m.message.taskId].expires).toBe(new Date(NOW.getTime() + 48 * 3_600_000).toISOString());
+    });
   });
 
   it('refuses to propose with nothing free', () => {
