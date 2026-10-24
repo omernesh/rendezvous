@@ -1,0 +1,27 @@
+{
+  "name": "@rendezvous/a2a",
+  "version": "0.1.0",
+  "description": "A2A v0.3 task semantics for Rendezvous: the dinner-negotiation message model, engine and calendar adapter",
+  "author": "Omer Nesher",
+  "license": "MIT",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  }
+}

@@ -5,13 +5,14 @@
   "type": "module",
   "workspaces": [
     "packages/core",
+    "packages/a2a",
     "packages/cli"
   ],
   "engines": {
     "node": ">=20"
   },
   "scripts": {
-    "build": "tsc -b packages/core packages/cli",
+    "build": "tsc -b packages/core packages/a2a packages/cli",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "npm test --workspaces --if-present",
     "test:live": "npm run test:live --workspaces --if-present",

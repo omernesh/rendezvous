@@ -1,0 +1,89 @@
+import { describe, expect, it } from 'vitest';
+import { parsePayload } from '../src/index.js';
+
+const U = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
+const slot = { start: '2026-11-05T19:00:00+02:00', end: '2026-11-05T21:00:00+02:00' };
+
+function msg(data: unknown, over: Record<string, unknown> = {}, parts?: unknown[]) {
+  return {
+    type: 'a2a/message',
+    message: {
+      kind: 'message',
+      messageId: U(1),
+      taskId: U(2),
+      contextId: U(3),
+      role: 'agent',
+      parts: parts ?? [
+        { kind: 'text', text: 'How about Thursday?' },
+        { kind: 'data', data },
+      ],
+      ...over,
+    },
+  };
+}
+
+const reason = (p: unknown) => {
+  const r = parsePayload(p);
+  return r.ok ? 'ok' : r.reason;
+};
+
+describe('parsePayload', () => {
+  it('accepts the PLAN §5.1 shape', () => {
+    const r = parsePayload(
+      msg({ rdv: 'meeting/propose', slots: [slot], place: { name: 'optional', area: 'Tel Aviv' }, expires: '2026-11-01T00:00:00Z' }),
+    );
+    expect(r.ok).toBe(true);
+    if (r.ok && r.value.kind === 'message') {
+      expect(r.value.data).toEqual({ rdv: 'meeting/propose', slots: [slot], place: { name: 'optional', area: 'Tel Aviv' }, expires: '2026-11-01T00:00:00Z' });
+      expect(r.value.text).toEqual(['How about Thursday?']);
+    }
+    expect(reason(msg({ rdv: 'meeting/accept', slot }))).toBe('ok');
+    expect(reason(msg({ rdv: 'meeting/decline', reason: 'busy' }))).toBe('ok');
+    expect(reason(msg({ rdv: 'rdv/cancel' }))).toBe('ok');
+    expect(reason(msg({ rdv: 'meeting/counter', slots: [slot] }, { metadata: { x: 1 }, referenceTaskIds: [U(9)] }))).toBe('ok');
+    expect(
+      reason({
+        type: 'a2a/task-update',
+        update: { kind: 'status-update', taskId: U(2), contextId: U(3), status: { state: 'completed', timestamp: '2026-11-01T00:00:00Z' }, final: true },
+      }),
+    ).toBe('ok');
+  });
+
+  it('rejects unknown verbs and malformed slots', () => {
+    expect(reason(msg({ rdv: 'meeting/delete' }))).toMatch(/unknown verb/);
+    expect(reason(msg({ slots: [slot] }))).toMatch(/unknown verb/);
+    expect(reason(msg({ rdv: 'meeting/propose', slots: [] }))).toMatch(/1–3 slots/);
+    expect(reason(msg({ rdv: 'meeting/propose', slots: [slot, slot, slot, slot] }))).toMatch(/1–3 slots/);
+    expect(reason(msg({ rdv: 'meeting/propose', slots: [slot, { start: '2026-11-05T17:00:00Z', end: '2026-11-05T19:00:00Z' }] }))).toMatch(/twice/);
+    expect(reason(msg({ rdv: 'meeting/propose', slots: [{ start: '2026-11-05T19:00:00', end: '2026-11-05T21:00:00' }] }))).toMatch(/offset/);
+    expect(reason(msg({ rdv: 'meeting/propose', slots: [{ start: slot.end, end: slot.start }] }))).toMatch(/after start/);
+    expect(reason(msg({ rdv: 'meeting/propose', slots: [{ start: '2026-11-05T00:00:00Z', end: '2026-11-06T00:00:00Z' }] }))).toMatch(/12 hours/);
+    expect(reason(msg({ rdv: 'meeting/propose', slots: [{ ...slot, title: 'Dentist' }] }))).toMatch(/unknown field "title"/);
+    expect(reason(msg({ rdv: 'meeting/propose', slots: [slot], expires: 'tomorrow' }))).toMatch(/expires/);
+    expect(reason(msg({ rdv: 'meeting/accept', slots: [slot] }))).toMatch(/missing "slot"/);
+    expect(reason(msg({ rdv: 'meeting/decline' }))).toMatch(/missing "reason"/);
+    expect(reason(msg({ rdv: 'meeting/decline', reason: 'x'.repeat(201) }))).toMatch(/1–200/);
+    expect(reason(msg({ rdv: 'meeting/propose', slots: [slot], place: { name: 'x', url: 'http://evil' } }))).toMatch(/unknown field/);
+  });
+
+  it('rejects malformed messages', () => {
+    const data = { rdv: 'rdv/cancel' };
+    expect(reason(msg(data, { messageId: 'not-a-uuid\u001b[2J' }))).toMatch(/UUID/);
+    expect(reason(msg(data, { role: 'user' }))).toMatch(/role/);
+    expect(reason(msg(data, { kind: 'task' }))).toMatch(/kind/);
+    expect(reason(msg(data, { extra: 1 }))).toMatch(/unknown field/);
+    expect(reason(msg(data, {}, [{ kind: 'text', text: 'hi' }]))).toMatch(/no data part/);
+    expect(reason(msg(data, {}, [{ kind: 'data', data }, { kind: 'data', data }]))).toMatch(/more than one/);
+    expect(reason(msg(data, {}, [{ kind: 'file', file: { uri: 'x' } }, { kind: 'data', data }]))).toMatch(/unsupported part/);
+    expect(reason(msg(data, {}, [{ kind: 'text', text: 'x'.repeat(2001) }, { kind: 'data', data }]))).toMatch(/2000/);
+    expect(reason(msg(data, {}, Array(9).fill({ kind: 'data', data })))).toMatch(/1–8 parts/);
+    expect(reason({ type: 'a2a/message' })).toMatch(/missing "message"/);
+    expect(reason({ type: 'a2a/message', message: msg(data).message, extra: true })).toMatch(/unknown field/);
+    expect(reason({ type: 'a2a/other' })).toMatch(/not an a2a payload/);
+    expect(reason(null)).toMatch(/object/);
+    expect(reason([])).toMatch(/object/);
+    expect(
+      reason({ type: 'a2a/task-update', update: { kind: 'status-update', taskId: U(2), contextId: U(3), status: { state: 'done' }, final: true } }),
+    ).toMatch(/task state/);
+  });
+});
