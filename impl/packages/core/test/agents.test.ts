@@ -1,5 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { Agent, type AgentKey, type Envelope, NostrTransport, type Payload, type Transport } from '../src/index.js';
+import {
+  Agent,
+  type AgentKey,
+  createCard,
+  type Envelope,
+  generateKey,
+  NostrTransport,
+  type Payload,
+  sealEnvelope,
+  type Transport,
+} from '../src/index.js';
 import { startTestRelay, type TestRelay } from '../src/testing/relay.js';
 
 function waitFor<T>(agent: Agent, event: 'request' | 'contact' | 'message' | 'revoked', ms = 5000): Promise<T> {
@@ -247,3 +257,61 @@ describe('requester-side binding and restart safety', () => {
     expect(texts).toEqual(['two', 'three']);
   });
 });
+
+describe('gap buffer bounds (security regression)', () => {
+  const card = { rendezvous: [{ type: 'nostr' as const, relay: 'ws://unused', pref: 1 }] };
+  const nullBus = (): Transport => ({
+    async sendEnvelope() {},
+    onEnvelopes: () => () => {},
+    async publishTopic() {},
+    onTopics: () => () => {},
+    fetchTopic: async () => [],
+    close() {},
+  });
+  // Feed raw envelopes straight into an agent through its transport.
+  function feedable() {
+    let handler: (e: unknown) => void = () => {};
+    const t = (): Transport => ({ ...nullBus(), onEnvelopes: (_me, h) => ((handler = h), () => {}) });
+    return { t, feed: (e: unknown) => handler(e) };
+  }
+
+  it('does not buffer or persist out-of-order envelopes from non-contacts', async () => {
+    const { t, feed } = feedable();
+    const john = Agent.create(t, card);
+    john.start();
+    const stranger = generateKey();
+    const reasons: string[] = [];
+    john.on('dropped', (r) => reasons.push(r));
+    feed(sealEnvelope(stranger, john.id, { type: 'a2a/message' }, { seq: 3, prev: null }));
+    await john.idle();
+    expect(reasons).toContain('out-of-order envelope from a non-contact');
+    expect(john.toJSON().buffer).toEqual({});
+  });
+
+  it('caps the number of peers with buffered envelopes', async () => {
+    const { t, feed } = feedable();
+    const john = Agent.create(t, card);
+    john.start();
+    const peers = Array.from({ length: 20 }, () => generateKey());
+    for (const p of peers) {
+      // Pretend each is a contact (only contacts may buffer).
+      john.book.state.contacts[p.id] = {
+        peer: p.id,
+        card: createCard(p, card),
+        tier: 'friend',
+        inboundScope: { may_initiate: true },
+        outboundScope: { may_initiate: true },
+        binding: 'claimed',
+        grantId: 'g',
+        expires: null,
+        since: new Date().toISOString(),
+      };
+      feed(sealEnvelope(p, john.id, { type: 'a2a/message' }, { seq: 5, prev: null }));
+    }
+    await john.idle();
+    const buffered = Object.keys(john.toJSON().buffer ?? {});
+    expect(buffered).toHaveLength(16);
+    expect(buffered).toEqual(peers.slice(4).map((p) => p.id)); // oldest four evicted
+  });
+});
+

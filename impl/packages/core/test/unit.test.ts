@@ -181,3 +181,41 @@ describe('contact book', () => {
     expect(book.contact(bob.id)).toBeUndefined();
   });
 });
+
+describe('grant acceptance (security regression)', () => {
+  const setup = () => {
+    const omer = generateKey();
+    const john = generateKey();
+    const mallory = generateKey();
+    const card = (k: ReturnType<typeof generateKey>) => createCard(k, { rendezvous: hints });
+    const req = createContactRequest(omer, card(omer), { toHint: john.id, greeting: 'hi' });
+    const scope = { may_initiate: true };
+    const grantFrom = (k: ReturnType<typeof generateKey>) => createGrant(k, card(k), req, { tier: 'friend', scope });
+    return { omer, john, mallory, req, grantFrom };
+  };
+
+  it('rejects a grant from anyone but the agent a card request was sent to', () => {
+    const { omer, john, mallory, req, grantFrom } = setup();
+    const book = new ContactBook();
+    book.trackOutstanding(req, 'in-person', john.id);
+    const forged = grantFrom(mallory);
+    expect(book.receiveGrant(forged, omer.id)).toBeNull();
+    // Rejected before any state was touched.
+    expect(book.state.outstanding[req.id]).toBeDefined();
+    expect(book.state.seenIds).not.toContain(forged.id);
+    expect(book.state.contacts).toEqual({});
+
+    const real = book.receiveGrant(grantFrom(john), omer.id);
+    expect(real?.peer).toBe(john.id);
+    expect(real?.binding).toBe('in-person');
+  });
+
+  it('accepts any grantor for a topic probe, but only as claimed', () => {
+    const { omer, mallory, req, grantFrom } = setup();
+    const book = new ContactBook();
+    book.trackOutstanding(req, 'in-person'); // no target: a topic probe
+    const c = book.receiveGrant(grantFrom(mallory), omer.id);
+    expect(c?.peer).toBe(mallory.id);
+    expect(c?.binding).toBe('claimed');
+  });
+});

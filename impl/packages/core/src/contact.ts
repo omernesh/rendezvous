@@ -164,8 +164,12 @@ export interface ContactBookState {
   policy: InboundPolicy;
   contacts: Record<string, Contact>;
   pending: Record<string, PendingRequest>;
-  /** Outbound requests awaiting a grant: request id -> target hint and how we found the peer. */
-  outstanding: Record<string, { to_hint: string; sent: string; binding?: Binding }>;
+  /**
+   * Outbound requests awaiting a grant: request id -> target hint, how we found
+   * the peer, and (for requests sent to a known card) the only agent whose
+   * grant we will accept.
+   */
+  outstanding: Record<string, { to_hint: string; sent: string; binding?: Binding; to?: string }>;
   blocked: string[];
   allowlist: Record<string, { tier: Tier; scope: GrantScope }>;
   seenIds: string[];
@@ -192,6 +196,13 @@ export class ContactBook {
     };
   }
 
+  /** Agent IDs we have sent a still-outstanding request to (by card). */
+  outstandingTargets(): Set<string> {
+    const out = new Set<string>();
+    for (const o of Object.values(this.state.outstanding)) if (o.to) out.add(o.to);
+    return out;
+  }
+
   toJSON(): ContactBookState {
     return this.state;
   }
@@ -215,8 +226,15 @@ export class ContactBook {
     return c;
   }
 
-  trackOutstanding(req: ContactRequestBody, binding: Binding = 'claimed'): void {
-    this.state.outstanding[req.id] = { to_hint: req.to_hint, sent: req.ts, binding };
+  /**
+   * Remember an outbound request. `to` is the target agent ID when the request
+   * went to a specific card; omit it for a topic probe (anyone may answer, and
+   * the binding is then always `claimed`).
+   */
+  trackOutstanding(req: ContactRequestBody, binding: Binding = 'claimed', to?: string): void {
+    this.state.outstanding[req.id] = to
+      ? { to_hint: req.to_hint, sent: req.ts, binding, to }
+      : { to_hint: req.to_hint, sent: req.ts, binding: 'claimed' };
   }
 
   /** Inbound contact request: verify, dedupe, apply policy (§5.4). */
@@ -258,7 +276,9 @@ export class ContactBook {
     const g = input;
     const outstanding = this.state.outstanding[g.request_ref];
     if (g.to !== me || !outstanding) return null;
-    if (!this.markSeen(g.id) || this.isBlocked(g.from)) return null;
+    // A request sent to a specific agent can only be granted by that agent.
+    if (outstanding.to !== undefined && g.from !== outstanding.to) return null;
+    if (this.isBlocked(g.from) || !this.markSeen(g.id)) return null;
     delete this.state.outstanding[g.request_ref];
     // We initiated, so we accept the grantor contacting us within the same scope.
     const contact: Contact = {
@@ -267,7 +287,7 @@ export class ContactBook {
       tier: g.tier,
       inboundScope: { ...g.scope, may_initiate: true },
       outboundScope: g.scope,
-      binding: outstanding.binding ?? 'claimed',
+      binding: outstanding.to !== undefined ? (outstanding.binding ?? 'claimed') : 'claimed',
       grantId: g.id,
       expires: g.expires,
       since: now.toISOString(),

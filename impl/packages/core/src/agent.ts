@@ -25,6 +25,8 @@ import { type AgentKey, generateKey, keyFromSecret } from './identity.js';
 import type { Transport } from './transport/transport.js';
 
 const OUTBOX_LIMIT = 64;
+/** Gap buffer bounds: per peer (OUTBOX_LIMIT envelopes) and across peers. */
+const BUFFER_PEER_LIMIT = 16;
 const CONTROL_TYPES = new Set(['rdv/contact-request', 'rdv/contact-grant', 'rdv/revoke', 'rdv/resend']);
 
 export interface AgentState {
@@ -83,7 +85,7 @@ export class Agent extends EventEmitter<AgentEvents> {
       book: this.book.toJSON(),
       channels: this.channels.state,
       outbox: this.outbox,
-      buffer: this.buffer,
+      buffer: this.bufferToPersist(),
     };
   }
 
@@ -154,7 +156,7 @@ export class Agent extends EventEmitter<AgentEvents> {
     const toHint = typeof target === 'string' ? target : target.id;
     const binding: Binding = typeof target === 'string' ? 'claimed' : (opts.binding ?? 'claimed');
     const req = createContactRequest(this.key, this.card, { toHint, greeting });
-    this.book.trackOutstanding(req, binding);
+    this.book.trackOutstanding(req, binding, typeof target === 'string' ? undefined : target.id);
     if (typeof target === 'string') {
       const topic = topicForHint(target);
       if (!topic) throw new Error(`cannot derive a discovery topic from "${target}"`);
@@ -266,8 +268,7 @@ export class Agent extends EventEmitter<AgentEvents> {
     if (order.kind === 'duplicate') return;
     if (order.kind === 'fork') return this.drop('envelope chain fork', env.seq);
     if (order.kind === 'gap') {
-      const buf = (this.buffer[env.from] ??= []);
-      if (!buf.some((e) => e.seq === env.seq) && buf.length < OUTBOX_LIMIT) buf.push(env);
+      this.bufferEnvelope(env);
       const c = this.book.contact(env.from);
       if (c) {
         const resend: Payload = { type: 'rdv/resend', from_seq: order.missingFrom, to_seq: order.missingTo };
@@ -278,6 +279,31 @@ export class Agent extends EventEmitter<AgentEvents> {
 
     await this.dispatch(env, opened.payload);
     await this.drainBuffer(env.from);
+  }
+
+  /** Only contacts (or agents we asked by card) may park envelopes with us. */
+  private mayBuffer(peer: string): boolean {
+    return !!this.book.contact(peer) || this.book.outstandingTargets().has(peer);
+  }
+
+  private bufferEnvelope(env: Envelope): void {
+    if (!this.mayBuffer(env.from)) return this.drop('out-of-order envelope from a non-contact', env.from);
+    let buf = this.buffer[env.from];
+    if (!buf) {
+      const peers = Object.keys(this.buffer);
+      // Evict the peer whose buffer was created first (insertion order).
+      if (peers.length >= BUFFER_PEER_LIMIT) delete this.buffer[peers[0]];
+      buf = this.buffer[env.from] = [];
+    }
+    if (!buf.some((e) => e.seq === env.seq) && buf.length < OUTBOX_LIMIT) buf.push(env);
+  }
+
+  private bufferToPersist(): Record<string, Envelope[]> {
+    const out: Record<string, Envelope[]> = {};
+    for (const [peer, buf] of Object.entries(this.buffer)) {
+      if (buf.length && this.mayBuffer(peer)) out[peer] = buf;
+    }
+    return out;
   }
 
   private async drainBuffer(peer: string): Promise<void> {
@@ -292,6 +318,7 @@ export class Agent extends EventEmitter<AgentEvents> {
       const opened = openEnvelope(this.key, next);
       if (opened.ok) await this.dispatch(next, opened.payload);
     }
+    if (buf && buf.length === 0) delete this.buffer[peer];
   }
 
   private async dispatch(env: Envelope, payload: Payload): Promise<void> {
@@ -303,6 +330,7 @@ export class Agent extends EventEmitter<AgentEvents> {
         return this.handleContactRequest(req, 'claimed');
       }
       case 'rdv/contact-grant': {
+        if ((payload as { from?: unknown }).from !== from) return this.drop('grant signer differs from envelope sender');
         const contact = this.book.receiveGrant(payload, this.id);
         if (!contact || contact.peer !== from) return this.drop('unexpected or invalid grant');
         this.emit('contact', contact);
