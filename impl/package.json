@@ -4,13 +4,14 @@
   "description": "npm workspace for the Rendezvous reference implementation",
   "type": "module",
   "workspaces": [
-    "packages/core"
+    "packages/core",
+    "packages/cli"
   ],
   "engines": {
     "node": ">=20"
   },
   "scripts": {
-    "build": "tsc -b packages/core",
+    "build": "tsc -b packages/core packages/cli",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "npm test --workspaces --if-present",
     "test:live": "npm run test:live --workspaces --if-present",

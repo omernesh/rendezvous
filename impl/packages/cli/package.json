@@ -1,0 +1,27 @@
+{
+  "name": "@rendezvous/cli",
+  "version": "0.1.0",
+  "description": "rdv: command-line agent and scripted bots for the Rendezvous protocol",
+  "author": "Omer Nesher",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "rdv": "dist/src/bin.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -b ../core && tsc -p tsconfig.json --noEmit",
+    "test": "tsc -b && vitest run",
+    "test:live": "tsc -b && vitest run --mode live",
+    "scenario": "tsc -b && node dist/scenarios/contact.js"
+  },
+  "dependencies": {
+    "@rendezvous/core": "0.1.0"
+  }
+}
