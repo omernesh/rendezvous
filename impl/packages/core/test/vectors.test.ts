@@ -1,6 +1,6 @@
 // Interop test vectors (spec §12, v0.2). Another implementation should
 // reproduce every deterministic value here and open the sample envelope.
-// Regenerate with: UPDATE_VECTORS=1 npx vitest run test/vectors.test.ts
+// Regenerate with: npm run test:vectors:update (works in PowerShell and POSIX shells)
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
