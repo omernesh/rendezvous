@@ -1,0 +1,24 @@
+name: impl
+
+on:
+  push:
+    paths: ['impl/**', '.github/workflows/impl.yml']
+  pull_request:
+    paths: ['impl/**', '.github/workflows/impl.yml']
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: impl
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: impl/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test

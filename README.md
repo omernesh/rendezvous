@@ -10,6 +10,7 @@ An open protocol for agent-to-agent contact — how personal AI agents belonging
 - Reading page (mobile-friendly HTML): https://<reading-page-host>/f/rendezvous-spec-html
 - Live spec (raw markdown): https://<reading-page-host>/f/rendezvous-spec
 - Pitch deck: https://slides.nesher.co/rendezvous/
+- Reference implementation (TypeScript): [`impl/`](impl/) — see [`impl/NOTES.md`](impl/NOTES.md) for spec deltas
 - Deck source mirror: [`deck/App.tsx`](deck/App.tsx) + [`deck/mobile.css`](deck/mobile.css) (published via bolt-slides on relay-host)
 
 ## Building the reading page

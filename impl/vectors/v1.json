@@ -1,0 +1,114 @@
+{
+  "keys": [
+    {
+      "seed_hex": "1111111111111111111111111111111111111111111111111111111111111111",
+      "public_key_hex": "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737",
+      "agent_id": "rdv1:2bflemtufo2kwoqtnc6umfpe43icesvxdiawxl4fecrtfslxq43q",
+      "nostr_p_tag": "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737",
+      "nostr_carrier_secret_hex": "cd17a175ad95dc13bdfa68182454160607220683d126d2f04b6dd1532577865c"
+    },
+    {
+      "seed_hex": "2222222222222222222222222222222222222222222222222222222222222222",
+      "public_key_hex": "a09aa5f47a6759802ff955f8dc2d2a14a5c99d23be97f864127ff9383455a4f0",
+      "agent_id": "rdv1:ucnkl5d2m5myal7zkx4nyljkcss4thjdx2l7qzasp74tqncvutya",
+      "nostr_p_tag": "a09aa5f47a6759802ff955f8dc2d2a14a5c99d23be97f864127ff9383455a4f0",
+      "nostr_carrier_secret_hex": "90cb645d078b79a15f9bded3f94fcfba532ee9b4d96f7d86ac6cb02835993c4d"
+    }
+  ],
+  "dtopic": {
+    "email john@doe.com": "sxpere2q7j6mah2rm5v6samywh",
+    "email John@Doe.COM": "sxpere2q7j6mah2rm5v6samywh",
+    "phone +972-54-000-0000": "5r5xrmjewhgwdkp6xyy7aq6ok5"
+  },
+  "card": {
+    "canonical": "{\"capabilities\":[\"rdv/v1\",\"a2a/0.3\"],\"created\":\"2026-10-24T00:00:00.000Z\",\"discovery\":{\"addresses\":[{\"type\":\"email\",\"value\":\"john@doe.com\"}],\"public_pointer\":false},\"expires\":null,\"id\":\"rdv1:ucnkl5d2m5myal7zkx4nyljkcss4thjdx2l7qzasp74tqncvutya\",\"policy\":{\"inbound\":\"prompt\",\"public\":false},\"rendezvous\":[{\"pref\":1,\"relay\":\"wss://relay.example\",\"type\":\"nostr\"}],\"sig\":\"wfQ2sZXLZpOkZxX/TTdkbfQK0KbKgQ3ye5BNzk26PsN76p3LyCXAZFfKMxVdYV7lF5mtQhR2ERIPOdPi7wLkAg==\",\"v\":1}",
+    "doc": {
+      "v": 1,
+      "id": "rdv1:ucnkl5d2m5myal7zkx4nyljkcss4thjdx2l7qzasp74tqncvutya",
+      "created": "2026-10-24T00:00:00.000Z",
+      "expires": null,
+      "capabilities": [
+        "rdv/v1",
+        "a2a/0.3"
+      ],
+      "discovery": {
+        "addresses": [
+          {
+            "type": "email",
+            "value": "john@doe.com"
+          }
+        ],
+        "public_pointer": false
+      },
+      "rendezvous": [
+        {
+          "type": "nostr",
+          "relay": "wss://relay.example",
+          "pref": 1
+        }
+      ],
+      "policy": {
+        "inbound": "prompt",
+        "public": false
+      },
+      "sig": "wfQ2sZXLZpOkZxX/TTdkbfQK0KbKgQ3ye5BNzk26PsN76p3LyCXAZFfKMxVdYV7lF5mtQhR2ERIPOdPi7wLkAg=="
+    }
+  },
+  "contact_request": {
+    "canonical": "{\"capabilities_offered\":[\"a2a/0.3\"],\"card\":{\"capabilities\":[\"rdv/v1\",\"a2a/0.3\"],\"created\":\"2026-10-24T00:00:00.000Z\",\"expires\":null,\"id\":\"rdv1:2bflemtufo2kwoqtnc6umfpe43icesvxdiawxl4fecrtfslxq43q\",\"policy\":{\"inbound\":\"prompt\",\"public\":false},\"rendezvous\":[{\"pref\":1,\"relay\":\"wss://relay.example\",\"type\":\"nostr\"}],\"sig\":\"niJCMBvJgQsdJYafxu5MBMO70S90QTqrjtNhYv6aXIK6Ollg2jqjHtTXFyDolc/q+Icmb5OV1A+vH7sTkHe+CQ==\",\"v\":1},\"from\":\"rdv1:2bflemtufo2kwoqtnc6umfpe43icesvxdiawxl4fecrtfslxq43q\",\"greeting\":\"Omer's agent requests contact on Omer's behalf.\",\"id\":\"00000000-0000-4000-8000-000000000001\",\"sig\":\"LvsoXgQSeDXfD+YQVLt5tFDdoh0b93DnQSmt76vcrK75oedDjIq2uMmsPFYFue0Q9aowOej3+OsT5S5AQmp6Ag==\",\"to_hint\":\"john@doe.com\",\"ts\":\"2026-10-24T00:00:00.000Z\",\"type\":\"rdv/contact-request\",\"v\":1}",
+    "doc": {
+      "v": 1,
+      "type": "rdv/contact-request",
+      "id": "00000000-0000-4000-8000-000000000001",
+      "from": "rdv1:2bflemtufo2kwoqtnc6umfpe43icesvxdiawxl4fecrtfslxq43q",
+      "to_hint": "john@doe.com",
+      "card": {
+        "v": 1,
+        "id": "rdv1:2bflemtufo2kwoqtnc6umfpe43icesvxdiawxl4fecrtfslxq43q",
+        "created": "2026-10-24T00:00:00.000Z",
+        "expires": null,
+        "capabilities": [
+          "rdv/v1",
+          "a2a/0.3"
+        ],
+        "rendezvous": [
+          {
+            "type": "nostr",
+            "relay": "wss://relay.example",
+            "pref": 1
+          }
+        ],
+        "policy": {
+          "inbound": "prompt",
+          "public": false
+        },
+        "sig": "niJCMBvJgQsdJYafxu5MBMO70S90QTqrjtNhYv6aXIK6Ollg2jqjHtTXFyDolc/q+Icmb5OV1A+vH7sTkHe+CQ=="
+      },
+      "greeting": "Omer's agent requests contact on Omer's behalf.",
+      "capabilities_offered": [
+        "a2a/0.3"
+      ],
+      "ts": "2026-10-24T00:00:00.000Z",
+      "sig": "LvsoXgQSeDXfD+YQVLt5tFDdoh0b93DnQSmt76vcrK75oedDjIq2uMmsPFYFue0Q9aowOej3+OsT5S5AQmp6Ag=="
+    }
+  },
+  "envelope": {
+    "recipient_seed_hex": "2222222222222222222222222222222222222222222222222222222222222222",
+    "doc": {
+      "v": 1,
+      "from": "rdv1:2bflemtufo2kwoqtnc6umfpe43icesvxdiawxl4fecrtfslxq43q",
+      "to": "rdv1:ucnkl5d2m5myal7zkx4nyljkcss4thjdx2l7qzasp74tqncvutya",
+      "seq": 1,
+      "prev": null,
+      "created": "2026-10-24T00:00:00.000Z",
+      "ttl": "3650d",
+      "content": {
+        "alg": "x25519+aes256gcm",
+        "epk": "7eOw7pQII8ryavjOstDrVo2TXSyd0Hvt967vyhoifjI=",
+        "nonce": "UZSkdebLRoJo6LL0",
+        "ciphertext": "JxcgrLdntubZzHGP+lf78VzVaPWmFU0IHdrI3h+4c26HWD3GFI4zT0A19S2oP/n6tnRDE8Zhqd43F/pT7V1v"
+      },
+      "sig": "Yfq14SCObJUBife5kHsEKiHmQ+l+2ohk4XQgYQn3LEUVPQjNtB6bat193LJm136yX5haGvNF+kgHYS7ouLC7AA=="
+    }
+  }
+}

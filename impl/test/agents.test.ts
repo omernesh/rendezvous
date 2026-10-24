@@ -1,0 +1,175 @@
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { Agent, type AgentKey, type Envelope, NostrTransport, type Payload, type Transport } from '../src/index.js';
+import { startTestRelay, type TestRelay } from '../src/testing/relay.js';
+
+function waitFor<T>(agent: Agent, event: 'request' | 'contact' | 'message' | 'revoked', ms = 5000): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(`timeout waiting for ${event}`)), ms);
+    agent.once(event, (...args: unknown[]) => {
+      clearTimeout(t);
+      resolve((args.length === 1 ? args[0] : args) as T);
+    });
+  });
+}
+
+describe('two agents over a Nostr relay', () => {
+  let relay: TestRelay;
+  let agents: Agent[] = [];
+
+  beforeEach(async () => {
+    relay = await startTestRelay();
+  });
+  afterEach(async () => {
+    for (const a of agents) a.close();
+    agents = [];
+    await relay.close();
+  });
+
+  const make = (email: string, opts: { pointer?: boolean } = {}) => {
+    const a = Agent.create((key: AgentKey) => new NostrTransport({ key, relays: [relay.url] }), {
+      rendezvous: [{ type: 'nostr', relay: relay.url, pref: 1 }],
+      discovery: { addresses: [{ type: 'email', value: email }], public_pointer: !!opts.pointer },
+      policy: { public: !!opts.pointer },
+    });
+    a.on('error', (e) => {
+      throw e;
+    });
+    a.start();
+    agents.push(a);
+    return a;
+  };
+
+  it('discovers by email (listen mode), asks consent, then exchanges encrypted messages', async () => {
+    const omer = make('omer@example.com');
+    const john = make('john@doe.com');
+    await new Promise((r) => setTimeout(r, 200)); // let subscriptions settle
+
+    const pending = waitFor<{ request: { id: string; greeting: string } }>(john, 'request');
+    await omer.requestContact('John@Doe.com', "Omer's agent would like to plan dinner.");
+    const req = await pending;
+    expect(req.request.greeting).toContain('dinner');
+    expect(john.contacts()).toHaveLength(0);
+
+    const omerSeesGrant = waitFor(omer, 'contact');
+    const grantedContact = await john.grant(req.request.id, { tier: 'friend' });
+    expect(grantedContact.peer).toBe(omer.id);
+    await omerSeesGrant;
+    expect(omer.contacts().map((c) => c.peer)).toEqual([john.id]);
+
+    const got = waitFor<[string, Payload, Envelope]>(john, 'message');
+    await omer.send(john.id, { type: 'a2a/message', text: 'Thursday 20:00?' });
+    const [from, payload] = await got;
+    expect(from).toBe(omer.id);
+    expect(payload).toEqual({ type: 'a2a/message', text: 'Thursday 20:00?' });
+
+    const reply = waitFor<[string, Payload]>(omer, 'message');
+    await john.send(omer.id, { type: 'a2a/message', text: 'Works for me.' });
+    expect((await reply)[1].text).toBe('Works for me.');
+
+    // The relay only ever saw ciphertext.
+    expect(relay.events.map((e) => e.content).join('')).not.toContain('Thursday');
+  });
+
+  it('finds a public pointer, contacts by card, and stops after revocation', async () => {
+    const omer = make('omer@example.com');
+    const john = make('john@doe.com', { pointer: true });
+    await john.publishPointers();
+    const cards = await omer.lookup('john@doe.com');
+    expect(cards.map((c) => c.id)).toEqual([john.id]);
+
+    const pending = waitFor<{ request: { id: string } }>(john, 'request');
+    await omer.requestContact(cards[0], 'hello');
+    const req = await pending;
+    const contact = waitFor(omer, 'contact');
+    await john.grant(req.request.id);
+    await contact;
+    expect(john.contacts()[0].tier).toBe('stranger'); // claimed binding default
+
+    const revoked = waitFor(omer, 'revoked');
+    await john.revoke(omer.id);
+    await revoked;
+    await expect(omer.send(john.id, { type: 'a2a/message' })).rejects.toThrow(/no active contact/);
+  });
+
+  it('ignores messages from strangers', async () => {
+    const omer = make('omer@example.com');
+    const john = make('john@doe.com');
+    await new Promise((r) => setTimeout(r, 200));
+    const dropped = new Promise<string>((resolve) => john.once('dropped', (reason) => resolve(reason)));
+    // Bypass Agent.send's own check by sealing directly.
+    const { sealEnvelope } = await import('../src/index.js');
+    await omer.transport.sendEnvelope(sealEnvelope(omer.key, john.id, { type: 'a2a/message' }, { seq: 1, prev: null }));
+    expect(await dropped).toBe('no grant for sender');
+  });
+
+  it('survives a save/restore round-trip', async () => {
+    const omer = make('omer@example.com');
+    const john = make('john@doe.com');
+    await new Promise((r) => setTimeout(r, 200));
+    const pending = waitFor<{ request: { id: string } }>(john, 'request');
+    await omer.requestContact('john@doe.com', 'hi');
+    const contact = waitFor(omer, 'contact');
+    await john.grant((await pending).request.id);
+    await contact;
+
+    const saved = JSON.parse(JSON.stringify(omer.toJSON()));
+    omer.close();
+    agents = agents.filter((a) => a !== omer);
+    const restored = Agent.fromJSON(saved, (key) => new NostrTransport({ key, relays: [relay.url] }));
+    agents.push(restored);
+    restored.start();
+    expect(restored.id).toBe(omer.id);
+
+    const got = waitFor<[string, Payload]>(john, 'message');
+    await restored.send(john.id, { type: 'a2a/message', text: 'still me' });
+    expect((await got)[1].text).toBe('still me');
+  });
+});
+
+describe('ordering over a lossy pipe', () => {
+  it('buffers out-of-order envelopes and recovers a dropped one via resend', async () => {
+    // A shared in-memory bus whose first delivery of seq 2 (omer → john) is lost.
+    const handlers = new Map<string, (e: unknown) => void>();
+    let dropped = false;
+    const bus = (): Transport => ({
+      async sendEnvelope(e) {
+        if (!dropped && e.seq === 2 && e.to === johnId) {
+          dropped = true;
+          return;
+        }
+        queueMicrotask(() => handlers.get(e.to)?.(structuredClone(e)));
+      },
+      onEnvelopes(me, h) {
+        handlers.set(me, h);
+        return () => handlers.delete(me);
+      },
+      async publishTopic() {},
+      onTopics: () => () => {},
+      fetchTopic: async () => [],
+      close() {},
+    });
+    const card = { rendezvous: [{ type: 'nostr' as const, relay: 'ws://unused', pref: 1 }] };
+    const omer = Agent.create(bus, card);
+    const john = Agent.create(bus, card);
+    const johnId = john.id;
+    omer.start();
+    john.start();
+
+    const pending = waitFor<{ request: { id: string } }>(john, 'request');
+    await omer.requestContact(john.card, 'hi'); // omer→john seq 1
+    const contact = waitFor(omer, 'contact');
+    await john.grant((await pending).request.id);
+    await contact;
+
+    const texts: string[] = [];
+    john.on('message', (_p, payload) => texts.push(String(payload.text)));
+    await omer.send(john.id, { type: 'a2a/message', text: 'two' }); // seq 2, lost
+    await omer.send(john.id, { type: 'a2a/message', text: 'three' }); // seq 3 → gap → resend
+    for (let i = 0; i < 20 && texts.length < 2; i++) {
+      await new Promise((r) => setTimeout(r, 10));
+      await john.idle();
+      await omer.idle();
+    }
+    expect(texts).toEqual(['two', 'three']);
+  });
+});
