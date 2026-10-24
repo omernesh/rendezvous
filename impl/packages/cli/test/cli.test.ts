@@ -5,6 +5,8 @@ import { startTestRelay, type TestRelay } from '@rendezvous/core/testing';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Listener, rdv, until } from '../scenarios/harness.js';
 import { acquireLock, LockTimeoutError, writeAtomic } from '../src/fsutil.js';
+import { clean, contactText, inboxText, requestText } from '../src/output.js';
+import type { Contact, PendingRequest } from '@rendezvous/core';
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'rdv-test-'));
 
@@ -111,3 +113,33 @@ describe('rdv commands', () => {
     }
   });
 });
+
+describe('terminal safety (security regression)', () => {
+  const ESC = String.fromCharCode(27);
+  const BEL = String.fromCharCode(7);
+  const CSI1 = String.fromCharCode(0x9b); // single-byte CSI
+  const RLO = String.fromCharCode(0x202e);
+  const evil = `${ESC}[2J${ESC}]0;pwned${BEL}${CSI1}31m${RLO}\nfake line`;
+  const unsafe = [ESC, BEL, CSI1, RLO, '\n'];
+
+  it('strips escape sequences from every peer-controlled field', () => {
+    const p = {
+      request: { id: evil, from: 'rdv1:x', to_hint: evil, greeting: evil },
+      binding: 'claimed',
+      received: evil,
+    } as unknown as PendingRequest;
+    const c = { peer: 'rdv1:x', tier: evil, binding: 'claimed', since: evil, expires: evil } as unknown as Contact;
+    const texts = [
+      requestText(p),
+      contactText(c),
+      inboxText({ ts: evil, from: 'rdv1:x', seq: 1, payload: { type: evil, text: evil } }),
+    ];
+    for (const t of texts) {
+      // A view may use its own newlines between lines, never a peer's.
+      for (const line of t.split('\n')) for (const ch of unsafe.slice(0, 4)) expect(line).not.toContain(ch);
+      expect(t).not.toContain('\nfake line');
+    }
+    expect(clean(evil)).not.toMatch(/[\u0000-\u001f\u007f-\u009f]/);
+  });
+});
+

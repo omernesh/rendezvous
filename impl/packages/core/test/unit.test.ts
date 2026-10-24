@@ -16,6 +16,8 @@ import {
   sealEnvelope,
   signDoc,
   verifyCard,
+  verifyContactRequest,
+  verifyGrant,
   verifyDoc,
 } from '../src/index.js';
 
@@ -219,3 +221,23 @@ describe('grant acceptance (security regression)', () => {
     expect(c?.binding).toBe('claimed');
   });
 });
+
+describe('document ids (security regression)', () => {
+  it('rejects request and grant ids that are not UUIDs, e.g. with an ESC sequence', () => {
+    const omer = generateKey();
+    const john = generateKey();
+    const evilId = '\u001b[2J\u001b]0;pwned\u0007';
+    const req = signDoc(
+      { ...createContactRequest(omer, createCard(omer, { rendezvous: hints }), { toHint: 'x', greeting: 'hi' }), sig: undefined, id: evilId },
+      omer,
+    );
+    expect(verifyContactRequest(req)).toBe(false);
+    const good = createContactRequest(omer, createCard(omer, { rendezvous: hints }), { toHint: 'x', greeting: 'hi' });
+    expect(verifyContactRequest(good)).toBe(true);
+    const grant = createGrant(john, createCard(john, { rendezvous: hints }), good, { tier: 'friend', scope: {} });
+    expect(verifyGrant(grant)).toBe(true);
+    expect(verifyGrant(signDoc({ ...grant, sig: undefined, id: evilId }, john))).toBe(false);
+    expect(verifyGrant(signDoc({ ...grant, sig: undefined, request_ref: evilId }, john))).toBe(false);
+  });
+});
+

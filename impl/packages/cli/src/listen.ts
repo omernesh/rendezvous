@@ -85,22 +85,22 @@ export async function listen(home: Home, out: Output, opts: ListenOptions): Prom
           inbox.push(entry);
           events.push({ obj: { event: 'message', ...entry }, human: `message ${inboxText(entry)}` });
         });
-        agent.on('revoked', (peer) => events.push({ obj: { event: 'revoked', peer }, human: `revoked by ${peer}` }));
+        agent.on('revoked', (peer) => events.push({ obj: { event: 'revoked', peer }, human: `revoked by ${clean(peer)}` }));
         agent.on('dropped', (reason, detail) => {
           const quiet = reason.includes('duplicate'); // relay replays on every restart
           events.push({
             obj: { event: 'dropped', reason, detail },
-            human: quiet ? undefined : `dropped: ${clean(reason)}`,
+            human: quiet ? undefined : `dropped: ${clean(reason)}${detail === undefined ? '' : ` (${clean(JSON.stringify(detail))})`}`,
           });
         });
-        agent.on('error', (err) => events.push({ obj: { event: 'error', message: err.message }, human: `error: ${err.message}` }));
+        agent.on('error', (err) => events.push({ obj: { event: 'error', message: err.message }, human: `error: ${clean(err.message)}` }));
         agent.start();
         feed(t);
         await agent.idle();
         for (const r of await Promise.allSettled(grants)) {
           if (r.status === 'rejected') {
             const message = `auto-grant failed: ${(r.reason as Error)?.message ?? r.reason}`;
-            events.push({ obj: { event: 'error', message }, human: `error: ${message}` });
+            events.push({ obj: { event: 'error', message }, human: `error: ${clean(message)}` });
           }
         }
         await agent.idle();
@@ -118,7 +118,7 @@ export async function listen(home: Home, out: Output, opts: ListenOptions): Prom
   const enqueue = (feed: (t: FeedTransport) => void) => {
     chain = chain
       .then(() => processOne(feed))
-      .catch((err: Error) => out.emit({ event: 'error', message: err.message }, `error: ${err.message}`));
+      .catch((err: Error) => out.emit({ event: 'error', message: err.message }, `error: ${clean(err.message)}`));
   };
 
   const unsubs = [

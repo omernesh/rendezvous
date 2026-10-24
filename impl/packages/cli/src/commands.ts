@@ -19,7 +19,7 @@ import {
 } from '@rendezvous/core';
 import { CliError, type Config, Home, type InboxEntry, parseJsonLines } from './home.js';
 import { listen } from './listen.js';
-import { contactText, contactView, inboxText, type Output, requestText, requestView } from './output.js';
+import { cardText, contactText, contactView, inboxText, type Output, requestText, requestView } from './output.js';
 
 export const TIERS: Tier[] = ['spouse', 'family', 'friend', 'colleague', 'business', 'stranger'];
 
@@ -163,13 +163,7 @@ export async function lookup({ home, out, positionals }: Ctx): Promise<void> {
     { save: false },
   );
   if (cards.length === 0) throw new CliError(`no public pointer found for ${address}`);
-  for (const card of cards) {
-    const relays = card.rendezvous.flatMap((h) => (h.type === 'nostr' ? [h.relay] : []));
-    out.emit(
-      { event: 'card', id: card.id, fingerprint: fingerprint(card.id), card },
-      `${card.id}  fingerprint ${fingerprint(card.id)}\n  addresses ${(card.discovery?.addresses ?? []).map((a) => a.value).join(', ')}  relays ${relays.join(', ')}`,
-    );
-  }
+  for (const card of cards) out.emit({ event: 'card', id: card.id, fingerprint: fingerprint(card.id), card }, cardText(card));
 }
 
 export async function contactRequest({ home, out, values, positionals }: Ctx): Promise<void> {

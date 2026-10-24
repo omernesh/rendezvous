@@ -112,9 +112,13 @@ export function createRevoke(key: AgentKey, peer: string, grantRef: string | nul
   );
 }
 
+/** Document IDs are UUIDs (crypto.randomUUID). Anything else is rejected, so peer IDs are safe to print. */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+export const isDocId = (id: unknown): id is string => typeof id === 'string' && UUID_RE.test(id);
+
 export function verifyContactRequest(input: unknown, now = new Date()): input is ContactRequest {
   const r = input as ContactRequest;
-  if (!r || r.v !== 1 || r.type !== 'rdv/contact-request' || typeof r.id !== 'string') return false;
+  if (!r || r.v !== 1 || r.type !== 'rdv/contact-request' || !isDocId(r.id)) return false;
   if (!isAgentId(r.from) || !verifyDoc(r, r.from)) return false;
   const card = verifyCard(r.card, now);
   return card.ok && card.card.id === r.from;
@@ -122,7 +126,7 @@ export function verifyContactRequest(input: unknown, now = new Date()): input is
 
 export function verifyGrant(input: unknown, now = new Date()): input is ContactGrant {
   const g = input as ContactGrant;
-  if (!g || g.v !== 1 || g.type !== 'rdv/contact-grant' || typeof g.id !== 'string') return false;
+  if (!g || g.v !== 1 || g.type !== 'rdv/contact-grant' || !isDocId(g.id) || !isDocId(g.request_ref)) return false;
   if (!isAgentId(g.from) || !isAgentId(g.to) || !verifyDoc(g, g.from)) return false;
   const card = verifyCard(g.card, now);
   return card.ok && card.card.id === g.from;
@@ -130,7 +134,7 @@ export function verifyGrant(input: unknown, now = new Date()): input is ContactG
 
 export function verifyRevoke(input: unknown): input is Revoke {
   const r = input as Revoke;
-  return !!r && r.v === 1 && r.type === 'rdv/revoke' && isAgentId(r.from) && verifyDoc(r, r.from);
+  return !!r && r.v === 1 && r.type === 'rdv/revoke' && isDocId(r.id) && isAgentId(r.from) && verifyDoc(r, r.from);
 }
 
 // ---------------------------------------------------------------------------
