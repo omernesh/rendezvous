@@ -1,0 +1,2 @@
+# Hooks run under sh; CRLF would break them on Windows checkouts.
+.githooks/* text eol=lf
