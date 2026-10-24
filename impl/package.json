@@ -15,7 +15,8 @@
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "npm test --workspaces --if-present",
     "test:live": "npm run test:live --workspaces --if-present",
-    "test:vectors:update": "npm run test:vectors:update -w @rendezvous/core"
+    "test:vectors:update": "npm run test:vectors:update -w @rendezvous/core",
+    "rdv": "node packages/cli/dist/src/bin.js"
   },
   "devDependencies": {
     "@types/node": "^22.20.5",

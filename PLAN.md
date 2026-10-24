@@ -1,6 +1,6 @@
 # Rendezvous: implementation plan (two-agent dinner demo)
 
-**Owner:** Omer Nesher · **Written:** 2026-10-24 · **Status:** step 1 done, steps 2–4 open
+**Owner:** Omer Nesher · **Written:** 2026-10-24 · **Status:** step 1 done; step 2 tasks 2.1, 2.2 and 2.5 (in-memory) done on `impl/step-2-cli`; 2.3, 2.4, 2.5 live runs and steps 3–4 open
 
 This is the working plan for turning the Rendezvous spec ([SPEC.md](SPEC.md))
 into running code. It is meant to be picked up in a local Claude Code session:
@@ -32,10 +32,10 @@ Example personas used throughout (from the spec's anonymized examples):
 SPEC.md                    protocol spec (source of truth)
 PLAN.md                    this file
 impl/                      npm workspace root
-  package.json             (today: the core library itself; see step 2 task 1)
+  package.json             workspace root: typecheck/test/build/test:live fan out
   NOTES.md                 spec deltas found while implementing
-  src/ test/ vectors/      @rendezvous/core
   packages/
+    core/                  @rendezvous/core     (src/ test/ vectors/)
     cli/                   @rendezvous/cli      (step 2)
     a2a/                   @rendezvous/a2a      (step 3)  dinner negotiation
     mcp/                   @rendezvous/mcp      (step 4)  MCP server
@@ -59,17 +59,16 @@ npm run typecheck
 npm run build
 ```
 
-- **Pre-push hook** (step 2, task 1): `impl/scripts/pre-push` runs
-  `npm run typecheck && npm test` in `impl/`. Install it with
-  `git config core.hooksPath .githooks` (commit the hook under `.githooks/`).
-  This replaces CI.
+- **Pre-push hook** (step 2, task 1): `.githooks/pre-push` runs
+  `npm run typecheck && npm test` in `impl/`. Enable it once per clone with
+  `git config core.hooksPath .githooks`. This replaces CI.
 - **Integration tests** use the in-memory relay in `src/testing/relay.ts` and
   need no network. Tests that hit real relays live behind an env flag:
   `RDV_LIVE_RELAYS=wss://...,wss://... npm run test:live`, and are never part
   of `npm test`.
 - **Vectors:** `vectors/v1.json` is generated once; regenerate only on a
-  deliberate wire-format change (`npm run test:vectors:update`) and say so in
-  the commit message.
+  deliberate wire-format change (`npm run test:vectors:update`, works in
+  PowerShell too) and say so in the commit message.
 - **Branches:** one branch per step (`impl/step-2-cli`, …), merged to `main`
   when its "done when" passes locally.
 
@@ -98,10 +97,12 @@ Known gaps carried forward (fix as part of later steps when touched):
 - Contact requests that arrive *inside an envelope* advance the per-peer
   `seq`; if a request is declined and re-sent, ordering state is shared with
   the later conversation. Acceptable for the demo; revisit in v0.2.
-- The requester records its own side of the contact with binding `claimed`
-  even when it reached the peer by card. Record the real discovery path.
-- No persistence locking: two processes using the same state file will race.
-  The CLI must hold a lockfile (step 2).
+- ~~The requester records its own side of the contact with binding `claimed`
+  even when it reached the peer by card.~~ Fixed in step 2: the binding is
+  stored with the outstanding request (`in-person` via `rdv contact request
+  <card-file> --in-person`).
+- ~~No persistence locking.~~ Fixed in step 2: the CLI holds a lockfile and
+  writes state temp-then-rename.
 
 ---
 
@@ -340,12 +341,15 @@ Update the reading page with `python3 render_html.py` after editing SPEC.md.
 ## 9. Order of work (checklist)
 
 - [x] Step 1: core library (PR #1)
-- [ ] Merge PR #1 (CI workflow removed)
-- [ ] Step 2.1: workspace and pre-push hook
-- [ ] Step 2.2: `rdv` CLI
+- [x] Merge PR #1 (CI workflow removed)
+- [x] Step 2.1: workspace and pre-push hook
+- [x] Step 2.2: `rdv` CLI
 - [ ] Step 2.3: strfry on relay-host via Cloudflare Tunnel
 - [ ] Step 2.4: public relay survey → NOTES.md
 - [ ] Step 2.5: scripted contact scenario (in-memory, relay-host, public)
+  - [x] in-memory relay, part of `npm test`
+  - [ ] relay-host relay, two machines
+  - [ ] two public relays via `test:live` (first runs passed on nos.lol and relay.damus.io; NOTES.md item 27)
 - [ ] Step 3: `@rendezvous/a2a` engine, calendar adapter, CLI integration
 - [ ] Step 4: `@rendezvous/mcp`, demo script, recording, deck slide
 - [ ] Spec rev 3 with the follow-ups in §7
