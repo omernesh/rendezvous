@@ -143,7 +143,7 @@ export class Agent extends EventEmitter<AgentEvents> {
    * envelope; with only an address, it is posted on the address's discovery
    * topic for a listening agent to pick up.
    *
-   * `binding` records how we got the peer's card (ง4.4) and is stored on the
+   * `binding` records how we got the peer's card (ยง4.4) and is stored on the
    * contact once the grant arrives. A topic probe is always `claimed`; a card
    * defaults to `claimed` unless the caller knows better (e.g. `in-person`
    * for a card scanned from a QR code).
