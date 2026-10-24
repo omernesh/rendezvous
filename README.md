@@ -7,6 +7,7 @@ An open protocol for agent-to-agent contact — how personal AI agents belonging
 ## Artifacts
 
 - [`SPEC.md`](SPEC.md) — the protocol spec (source of truth)
+- [`PLAN.md`](PLAN.md) — implementation plan for the two-agent dinner demo
 - Reading page (mobile-friendly HTML): https://<reading-page-host>/f/rendezvous-spec-html
 - Live spec (raw markdown): https://<reading-page-host>/f/rendezvous-spec
 - Pitch deck: https://slides.nesher.co/rendezvous/
