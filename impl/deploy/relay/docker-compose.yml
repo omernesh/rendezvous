@@ -1,0 +1,16 @@
+services:
+  strfry:
+    # Pinned by digest (the image publishes only :latest; watchtower must not float it).
+    # strfry 1.1.2-148-g4cd3cf6, pulled 2026-10-25.
+    image: ghcr.io/hoytech/strfry@sha256:36f1886d185a88ca57c66ebe52e6e9e8428dac2486eea0a5d50ff934f18b60c3
+    container_name: rendezvous-relay
+    restart: unless-stopped
+    command: ["--config=/etc/strfry.conf", "relay"]
+    labels:
+      com.centurylinklabs.watchtower.enable: "false"
+    ports:
+      - "127.0.0.1:7777:7777"
+      - "<relay-host>:7777:7777"
+    volumes:
+      - ./strfry.conf:/etc/strfry.conf:ro
+      - ./data:/app/strfry-db   # local disk only: LMDB must not live on the CIFS NAS
