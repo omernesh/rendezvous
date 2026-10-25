@@ -388,6 +388,21 @@ export async function contactRevoke({ home, out, positionals }: Ctx): Promise<vo
   out.emit({ event: 'revoked', peer }, `revoked ${peer}`);
 }
 
+/** The owner's re-sync after a fork or rollback (issue #13); the library never does this by itself. */
+export async function contactResync({ home, out, positionals }: Ctx): Promise<void> {
+  const peer = positionals[0];
+  const refused = await withAgent(home, async (agent) => {
+    const r = agent.refusedChannels().find((c) => c.peer === peer);
+    if (!r) throw new CliError(`the channel with ${peer} is not refused`);
+    agent.resyncChannel(peer);
+    return r;
+  });
+  out.emit(
+    { event: 'resync', peer, kind: refused.kind, seq: refused.seq, accepted: refused.accepted },
+    `resync ${peer}: its next new envelope becomes the chain head`,
+  );
+}
+
 export async function send({ home, out, values, positionals }: Ctx): Promise<void> {
   const raw = str(values.json) ?? str(values.payload);
   if (raw === undefined) throw new CliError('give the payload with --json \'{"type":"…"}\' (or --payload)', 2);

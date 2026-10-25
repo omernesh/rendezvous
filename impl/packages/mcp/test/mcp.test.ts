@@ -12,6 +12,7 @@ import { Listener, RDV_BIN, rdv } from '../../cli/scenarios/harness.js';
 import { checkPhrase, dropPhrase, EventLog, EVENTS_KEPT, MAX_ATTEMPTS, normalizePhrase, syncPhrases, toModelEvent, UNTRUSTED_NOTE } from '../src/index.js';
 import { confirmWithPhrase, dinnerFlow, type ElicitHandler, INJECTION, makeSide, moveHold, ok, phraseFromHumanLog, type Side, waitEvent } from './flow.js';
 import { appendEvents, Home } from '@rendezvous/cli/lib';
+import { generateKey } from '@rendezvous/core';
 
 const ESC = String.fromCharCode(27);
 
@@ -352,6 +353,13 @@ describe('event log (security review M1)', () => {
       expect(toModelEvent({ event: 'dropped', reason }, false)).toBeNull();
     }
     expect(toModelEvent({ event: 'dropped', reason: 'envelope chain fork' }, false)).not.toBeNull();
+    // A contact's rollback reaches the model with the peer and a hand-off to the human (issue #13).
+    const peerId = generateKey().id;
+    const rolled = toModelEvent({ event: 'dropped', reason: 'envelope chain fork (rollback)', detail: { peer: peerId, seq: 2, accepted: 6 } }, false)!;
+    expect(rolled).toMatchObject({ type: 'dropped', peer: peerId, reason: { untrusted_peer_text: 'envelope chain fork (rollback)' } });
+    expect(String(rolled.next_step)).toContain('rdv contact resync');
+    expect(toModelEvent({ event: 'dropped', reason: 'envelope chain fork', detail: { peer: 'not an id' } }, false)!.peer).toEqual({ untrusted_peer_text: 'not an id' });
+    expect(toModelEvent({ event: 'dropped', reason: 'envelope chain fork from a non-contact' }, false)).toBeNull();
     const flooded = toModelEvent({ event: 'probe-overflow', request_ref: '00000000-0000-4000-8000-0000000000aa', to_hint: 'alice@x.com', dropped: 3 }, false)!;
     expect(flooded).toMatchObject({ type: 'probe_flooded', probe_for: 'alice@x.com', dropped: 3 });
     expect(String(flooded.next_step)).toContain('by card');

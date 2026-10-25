@@ -27,7 +27,9 @@
 
 - **Security fix, §6.4:** the envelope signature covers `content` (rev 2 left
   it out, so a genuine header could carry a substituted ciphertext). The
-  encryption (ephemeral key `epk`, HKDF, AES-GCM) is now described.
+  encryption (ephemeral key `epk`, HKDF, AES-GCM) is now described. A peer
+  that forks or rolls back its chain is refused until the receiving human
+  re-syncs it.
 - **Wire format, new §4.6:** canonical JSON (RFC 8785 subset), base32 alphabet
   and case, `sig` encoding and domain separation, `canon(address)`. §4.2 and
   §4.4 point to it.
@@ -744,7 +746,21 @@ where hole-punching fails (TURN relays carry the ciphertext).
   cannot read the payload.
 - `seq`/`prev` give ordering and gap detection (§7). The first envelope in a
   direction has `seq: 1` and `prev: null`; later ones carry the hash (§4.6) of
-  the previous envelope in the same direction.
+  the previous envelope in the same direction. `seq` is a positive integer.
+- **Forks and rollbacks.** An envelope identical to one already accepted is a
+  relay replay and is dropped silently. A *different* envelope that reuses an
+  accepted `seq`, or whose `prev` does not match the receiver's chain head,
+  means the sender forked its chain: it restored older state (a backup) or two
+  copies of it run. The receiver MUST NOT accept the forked chain on its own
+  and MUST NOT drop it silently: it tells its human and refuses the peer's
+  envelopes until the human re-syncs. A re-sync adopts the next envelope that
+  is newer (`created`) than every envelope accepted from that peer; relay
+  replays of the old chain are never newer, so they cannot become the head.
+  Detection keeps bounded state: the hashes of the last few accepted envelopes
+  (8 in the reference implementation) plus the newest accepted `created`. A
+  reused `seq` below that window is detected by its `created` being newer than
+  everything accepted; one that is also older is indistinguishable from a
+  replay and is dropped as one.
 - `ttl` is `<n><s|m|h|d>` (default `48h`); an envelope is expired when
   `created + ttl` has passed. It lets relays garbage-collect and bounds replay
   windows, so receivers MUST reject a `ttl` over 7 days and a `created` more
@@ -765,7 +781,7 @@ where hole-punching fails (TURN relays carry the ciphertext).
   negotiation = propose/accept cycles over store-and-forward.)
 - Idempotency: task IDs are UUIDs; retries re-send the same envelope. There
   are two dedupe layers: the receiver drops an envelope it has already seen
-  (same `seq`), and drops a re-sent A2A message (same `messageId`, new
+  (the same bytes; a different envelope at that `seq` is a fork, §6.4), and drops a re-sent A2A message (same `messageId`, new
   envelope) per task.
 - Ordering: `seq` is per-direction monotonic. A gap buffers later envelopes
   and triggers `{"type": "rdv/resend", "from_seq": n, "to_seq": m}`; the

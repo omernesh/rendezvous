@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   Agent,
   type AgentKey,
+  type ChannelState,
+  Channels,
   createCard,
   createReverseGrant,
   dtopic,
@@ -530,6 +532,119 @@ describe('gap buffer bounds (security regression)', () => {
     const buffered = Object.keys(john.toJSON().buffer ?? {});
     expect(buffered).toHaveLength(16);
     expect(buffered).toEqual(peers.slice(4).map((p) => p.id)); // oldest four evicted
+  });
+});
+
+describe('peer rollback (issue #13)', () => {
+  const card = { rendezvous: [{ type: 'nostr' as const, relay: 'ws://unused', pref: 1 }] };
+  function feedable() {
+    let handler: (e: unknown) => void = () => {};
+    const t = (): Transport => ({
+      async sendEnvelope() {},
+      onEnvelopes: (_me, h) => ((handler = h), () => {}),
+      async publishTopic() {},
+      onTopics: () => () => {},
+      fetchTopic: async () => [],
+      close() {},
+    });
+    return { t, feed: (e: unknown) => handler(e) };
+  }
+  const contactOf = (p: AgentKey) => ({
+    peer: p.id,
+    card: createCard(p, card),
+    tier: 'friend' as const,
+    inboundScope: { may_initiate: true },
+    outboundScope: { may_initiate: true },
+    binding: 'claimed' as const,
+    grantId: 'g',
+    expires: null,
+    since: new Date().toISOString(),
+  });
+
+  it('reports a restored peer, refuses it across a restart, and takes it back only after the owner re-syncs', async () => {
+    const { t, feed } = feedable();
+    const omer = generateKey();
+    let john = Agent.create(t, card);
+    john.book.state.contacts[omer.id] = contactOf(omer);
+    const drops: Array<[string, unknown]> = [];
+    const texts: unknown[] = [];
+    const watch = (a: Agent) => {
+      a.on('dropped', (r, d) => drops.push([r, d]));
+      a.on('message', (_p, payload) => texts.push(payload.n));
+    };
+    watch(john);
+    john.start();
+
+    // Omer sends six notes; his state after the first is his "backup".
+    const base = Date.now() - 60_000;
+    let omerState: Record<string, ChannelState> = {};
+    let backup = '';
+    const sent: Envelope[] = [];
+    const sendFrom = (state: Record<string, ChannelState>, n: number, at: number) => {
+      const ch = new Channels(state);
+      const { seq, prev } = ch.nextOutbound(john.id);
+      const e = sealEnvelope(omer, john.id, { type: 'a2a/message', n }, { seq, prev, now: new Date(at) });
+      ch.commitOutbound(john.id, e);
+      return e;
+    };
+    for (let n = 1; n <= 6; n++) {
+      const e = sendFrom(omerState, n, base + n * 1000);
+      sent.push(e);
+      if (n === 1) backup = JSON.stringify(omerState);
+      feed(e);
+    }
+    await john.idle();
+    expect(texts).toEqual([1, 2, 3, 4, 5, 6]);
+
+    // He restores the backup (a rollback by 5) and carries on.
+    omerState = JSON.parse(backup);
+    const forked1 = sendFrom(omerState, 7, base + 30_000);
+    const forked2 = sendFrom(omerState, 8, base + 31_000);
+    feed(forked1);
+    feed(forked2);
+    for (const e of sent) feed(structuredClone(e)); // the relay replays the old chain: silent
+    feed(structuredClone(forked1)); // and the forking envelope: already reported
+    await john.idle();
+    expect(texts).toEqual([1, 2, 3, 4, 5, 6]);
+    expect(drops).toEqual([
+      ['envelope chain fork (rollback)', { peer: omer.id, seq: 2, accepted: 6 }],
+      ['envelope chain fork (channel refused until resync)', { peer: omer.id, seq: 3, accepted: 6 }],
+    ]);
+    expect(john.refusedChannels()).toMatchObject([{ peer: omer.id, kind: 'rollback', seq: 2, accepted: 6 }]);
+
+    // A restart keeps the refusal: nothing is trusted on its own.
+    const saved = JSON.parse(JSON.stringify(john.toJSON()));
+    john.stop();
+    john = Agent.fromJSON(saved, t);
+    watch(john);
+    john.start();
+    feed(structuredClone(forked2));
+    await john.idle();
+    expect(texts).toEqual([1, 2, 3, 4, 5, 6]);
+    expect(drops).toHaveLength(3);
+
+    // The owner checked with Omer and re-syncs: his current chain is accepted from its next new envelope.
+    john.resyncChannel(omer.id);
+    expect(john.refusedChannels()).toEqual([]);
+    feed(structuredClone(sent[5])); // an old replay can't become the head
+    feed(structuredClone(forked2));
+    feed(sendFrom(omerState, 9, base + 32_000));
+    await john.idle();
+    expect(texts).toEqual([1, 2, 3, 4, 5, 6, 8, 9]);
+    expect(drops).toHaveLength(3);
+  });
+
+  it("keeps a stranger's forks out of the owner's view", async () => {
+    const { t, feed } = feedable();
+    const john = Agent.create(t, card);
+    const reasons: string[] = [];
+    john.on('dropped', (r) => reasons.push(r));
+    john.start();
+    const stranger = generateKey();
+    feed(sealEnvelope(stranger, john.id, { type: 'a2a/message' }, { seq: 1, prev: null }));
+    feed(sealEnvelope(stranger, john.id, { type: 'a2a/message', other: true }, { seq: 1, prev: null }));
+    await john.idle();
+    expect(reasons).toEqual(['no grant for sender', 'envelope chain fork from a non-contact']);
   });
 });
 

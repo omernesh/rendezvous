@@ -17,6 +17,7 @@ import {
   RESEND_LIMIT,
   defaultTier,
   dtopic,
+  envelopeHash,
   fingerprint,
   generateKey,
   isAgentId,
@@ -156,7 +157,7 @@ describe('envelope', () => {
     expect(ch.acceptInbound(first).kind).toBe('in-order');
     expect(ch.acceptInbound(first).kind).toBe('duplicate'); // the same envelope again
     const reused = sealEnvelope(a, b.id, { type: 'x', n: 2 }, { seq: 1, prev: null }); // peer restored old state
-    expect(ch.acceptInbound(reused).kind).toBe('fork');
+    expect(ch.acceptInbound(reused).kind).toBe('rollback'); // a fork by rollback (issue #13), never a duplicate
   });
 
   it('orders per direction and detects gaps, duplicates and forks', () => {
@@ -178,6 +179,138 @@ describe('envelope', () => {
     const rogue = sealEnvelope(alice, bob.id, { type: 'note' }, { seq: 4, prev: 'deadbeef' });
     expect(inn.acceptInbound(e3).kind).toBe('in-order');
     expect(inn.acceptInbound(rogue).kind).toBe('fork');
+  });
+
+  it('rejects a seq that is not a positive integer', () => {
+    for (const seq of [0, -5, 1.5]) {
+      expect(openEnvelope(bob, sealEnvelope(alice, bob.id, { type: 'x' }, { seq, prev: null }))).toEqual({ ok: false, reason: 'malformed' });
+    }
+  });
+});
+
+describe('peer rollback (issue #13)', () => {
+  const omer = generateKey();
+  const john = generateKey();
+  const t0 = Date.parse('2026-10-25T10:00:00Z');
+  /** Omer's sending side; `at(i)` puts envelope i one second after the previous one. */
+  function sender() {
+    const ch = new Channels();
+    let clock = t0;
+    const send = (n: number, now = new Date((clock += 1000))) => {
+      const { seq, prev } = ch.nextOutbound(john.id);
+      const e = sealEnvelope(omer, john.id, { type: 'note', n }, { seq, prev, now });
+      ch.commitOutbound(john.id, e);
+      return e;
+    };
+    return { ch, send };
+  }
+  /** John accepts `count` envelopes from Omer; returns them plus Omer's state after each. */
+  function history(count: number) {
+    const s = sender();
+    const states: string[] = [JSON.stringify(s.ch.state)];
+    const sent = [];
+    const inn = new Channels();
+    for (let i = 1; i <= count; i++) {
+      const e = s.send(i);
+      sent.push(e);
+      states.push(JSON.stringify(s.ch.state));
+      expect(inn.acceptInbound(e).kind).toBe('in-order');
+    }
+    return { sent, states, inn, s };
+  }
+  /** Omer restores his state from `k` envelopes ago and sends again, later than anything before. */
+  function rolledBack(states: string[], k: number, at = t0 + 10_000_000) {
+    const ch = new Channels(JSON.parse(states[states.length - 1 - k]));
+    const { seq, prev } = ch.nextOutbound(john.id);
+    const e = sealEnvelope(omer, john.id, { type: 'note', forked: true }, { seq, prev, now: new Date(at) });
+    ch.commitOutbound(john.id, e);
+    return { ch, e };
+  }
+
+  for (const k of [1, 5, 70]) {
+    it(`detects a rollback by ${k}${k > 64 ? ' (more than the outbox)' : ''} and refuses the peer`, () => {
+      const { states, inn } = history(80);
+      const { e } = rolledBack(states, k);
+      expect(e.seq).toBe(80 - k + 1);
+      expect(inn.acceptInbound(e)).toEqual({ kind: 'rollback', seq: 80 - k + 1, accepted: 80 });
+      expect(inn.refused(omer.id)).toMatchObject({ kind: 'rollback', seq: 80 - k + 1, accepted: 80 });
+      // A relay replay of the forking envelope stays silent; anything else from Omer is refused.
+      expect(inn.acceptInbound(structuredClone(e)).kind).toBe('duplicate');
+      const next = sealEnvelope(omer, john.id, { type: 'note' }, { seq: 81, prev: inn.state[omer.id].inPrev, now: new Date(t0 + 20_000_000) });
+      expect(inn.acceptInbound(next).kind).toBe('refused');
+      expect(inn.state[omer.id].inSeq).toBe(80); // the forked chain was never accepted
+    });
+  }
+
+  it('ignores a relay replay of every envelope already accepted (identical bytes)', () => {
+    const { sent, inn } = history(80);
+    for (const e of sent) expect(inn.acceptInbound(structuredClone(e)).kind).toBe('duplicate');
+    expect(inn.refused(omer.id)).toBeUndefined();
+    expect(inn.state[omer.id].inRecent).toHaveLength(8); // bounded, not a hash per seq
+  });
+
+  it('detects the same seq with different content inside the window, whatever its clock says', () => {
+    const { sent, inn } = history(10);
+    const old = sent[6]; // seq 7, within the last 8
+    const twin = sealEnvelope(omer, john.id, { type: 'note', other: true }, { seq: old.seq, prev: old.prev, now: new Date(t0) }); // older clock
+    expect(inn.acceptInbound(twin)).toEqual({ kind: 'rollback', seq: 7, accepted: 10 });
+  });
+
+  it('treats an old, unknown envelope below the window as a duplicate (cannot tell; NOTES 56)', () => {
+    const { inn } = history(20);
+    const stale = sealEnvelope(omer, john.id, { type: 'note' }, { seq: 2, prev: null, now: new Date(t0 + 500) });
+    expect(inn.acceptInbound(stale).kind).toBe('duplicate');
+    expect(inn.refused(omer.id)).toBeUndefined();
+  });
+
+  it('reports a fork past our head and refuses the peer', () => {
+    const { inn } = history(3);
+    const rogue = sealEnvelope(omer, john.id, { type: 'note' }, { seq: 4, prev: 'deadbeef', now: new Date(t0 + 9_000) });
+    expect(inn.acceptInbound(rogue)).toEqual({ kind: 'fork', seq: 4, accepted: 3 });
+    const gap = sealEnvelope(omer, john.id, { type: 'note' }, { seq: 9, prev: null, now: new Date(t0 + 9_500) });
+    expect(inn.acceptInbound(gap).kind).toBe('refused'); // no resend dance for a refused channel
+  });
+
+  it('recovers only after the owner re-syncs, and never re-adopts the old chain', () => {
+    const { sent, states, inn } = history(80);
+    const { ch, e } = rolledBack(states, 5);
+    expect(inn.acceptInbound(e).kind).toBe('rollback');
+    expect(() => inn.resync(john.id)).toThrow(/not refused/);
+    inn.resync(omer.id);
+    // Relay replays of the old chain cannot become the head: none is newer.
+    for (const old of sent.slice(-10)) expect(inn.acceptInbound(structuredClone(old)).kind).toBe('duplicate');
+    // The forked envelope (newer than all we accepted) becomes the head, and the chain goes on from it.
+    expect(inn.acceptInbound(structuredClone(e)).kind).toBe('in-order');
+    expect(inn.state[omer.id]).toMatchObject({ inSeq: 76, inPrev: envelopeHash(e) });
+    expect(inn.state[omer.id].resync).toBeUndefined();
+    const { seq, prev } = ch.nextOutbound(john.id);
+    const after = sealEnvelope(omer, john.id, { type: 'note' }, { seq, prev, now: new Date(t0 + 11_000_000) });
+    expect(inn.acceptInbound(after).kind).toBe('in-order');
+    expect(inn.acceptInbound(structuredClone(e)).kind).toBe('duplicate');
+  });
+
+  it('keeps refusal and re-sync across toJSON/fromJSON', () => {
+    const { states, inn } = history(80);
+    const { e } = rolledBack(states, 70);
+    expect(inn.acceptInbound(e).kind).toBe('rollback');
+    const saved = new Channels(JSON.parse(JSON.stringify(inn.state)));
+    expect(saved.refused(omer.id)).toMatchObject({ kind: 'rollback', seq: 11 });
+    expect(saved.acceptInbound(structuredClone(e)).kind).toBe('duplicate');
+    const later = rolledBack(states, 70, t0 + 12_000_000).e;
+    expect(saved.acceptInbound(later).kind).toBe('refused');
+    saved.resync(omer.id);
+    const again = new Channels(JSON.parse(JSON.stringify(saved.state)));
+    expect(again.acceptInbound(later).kind).toBe('in-order');
+    expect(again.state[omer.id].inSeq).toBe(11);
+  });
+
+  it('upgrades channel state saved before the window existed', () => {
+    const { sent, inn } = history(5);
+    const legacy = new Channels({ [omer.id]: { outSeq: 0, outPrev: null, inSeq: 5, inPrev: inn.state[omer.id].inPrev } });
+    expect(legacy.acceptInbound(structuredClone(sent[4])).kind).toBe('duplicate');
+    expect(legacy.acceptInbound(structuredClone(sent[1])).kind).toBe('duplicate'); // too old to tell without a window
+    const twin = sealEnvelope(omer, john.id, { type: 'note' }, { seq: 5, prev: sent[4].prev, now: new Date(t0) });
+    expect(legacy.acceptInbound(twin).kind).toBe('rollback');
   });
 });
 

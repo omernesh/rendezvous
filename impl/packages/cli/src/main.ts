@@ -95,6 +95,12 @@ const COMMANDS: Record<string, Command> = {
     args: 1,
     run: cmd.contactRevoke,
   },
+  'contact resync': {
+    usage: 'rdv contact resync <agent-id>',
+    summary: "Accept a contact's current chain after a fork or rollback was reported (check with them first)",
+    args: 1,
+    run: cmd.contactResync,
+  },
   send: {
     usage: 'rdv send <agent-id> --json \'{"type":"a2a/message","text":"hi"}\'   (or --payload \'…\')',
     summary: 'Send any payload to a contact (--json carries the payload here and also selects JSON output)',

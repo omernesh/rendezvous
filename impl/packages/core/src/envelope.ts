@@ -83,7 +83,7 @@ export type OpenResult = { ok: true; payload: Payload; envelope: Envelope } | { 
 
 export function openEnvelope(recipient: AgentKey, input: unknown, now: Date = new Date()): OpenResult {
   const e = input as Envelope;
-  if (!e || e.v !== 1 || !isAgentId(e.from) || typeof e.seq !== 'number') return { ok: false, reason: 'malformed' };
+  if (!e || e.v !== 1 || !isAgentId(e.from) || !Number.isSafeInteger(e.seq) || e.seq < 1) return { ok: false, reason: 'malformed' };
   if (e.to !== recipient.id) return { ok: false, reason: 'not addressed to us' };
   if (!e.content || e.content.alg !== ENVELOPE_ALG) return { ok: false, reason: 'unsupported alg' };
   if (!verifyDoc(e, e.from)) return { ok: false, reason: 'bad signature' };
@@ -141,13 +141,38 @@ export interface ChannelState {
   outPrev: string | null;
   inSeq: number;
   inPrev: string | null;
+  /** Hashes of the last accepted inbound envelopes, oldest first; the last one is `inPrev` (at most ROLLBACK_WINDOW). */
+  inRecent?: string[];
+  /** Newest `created` (ms) among accepted inbound envelopes: a relay replay can't be newer than this. */
+  inNewest?: number;
+  /** Set when the peer forked or rolled back its chain: inbound is refused until the owner calls `resync`. */
+  refused?: RefusedChannel;
+  /** The owner allowed a re-sync: the next inbound envelope newer than `inNewest` becomes the chain head. */
+  resync?: true;
 }
+
+export interface RefusedChannel {
+  kind: 'fork' | 'rollback';
+  /** The offending envelope's seq and hash (a relay replay of it stays silent). */
+  seq: number;
+  hash: string;
+  /** Our `inSeq` when it arrived. */
+  accepted: number;
+}
+
+/** How many accepted inbound hashes a channel keeps to tell a replay from a rollback (NOTES 56). */
+export const ROLLBACK_WINDOW = 8;
 
 export type InboundOrder =
   | { kind: 'in-order' }
   | { kind: 'duplicate' }
   | { kind: 'gap'; missingFrom: number; missingTo: number }
-  | { kind: 'fork' };
+  /** `prev` doesn't match our chain head. The channel is refused from now on. */
+  | { kind: 'fork'; seq: number; accepted: number }
+  /** A seq we already accepted, with different content: the peer restored older state. Refused from now on. */
+  | { kind: 'rollback'; seq: number; accepted: number }
+  /** The channel is refused (an earlier fork or rollback) until the owner re-syncs it. */
+  | { kind: 'refused'; seq: number; accepted: number };
 
 export class Channels {
   constructor(public state: Record<string, ChannelState> = {}) {}
@@ -167,18 +192,72 @@ export class Channels {
     c.outPrev = envelopeHash(e);
   }
 
+  /** Why inbound from `peer` is refused, if it is. */
+  refused(peer: string): RefusedChannel | undefined {
+    return this.state[peer]?.refused;
+  }
+
+  /**
+   * The owner's decision after a fork or rollback, never the library's: the
+   * next envelope from `peer` that is newer than everything accepted so far
+   * becomes the new chain head. Relay replays of the old chain stay
+   * duplicates, because none of them is newer.
+   */
+  resync(peer: string): void {
+    const c = this.state[peer];
+    if (!c?.refused) throw new Error(`channel with ${peer} is not refused`);
+    delete c.refused;
+    c.resync = true;
+  }
+
+  /** The hash we accepted at `seq`, if it is still in the window. */
+  private acceptedHash(c: ChannelState, seq: number): string | undefined {
+    const back = c.inSeq - seq;
+    if (back < 0) return undefined;
+    const recent = c.inRecent ?? (c.inPrev === null ? [] : [c.inPrev]); // state saved before the window existed
+    return back < recent.length ? recent[recent.length - 1 - back] : undefined;
+  }
+
+  private advance(c: ChannelState, e: Envelope, hash: string, created: number): void {
+    c.inSeq = e.seq;
+    c.inPrev = hash;
+    c.inRecent = [...(c.inRecent ?? []), hash].slice(-ROLLBACK_WINDOW);
+    if (Number.isFinite(created)) c.inNewest = Math.max(c.inNewest ?? created, created);
+  }
+
+  private refuse(c: ChannelState, kind: 'fork' | 'rollback', e: Envelope, hash: string): InboundOrder {
+    c.refused = { kind, seq: e.seq, hash, accepted: c.inSeq };
+    return { kind, seq: e.seq, accepted: c.inSeq };
+  }
+
   /** Classify an inbound envelope; advances state only when in order. */
   acceptInbound(e: Envelope): InboundOrder {
     const c = this.get(e.from);
-    // A different envelope with the seq we last accepted: the peer reused a
-    // seq (e.g. restored old state). Report it instead of calling it a
-    // duplicate (security review L4). Older seqs can't be told apart cheaply.
-    if (e.seq === c.inSeq && c.inPrev !== null && envelopeHash(e) !== c.inPrev) return { kind: 'fork' };
-    if (e.seq <= c.inSeq) return { kind: 'duplicate' };
+    const hash = envelopeHash(e);
+    const created = parseTimestamp(e.created) ?? Number.NEGATIVE_INFINITY;
+    const newer = c.inNewest === undefined || created > c.inNewest;
+    if (c.resync) {
+      // Only something newer than all we accepted can be the peer's current chain.
+      if (!newer) return { kind: 'duplicate' };
+      delete c.resync;
+      c.inRecent = [];
+      this.advance(c, e, hash, created);
+      return { kind: 'in-order' };
+    }
+    if (e.seq <= c.inSeq) {
+      // Identical bytes are a relay replay. A different envelope at a seq we
+      // still hold a hash for, or one newer than everything we accepted, means
+      // the peer reused seqs: it restored older state (L4, issue #13).
+      const known = this.acceptedHash(c, e.seq);
+      if (known === hash || hash === c.refused?.hash) return { kind: 'duplicate' };
+      if (known === undefined && (c.inNewest === undefined || !newer)) return { kind: 'duplicate' }; // too old to tell (NOTES 56)
+      if (c.refused) return { kind: 'refused', seq: e.seq, accepted: c.inSeq };
+      return this.refuse(c, 'rollback', e, hash);
+    }
+    if (c.refused) return hash === c.refused.hash ? { kind: 'duplicate' } : { kind: 'refused', seq: e.seq, accepted: c.inSeq };
     if (e.seq > c.inSeq + 1) return { kind: 'gap', missingFrom: c.inSeq + 1, missingTo: e.seq - 1 };
-    if (e.prev !== c.inPrev) return { kind: 'fork' };
-    c.inSeq = e.seq;
-    c.inPrev = envelopeHash(e);
+    if (e.prev !== c.inPrev) return this.refuse(c, 'fork', e, hash);
+    this.advance(c, e, hash, created);
     return { kind: 'in-order' };
   }
 }

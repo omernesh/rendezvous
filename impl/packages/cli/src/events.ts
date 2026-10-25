@@ -40,6 +40,7 @@ export const STRANGER_DROPS = [
   'request signer differs',
   'grant signer differs',
   'blocked sender',
+  'envelope chain fork from a non-contact',
 ];
 
 /** Events not worth a line in the log: relay replays, stranger-caused drops, all but every 50th eviction. */

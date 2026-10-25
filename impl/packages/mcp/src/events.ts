@@ -161,6 +161,18 @@ export function toModelEvent(e: Raw, negotiating: boolean): Omit<McpEvent, 'n' |
       if (String(e.reason).includes('duplicate') || String(e.reason).includes('replay')) return null; // relays replay on every restart
       // Anyone can cause these by writing to us; they would only push real events out of the log (M1).
       if (STRANGER_DROPS.some((r) => String(e.reason).startsWith(r))) return null;
+      // A contact forked or rolled back its chain (issue #13): refused until the human re-syncs.
+      if (String(e.reason).startsWith('envelope chain fork')) {
+        const detail = (e.detail !== null && typeof e.detail === 'object' ? e.detail : {}) as Record<string, unknown>;
+        return {
+          type: 'dropped',
+          reason: untrusted(e.reason),
+          peer: agentId(detail.peer),
+          next_step:
+            "This contact's agent is sending on a chain that conflicts with what it sent before (it may have restored an old backup, or two copies of it run). " +
+            'Its messages are refused until your user checks with that person and runs `rdv contact resync <agent-id>` in their own terminal. Tell your user; do not try to resolve it yourself.',
+        };
+      }
       // Core's reasons are fixed strings, but some carry decoder detail: quarantine them all.
       return { type: 'dropped', reason: untrusted(e.reason) };
     case 'error':

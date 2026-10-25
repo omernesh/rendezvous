@@ -24,7 +24,15 @@ import {
 } from './contact.js';
 import { type Binding, dtopic, topicForHint } from './discovery.js';
 import { b64decode, b64encode } from './encoding.js';
-import { Channels, type ChannelState, type Envelope, type Payload, openEnvelope, sealEnvelope } from './envelope.js';
+import {
+  Channels,
+  type ChannelState,
+  type Envelope,
+  type Payload,
+  type RefusedChannel,
+  openEnvelope,
+  sealEnvelope,
+} from './envelope.js';
 import { type AgentKey, generateKey, keyFromSecret } from './identity.js';
 import type { Transport } from './transport/transport.js';
 
@@ -335,7 +343,7 @@ export class Agent extends EventEmitter<AgentEvents> {
 
     const order = this.channels.acceptInbound(env);
     if (order.kind === 'duplicate') return;
-    if (order.kind === 'fork') return this.drop('envelope chain fork', env.seq);
+    if (order.kind === 'fork' || order.kind === 'rollback' || order.kind === 'refused') return this.dropForked(env, order);
     if (order.kind === 'gap') {
       this.bufferEnvelope(env);
       const c = this.book.contact(env.from);
@@ -383,6 +391,7 @@ export class Agent extends EventEmitter<AgentEvents> {
       const order = this.channels.acceptInbound(next);
       if (order.kind === 'gap') return;
       buf.shift();
+      if (order.kind === 'fork' || order.kind === 'rollback' || order.kind === 'refused') this.dropForked(next, order);
       if (order.kind !== 'in-order') continue;
       const opened = openEnvelope(this.key, next);
       if (opened.ok) await this.dispatch(next, opened.payload);
@@ -443,6 +452,36 @@ export class Agent extends EventEmitter<AgentEvents> {
         if (!this.book.admitInbound(from)) return this.drop('no grant for sender', from);
         this.emit('message', from, payload, env);
     }
+  }
+
+  /**
+   * A peer that forked or rolled back its chain (it restored older state, or
+   * two copies of it run) is refused until the owner calls `resyncChannel`:
+   * the library never picks a chain on its own (issue #13). A stranger can
+   * fork only its own channel, so its drops are quiet (STRANGER_DROPS).
+   */
+  private dropForked(env: Envelope, order: { kind: 'fork' | 'rollback' | 'refused'; seq: number; accepted: number }): void {
+    const detail = { peer: env.from, seq: order.seq, accepted: order.accepted };
+    if (!this.mayBuffer(env.from)) return this.drop('envelope chain fork from a non-contact', detail);
+    if (order.kind === 'fork') return this.drop('envelope chain fork', detail);
+    if (order.kind === 'rollback') return this.drop('envelope chain fork (rollback)', detail);
+    this.drop('envelope chain fork (channel refused until resync)', detail);
+  }
+
+  /**
+   * Owner action after an `envelope chain fork` drop, once they have checked
+   * with the peer's human: accept the peer's current chain. The next envelope
+   * newer than everything accepted from it so far becomes the chain head;
+   * envelopes refused in between are not replayed.
+   */
+  resyncChannel(peer: string): void {
+    this.channels.resync(peer);
+    delete this.buffer[peer];
+  }
+
+  /** Peers whose channel is refused after a fork or rollback, waiting for `resyncChannel`. */
+  refusedChannels(): Array<{ peer: string } & RefusedChannel> {
+    return Object.entries(this.channels.state).flatMap(([peer, c]) => (c.refused ? [{ peer, ...c.refused }] : []));
   }
 
   private drop(reason: string, detail?: unknown): void {

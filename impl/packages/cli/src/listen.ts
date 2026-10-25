@@ -194,9 +194,15 @@ async function handleLocked(
       agent.on('revoked', (peer) => events.push({ obj: { event: 'revoked', peer }, human: `revoked by ${clean(peer)}` }));
       agent.on('dropped', (reason, detail) => {
         const quiet = reason.includes('duplicate'); // relay replays on every restart
+        // A contact's fork or rollback: its messages are refused until the owner re-syncs (issue #13).
+        const peer = (detail as { peer?: unknown } | undefined)?.peer;
+        const hint =
+          reason.startsWith('envelope chain fork') && !reason.includes('non-contact') && typeof peer === 'string'
+            ? `; its messages are refused until you check with them and run: rdv contact resync ${clean(peer)}`
+            : '';
         events.push({
           obj: { event: 'dropped', reason, detail },
-          human: quiet ? undefined : `dropped: ${clean(reason)}${detail === undefined ? '' : ` (${clean(JSON.stringify(detail))})`}`,
+          human: quiet ? undefined : `dropped: ${clean(reason)}${detail === undefined ? '' : ` (${clean(JSON.stringify(detail))})`}${hint}`,
         });
       });
       agent.on('error', (err) => events.push({ obj: { event: 'error', message: err.message }, human: `error: ${clean(err.message)}` }));

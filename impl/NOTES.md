@@ -403,10 +403,34 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
     waiting for the gap) still advances the chain, which would stall
     otherwise, but now emits `dropped: buffered envelope lost (…)`. A
     different envelope carrying the seq we last accepted (a peer that
-    restored old state) is a `fork`, not a duplicate. Open: a peer that
-    rolled back further than one envelope reuses seqs below ours, which
-    still read as duplicates; telling them apart needs a hash per seq or a
-    chain reset message (v0.2).
+    restored old state) is a fork, not a duplicate.
+    **Rollbacks of any depth** (fixed, issue #13, **spec change**, §6.4, §7).
+    Each channel keeps the hashes of the last 8 accepted inbound envelopes
+    (`ROLLBACK_WINDOW`, `inRecent`) and the newest accepted `created`
+    (`inNewest`); nothing grows with the chain. An envelope with
+    `seq <= inSeq` is a `rollback` when its hash differs from the one we hold
+    for that seq, or, below the window, when its `created` is newer than
+    everything we accepted (a relay replay can't be: it is one of those
+    envelopes). Identical bytes stay a silent duplicate. A `prev` mismatch at
+    `inSeq + 1` is a `fork`. Either one sets `refused` on the channel and is
+    reported as `dropped: envelope chain fork (rollback)` / `envelope chain
+    fork` with `{peer, seq, accepted}`; every later envelope from the peer is
+    `envelope chain fork (channel refused until resync)` (a replay of the
+    forking envelope itself stays silent). Nothing from either chain is
+    dispatched, buffered or answered with a resend. **What happens next:**
+    the owner checks with the peer's human, then re-syncs locally
+    (`Agent.resyncChannel`, `rdv contact resync <agent-id>`); the library and
+    the MCP model never do (the MCP event carries a `next_step` that hands it
+    to the human). A re-sync adopts the next envelope newer than `inNewest`
+    as the chain head, so replays of the old chain can never take over;
+    envelopes refused in between are not replayed. `refused`/`resync`
+    persist in `agent.json`. A stranger can fork only its own channel, so
+    its drops read `envelope chain fork from a non-contact` and stay out of
+    the event log (`STRANGER_DROPS`). `openEnvelope` now also rejects a
+    `seq` that is not a positive integer. Left open: a reused seq below the
+    window whose `created` is also not newer (the peer's clock went back
+    further than its last envelope) still reads as a duplicate; detecting
+    that needs a hash per seq or a chain-reset message (v0.2).
 57. **Confirm-phrase limits** (L6, open, documented only). `consent.json`
     (mode 600) holds each phrase in clear text, because `rdv contact
     pending` must show it to the human again. A client that gives the model

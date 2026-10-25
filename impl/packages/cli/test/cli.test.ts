@@ -279,6 +279,63 @@ describe('floods are shown to the human', () => {
   });
 });
 
+describe('a contact that rolled back its chain (issue #13)', () => {
+  it('listen reports it with the resync hint, refuses it, and rdv contact resync takes it back', async () => {
+    const { Channels, createCard, generateKey, sealEnvelope } = await import('@rendezvous/core');
+    const { handleInbound } = await import('../src/listen.js');
+    const { Home } = await import('../src/home.js');
+    const { initHome } = await import('../src/commands.js');
+    const dir = tmp();
+    try {
+      const home = new Home(join(dir, 'h'));
+      await initHome(home, { profile: 'john', relays: ['ws://127.0.0.1:9'], emails: ['john@doe.com'] });
+      const omer = generateKey();
+      const state = home.readAgentState();
+      const johnId = state.card.id;
+      state.book.contacts[omer.id] = {
+        peer: omer.id,
+        card: createCard(omer, { rendezvous: [{ type: 'nostr', relay: 'ws://127.0.0.1:9', pref: 1 }] }),
+        tier: 'friend',
+        inboundScope: { may_initiate: true },
+        outboundScope: { may_initiate: true },
+        binding: 'claimed',
+        grantId: 'g',
+        expires: null,
+        since: new Date().toISOString(),
+      };
+      home.writeAgentState(state);
+      const real = { sendEnvelope: async () => {}, publishTopic: async () => {}, fetchTopic: async () => [], onEnvelopes: () => () => {}, onTopics: () => () => {}, close() {} };
+      const omerCh = new Channels();
+      const base = Date.now() - 60_000;
+      const send = (ch: InstanceType<typeof Channels>, text: string, at: number) => {
+        const { seq, prev } = ch.nextOutbound(johnId);
+        const e = sealEnvelope(omer, johnId, { type: 'note', text }, { seq, prev, now: new Date(at) });
+        ch.commitOutbound(johnId, e);
+        return e;
+      };
+      const inbound = (e: unknown) => handleInbound(home, real, (t) => t.feedEnvelope(e), {});
+      await inbound(send(omerCh, 'one', base));
+      const backup = JSON.stringify(omerCh.state);
+      await inbound(send(omerCh, 'two', base + 1000));
+      const restored = new Channels(JSON.parse(backup)); // Omer restored an old agent.json
+      const forked = send(restored, 'two again', base + 30_000);
+      const events = await inbound(forked);
+      expect(events.map((e) => e.obj)).toEqual([{ event: 'dropped', reason: 'envelope chain fork (rollback)', detail: { peer: omer.id, seq: 2, accepted: 2 } }]);
+      expect(events[0].human).toContain(`rdv contact resync ${omer.id}`);
+      expect((await inbound(send(restored, 'three', base + 31_000))).map((e) => e.obj.event)).toEqual(['dropped']);
+
+      const notRefused = await rdv(['contact', 'resync', generateKey().id], home.dir, { check: false });
+      expect(notRefused.code).not.toBe(0);
+      const r = await rdv(['contact', 'resync', omer.id], home.dir);
+      expect(r.lines[0]).toEqual({ event: 'resync', peer: omer.id, kind: 'rollback', seq: 2, accepted: 2 });
+      const back = await inbound(send(restored, 'four', base + 32_000));
+      expect(back.map((e) => [e.obj.event, (e.obj.payload as { text?: string } | undefined)?.text])).toEqual([['message', 'four']]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('a busy lock does not lose inbound items (security review L8)', () => {
   it('handleInbound waits out a held lock instead of dropping the item', async () => {
     const { createCard, createContactRequest, generateKey, dtopic } = await import('@rendezvous/core');
