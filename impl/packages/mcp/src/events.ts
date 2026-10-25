@@ -136,7 +136,15 @@ export function toModelEvent(e: Raw, negotiating: boolean): Omit<McpEvent, 'n' |
           'Tell your user; the safe route is to get their card through a channel they trust (in person, a QR code) and request contact by card.',
       };
     case 'contact':
-      return { type: 'contact', peer: agentId(e.peer), fingerprint: fp(e.peer), tier: oneOf(TIERS)(e.tier), binding: oneOf(BINDINGS)(e.binding) };
+      return {
+        type: 'contact',
+        peer: agentId(e.peer),
+        fingerprint: fp(e.peer),
+        // Our own user's name for the peer (written locally, never by the peer).
+        local_label: typeof e.label === 'string' ? safe(e.label) : null,
+        tier: oneOf(TIERS)(e.tier),
+        binding: oneOf(BINDINGS)(e.binding),
+      };
     case 'reverse-grant': {
       // The peer's human granted us rights towards it (NOTES 60). It changes only what we may do; tell the user.
       const meetings = e.outbound_meetings === true;

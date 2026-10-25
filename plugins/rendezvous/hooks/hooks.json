@@ -1,9 +1,9 @@
 {
-  "description": "Consent guard: the assistant may not run the Rendezvous commands that grant consent or show confirm phrases. Those belong to the human.",
+  "description": "Consent guard, defence in depth and not a security boundary: the assistant may not run the Rendezvous commands that grant consent or show confirm phrases, or reach the secret key and consent file through any tool. Those belong to the human.",
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Bash|PowerShell|Read",
+        "matcher": ".*",
         "hooks": [{ "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/consent-guard.mjs\"", "timeout": 10 }]
       }
     ]

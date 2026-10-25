@@ -144,8 +144,10 @@ describe('rdv commands', () => {
     try {
       await johnL.waitFor((l) => l.event === 'ready', 'ready', 10_000);
       await omerL.waitFor((l) => l.event === 'ready', 'ready', 10_000);
-      const req = await rdv(['contact', 'request', cardFile, '--in-person', '--greeting', 'hi'], omerHome);
-      expect(req.lines[0]).toMatchObject({ via: 'card', binding: 'in-person' });
+      const bad = await rdv(['contact', 'request', cardFile, '--label', ' '], omerHome, { check: false });
+      expect(bad.code).toBe(2);
+      const req = await rdv(['contact', 'request', cardFile, '--in-person', '--greeting', 'hi', '--label', 'john@doe.com'], omerHome);
+      expect(req.lines[0]).toMatchObject({ via: 'card', binding: 'in-person', label: 'john@doe.com' });
       await johnL.waitFor((l) => l.event === 'contact', 'john contact (auto-grant)', 10_000);
       await omerL.waitFor((l) => l.event === 'contact' && l.peer === card.id, 'omer contact', 10_000);
       const contacts = await until(
@@ -158,6 +160,11 @@ describe('rdv commands', () => {
       );
       // John's grant sets what Omer may do; John's rights towards Omer stay the local default.
       expect(contacts[0]).toMatchObject({ peer: card.id, granted_tier: 'colleague', tier: 'stranger', inbound: 'default', binding: 'in-person' });
+      // The label Omer used, kept locally; the human can rename the contact.
+      expect(contacts[0].label).toBe('john@doe.com');
+      const renamed = await rdv(['contact', 'label', card.id, 'John Doe'], omerHome);
+      expect(renamed.lines[0]).toMatchObject({ event: 'labeled', peer: card.id, label: 'John Doe' });
+      expect((await rdv(['contact', 'label', 'rdv1:nobody', 'x'], omerHome, { check: false })).code).not.toBe(0);
 
       const rv = await rdv(['contact', 'revoke', card.id], omerHome);
       expect(rv.lines[0]).toMatchObject({ event: 'revoked', peer: card.id });

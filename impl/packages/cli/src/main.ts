@@ -49,10 +49,10 @@ const COMMANDS: Record<string, Command> = {
     run: cmd.lookup,
   },
   'contact request': {
-    usage: 'rdv contact request <email|card-file|agent-id> [--greeting "…"] [--in-person]',
+    usage: 'rdv contact request <email|card-file|agent-id> [--greeting "…"] [--in-person] [--label john@doe.com]',
     summary: 'Topic probe by email, or direct by card (--in-person: the card came from a QR/in person)',
     args: 1,
-    options: { greeting: { type: 'string' }, 'in-person': { type: 'boolean' } },
+    options: { greeting: { type: 'string' }, 'in-person': { type: 'boolean' }, label: { type: 'string' } },
     run: cmd.contactRequest,
   },
   'contact pending': {
@@ -62,10 +62,10 @@ const COMMANDS: Record<string, Command> = {
     run: cmd.contactPending,
   },
   'contact grant': {
-    usage: 'rdv contact grant <request-id|agent-id> [--tier friend] [--scope-file s.json]',
+    usage: 'rdv contact grant <request-id|agent-id> [--tier friend] [--scope-file s.json] [--label john@doe.com]',
     summary: 'Approve a pending request, or give a contact rights towards you (meetings etc.; the contact is told)',
     args: 1,
-    options: { tier: { type: 'string' }, 'scope-file': { type: 'string' } },
+    options: { tier: { type: 'string' }, 'scope-file': { type: 'string' }, label: { type: 'string' } },
     run: cmd.contactGrant,
   },
   'contact confirm': {
@@ -89,6 +89,12 @@ const COMMANDS: Record<string, Command> = {
     run: cmd.contactDecline,
   },
   'contact list': { usage: 'rdv contact list', summary: 'List contacts', args: 0, run: cmd.contactList },
+  'contact label': {
+    usage: 'rdv contact label <agent-id> <label>',
+    summary: 'Name a contact locally (e.g. the address you know them by); sending by name uses this, never the addresses its card claims',
+    args: 2,
+    run: cmd.contactLabel,
+  },
   'contact revoke': {
     usage: 'rdv contact revoke <agent-id>',
     summary: 'Revoke a contact',

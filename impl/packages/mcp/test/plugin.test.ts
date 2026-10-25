@@ -2,14 +2,14 @@
 // the launcher, the consent guard hook, and a lint that keeps the skill from
 // ever telling the assistant to run a consent command itself.
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { describe, expect, it } from 'vitest';
 // A plain JS module (no types); vitest does not type-check tests.
-import { checkCommand, checkPath, decide } from '../../../../plugins/rendezvous/hooks/consent-guard.mjs';
+import { checkCommand, checkPath, checkToolInput, decide } from '../../../../plugins/rendezvous/hooks/consent-guard.mjs';
 
 const REPO = join(import.meta.dirname, '..', '..', '..', '..');
 const PLUGIN = join(REPO, 'plugins', 'rendezvous');
@@ -62,7 +62,11 @@ describe('plugin manifests', () => {
     const mcp = json(join(PLUGIN, '.mcp.json'));
     expect(mcp.mcpServers.rendezvous).toEqual({ command: 'node', args: ['${CLAUDE_PLUGIN_ROOT}/bin/rdv-mcp.mjs'] });
     const hooks = json(join(PLUGIN, 'hooks', 'hooks.json')).hooks.PreToolUse;
-    expect(hooks[0].matcher.split('|')).toEqual(expect.arrayContaining(['Bash', 'PowerShell', 'Read']));
+    // Every tool, so Grep, Glob, Edit, Write, MultiEdit, NotebookEdit and MCP file tools can't reach the home either.
+    const matcher = new RegExp(`^(?:${hooks[0].matcher})$`);
+    for (const t of ['Bash', 'PowerShell', 'Read', 'Grep', 'Glob', 'Edit', 'Write', 'MultiEdit', 'NotebookEdit', 'mcp__filesystem__read_file']) {
+      expect(matcher.test(t), t).toBe(true);
+    }
     expect(hooks[0].hooks[0].command).toBe('node "${CLAUDE_PLUGIN_ROOT}/hooks/consent-guard.mjs"');
     expect(existsSync(LAUNCHER) && existsSync(GUARD)).toBe(true);
   });
@@ -102,7 +106,9 @@ describe('the skill', () => {
     expect(consentViolations('Then:\n\n```sh\nrdv dinner confirm t1 --hold 1234\n```\n')).toHaveLength(1);
     expect(consentViolations('Read the phrase: `rdv contact pending`.')).toHaveLength(1);
     expect(consentViolations('The human runs `rdv contact grant` in their own terminal.')).toEqual([]);
-    expect(consentViolations('List requests with `rdv contact pending --json`.')).toEqual([]);
+    // No --json exemption any more: the assistant lists requests with the MCP tool.
+    expect(consentViolations('List requests with `rdv contact pending --json`.')).toHaveLength(1);
+    expect(consentViolations('List requests with `rdv_pending_requests`.')).toEqual([]);
   });
 
   it('uses only the example personas', () => {
@@ -132,15 +138,118 @@ describe('consent guard hook', () => {
     'npm run rdv -- contact grant x',
     'cat ~/.rendezvous/default/agent.json',
     'Get-Content $HOME\\.rendezvous\\omer\\consent.json',
+    // Denied outright now: the --json exemption could be spoofed, and the assistant has rdv_pending_requests / rdv_negotiate.
+    'rdv contact pending --json',
+    'rdv dinner list --json',
+    'rdv contact pending # --json',
+    'rdv contact pending --greeting --json',
   ];
+
+  // Parser differential: each of these runs a consent command in a real shell.
+  const bypasses = [
+    // quotes and escapes
+    'rdv "contact" grant x',
+    "rdv 'contact' 'grant' x",
+    "r\"\"dv con''tact gr\\ant x",
+    '"rdv" contact grant x',
+    'rdv contact \\\ngrant x',
+    'rdv con`tact grant x',
+    'rdv contact {grant,list} x',
+    // comments and separators
+    '# harmless\nrdv contact grant x',
+    'echo "#"; rdv contact grant x',
+    'echo "a;b" && rdv contact confirm g1',
+    'true || rdv dinner confirm t1 --hold 1',
+    'rdv contact grant x & disown',
+    // package runners
+    'npx rdv contact grant x',
+    'npx -y @rendezvous/cli contact grant x',
+    'npx --package=@rendezvous/cli rdv dinner confirm t1',
+    'npm exec -- rdv contact grant x',
+    'npm --prefix ~/.rendezvous/src/impl run rdv -- contact grant x',
+    'pnpm rdv contact grant x',
+    'pnpm exec rdv contact confirm g1',
+    'pnpm dlx @rendezvous/cli dinner cancel t1',
+    'yarn rdv contact grant x',
+    'yarn run rdv dinner confirm t1',
+    'bunx rdv contact grant x',
+    // substitutions and nested shells
+    'echo $(rdv contact grant x)',
+    'x=$(rdv contact pending)',
+    'echo "$(rdv contact grant x)"',
+    'echo `rdv contact grant x`',
+    'echo "`rdv contact grant x`"',
+    'rdv contact $(echo grant) x',
+    'rdv $CMD grant x',
+    'rdv contact "$SUB" x',
+    'bash -c "rdv contact grant x"',
+    "sh -lc 'rdv dinner confirm t1'",
+    'cmd /c rdv contact grant x',
+    'pwsh -NoProfile -Command "rdv contact grant x"',
+    `pwsh -EncodedCommand ${Buffer.from('rdv contact grant x', 'utf16le').toString('base64')}`,
+    'powershell rdv contact grant x',
+    'eval "rdv contact grant x"',
+    'iex "rdv contact grant x"',
+    `node -e "require('child_process').execSync('rdv contact grant x')"`,
+    `node -e "require('child_process').execFileSync('rdv', ['contact', 'grant', 'x'])"`,
+    `python -c "import subprocess; subprocess.run(['rdv','contact','grant','x'])"`,
+    // wrappers and prefixes
+    'RDV_HOME=/tmp/h rdv contact grant x',
+    'env rdv contact grant x',
+    'sudo -u omer rdv contact grant x',
+    'echo grant | xargs rdv contact',
+    'Start-Process rdv -ArgumentList contact,grant,x',
+    '& { rdv contact grant x }',
+    // flags
+    'rdv listen --auto-grant=friend',
+    'npx rdv listen --negotiate --calendar c.json --auto-confirm',
+    'npx rdv init --force --email omer@example.com',
+    'npm run rdv -- init --force',
+  ];
+  it.each(bypasses)('refuses the bypass %s', (c) => expect(checkCommand(c)).toBeTruthy());
+
+  // The secret files and the home, however they are spelled.
+  const secretBypasses = [
+    'cat ~/.rendezvous/default/"agent".json',
+    "cat ~/.rendezvous/default/agen't'.json",
+    'cat ~/.rendezvous/default/agent.js\\on',
+    'cat ~/.rendezvous/default/agen?.json',
+    'cat ~/.rendezvous/default/*',
+    'cat ~/.rendezvous/*/a*',
+    'cat ~/.rendezvous/default/{agent,x}.json',
+    'cd ~/.rendezvous/default && cat *',
+    'grep -r seed ~/.rendezvous',
+    'tar czf /tmp/x.tgz ~/.rendezvous/default',
+    'cp -r ~/.rendezvous/omer /tmp/x',
+    'Select-String -Path $env:USERPROFILE\\.rendezvous\\default -Pattern seed',
+    'cat $RDV_HOME/agent.json',
+    'grep -r seed "$RDV_HOME"',
+    'cat ${RDV_HOME}/*',
+    'cat ~/.rendezvous/default/$(echo agent).json',
+    'cat ~/.rendezvous/default/$F',
+    'cat /work/tmp/omer/consent.json',
+    'echo x > ~/.rendezvous/default/consent.json',
+    'base64 agent.json.bak',
+  ];
+  it.each(secretBypasses)('refuses the secret-file bypass %s', (c) => expect(checkCommand(c)).toBeTruthy());
   const allowed = [
     'rdv --help',
     'rdv whoami',
     'rdv init --email omer@example.com --relay wss://relay.nesher.co --public-pointer',
     'rdv contact request john@doe.com --greeting "please grant me contact"',
-    'rdv contact pending --json',
-    'rdv dinner list --json',
     'rdv contact list',
+    'rdv contact request john@doe.com --label john@doe.com',
+    'rdv whoami --home ~/.rendezvous/omer',
+    'rdv-mcp --home="$RDV_HOME"',
+    'cat ~/.rendezvous/default/config.json',
+    'cd ~/.rendezvous/src && npm run build',
+    'ls ~/.rendezvous/default',
+    'curl -fsSL https://rendezvous.nesher.co/install.sh | sh',
+    'irm https://rendezvous.nesher.co/install.ps1 | iex',
+    'git commit -m "docs: rdv contact grant is for the human"',
+    'grep -rn "contact grant" impl/packages/cli/src',
+    'npm init -y',
+    'echo $HOME',
     'rdv contact decline 0f1e --block',
     'rdv send rdv1:abc --json \'{"type":"note","text":"hi"}\'',
     'rdv listen',
@@ -157,6 +266,68 @@ describe('consent guard hook', () => {
     expect(checkPath('/work/project/agent.json')).toBeUndefined();
     expect(checkPath(join('/home/omer', '.rendezvous', 'omer', 'config.json'))).toBeUndefined();
     expect(decide({ tool_name: 'Read', tool_input: { file_path: '/home/omer/.rendezvous/x/agent.json.bak' } })).toBeTruthy();
+  });
+
+  it('checks every path-like field of every tool against the home (matcher gap)', () => {
+    const h = join(homedir(), '.rendezvous', 'default');
+    const denied: Array<[string, Record<string, unknown>]> = [
+      ['Grep', { pattern: 'seed', path: h }],
+      ['Grep', { pattern: 'seed', path: join(homedir(), '.rendezvous') }],
+      ['Grep', { pattern: 'seed', path: homedir() }], // above the home: a recursive search reaches the key
+      ['Grep', { pattern: 'seed', glob: 'agent.json' }],
+      ['Grep', { pattern: 'seed', path: '/work', glob: '**/consent.json' }],
+      ['Glob', { pattern: '**/*', path: h }],
+      ['Glob', { pattern: '~/.rendezvous/**' }],
+      ['Glob', { pattern: '**/agent.json' }],
+      ['Glob', { pattern: '*', path: '~/.rendezvous/omer' }],
+      ['Edit', { file_path: join(h, 'consent.json'), old_string: 'a', new_string: 'b' }],
+      ['Write', { file_path: join(h, 'agent.json'), content: '{}' }],
+      ['MultiEdit', { file_path: join(h, 'agent.json.bak'), edits: [] }],
+      ['NotebookEdit', { notebook_path: join(h, 'agent.json'), new_source: '' }],
+      ['Read', { file_path: '~/.rendezvous/default/agent.json' }],
+      ['mcp__filesystem__read_file', { path: join(h, 'consent.json') }],
+      ['mcp__filesystem__search_files', { path: h, pattern: '*' }],
+    ];
+    for (const [tool, input] of denied) expect(checkToolInput(tool, input, '/work'), `${tool} ${JSON.stringify(input)}`).toBeTruthy();
+    const allowed: Array<[string, Record<string, unknown>]> = [
+      ['Grep', { pattern: 'agent\\.json', path: '/work/project' }], // searching code for the name is fine
+      ['Glob', { pattern: '**/*.ts', path: '/work/project' }],
+      ['Read', { file_path: join(h, 'config.json') }],
+      ['Edit', { file_path: '/work/project/README.md', old_string: 'agent.json', new_string: 'consent.json' }],
+      ['Write', { file_path: '/work/project/notes.md', content: 'cat ~/.rendezvous/default/agent.json' }],
+      ['Read', { file_path: join(homedir(), '.rendezvous', 'src', 'README.md') }],
+    ];
+    for (const [tool, input] of allowed) expect(checkToolInput(tool, input, '/work'), `${tool} ${JSON.stringify(input)}`).toBeUndefined();
+  });
+
+  it('recognizes any --home or $RDV_HOME directory, not only ~/.rendezvous', () => {
+    const root = mkdtempSync(join(tmpdir(), 'rdv-guard-'));
+    const home = join(root, 'tmp', 'omer');
+    mkdirSync(home, { recursive: true });
+    for (const f of ['agent.json', 'config.json']) writeFileSync(join(home, f), '{}');
+    const prev = process.env.RDV_HOME;
+    try {
+      expect(checkCommand(`grep -r seed ${home}`)).toBeTruthy();
+      expect(checkCommand('cat tmp/omer/*', { cwd: root })).toBeTruthy();
+      expect(checkCommand('cd tmp/omer && cat *', { cwd: root })).toBeTruthy();
+      expect(checkCommand(`rdv whoami --home ${home}`)).toBeUndefined();
+      expect(checkCommand('cat tmp/omer/config.json', { cwd: root })).toBeUndefined();
+      expect(checkToolInput('Grep', { pattern: 'seed', path: home }, root)).toBeTruthy();
+      expect(checkToolInput('Grep', { pattern: 'seed' }, home)).toBeTruthy(); // no path: the working directory
+      expect(checkToolInput('Glob', { pattern: 'tmp/omer/*' }, root)).toBeTruthy();
+      expect(checkPath(join(home, 'agent.json'))).toBeTruthy();
+      const other = join(root, 'h2');
+      process.env.RDV_HOME = other;
+      expect(checkToolInput('Grep', { pattern: 'seed', path: other }, root)).toBeTruthy();
+      expect(checkToolInput('Read', { file_path: join(other, 'consent.json') }, root)).toBeTruthy();
+      expect(checkCommand('grep -r seed $RDV_HOME')).toBeTruthy();
+      expect(checkCommand('grep -r seed $env:RDV_HOME')).toBeTruthy();
+      expect(checkCommand('cat $RDV_HOME/config.json')).toBeUndefined();
+    } finally {
+      if (prev === undefined) delete process.env.RDV_HOME;
+      else process.env.RDV_HOME = prev;
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it('answers Claude Code with a deny decision on stdout', () => {

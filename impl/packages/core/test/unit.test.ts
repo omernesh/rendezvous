@@ -402,6 +402,39 @@ describe('contact book', () => {
     expect(book.receiveRevoke(createRevoke(bob, alice.id, grant.id), alice.id)).toBe(true);
     expect(book.contact(bob.id)).toBeUndefined();
   });
+
+  it('labels a contact only with what the local human used, never with what its card claims', () => {
+    const claims = (k: ReturnType<typeof generateKey>, email: string) =>
+      createCard(k, { rendezvous: hints, discovery: { addresses: [{ type: 'email', value: email }], public_pointer: false } });
+    const john = generateKey();
+    const mallory = generateKey();
+    const book = new ContactBook();
+    // A request by card, labeled with the address the human looked up.
+    const toJohn = createContactRequest(alice, aliceCard, { toHint: john.id, greeting: 'hi' });
+    book.trackOutstanding(toJohn, 'claimed', john.id, ' john@doe.com ');
+    book.receiveGrant(createGrant(john, claims(john, 'john@doe.com'), toJohn, { tier: 'friend', scope: {} }), alice.id);
+    expect(book.contact(john.id)?.label).toBe('john@doe.com');
+    // Mallory's card claims John's address, but nobody local named her: no label, so "john@doe.com" still means John.
+    const fromMallory = createContactRequest(mallory, claims(mallory, 'john@doe.com'), { toHint: alice.id, greeting: 'hi' });
+    book.receiveRequest(fromMallory, 'claimed');
+    book.recordIssuedGrant(createGrant(alice, aliceCard, fromMallory, { tier: 'friend', scope: {} }), fromMallory, 'claimed');
+    expect(book.contact(mallory.id)?.label).toBeUndefined();
+    expect(book.byLabel('JOHN@doe.com').map((c) => c.peer)).toEqual([john.id]);
+    // A probe is labeled with the probed address; confirming a claimant makes the label ambiguous, which callers must refuse.
+    const probe = createContactRequest(alice, aliceCard, { toHint: 'john@doe.com', greeting: 'hi' });
+    book.trackOutstanding(probe);
+    expect(book.state.outstanding[probe.id].label).toBe('john@doe.com');
+    const mallory2 = generateKey();
+    const eg = createGrant(mallory2, claims(mallory2, 'john@doe.com'), probe, { tier: 'friend', scope: {} });
+    book.receiveGrant(eg, alice.id);
+    expect(book.confirmCandidate(eg.id).label).toBe('john@doe.com');
+    expect(book.byLabel('john@doe.com').map((c) => c.peer).sort()).toEqual([john.id, mallory2.id].sort());
+    // The human renames; labels are local and checked.
+    book.setLabel(mallory2.id, 'Not John');
+    expect(book.byLabel('john@doe.com').map((c) => c.peer)).toEqual([john.id]);
+    expect(() => book.setLabel(mallory2.id, 'a\u202eb')).toThrow(/label/);
+    expect(() => book.setLabel(mallory2.id, '  ')).toThrow(/label/);
+  });
 });
 
 describe('grant acceptance (security regression)', () => {

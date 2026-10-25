@@ -6,6 +6,7 @@ import {
   type AddressCard,
   Agent,
   canonAddress,
+  cleanLabel,
   type DiscoveryAddress,
   dtopic,
   fingerprint,
@@ -236,8 +237,8 @@ export async function requestContactTo(
   agent: Agent,
   target: string,
   greeting: string,
-  opts: { inPerson?: boolean; allowFile?: boolean } = {},
-): Promise<{ id: string; to: string; via: 'topic' | 'card'; binding: 'in-person' | 'claimed' }> {
+  opts: { inPerson?: boolean; allowFile?: boolean; label?: string } = {},
+): Promise<{ id: string; to: string; via: 'topic' | 'card'; binding: 'in-person' | 'claimed'; label?: string }> {
   let to: AddressCard | string;
   let via: 'topic' | 'card';
   if (isAgentId(String(target))) {
@@ -265,14 +266,19 @@ export async function requestContactTo(
   }
   if (typeof to !== 'string' && to.id === agent.id) throw new CliError('that card is your own');
   const binding = opts.inPerson ? ('in-person' as const) : ('claimed' as const);
-  const req = await agent.requestContact(to, greeting, { binding });
-  return { id: req.id, to: req.to_hint, via, binding };
+  const req = await agent.requestContact(to, greeting, { binding, label: labelOf(opts.label) });
+  const label = agent.book.state.outstanding[req.id]?.label;
+  return { id: req.id, to: req.to_hint, via, binding, ...(label ? { label } : {}) };
 }
 
 export async function contactRequest({ home, out, values, positionals }: Ctx): Promise<void> {
   const res = await withAgent(home, async (agent, config) => {
     const greeting = str(values.greeting) ?? `${config.profile}'s agent would like to get in touch.`;
-    return requestContactTo(home, agent, positionals[0], greeting, { inPerson: values['in-person'] === true, allowFile: true });
+    return requestContactTo(home, agent, positionals[0], greeting, {
+      inPerson: values['in-person'] === true,
+      allowFile: true,
+      label: str(values.label),
+    });
   });
   out.emit(
     { event: 'request-sent', ...res },
@@ -348,6 +354,17 @@ export async function contactReject({ home, out, values, positionals }: Ctx): Pr
   out.emit({ event: 'rejected', id: positionals[0], from, blocked: block }, `rejected ${positionals[0]}${block ? ` and blocked ${from}` : ''}`);
 }
 
+/** Our human's name for a contact (`--label`, local only), checked before anything is sent. */
+function labelOf(v: unknown): string | undefined {
+  const l = str(v);
+  if (l === undefined) return undefined;
+  try {
+    return cleanLabel(l);
+  } catch (err) {
+    throw new CliError((err as Error).message, 2);
+  }
+}
+
 export async function contactGrant({ home, out, values, positionals }: Ctx): Promise<void> {
   const tier = tierOf(values.tier);
   const scopeFile = str(values['scope-file']);
@@ -357,16 +374,18 @@ export async function contactGrant({ home, out, values, positionals }: Ctx): Pro
     if (!s || typeof s !== 'object' || Array.isArray(s)) throw new CliError('scope file must hold a JSON object', 2);
     scope = s as GrantScope;
   }
+  const label = labelOf(values.label);
   const target = positionals[0];
   const contact = await withAgent(home, async (agent) => {
     // An agent ID: the owner grants an existing contact (one we requested) rights towards us,
     // and the agent sends the peer a reverse grant so it can use them (NOTES 60).
     if (isAgentId(target)) {
       if (!agent.book.contact(target)) throw new CliError(`no active contact ${target}`);
+      if (label !== undefined) throw new CliError('--label goes with a request ID; to name an existing contact use "rdv contact label <agent-id> <label>"', 2);
       return agent.allowInbound(target, { tier, scope });
     }
     if (!agent.book.state.pending[target]) throw new CliError(`no pending request ${target}`);
-    return agent.grant(target, { tier, scope });
+    return agent.grant(target, { tier, scope, label });
   });
   out.emit({ event: 'granted', ...contactView(contact) }, `granted: ${contactText(contact)}`);
 }
@@ -383,6 +402,17 @@ export async function contactDecline({ home, out, values, positionals }: Ctx): P
     { event: 'declined', id: positionals[0], from, blocked: block },
     `declined ${positionals[0]}${block ? ` and blocked ${from}` : ''}`,
   );
+}
+
+/** Our human names a contact (local only): the name "tell John" resolves through, unlike the addresses its card claims. */
+export async function contactLabel({ home, out, positionals }: Ctx): Promise<void> {
+  const [peer, given] = positionals;
+  const label = labelOf(given);
+  const contact = await withAgent(home, async (agent) => {
+    if (!agent.book.contact(peer)) throw new CliError(`no active contact ${peer}`);
+    return agent.book.setLabel(peer, label!);
+  });
+  out.emit({ event: 'labeled', ...contactView(contact) }, `labeled: ${contactText(contact)}`);
 }
 
 export async function contactList({ home, out }: Ctx): Promise<void> {

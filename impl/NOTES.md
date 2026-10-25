@@ -650,24 +650,65 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       Windows, which a stdio client can't spawn without `cmd /c`. When the
       build is missing it exits 1 with install instructions on stderr
       (stdout stays clean: it is the MCP channel).
-    - **Consent guard hook** (PreToolUse on Bash, PowerShell and Read). It
-      denies the commands that approve or that print a phrase (the list in
-      the MCP README) and reads of `agent.json`, `agent.json.bak` or
-      `consent.json` under `.rendezvous` or `$RDV_HOME`. JSON-mode
-      `contact pending` and `dinner list` stay allowed: they show no
-      phrase. Honest limit, same as item 57: it matches command text, so a
-      model with a shell can get past it (an alias, a variable, another
-      interpreter). It makes drifting or injected attempts fail loudly; the
-      boundary is still the MCP gate and running the server as another user.
+    - **Consent guard hook** (PreToolUse, matcher `.*`: every tool). **It is
+      defence in depth, not a security boundary**; the boundary is the MCP
+      consent gate (items 57, 59) and running the server as another user. It
+      makes drifting or injected attempts fail loudly. What it refuses:
+      - The commands that approve or print a phrase (the list in the MCP
+        README), now including `contact pending` and `dinner list` in any
+        mode: the `--json` exemption was matched on raw text and could be
+        spoofed (`rdv contact pending # --json`), and the assistant has
+        `rdv_pending_requests` and `rdv_negotiate` "status" for them.
+      - Any command naming `agent.json`, `agent.json.bak` or `consent.json`,
+        in any directory.
+      - Any path-like tool field (`file_path`, `notebook_path`, `path`,
+        `paths`, `glob`, Glob's `pattern`, and the same names in MCP tools)
+        that is or reaches into a Rendezvous home: `~/.rendezvous` and its
+        profiles (not `~/.rendezvous/src`), `$RDV_HOME`, and any folder that
+        looks like one on disk (`config.json` beside `agent.json` or
+        `consent.json`), which covers `--home` dirs. A search with no path
+        is checked against the working directory, and a search of a folder
+        above `~/.rendezvous` or `$RDV_HOME` is refused too. Shell words get
+        the same check, including globs, `$RDV_HOME`, and `cd` earlier in
+        the command; `ls`, `cd` and the like may name a home, `--home` may
+        take one.
+      Matching runs on a shell-style parse, not the raw string: quotes,
+      escapes and line continuations removed, `#` comments dropped, brace
+      expansion, `$(…)`, backticks and `<(…)` checked as commands of their
+      own, `bash -c`, `cmd /c`, `pwsh -Command`/`-EncodedCommand`, `eval`,
+      `iex`, and `node -e`/`python -c` code (with its string literals and
+      argument arrays) checked recursively, each in both POSIX and
+      PowerShell syntax. rdv dispatches on its first two arguments, so the
+      guard refuses any two adjacent words that are a consent subcommand
+      (`contact grant`, `dinner list`, …) wherever they appear, which
+      covers `npx`, `pnpm`, `yarn`, `npm run rdv --`, `bin.js` and
+      `Start-Process -ArgumentList`. A subcommand or home path built at run
+      time (`rdv contact $X`, `xargs rdv contact`) is refused as uncheckable.
+      Honest limit, same as item 57: a script file, an alias defined in an
+      earlier call, or an interpreter it does not know still gets through.
+      Each bypass form above has a regression test in `plugin.test.ts`.
     - **Skill lint.** `packages/mcp/test/plugin.test.ts` runs every inline
       command and code-block line of the skill and its references through
       the guard; a refused command may appear only in a paragraph that says
       it is the human's ("own terminal", "never run"), and never in a code
       block.
-    - **`rdv_status` contacts carry `claimed_addresses`** from the peer's
-      card (strict address or quarantined, at most 8), so "tell John …" can
-      find John's agent ID. They are self-asserted, like everything in a
-      card; the contact itself is what the humans approved.
+    - **Recipients resolve through a local label, not the card.** The first
+      version exposed `claimed_addresses` from the peer's card and the skill
+      resolved "tell John" with them, so a contact whose card claimed
+      `john@doe.com` could get John's messages. Now `Contact.label` (local
+      only, never sent) records what our human used: the address probed
+      (`OutstandingRequest.label`, default `to_hint`), the address looked up
+      with `rdv_discover` before requesting by card (kept in the server's
+      memory), or `label` given to `rdv_request_contact` / `rdv_grant`
+      (`--label` in the CLI). `rdv_status` shows it as `local_label`, the
+      card's addresses as `unverified_claims`, and `label_conflict` when two
+      contacts share a label (compared as canonical addresses, else
+      case-insensitively). `rdv_send` takes `to` = a label and refuses when
+      no contact or more than one has it, naming their fingerprints; the
+      card's addresses never resolve. The skill finds people only by label
+      and shows the fingerprint before the first message. Contacts made
+      before this change have no label until the human names one
+      (`rdv contact label <agent-id> <label>`). No wire change.
     - **What the plugin can't do:** in `claude -p` there is no elicitation
       (Claude Code cancels it), so headless runs fall back to the phrase.
       The phrase reaches the human through `rdv contact pending` in their
