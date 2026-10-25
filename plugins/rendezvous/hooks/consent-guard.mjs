@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 // PreToolUse hook: keeps the assistant away from the Rendezvous commands and
 // files that belong to the human. Consent (granting a contact, confirming a
-// probe answer or a meeting, canceling an agreed one, auto-grant/auto-confirm
-// listeners), naming a contact (`rdv contact label`: a label decides who
+// probe answer or a meeting, canceling an agreed one, starting a peer's task
+// or releasing a result to it, auto-grant/auto-confirm listeners), naming a contact (`rdv contact label`: a label decides who
 // "tell John" reaches), the commands that show confirm phrases (`rdv contact
-// pending`, `rdv dinner list`), re-keying (`rdv init --force`), and the secret key and
+// pending`, `rdv dinner list`, `rdv task list`), re-keying (`rdv init --force`), and the secret key and
 // consent state (`agent.json`, `agent.json.bak`, `consent.json`) in the
 // Rendezvous home, through any tool.
 //
@@ -41,6 +41,10 @@ const LABEL_REQUEST =
   'rdv contact request --label with an agent ID or card names a contact without the human ever seeing the label (a request by card needs no approval on your side). Leave out --label, or probe the address: the human then confirms the answer and its label.';
 const DINNER_LIST =
   'rdv dinner list is for the human, in their own terminal (it shows confirm phrases meant only for them). Use rdv_negotiate with action "status".';
+const TASK_LIST =
+  'rdv task list is for the human, in their own terminal (it shows confirm phrases meant only for them). Use rdv_task with action "list".';
+const TASK_GATE =
+  'That Rendezvous command is for the human, in their own terminal. Use the MCP tools: rdv_task "approve-start" and "approve-release" ask the human through an approval form or a confirm phrase they type to you.';
 const OPAQUE =
   'That command builds a Rendezvous subcommand or path at run time, so the consent guard cannot check it. Spell it out, or use the rdv_* MCP tools.';
 const NESTED = 'That command nests too deeply for the consent guard to check. Spell it out.';
@@ -246,6 +250,8 @@ const LISTING = new Set(['ls', 'dir', 'gci', 'get-childitem', 'cd', 'pushd', 'po
 
 const CONTACT_SUBS = { grant: `rdv contact grant: ${HUMAN_ONLY}`, confirm: `rdv contact confirm: ${HUMAN_ONLY}`, resync: `rdv contact resync: ${HUMAN_ONLY}`, label: LABEL, pending: PENDING };
 const DINNER_SUBS = { confirm: `rdv dinner confirm: ${HUMAN_ONLY}`, cancel: `rdv dinner cancel: ${HUMAN_ONLY}`, list: DINNER_LIST };
+// The two task gates (SPEC §5.5): starting a peer's task, and releasing what goes back to it.
+const TASK_SUBS = { approve: `rdv task approve: ${TASK_GATE}`, release: `rdv task release: ${TASK_GATE}`, list: TASK_LIST };
 
 // --- paths ----------------------------------------------------------------------
 
@@ -350,6 +356,7 @@ function checkWords(words, ctx, depth) {
     for (const [cmd, subs] of [
       ['contact', CONTACT_SUBS],
       ['dinner', DINNER_SUBS],
+      ['task', TASK_SUBS],
     ]) {
       const named = couldBe(a, cmd, ctx.cwd);
       for (const [s, why] of Object.entries(subs)) {
@@ -364,7 +371,7 @@ function checkWords(words, ctx, depth) {
   if (feeder >= 0 && words.slice(feeder + 1).some(isRdv)) {
     const at = words.findIndex((w, k) => k > feeder && isRdv(w));
     const tail = words.slice(at + 1).filter((w) => !w.startsWith('-'));
-    if (tail.length < 2 || ['contact', 'dinner'].includes(tail[tail.length - 1].toLowerCase())) throw new Refusal(OPAQUE);
+    if (tail.length < 2 || ['contact', 'dinner', 'task'].includes(tail[tail.length - 1].toLowerCase())) throw new Refusal(OPAQUE);
   }
   const listenAt = words.findIndex((w) => couldBe(w, 'listen', ctx.cwd));
   if (listenAt >= 0 && words.slice(listenAt + 1).some((w) => braces(w).some((x) => /^--auto-(grant|confirm)/i.test(x)))) {

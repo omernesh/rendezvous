@@ -5,6 +5,8 @@
 //   inbox.jsonl  received payloads, one JSON object per line
 //   cards.json   cards found by `rdv lookup` (so `contact request <agent-id>` works)
 //   negotiations.json  dinner negotiations (@rendezvous/a2a engine state)
+//   tasks.json   general tasks (tasks/v1 engine state) and results waiting for release (mode 600)
+//   audit.jsonl  gates passed without asking the human (an `auto` start, a `notify`), and every approval (bounded)
 //   consent.json  confirm phrases for pending requests and meetings (written by the MCP server)
 //   holds.json   which calendar file holds each dinner hold, tentative or agreed (to release or finalize it)
 //   relays.json  per-relay diagnostics and cooldowns (last OK, last error), written after each publish
@@ -15,7 +17,7 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { emptyState, type NegotiationState } from '@rendezvous/a2a';
+import { emptyState, emptyTaskState, type NegotiationState, type TaskEngineState, type TaskPart } from '@rendezvous/a2a';
 import type { AddressCard, AgentState, DiscoveryAddress, GrantScope, InboundPolicy, Payload, RelayStatus, Tier } from '@rendezvous/core';
 import { acquireLock, writeAtomic } from './fsutil.js';
 
@@ -49,7 +51,49 @@ export interface InboxEntry {
  * dinner, canceling an agreed one, or granting an existing contact rights
  * towards us (`inbound`, issue #1: a reverse grant).
  */
-export type ConsentAction = 'request' | 'candidate' | 'meeting' | 'cancel' | 'inbound';
+export type ConsentAction = 'request' | 'candidate' | 'meeting' | 'cancel' | 'inbound' | 'task-start' | 'task-release';
+
+/**
+ * What our side wants to send for a peer's task, held until our human
+ * releases it (the release gate, SPEC §5.5): exactly the arguments the engine
+ * is called with again once released.
+ */
+export type ReleaseContent =
+  | {
+      kind: 'artifact';
+      artifact: { artifactId: string; name?: string; description?: string; parts: TaskPart[]; append?: boolean; lastChunk?: boolean };
+      /** Also end the task `completed` once the artifact has left. */
+      complete?: boolean;
+    }
+  | { kind: 'question'; text?: string; data?: Record<string, unknown> }
+  | { kind: 'finish'; outcome: 'completed' | 'failed'; text?: string; data?: Record<string, unknown> };
+
+export interface PendingRelease {
+  taskId: string;
+  peer: string;
+  content: ReleaseContent;
+  created: string;
+}
+
+/** tasks.json: the tasks engine's state and, per task, at most one draft waiting for release. */
+export interface TaskHostState {
+  v: 1;
+  engine: TaskEngineState;
+  releases: Record<string, PendingRelease>;
+}
+
+/** One line of audit.jsonl. */
+export interface AuditEntry {
+  ts: string;
+  peer: string;
+  capability: string;
+  task: string;
+  gate: 'start' | 'release' | 'notify';
+  /** Who let it pass: the grant (class `auto`/`notify`), or the human (form, phrase, terminal). */
+  by: 'grant' | 'human';
+  approval?: string;
+  digest?: string;
+}
 
 /**
  * `consent.json` key: IDs are peer-chosen and may collide across actions, so
@@ -102,6 +146,9 @@ export class CliError extends Error {
   }
 }
 
+/** Lines audit.jsonl keeps after compaction. */
+export const AUDIT_KEPT = 1000;
+
 const PROFILE_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/;
 
 export class Home {
@@ -135,6 +182,12 @@ export class Home {
   }
   get consentPath() {
     return join(this.dir, 'consent.json');
+  }
+  get tasksPath() {
+    return join(this.dir, 'tasks.json');
+  }
+  get auditPath() {
+    return join(this.dir, 'audit.jsonl');
   }
   get holdsPath() {
     return join(this.dir, 'holds.json');
@@ -239,6 +292,39 @@ export class Home {
     writeAtomic(this.negotiationsPath, JSON.stringify(state, null, 2) + '\n', 0o600);
   }
 
+  readTasks(): TaskHostState {
+    if (!existsSync(this.tasksPath)) return { v: 1, engine: emptyTaskState(), releases: {} };
+    const s = readJson<TaskHostState>(this.tasksPath);
+    const ok = (o: unknown) => typeof o === 'object' && o !== null && !Array.isArray(o);
+    if (s?.v !== 1 || !ok(s.engine) || s.engine.v !== 1 || !ok(s.engine.tasks) || !ok(s.releases)) throw new CliError(`unrecognized ${this.tasksPath}`);
+    s.engine.dropped ??= {};
+    return s;
+  }
+
+  writeTasks(state: TaskHostState): void {
+    writeAtomic(this.tasksPath, JSON.stringify(state, null, 2) + '\n', 0o600);
+  }
+
+  /** Append to audit.jsonl, keeping its last AUDIT_KEPT lines (compacted at twice that). */
+  appendAudit(entries: AuditEntry[]): void {
+    if (entries.length === 0) return;
+    const text = existsSync(this.auditPath) ? readFileSync(this.auditPath, 'utf8') : '';
+    const lines = text.split('\n').filter((l) => l.trim());
+    const add = entries.map((e) => JSON.stringify(e));
+    if (lines.length + add.length > 2 * AUDIT_KEPT) {
+      writeAtomic(this.auditPath, [...lines, ...add].slice(-AUDIT_KEPT).join('\n') + '\n', 0o600);
+    } else {
+      // A crash can leave a torn last line: start on a fresh one so ours stays readable.
+      const sep = text && !text.endsWith('\n') ? '\n' : '';
+      appendFileSync(this.auditPath, sep + add.join('\n') + '\n', { mode: 0o600 });
+    }
+  }
+
+  readAudit(): AuditEntry[] {
+    if (!existsSync(this.auditPath)) return [];
+    return parseJsonLines(readFileSync(this.auditPath, 'utf8'));
+  }
+
   readConsent(): Record<string, ConsentEntry> {
     return existsSync(this.consentPath) ? readJson(this.consentPath) : {};
   }
@@ -303,6 +389,8 @@ export class Home {
       this.inboxPath,
       this.cardsPath,
       this.negotiationsPath,
+      this.tasksPath,
+      this.auditPath,
       this.consentPath,
       this.eventsPath,
       this.holdsPath,

@@ -13,7 +13,7 @@
 // refused or attaches), and appends what it handles to `events.jsonl`.
 import { spawn } from 'node:child_process';
 import { statSync } from 'node:fs';
-import { expire, isA2APayload, isTerminal, receive, type Step } from '@rendezvous/a2a';
+import { type CapabilityRegistry, expire, isA2APayload, isTerminal, receive, type Step } from '@rendezvous/a2a';
 import {
   Agent,
   type AgentKey,
@@ -45,6 +45,7 @@ import {
   requestText,
   requestView,
 } from './output.js';
+import { hostRegistry, taskEventText, taskEventView, tasksExpiring, tasksInbound, tasksRoute } from './tasks.js';
 import { relayTransport } from './transport.js';
 
 /** How often `listen --negotiate` checks pending negotiations for expiry. */
@@ -156,6 +157,8 @@ export interface ListenOptions {
   exec?: string;
   /** Run the dinner negotiation engine on inbound a2a/* payloads (PLAN §5.3). */
   negotiate?: NegotiateOptions;
+  /** The capabilities tasks/v1 payloads are routed to (always on; default: hostRegistry()). */
+  tasks?: { registry: CapabilityRegistry };
 }
 
 /**
@@ -174,7 +177,7 @@ export async function handleInbound(
   home: Home,
   real: Transport,
   feed: (t: FeedTransport) => void,
-  opts: Pick<ListenOptions, 'autoGrant' | 'autoGrantAnyTier' | 'negotiate'>,
+  opts: Pick<ListenOptions, 'autoGrant' | 'autoGrantAnyTier' | 'negotiate' | 'tasks'>,
   sweep = false,
   lock: { timeoutMs: number; attempts: number } = INBOUND_LOCK,
 ): Promise<Emitted[]> {
@@ -198,7 +201,7 @@ async function handleLocked(
   home: Home,
   real: Transport,
   feed: (t: FeedTransport) => void,
-  opts: Pick<ListenOptions, 'autoGrant' | 'autoGrantAnyTier' | 'negotiate'>,
+  opts: Pick<ListenOptions, 'autoGrant' | 'autoGrantAnyTier' | 'negotiate' | 'tasks'>,
   sweep: boolean,
   events: Emitted[],
   timeoutMs: number,
@@ -210,6 +213,7 @@ async function handleLocked(
       const loaded = JSON.stringify(agent.toJSON());
       const grants: Promise<unknown>[] = [];
       const inbox: InboxEntry[] = [];
+      const messageEvents = new Map<InboxEntry, Emitted>();
       let flushed = 0;
       // Inbox first, then state: a crash in between re-delivers rather than loses.
       const save = () => {
@@ -241,7 +245,9 @@ async function handleLocked(
       agent.on('message', (from, payload, env) => {
         const entry: InboxEntry = { ts: new Date().toISOString(), from, seq: env.seq, payload };
         inbox.push(entry);
-        events.push({ obj: { event: 'message', ...entry }, human: `message ${inboxText(entry)}` });
+        const ev: Emitted = { obj: { event: 'message', ...entry }, human: `message ${inboxText(entry)}` };
+        messageEvents.set(entry, ev);
+        events.push(ev);
       });
       agent.on('revoked', (peer) => events.push({ obj: { event: 'revoked', peer }, human: `revoked by ${clean(peer)}` }));
       // We revoked a contact for gross abuse of per-capability limits (§5.3, issue #28): an rdv/revoke went out.
@@ -270,7 +276,7 @@ async function handleLocked(
         }
       }
       await agent.idle();
-      if (opts.negotiate) await negotiateInbound(home, opts.negotiate, agent, inbox, sweep, events);
+      await routeInbound(home, opts, agent, inbox, messageEvents, sweep, events);
       await agent.idle();
       agent.stop();
       // Replays and refused items usually change nothing: skip the rewrite then.
@@ -286,16 +292,61 @@ async function handleLocked(
   );
 }
 
-// Inside the lock: feed this item's a2a payloads to the engine, save its state, then hold and send.
+/**
+ * Inside the lock: route this item's A2A payloads (routeA2A, NOTES 73 g) to
+ * the tasks engine, always, and to the meeting engine when negotiating, as
+ * before. A payload the tasks engine takes is marked `routed: 'tasks'` on its
+ * message event, so readers show the engine's task events instead.
+ */
+async function routeInbound(
+  home: Home,
+  opts: Pick<ListenOptions, 'negotiate' | 'tasks'>,
+  agent: Agent,
+  inbox: InboxEntry[],
+  messageEvents: Map<InboxEntry, Emitted>,
+  sweep: boolean,
+  events: Emitted[],
+): Promise<void> {
+  let route: { tasks: InboxEntry[]; rest: InboxEntry[] } | undefined;
+  try {
+    route = tasksRoute(home, inbox);
+  } catch (err) {
+    // Unreadable tasks.json: meetings keep working; the human is told.
+    events.push({ obj: { event: 'error', message: (err as Error).message }, human: `error: ${clean((err as Error).message)}` });
+  }
+  if (!route) {
+    if (opts.negotiate) await negotiateInbound(home, opts.negotiate, agent, inbox.filter((e) => isA2APayload(e.payload)), sweep, events);
+    return;
+  }
+  for (const e of route.tasks) {
+    const m = messageEvents.get(e);
+    if (m) m.obj.routed = 'tasks';
+  }
+  if (opts.negotiate) await negotiateInbound(home, opts.negotiate, agent, route.rest.filter((e) => isA2APayload(e.payload)), sweep, events);
+  if (route.tasks.length === 0 && !(sweep && tasksExpiring(home))) return;
+  const run = await tasksInbound(home, opts.tasks?.registry ?? hostRegistry(), agent, route.tasks, sweep);
+  for (const ev of run.events) events.push({ obj: taskEventView(ev), human: taskEventText(ev) });
+  for (const n of run.notices) {
+    events.push({
+      obj: { event: 'task', kind: n.kind, task: n.taskId, peer: n.peer, capability: n.capability, state: n.kind === 'notify' ? 'completed' : 'working' },
+      human:
+        n.kind === 'notify'
+          ? `task notify ${clean(n.taskId)} from ${clean(n.peer)}: ${clean(n.capability)} (shown to you only; nothing was done)`
+          : `task started ${clean(n.taskId)} from ${clean(n.peer)}: ${clean(n.capability)} (class auto: the grant allows it without asking; audited)`,
+    });
+  }
+  for (const message of run.errors) events.push({ obj: { event: 'error', message }, human: `error: ${clean(message)}` });
+}
+
+// Inside the lock: feed this item's meeting payloads to the engine, save its state, then hold and send.
 async function negotiateInbound(
   home: Home,
   n: NegotiateOptions,
   agent: Agent,
-  inbox: InboxEntry[],
+  a2a: InboxEntry[],
   sweep: boolean,
   events: Emitted[],
 ): Promise<void> {
-  const a2a = inbox.filter((e) => isA2APayload(e.payload));
   if (a2a.length === 0 && !sweep) return;
   let state = home.readNegotiations();
   const before = JSON.stringify(state);
@@ -319,8 +370,13 @@ async function negotiateInbound(
   }
 }
 
-/** Any pending negotiation that can expire? Unreadable state counts, so the sweep reports it. */
-export function hasExpiring(home: Home): boolean {
+/**
+ * Anything that can expire: a pending negotiation (when `meetings`, the
+ * default) or an open task. Unreadable state counts, so the sweep reports it.
+ */
+export function hasExpiring(home: Home, opts: { meetings?: boolean } = {}): boolean {
+  if (tasksExpiring(home)) return true;
+  if (opts.meetings === false) return false;
   try {
     return Object.values(home.readNegotiations().tasks).some((t) => !isTerminal(t.state) && t.expires);
   } catch {
@@ -392,17 +448,16 @@ export async function listen(home: Home, out: Output, opts: ListenOptions): Prom
   // Relay sockets come and go (the transport re-subscribes); this timer keeps
   // the process alive in between instead of exiting with nothing left to do.
   const keepAlive = setInterval(() => {}, 1 << 30);
-  const sweeper = opts.negotiate
-    ? setInterval(() => {
-        if (hasExpiring(home)) enqueue(() => {}, true);
-      }, SWEEP_MS)
-    : undefined;
+  // Negotiations (with --negotiate) and tasks (always) expire on the sweep.
+  const sweeper = setInterval(() => {
+    if (hasExpiring(home, { meetings: opts.negotiate !== undefined })) enqueue(() => {}, true);
+  }, SWEEP_MS);
   await new Promise<void>((resolve) => {
     process.once('SIGINT', resolve);
     process.once('SIGTERM', resolve);
   });
   clearInterval(keepAlive);
-  if (sweeper) clearInterval(sweeper);
+  clearInterval(sweeper);
   for (const u of unsubs) u();
   await chain;
   real.close();

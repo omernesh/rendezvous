@@ -653,3 +653,43 @@ describe('docs/agents.md and the agent packaging', () => {
     expect(doc).toContain('git:omernesh/rendezvous@skill');
   });
 });
+
+describe('the task gates are the human’s (issue #24)', () => {
+  const denied = [
+    'rdv task approve 0f1e --code 0123456789ab',
+    'rdv task release 0f1e --code 0123456789ab',
+    'rdv task list',
+    'rdv task list --json',
+    'rdv --profile john task approve 0f1e --code 1',
+    'rdv "task" approve 0f1e --code 1',
+    "rdv ta''sk rel\\ease 0f1e --code 1",
+    'rdv task {approve,list} 0f1e',
+    'npx rdv task release 0f1e --code 1',
+    'npm run rdv -- task approve 0f1e --code 1',
+    'node ~/.rendezvous/src/impl/packages/cli/dist/src/bin.js task release 0f1e --code 1',
+    'echo $(rdv task approve 0f1e --code 1)',
+    'bash -c "rdv task release 0f1e --code 1"',
+    'pwsh -NoProfile -Command "rdv task approve 0f1e --code 1"',
+    `node -e "require('child_process').execFileSync('rdv', ['task', 'release', '0f1e', '--code', '1'])"`,
+    'rdv task $(echo approve) 0f1e',
+    'echo approve | xargs rdv task',
+    'Start-Process rdv -ArgumentList task,approve,0f1e',
+  ];
+  const allowed = [
+    'rdv task request rdv1:abc --text "Draft the copy"',
+    'rdv task submit 0f1e --text "the result"',
+    'rdv task decline 0f1e',
+    'rdv task cancel 0f1e',
+    'rdv task input 0f1e --text "Tuesday"',
+  ];
+  it.each(denied)('the guard refuses %s', (c) => expect(checkCommand(c)).toBeTruthy());
+  it.each(allowed)('the guard allows %s', (c) => expect(checkCommand(c)).toBeUndefined());
+
+  it('the skill lint catches a skill that tells the assistant to pass a task gate', () => {
+    expect(consentViolations('Start it: run `rdv task approve <id> --code <code>`.')).toHaveLength(1);
+    expect(consentViolations('Then:\n\n```sh\nrdv task release t1 --code 0123456789ab\n```\n')).toHaveLength(1);
+    expect(consentViolations('See what waits: `rdv task list`.')).toHaveLength(1);
+    expect(consentViolations('The human runs `rdv task approve` and `rdv task release` in their own terminal.')).toEqual([]);
+    expect(consentViolations('Draft the result with `rdv task submit <id> --text "…"`.')).toEqual([]);
+  });
+});

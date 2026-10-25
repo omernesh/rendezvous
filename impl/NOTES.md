@@ -1424,6 +1424,102 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       every envelope and revokes as before (item 16). A `max_frequency`
       on the meetings URI is not enforced yet.
 
+## Tasks in the hosts: routing and the two gates (v0.3)
+
+76. **`rdv listen` and `rdv-mcp` run tasks/v1, with the start and release
+    gates** (**spec change**, §5.5, §13; issues #24, #36, #39, design A.5).
+    The glue is `packages/cli/src/tasks.ts`, shared by both hosts like
+    `negotiate.ts`:
+    - **Routing.** `handleInbound` routes each A2A payload with `routeA2A`
+      inside the same per-item lock and critical section as meetings: tasks
+      always, meetings only with `--negotiate` (or a calendar), as before.
+      Engine state is `tasks.json` (mode 600): the engine's state, which
+      bounds itself (NOTES 73), plus at most one draft per task waiting for
+      release, pruned when its task ends, vanishes or reopens a gate.
+      Effects are carried out: `abort` drops the draft, `start` and `notify`
+      are audited, `notify` is told to the human (listener line, the
+      server's log, an `rdv_inbox` event). The expiry sweep runs for tasks
+      even without `--negotiate`. A routed message's event is marked
+      `routed: "tasks"`, so `rdv_inbox` shows the task events instead of the
+      raw `a2a/*` message. `audit.jsonl` keeps 1000 lines (compacted at
+      2000). `auto_approve: all` (issue #25) plugs in where `tasksInbound`
+      gets the `start-gate` effects and where `submitDraft` gets the
+      `release-gate` effect, and logs to the same file.
+    - **Per-capability limits** (item 75): `tasksInbound` passes core's
+      limiter, `limit: (cap, o) => agent.admitTask(peer, cap, o, now)`, so
+      `max_open` and `max_frequency` from our grant hold and gross abuse
+      revokes; no reply goes to a peer that is no longer a contact.
+    - **`effectiveInvoke`, never the raw field** (issue #39). `taskCtx`
+      gives the engine `effectiveInvoke(inboundScope)` for a peer's task and
+      our executor steps, `effectiveInvoke(outboundScope)` for a task we
+      request; a status or artifact for a task we requested rides the
+      outbound scope (`inboundTaskCtx`, as `inboundMeetingScope`). A cli
+      test runs the #23 scope matrix through `receiveTask` and `scopeAllows`
+      and they agree on every shape (a malformed `invoke` beside a good key,
+      a wildcard, a bad `max_open`, the meeting rule).
+    - **Advertised** (issue #36): a new card lists `tasks/v1` and the
+      registry's URIs (`hostCardCapabilities`; the host registers
+      `request/v1`, `a2a`'s `REQUEST_CAPABILITY`: class `free-form`, no
+      `input`, results text and files only, since it defines no data
+      shapes). `cardCapabilities()` itself still defaults to the meeting
+      URIs. A card made before this keeps what it listed, so a peer that
+      checks it sends no task: re-create the agent, or wait for
+      `rdv/card-update` (design C.1). An outbound task needs both the
+      peer's grant (`effectiveInvoke`) and the peer's card to list
+      `tasks/v1` and the capability; a card without `capabilities` lists
+      nothing.
+    - **Gates by class.** `notify`: completed at once, audited. `auto`: the
+      start passes on the grant, audited (`by: "grant"`). `confirm`,
+      `free-form`: the start waits for the human. **Release:** everything a
+      host sends for a peer's task was written by its model or its human,
+      so it is "owner data or a model's output" (§5.5) and every draft
+      passes the release gate whatever the class (`ownerData: true`); a bare
+      `finish` with no text carries nothing of ours and is sent at once. A
+      later slice with host-run handlers for `auto` capabilities can skip
+      it for their output.
+    - **Digests** (the NOTES 59 pattern). `startDigest` covers the peer and
+      its fingerprint, `contextId`, `taskId`, capability and class, the
+      task's `created`, the gate's step and `since`, `input` (and the answer
+      for a step `input`), each text part's SHA-256 and a hash of each file
+      part. `releaseDigest` covers the peer, the task (`created` included)
+      and exactly what would be sent. JSON for hashing has sorted keys but,
+      unlike core's `canonicalize`, allows non-integers (capability data
+      may hold them). `approveStart` / `approveRelease` recompute the digest
+      under the lock where the step runs and throw `TaskChangedError`,
+      nothing saved or sent, when it differs; the released artifact is
+      compared with the draft before it leaves.
+    - **Consent.** New actions `task-start` and `task-release` in
+      `consent.json`, digest-bound like the meeting phrase: `refreshPhrases`
+      gives every task at a gate and every draft a phrase (announced on the
+      server's log with what it starts or sends), a changed task gets a new
+      one (the old one is `changed`), an ended one loses it, and it is used
+      up only once the step went through. Elicitation shows the task (peer
+      text marked untrusted) or the draft; "decline" on a start rejects the
+      task (bound to the digest), on a release throws the draft away. The
+      terminal: `rdv task list` (text mode re-issues and shows the phrases;
+      JSON shows `start_code` / `release_code`), `rdv task approve <id>
+      --code`, `rdv task release <id> --code`; all three are on the consent
+      guard's human-only list and so in the skill lint. `rdv task request`,
+      `submit`, `ask`, `finish`, `decline`, `cancel` and `input` are not
+      gates (a draft only waits for release; declining and cancelling only
+      reduce).
+    - **MCP** `rdv_task`: `list`, `status`, `request`, `input`, `cancel`,
+      `decline`, `submit` (`result` by default, ending the task once
+      released; `question`; `finish`), `approve-start`, `approve-release`.
+      No result carries a phrase or a code; peer text, input, file parts
+      and results are `untrusted_peer_text`. `rdv_status` gains `tasks`
+      (capabilities, open, waiting for the user, dropped without asking).
+    - **Honest limit** (as item 57): the release gate stops a result from
+      leaving through the task. A model with a shell can still run `rdv
+      send` with any payload, `a2a/*` included (`rdv_send` refuses those
+      types, the CLI does not), so where the model has a shell, keep it
+      away from the home or run `rdv-mcp` as another user.
+    - **Not here:** quarantine guidance for the model that does a
+      `free-form` task, and the hostile-text test (issue #27); requester-side
+      release of the owner's files, since tasks carry no files from these
+      tools yet (issue #26);
+      `auto_approve: all` (issue #25); full docs (issue #29).
+
 ## Not implemented yet
 
 

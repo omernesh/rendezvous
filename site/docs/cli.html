@@ -336,6 +336,14 @@ npm run rdv -- --help                     # or: node packages/cli/dist/src/bin.j
 <td>dinner negotiations (the a2a engine state)</td>
 </tr>
 <tr>
+<td><code>tasks.json</code></td>
+<td>general tasks (the tasks/v1 engine state) and, per task, the draft waiting for your release</td>
+</tr>
+<tr>
+<td><code>audit.jsonl</code></td>
+<td>each task gate passed: by the grant (<code>auto</code>, <code>notify</code>) or by you (bounded to its last 1000 lines)</td>
+</tr>
+<tr>
 <td><code>consent.json</code></td>
 <td>salted scrypt hashes of the confirm phrases for pending requests, probe answers and held dinners, each bound to what the human was shown (written by <code>rdv-mcp</code>; <code>contact pending</code> and <code>dinner list</code> issue and show a fresh phrase in text mode)</td>
 </tr>
@@ -450,6 +458,30 @@ npm run rdv -- --help                     # or: node packages/cli/dist/src/bin.j
 <tr>
 <td><code>rdv dinner list</code></td>
 <td>Negotiations with state, round, agreed or held slot (and what it waits for)</td>
+</tr>
+<tr>
+<td><code>rdv task request &lt;agent-id&gt; --text "…" [--capability &lt;uri&gt;] [--input '{…}'] [--expires &lt;rfc3339&gt;]</code></td>
+<td>Ask a contact's agent for a task (SPEC §7.6; default capability <code>request/v1</code>, a free-text request). Needs its grant to you and its card to list the capability</td>
+</tr>
+<tr>
+<td><code>rdv task list</code></td>
+<td>Tasks both ways, with what waits for you: the <code>--code</code> for <code>approve</code> and <code>release</code> (and, in text mode, the MCP server's confirm phrases). Yours to run</td>
+</tr>
+<tr>
+<td><code>rdv task approve &lt;task-id&gt; --code &lt;code&gt;</code> / <code>rdv task decline &lt;task-id&gt;</code></td>
+<td>Let your agent act on a contact's task (start gate, SPEC §5.5), or refuse it. <code>--code</code> is refused if the task changed since you reviewed it. <code>approve</code> is yours to run</td>
+</tr>
+<tr>
+<td><code>rdv task submit &lt;task-id&gt; --text "…" [--name …] [--complete]</code> / <code>rdv task ask &lt;task-id&gt; --text "…"</code> / <code>rdv task finish &lt;task-id&gt; [--failed] [--text …]</code></td>
+<td>Draft a result, a question or the end of a contact's task; a draft leaves only when released</td>
+</tr>
+<tr>
+<td><code>rdv task release &lt;task-id&gt; --code &lt;code&gt;</code></td>
+<td>Send the draft you reviewed (release gate). Yours to run</td>
+</tr>
+<tr>
+<td><code>rdv task cancel &lt;task-id&gt;</code> / <code>rdv task input &lt;task-id&gt; --text "…"</code></td>
+<td>Withdraw a task you requested, or answer its executor's question</td>
 </tr>
 <tr>
 <td><code>rdv inbox [--follow]</code></td>

@@ -62,4 +62,34 @@ export {
   validateNegotiateOptions,
 } from './negotiate.js';
 export { candidateView, clean, contactView, overflowView, requestView } from './output.js';
+export { type AuditEntry, AUDIT_KEPT, type PendingRelease, type ReleaseContent, type TaskHostState } from './home.js';
+export {
+  answerPeer,
+  approveRelease,
+  approveStart,
+  cancelPeer,
+  declineStart,
+  describeDraft,
+  discardDraft,
+  type DraftInput,
+  gateCode,
+  HOST_CAPABILITIES,
+  hostCardCapabilities,
+  hostRegistry,
+  inboundTaskCtx,
+  pruneReleases,
+  releaseDigest,
+  releaseView,
+  requestPeer,
+  startDigest,
+  startView,
+  submitDraft,
+  TaskChangedError,
+  taskCtx,
+  taskEventText,
+  taskEventView,
+  taskListView,
+  taskPhraseTargets,
+  type TaskRun,
+} from './tasks.js';
 export { relayTransport } from './transport.js';
