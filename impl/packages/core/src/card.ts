@@ -1,6 +1,7 @@
 // §4.3: the address card ("calling card").
 import type { AgentKey } from './identity.js';
 import { isAgentId } from './identity.js';
+import { isPast, parseTimestamp } from './encoding.js';
 import { type Signed, signDoc, verifyDoc } from './sign.js';
 
 export type InboundPolicy = 'allow' | 'block' | 'prompt';
@@ -67,9 +68,8 @@ export function verifyCard(input: unknown, now: Date = new Date()): CardCheck {
   if (!Array.isArray(card.rendezvous)) return { ok: false, reason: 'missing rendezvous list' };
   if (!Array.isArray(card.capabilities)) return { ok: false, reason: 'missing capabilities' };
   if (!verifyDoc(card, card.id)) return { ok: false, reason: 'bad signature' };
-  if (card.expires && Date.parse(card.expires) <= now.getTime()) {
-    return { ok: false, reason: 'card expired' };
-  }
+  if (parseTimestamp(card.created) === null) return { ok: false, reason: 'bad created' };
+  if (isPast(card.expires, now)) return { ok: false, reason: 'card expired' };
   return { ok: true, card };
 }
 

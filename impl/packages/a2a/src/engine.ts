@@ -30,7 +30,7 @@ import {
   parsePayload,
   type TaskState,
 } from './model.js';
-import { describeSlot, localDay, overlaps, sameSpan, type Slot, type Span, toSlot, toSpan, within } from './time.js';
+import { describeSlot, localDay, overlaps, parseInstant, sameSpan, type Slot, type Span, toSlot, toSpan, within } from './time.js';
 import { candidateSlots } from './window.js';
 
 /** The grant fields that govern meetings (structurally a subset of core's GrantScope). */
@@ -328,8 +328,8 @@ class Run {
   /** Pending task past its `expires`: reject it and tell the peer. */
   expireIfDue(task: NegotiationTask): boolean {
     if (isTerminal(task.state) || task.expires === null) return false;
-    const exp = Date.parse(task.expires);
-    if (!(this.now > exp)) return false;
+    const exp = parseInstant(task.expires);
+    if (exp !== null && !(this.now > exp)) return false; // an unreadable expires counts as expired (fail closed)
     this.setState(task, 'rejected', 'expired');
     this.message(task, { rdv: 'meeting/decline', reason: 'expired' }, 'This dinner proposal expired.');
     this.event({ kind: 'expired', taskId: task.id, peer: task.peer, state: task.state, reason: 'expired' });
@@ -355,7 +355,7 @@ class Run {
   /** Default and clamp a peer-supplied `expires`. */
   peerExpires(expires: string | undefined): string {
     const max = this.now + PEER_EXPIRES_MAX_MS;
-    const want = expires === undefined ? this.now + PEER_EXPIRES_DEFAULT_MS : Date.parse(expires);
+    const want = parseInstant(expires) ?? this.now + PEER_EXPIRES_DEFAULT_MS;
     return new Date(Math.min(want, max)).toISOString();
   }
 
@@ -388,7 +388,8 @@ export function propose(
   const minutes = ctx.minutes ?? DEFAULT_MINUTES;
   if (!(minutes >= 15 && minutes <= LIMITS.slotMinutes)) throw new NegotiationError(`slot length must be 15–${LIMITS.slotMinutes} minutes`);
   const expires = opts.expires ?? new Date(run.now + 48 * 3_600_000).toISOString();
-  if (!(Date.parse(expires) > run.now)) throw new NegotiationError('expires must be in the future');
+  const exp = parseInstant(expires);
+  if (exp === null || !(exp > run.now)) throw new NegotiationError('expires must be an RFC 3339 date-time in the future');
   const slots = run.pickSlots(minutes, []);
   if (slots.length === 0) throw new NegotiationError('no free slot in the window');
   if (!run.makeRoom(peer)) throw new NegotiationError(`too many open negotiations with ${peer} (max ${MAX_TASKS_PER_PEER})`);

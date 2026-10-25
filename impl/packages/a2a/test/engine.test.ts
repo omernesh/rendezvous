@@ -475,6 +475,23 @@ describe('negotiation', () => {
       expect(replies).toBe(FINISHED_REPLIES);
     });
 
+    it('garbage expires fails closed', () => {
+      const omer = side(OMER, 1);
+      expect(() => propose(omer.state, JOHN, ctxOf(omer), { expires: 'garbage' })).toThrow(NegotiationError);
+      const john = side(JOHN, 2);
+      const p = propose(omer.state, JOHN, ctxOf(omer));
+      const payload = p.outgoing[0].payload as { message: { parts: Array<{ kind: string; data?: Record<string, unknown> }> } };
+      const bad = structuredClone(payload);
+      for (const part of bad.message.parts) if (part.kind === 'data') part.data!.expires = 'garbage';
+      const step = receive(john.state, OMER, bad, ctxOf(john));
+      expect(step.events[0].kind).toBe('invalid');
+      // A stored task with an unreadable expires is expired by the next sweep, not kept forever.
+      const stored = structuredClone(p.state);
+      stored.tasks[p.taskId].expires = 'garbage';
+      const swept = expire(stored, { now: NOW });
+      expect(swept.state.tasks[p.taskId].state).toBe('rejected');
+    });
+
     it('prunes finished tasks older than 30 days on any receive', () => {
       const john = side(JOHN, 2);
       const old = receive(john.state, MALLORY, cancelFor(1), ctxOf(john)).state;

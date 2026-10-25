@@ -357,6 +357,16 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
     `--auto-grant-any-tier` (the demos pass it); library callers of
     `handleInbound` get the tier capped at `defaultTier(binding)` unless
     `autoGrantAnyTier`.
+54. **Timestamps fail closed** (follow-up to L5). `Date.parse("garbage")` is
+    NaN, and NaN makes every expiry comparison false: an envelope, card,
+    grant or contact with a garbage date never expired. Core now parses every
+    peer timestamp with `parseTimestamp` (strict RFC 3339 with an offset;
+    impossible dates refused): envelope `created`, card `created`/`expires`,
+    request/grant/revoke `ts`, grant `expires` are rejected when unreadable,
+    and `isPast`/`isExpired` treat an unreadable stored date as expired. The
+    a2a engine already validated peer slots and `expires` with
+    `parseInstant`; its own `expires` handling now uses it too (an unreadable
+    stored `expires` is expired by the sweep).
 
 ## Not implemented yet
 

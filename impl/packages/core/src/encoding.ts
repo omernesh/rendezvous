@@ -48,3 +48,31 @@ export function canonicalize(value: unknown): string {
 export function canonicalBytes(value: unknown): Uint8Array {
   return utf8ToBytes(canonicalize(value));
 }
+
+const RFC3339 = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,9}))?(Z|([+-])(\d{2}):(\d{2}))$/;
+
+/**
+ * Strict RFC 3339 date-time with an explicit offset (what toISOString emits,
+ * plus `±HH:MM`), as epoch ms; null for anything else, including impossible
+ * dates. Every peer-supplied timestamp goes through this: `Date.parse` gives
+ * NaN for garbage, and NaN makes every expiry comparison false, i.e. "never
+ * expires" (fail-open).
+ */
+export function parseTimestamp(s: unknown): number | null {
+  if (typeof s !== 'string' || s.length > 40) return null;
+  const m = RFC3339.exec(s);
+  if (!m) return null;
+  const [y, mo, d, h, mi, sec] = [m[1], m[2], m[3], m[4], m[5], m[6]].map(Number);
+  if (mo < 1 || mo > 12 || d < 1 || h > 23 || mi > 59 || sec > 59) return null;
+  if (d > new Date(Date.UTC(y, mo, 0)).getUTCDate()) return null;
+  if (m[8] !== 'Z' && (Number(m[10]) > 14 || Number(m[11]) > 59)) return null;
+  const t = Date.parse(s);
+  return Number.isFinite(t) ? t : null;
+}
+
+/** Expired, or not a valid timestamp (fail closed). `null`/absent means no expiry. */
+export function isPast(expires: unknown, now: Date): boolean {
+  if (expires === undefined || expires === null) return false;
+  const t = parseTimestamp(expires);
+  return t === null || t <= now.getTime();
+}

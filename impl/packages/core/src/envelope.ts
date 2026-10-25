@@ -11,7 +11,7 @@ import { x25519 } from '@noble/curves/ed25519';
 import { hkdf } from '@noble/hashes/hkdf';
 import { sha256 } from '@noble/hashes/sha256';
 import { concatBytes, utf8ToBytes } from '@noble/hashes/utils';
-import { b64decode, b64encode, bytesToHex, canonicalBytes } from './encoding.js';
+import { b64decode, b64encode, bytesToHex, canonicalBytes, parseTimestamp } from './encoding.js';
 import { type AgentKey, isAgentId, x25519PublicFromAgentId, x25519Secret } from './identity.js';
 import { type Signed, signDoc, verifyDoc } from './sign.js';
 
@@ -87,10 +87,12 @@ export function openEnvelope(recipient: AgentKey, input: unknown, now: Date = ne
   if (e.to !== recipient.id) return { ok: false, reason: 'not addressed to us' };
   if (!e.content || e.content.alg !== ENVELOPE_ALG) return { ok: false, reason: 'unsupported alg' };
   if (!verifyDoc(e, e.from)) return { ok: false, reason: 'bad signature' };
+  const created = parseTimestamp(e.created);
+  if (created === null) return { ok: false, reason: 'bad created' };
   if (isExpired(e, now)) return { ok: false, reason: 'expired' };
   // Replay protection must not rest on seq alone (security review L5).
   if (parseTtl(e.ttl) > MAX_TTL_MS) return { ok: false, reason: 'ttl too long' };
-  if (Date.parse(e.created) > now.getTime() + MAX_CLOCK_SKEW_MS) return { ok: false, reason: 'created in the future' };
+  if (created > now.getTime() + MAX_CLOCK_SKEW_MS) return { ok: false, reason: 'created in the future' };
   try {
     const epk = b64decode(e.content.epk);
     const myPub = x25519PublicFromAgentId(recipient.id);
@@ -123,7 +125,8 @@ export function parseTtl(ttl: string): number {
 
 export function isExpired(e: EnvelopeHeader, now: Date): boolean {
   try {
-    return Date.parse(e.created) + parseTtl(e.ttl) <= now.getTime();
+    const created = parseTimestamp(e.created);
+    return created === null || created + parseTtl(e.ttl) <= now.getTime();
   } catch {
     return true;
   }

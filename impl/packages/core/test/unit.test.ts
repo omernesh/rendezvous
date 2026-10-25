@@ -19,6 +19,9 @@ import {
   isAgentId,
   openEnvelope,
   sealEnvelope,
+  isExpired,
+  isPast,
+  parseTimestamp,
   signDoc,
   TIERS,
   verifyCard,
@@ -116,6 +119,30 @@ describe('envelope', () => {
     expect(openEnvelope(b, future, now)).toMatchObject({ ok: false, reason: 'created in the future' });
     const skewed = sealEnvelope(a, b.id, { type: 'x' }, { seq: 1, prev: null, now: new Date(now.getTime() + 2 * 60_000) });
     expect(openEnvelope(b, skewed, now).ok).toBe(true);
+  });
+
+  it('garbage timestamps fail closed: never "never expires"', () => {
+    const a = generateKey();
+    const b = generateKey();
+    const now = new Date('2026-10-25T10:00:00Z');
+    const env = signDoc({ ...sealEnvelope(a, b.id, { type: 'x' }, { seq: 1, prev: null, now }), sig: undefined, created: 'garbage' }, a);
+    expect(openEnvelope(b, env, now)).toMatchObject({ ok: false, reason: 'bad created' });
+    expect(isExpired({ ...env, created: 'garbage' }, now)).toBe(true);
+    expect(parseTimestamp('2026-02-31T10:00:00Z')).toBeNull();
+    expect(parseTimestamp('2026-10-25T10:00:00.000Z')).toBe(now.getTime());
+    expect(parseTimestamp('2026-10-25T12:00:00+02:00')).toBe(now.getTime());
+    expect(isPast('garbage', now)).toBe(true);
+    expect(isPast(null, now)).toBe(false);
+
+    const card = createCard(a, { rendezvous: hints });
+    expect(verifyCard(signDoc({ ...card, sig: undefined, expires: 'garbage' }, a)).ok).toBe(false);
+    const req = createContactRequest(b, createCard(b, { rendezvous: hints }), { toHint: a.id, greeting: 'hi' });
+    const grant = createGrant(a, card, req, { tier: 'friend', scope: {}, expires: 'garbage' });
+    expect(verifyGrant(grant)).toBe(false);
+    expect(verifyContactRequest(signDoc({ ...req, sig: undefined, ts: 'garbage' }, b))).toBe(false);
+    // A contact whose stored expiry is unreadable counts as expired.
+    const book = new ContactBook({ contacts: { [a.id]: { peer: a.id, card, tier: 'friend', inboundScope: {}, outboundScope: {}, binding: 'claimed', grantId: grant.id, expires: 'garbage', since: '' } } });
+    expect(book.contact(a.id, now)).toBeUndefined();
   });
 
   it('orders per direction and detects gaps, duplicates and forks', () => {

@@ -5,6 +5,7 @@ import { verifyCard } from './card.js';
 import { BINDING_STRENGTH, type Binding, topicForHint } from './discovery.js';
 import type { AgentKey } from './identity.js';
 import { isAgentId } from './identity.js';
+import { isPast, parseTimestamp } from './encoding.js';
 import { type Signed, signDoc, verifyDoc } from './sign.js';
 
 export type Tier = 'spouse' | 'family' | 'friend' | 'colleague' | 'business' | 'stranger';
@@ -121,7 +122,7 @@ export const isDocId = (id: unknown): id is string => typeof id === 'string' && 
 
 export function verifyContactRequest(input: unknown, now = new Date()): input is ContactRequest {
   const r = input as ContactRequest;
-  if (!r || r.v !== 1 || r.type !== 'rdv/contact-request' || !isDocId(r.id)) return false;
+  if (!r || r.v !== 1 || r.type !== 'rdv/contact-request' || !isDocId(r.id) || parseTimestamp(r.ts) === null) return false;
   if (!isAgentId(r.from) || !verifyDoc(r, r.from)) return false;
   const card = verifyCard(r.card, now);
   return card.ok && card.card.id === r.from;
@@ -131,6 +132,7 @@ export function verifyGrant(input: unknown, now = new Date()): input is ContactG
   const g = input as ContactGrant;
   if (!g || g.v !== 1 || g.type !== 'rdv/contact-grant' || !isDocId(g.id) || !isDocId(g.request_ref)) return false;
   if (!isTier(g.tier) || !g.scope || typeof g.scope !== 'object' || Array.isArray(g.scope)) return false;
+  if (parseTimestamp(g.ts) === null || (g.expires !== null && parseTimestamp(g.expires) === null)) return false;
   if (!isAgentId(g.from) || !isAgentId(g.to) || !verifyDoc(g, g.from)) return false;
   const card = verifyCard(g.card, now);
   return card.ok && card.card.id === g.from;
@@ -138,7 +140,9 @@ export function verifyGrant(input: unknown, now = new Date()): input is ContactG
 
 export function verifyRevoke(input: unknown): input is Revoke {
   const r = input as Revoke;
-  return !!r && r.v === 1 && r.type === 'rdv/revoke' && isDocId(r.id) && isAgentId(r.from) && verifyDoc(r, r.from);
+  return (
+    !!r && r.v === 1 && r.type === 'rdv/revoke' && isDocId(r.id) && isAgentId(r.from) && parseTimestamp(r.ts) !== null && verifyDoc(r, r.from)
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -316,7 +320,7 @@ export class ContactBook {
   contact(peer: string, now = new Date()): Contact | undefined {
     const c = this.state.contacts[peer];
     if (!c) return undefined;
-    if (c.expires && Date.parse(c.expires) <= now.getTime()) return undefined;
+    if (isPast(c.expires, now)) return undefined;
     return c;
   }
 
@@ -452,7 +456,7 @@ export class ContactBook {
   confirmCandidate(grantId: string, now = new Date()): Contact {
     const c = this.state.candidates[grantId];
     if (!c) throw new Error(`no grant candidate ${grantId}`);
-    if (c.grant.expires && Date.parse(c.grant.expires) <= now.getTime()) throw new Error(`grant ${grantId} has expired`);
+    if (isPast(c.grant.expires, now)) throw new Error(`grant ${grantId} has expired`);
     if (this.isBlocked(c.grant.from)) throw new Error(`${c.grant.from} is blocked`);
     for (const [id, x] of Object.entries(this.state.candidates)) if (x.request_ref === c.request_ref) delete this.state.candidates[id];
     delete this.state.outstanding[c.request_ref];
