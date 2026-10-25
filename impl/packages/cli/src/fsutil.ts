@@ -3,6 +3,7 @@ import { randomBytes } from 'node:crypto';
 import {
   chmodSync,
   closeSync,
+  existsSync,
   fsyncSync,
   openSync,
   readFileSync,
@@ -10,6 +11,7 @@ import {
   rmSync,
   statSync,
   unlinkSync,
+  utimesSync,
   writeSync,
 } from 'node:fs';
 import { hostname } from 'node:os';
@@ -86,6 +88,8 @@ interface LockInfo {
   pid: number;
   host: string;
   since: string;
+  /** What holds a long-lived lock (`rdv listen`, `rdv-mcp`). */
+  role?: string;
 }
 
 function pidAlive(pid: number): boolean {
@@ -162,46 +166,107 @@ export async function acquireLock(
   const timeoutMs = opts.timeoutMs ?? 15_000;
   const staleMs = opts.staleMs ?? 10 * 60_000;
   const deadline = Date.now() + timeoutMs;
-  const mine = JSON.stringify({ pid: process.pid, host: hostname(), since: new Date().toISOString() } satisfies LockInfo);
+  const mine = lockContent();
   for (;;) {
-    try {
-      const fd = openSync(path, 'wx');
-      try {
-        writeSync(fd, mine);
-      } finally {
-        closeSync(fd);
-      }
-      let released = false;
-      const release = () => {
-        if (released) return;
-        released = true;
-        process.off('exit', release);
-        try {
-          if (readFileSync(path, 'utf8') === mine) unlinkSync(path);
-        } catch {
-          // already gone
-        }
-      };
-      process.on('exit', release);
-      return release;
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
-    }
+    if (tryCreate(path, mine)) return releaser(path, mine);
     const stale = staleContent(path, staleMs);
     if (stale !== null) {
       breakStale(path, stale);
       continue;
     }
-    if (Date.now() >= deadline) {
-      let owner = 'another process';
-      try {
-        const info = JSON.parse(readFileSync(path, 'utf8')) as LockInfo;
-        owner = `pid ${info.pid} on ${info.host} since ${info.since}`;
-      } catch {
-        // unreadable
-      }
-      throw new LockTimeoutError(`state is locked by ${owner} (${path})`);
-    }
+    if (Date.now() >= deadline) throw new LockTimeoutError(`state is locked by ${describeOwner(path)} (${path})`);
     await sleep(40 + Math.floor(Math.random() * 40));
   }
+}
+
+/** Create `path` with O_EXCL holding `mine`; false if it exists. */
+function tryCreate(path: string, mine: string): boolean {
+  try {
+    const fd = openSync(path, 'wx');
+    try {
+      writeSync(fd, mine);
+    } finally {
+      closeSync(fd);
+    }
+    return true;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+    return false;
+  }
+}
+
+/** Idempotent release that removes the lock only while it is still ours; also runs on process exit. */
+function releaser(path: string, mine: string): () => void {
+  let released = false;
+  const release = () => {
+    if (released) return;
+    released = true;
+    process.off('exit', release);
+    try {
+      if (readFileSync(path, 'utf8') === mine) unlinkSync(path);
+    } catch {
+      // already gone
+    }
+  };
+  process.on('exit', release);
+  return release;
+}
+
+function lockContent(role?: string): string {
+  return JSON.stringify({ pid: process.pid, host: hostname(), since: new Date().toISOString(), ...(role ? { role } : {}) } satisfies LockInfo);
+}
+
+function describeOwner(path: string): string {
+  try {
+    const info = JSON.parse(readFileSync(path, 'utf8')) as LockInfo;
+    return `${info.role ? `${info.role}, ` : ''}pid ${info.pid} on ${info.host} since ${info.since}`;
+  } catch {
+    return 'another process';
+  }
+}
+
+/** How often a long-lived lock's owner touches it; others treat it as stale after LONG_LOCK_STALE_MS without a touch. */
+export const LONG_LOCK_HEARTBEAT_MS = 60_000;
+export const LONG_LOCK_STALE_MS = 10 * 60_000;
+
+export type LongLock = { release: () => void; owner?: undefined } | { release?: undefined; owner: string };
+
+/**
+ * A long-lived exclusive lock (`listener.lock`, issue #9): one attempt, no
+ * waiting. Same O_EXCL file and stale rules as `acquireLock` (the owner's pid
+ * is gone on this host; or, for an owner on another host sharing the home, no
+ * heartbeat for `staleMs`). While held, the file's mtime is touched every
+ * `heartbeatMs`, so a live owner's lock never goes stale by age. Returns
+ * `{ release }`, or `{ owner }` saying who holds it (`role` names the program).
+ */
+export function tryLongLock(path: string, role: string, opts: { staleMs?: number; heartbeatMs?: number } = {}): LongLock {
+  const staleMs = opts.staleMs ?? LONG_LOCK_STALE_MS;
+  const mine = lockContent(role);
+  for (let attempt = 0; attempt < 5; attempt++) {
+    if (tryCreate(path, mine)) {
+      const release = releaser(path, mine);
+      const beat = setInterval(() => {
+        try {
+          if (readFileSync(path, 'utf8') === mine) {
+            const now = new Date();
+            utimesSync(path, now, now);
+          }
+        } catch {
+          // gone: whoever tries next recreates it
+        }
+      }, opts.heartbeatMs ?? LONG_LOCK_HEARTBEAT_MS);
+      beat.unref();
+      return {
+        release: () => {
+          clearInterval(beat);
+          release();
+        },
+      };
+    }
+    if (!existsSync(path)) continue; // released meanwhile
+    const stale = staleContent(path, staleMs);
+    if (stale === null) break;
+    breakStale(path, stale);
+  }
+  return { owner: describeOwner(path) };
 }

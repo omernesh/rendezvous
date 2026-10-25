@@ -3,6 +3,12 @@
 // relay subscriptions stay open, but the lock is taken only per operation, so
 // `rdv contact pending` / `rdv contact grant` can run beside it in a terminal.
 //
+// One inbound consumer per home (issue #9): the server consumes only while it
+// holds `listener.lock`. If `rdv listen` or another rdv-mcp holds it, this one
+// runs attached: no subscriptions, sends still work, and rdv_inbox follows the
+// shared `events.jsonl` the consumer writes. An attached server takes over
+// when the lock comes free (the relays' lookback replays what it missed).
+//
 // Two safety properties are demo-critical and covered by tests:
 //   consent   rdv_grant needs the human: an MCP elicitation answered by them,
 //             or a confirm phrase that only reaches human-facing channels.
@@ -41,6 +47,7 @@ import {
   hasExpiring,
   type Home,
   initHome,
+  type LoggedEvent,
   isJunk,
   meetingScope,
   type NegotiateOptions,
@@ -48,6 +55,7 @@ import {
   requestContactTo,
   SWEEP_MS,
   TIERS,
+  tryLongLock,
   validateNegotiateOptions,
 } from '@rendezvous/cli/lib';
 import { z } from 'zod';
@@ -81,6 +89,8 @@ export interface RdvMcpOptions {
    */
   humanLog?: (line: string) => void;
   sweepMs?: number;
+  /** How often to follow the shared event log and, when attached, retry `listener.lock` (default 1000). */
+  pollMs?: number;
   /** How long to wait for the human to answer an approval form (default 10 min). */
   elicitTimeoutMs?: number;
   /**
@@ -204,10 +214,16 @@ export class RdvMcpServer {
   private real?: Transport;
   private unsubs: Array<() => void> = [];
   private sweeper?: ReturnType<typeof setInterval>;
+  private poller?: ReturnType<typeof setInterval>;
+  /** `consumer` while holding listener.lock, `attached` while another process does. */
+  private mode?: 'consumer' | 'attached';
+  private releaseListener?: () => void;
+  private boot?: { id: string; key: Agent['key']; topics: string[] };
   private chain: Promise<void> = Promise.resolve();
   private subscribed = false;
   private readonly humanLog: (line: string) => void;
   private readonly sweepMs: number;
+  private readonly pollMs: number;
   private readonly elicitTimeoutMs: number;
   private readonly calendarDirs: string[];
 
@@ -224,8 +240,9 @@ export class RdvMcpServer {
     // Lines can quote peer text: clean() keeps terminal escapes out of the human's console.
     this.humanLog = opts.humanLog ?? ((line) => process.stderr.write(`[rdv-mcp] ${clean(line)}\n`));
     this.sweepMs = opts.sweepMs ?? SWEEP_MS;
+    this.pollMs = opts.pollMs ?? 1000;
     this.elicitTimeoutMs = opts.elicitTimeoutMs ?? 10 * 60_000;
-    this.events = new EventLog(this.home);
+    this.events = new EventLog(this.home, (raw) => this.beforeVisible(raw));
     this.mcp = new McpServer({ name: 'rendezvous', version: '0.1.0' }, { instructions: INSTRUCTIONS });
     this.registerTools();
     this.registerInbox();
@@ -247,20 +264,44 @@ export class RdvMcpServer {
 
   // --- the listening agent --------------------------------------------------
 
-  /** Open relay subscriptions if the home has an agent. Idempotent. */
+  /**
+   * Start the agent if the home has one: consume inbound if `listener.lock`
+   * is free, else attach to the process that holds it. Idempotent.
+   */
   startListening(): void {
     if (this.real || !this.home.initialized()) return;
     const config = this.home.readConfig();
     const boot = Agent.fromJSON(this.home.readAgentState(), (key) => relayTransport(key, config.relays));
-    const real = boot.transport;
-    this.real = real;
-    const topics = (boot.card.discovery?.addresses ?? []).map(dtopic);
+    this.real = boot.transport; // sends go out over it in both modes
+    this.boot = { id: boot.id, key: boot.key, topics: (boot.card.discovery?.addresses ?? []).map(dtopic) };
+    this.home.ensureDir();
+    const lock = tryLongLock(this.home.listenerLockPath, 'rdv-mcp');
+    if (lock.release) this.consume(lock.release);
+    else {
+      this.mode = 'attached';
+      this.humanLog(
+        `attached: ${lock.owner} receives for ${this.home.dir}; following its events (${this.home.eventsPath}) and taking over when it stops`,
+      );
+    }
+    this.poller = setInterval(() => void this.tick(), this.pollMs);
+    this.poller.unref?.();
+    // Requests that arrived while we were down (or through `rdv listen`) get phrases too.
+    this.chain = this.chain.then(() => this.refreshPhrases()).catch((err) => this.humanLog(`error: ${(err as Error).message}`));
+    this.humanLog(`listening as ${boot.id} (${fingerprint(boot.id)}) on ${config.relays.join(', ')}; home ${this.home.dir}`);
+  }
+
+  /** Holding listener.lock: open the relay subscriptions and the expiry sweep. */
+  private consume(release: () => void): void {
+    const real = this.real!;
+    const boot = this.boot!;
+    this.mode = 'consumer';
+    this.releaseListener = release;
     this.unsubs = [
       // Junk (unopenable envelopes, invalid topic docs) never takes the lock or reaches the log (M1).
       real.onEnvelopes(boot.id, (raw) => {
         if (!isJunk(boot.key, { envelope: raw })) this.enqueue((t) => t.feedEnvelope(raw));
       }),
-      real.onTopics(topics, (doc, topic) => {
+      real.onTopics(boot.topics, (doc, topic) => {
         if (!isJunk(boot.key, { doc })) this.enqueue((t) => t.feedTopic(doc, topic));
       }),
     ];
@@ -268,9 +309,18 @@ export class RdvMcpServer {
       if (this.negotiateOpts() && hasExpiring(this.home)) this.enqueue(() => {}, true);
     }, this.sweepMs);
     this.sweeper.unref?.();
-    // Requests that arrived while we were down (or through `rdv listen`) get phrases too.
-    this.chain = this.chain.then(() => this.refreshPhrases()).catch((err) => this.humanLog(`error: ${(err as Error).message}`));
-    this.humanLog(`listening as ${boot.id} (${fingerprint(boot.id)}) on ${config.relays.join(', ')}; home ${this.home.dir}`);
+  }
+
+  /** Follow the shared log; when attached, take over if the consumer has gone. */
+  private async tick(): Promise<void> {
+    if (this.mode === 'attached' && this.real) {
+      const lock = tryLongLock(this.home.listenerLockPath, 'rdv-mcp');
+      if (lock.release) {
+        this.humanLog(`the previous listener stopped; now receiving for ${this.home.dir}`);
+        this.consume(lock.release);
+      }
+    }
+    await this.syncEvents().catch((err) => this.humanLog(`error reading ${this.home.eventsPath}: ${(err as Error).message}`));
   }
 
   /** Stop subscriptions, let in-flight items finish (they send over the transport), then close it. */
@@ -278,9 +328,14 @@ export class RdvMcpServer {
     for (const u of this.unsubs.splice(0)) u();
     if (this.sweeper) clearInterval(this.sweeper);
     this.sweeper = undefined;
+    if (this.poller) clearInterval(this.poller);
+    this.poller = undefined;
     await this.chain;
     this.real?.close();
     this.real = undefined;
+    this.releaseListener?.();
+    this.releaseListener = undefined;
+    this.mode = undefined;
   }
 
   /** Resolves once every inbound item received so far has been handled (tests). */
@@ -298,23 +353,31 @@ export class RdvMcpServer {
     if (!real) return;
     this.chain = this.chain
       .then(async () => this.record(await handleInbound(this.home, real, feed, { negotiate: this.negotiateOpts() }, sweep)))
-      .catch((err: Error) => {
+      .catch(async (err: Error) => {
         // Details can carry peer or file content: they go to the human only.
         this.humanLog(`error handling an inbound item: ${err.message}`);
-        this.publish([{ type: 'error', message: GENERIC_ERROR }]);
+        await this.publish([{ type: 'error', message: GENERIC_ERROR }]).catch(() => {});
       });
   }
 
+  /** handleInbound already wrote the events to the shared log: show errors to the human, then make them visible. */
   private async record(events: Emitted[]): Promise<void> {
-    const negotiating = this.negotiateOpts() !== undefined;
-    const items = events.map((e) => toModelEvent(e.obj, negotiating)).filter((x) => x !== null);
     for (const e of events) if (e.obj.event === 'error') this.humanLog(`error: ${String(e.obj.message)}`);
-    if (events.some((e) => e.obj.event === 'request')) await this.refreshPhrases();
-    this.publish(items);
+    await this.syncEvents();
   }
 
-  private publish(items: Array<Omit<McpEvent, 'n' | 'ts'>>): void {
-    const added = this.events.append(items);
+  /** Runs before new log lines become visible: confirm phrases for new requests reach the human first. */
+  private async beforeVisible(raw: LoggedEvent[]): Promise<void> {
+    if (raw.some((e) => e.obj.event === 'request' || e.obj.event === 'candidate')) await this.refreshPhrases();
+  }
+
+  private async syncEvents(): Promise<void> {
+    const added = await this.events.sync();
+    if (added.length && this.subscribed) this.mcp.server.sendResourceUpdated({ uri: INBOX_URI }).catch(() => {});
+  }
+
+  private async publish(items: Array<Omit<McpEvent, 'n' | 'ts'>>): Promise<void> {
+    const added = await this.events.append(items);
     if (added.length && this.subscribed) this.mcp.server.sendResourceUpdated({ uri: INBOX_URI }).catch(() => {});
   }
 
@@ -592,7 +655,7 @@ export class RdvMcpServer {
           if (!agent.book.contact(agent_id!)) throw new ToolError(`no active contact ${agent_id}`);
           await agent.revoke(agent_id!);
         });
-        this.publish([{ type: 'revoked_by_us', peer: safe(agent_id) }]);
+        await this.publish([{ type: 'revoked_by_us', peer: safe(agent_id) }]);
         return { revoked: safe(agent_id) };
       },
       { destructiveHint: true },
@@ -748,6 +811,7 @@ export class RdvMcpServer {
       relays: config.relays,
       public_pointer: config.public_pointer,
       listening: this.listening,
+      inbound: this.mode,
       home: this.home.dir,
       contacts: contacts.map((c) => {
         const v = contactView(c);
@@ -828,7 +892,7 @@ export class RdvMcpServer {
     await this.refreshPhrases(); // the probe's other answers are gone
     const v = contactView(contact);
     const view = { agent_id: safe(v.peer), fingerprint: safe(v.fingerprint), tier: v.tier, binding: v.binding };
-    this.publish([{ type: 'contact', ...view }]);
+    await this.publish([{ type: 'contact', ...view }]);
     return { confirmed: true, ...view };
   }
 
@@ -901,7 +965,7 @@ export class RdvMcpServer {
     });
     const v = contactView(contact);
     const view = { agent_id: safe(v.peer), fingerprint: safe(v.fingerprint), tier: v.tier, binding: v.binding };
-    this.publish([{ type: 'contact', ...view, granted_by_us: true }]);
+    await this.publish([{ type: 'contact', ...view, granted_by_us: true }]);
     return { granted: true, ...view, scope: scopeFor(mayMeet) };
   }
 
@@ -939,7 +1003,7 @@ export class RdvMcpServer {
         for (const o of s.outgoing) await agent.send(o.to, o.payload as unknown as Payload);
         return s;
       });
-      this.publishSteps(step.events);
+      await this.publishSteps(step.events);
       return { task_id: safe(a.task_id), state: step.state.tasks[a.task_id]?.state };
     }
 
@@ -965,7 +1029,7 @@ export class RdvMcpServer {
       for (const o of s.outgoing) await agent.send(o.to, o.payload as unknown as Payload);
       return s;
     });
-    this.publishSteps(step.events);
+    await this.publishSteps(step.events);
     const task = step.state.tasks[step.taskId];
     return {
       task_id: step.taskId,
@@ -975,7 +1039,7 @@ export class RdvMcpServer {
     };
   }
 
-  private publishSteps(events: Parameters<typeof dinnerView>[0][]): void {
-    this.publish(events.map((e) => toModelEvent(dinnerView(e) as { event: string }, true)).filter((x) => x !== null));
+  private publishSteps(events: Parameters<typeof dinnerView>[0][]): Promise<void> {
+    return this.publish(events.map((e) => toModelEvent(dinnerView(e) as { event: string }, true)).filter((x) => x !== null));
   }
 }

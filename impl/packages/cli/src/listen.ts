@@ -7,6 +7,10 @@
 // take the lock, load state fresh from disk, feed the item to an Agent built
 // on that state, save, release. Events are printed only after the state that
 // produced them is on disk, so a reaction to an event always sees it.
+//
+// It is the home's one inbound consumer: it holds `listener.lock` while it
+// runs (a second `rdv listen`, or an `rdv-mcp` that would consume, is
+// refused or attaches), and appends what it handles to `events.jsonl`.
 import { spawn } from 'node:child_process';
 import { expire, isA2APayload, isTerminal, receive, type Step } from '@rendezvous/a2a';
 import {
@@ -21,8 +25,9 @@ import {
   type Transport,
   verifyContactRequest,
 } from '@rendezvous/core';
-import { LockTimeoutError } from './fsutil.js';
-import type { Home, InboxEntry } from './home.js';
+import { appendEvents } from './events.js';
+import { LockTimeoutError, tryLongLock } from './fsutil.js';
+import { CliError, type Home, type InboxEntry } from './home.js';
 import { buildCtx, carryOut, dinnerText, dinnerView, inboundMeetingScope, type NegotiateOptions } from './negotiate.js';
 import {
   candidateText,
@@ -207,6 +212,12 @@ async function handleLocked(
       agent.stop();
       // Replays and refused items usually change nothing: skip the rewrite then.
       if (flushed < inbox.length || JSON.stringify(agent.toJSON()) !== loaded) save();
+      // The shared log, after the state is on disk (issue #9).
+      await appendEvents(
+        home,
+        events.map((e) => e.obj),
+        { negotiated: opts.negotiate !== undefined },
+      );
     },
     { timeoutMs },
   );
@@ -254,7 +265,22 @@ export function hasExpiring(home: Home): boolean {
   }
 }
 
+/**
+ * Take the home's `listener.lock` for this process's lifetime, or refuse:
+ * two consumers on one home would split inbound events between them (issue #9).
+ */
+export function claimListener(home: Home): () => void {
+  home.ensureDir();
+  const lock = tryLongLock(home.listenerLockPath, 'rdv listen');
+  if (lock.release) return lock.release;
+  throw new CliError(
+    `another listener already receives for this home (${lock.owner}). Only one process per home may consume inbound ` +
+      `events; stop it first, or follow its events another way (rdv-mcp attaches to a running listener and reads ${home.eventsPath}).`,
+  );
+}
+
 export async function listen(home: Home, out: Output, opts: ListenOptions): Promise<void> {
+  const releaseListener = claimListener(home);
   const config = home.readConfig();
   const boot = Agent.fromJSON(home.readAgentState(), (key) => relayTransport(key, config.relays));
   const real = boot.transport;
@@ -304,6 +330,7 @@ export async function listen(home: Home, out: Output, opts: ListenOptions): Prom
   for (const u of unsubs) u();
   await chain;
   real.close();
+  releaseListener();
 }
 
 /** Pipe one event (a JSON line on stdin) to the user's script; its stdout goes to our stderr. */

@@ -1,30 +1,19 @@
 // The server's event log: what `rdv_inbox` and the `rdv://inbox` resource
 // return. Inbound items become model-facing events here, with every
-// peer-written string wrapped by `untrusted()`. Kept in `mcp-events.jsonl`
-// in the home so a restart doesn't reset the cursor.
-import { appendFileSync, existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+// peer-written string wrapped by `untrusted()`. The source is the home's
+// shared `events.jsonl` (written by whichever process holds `listener.lock`,
+// see @rendezvous/cli events.ts), so a restart doesn't reset the cursor and
+// every rdv-mcp on the home sees the same events.
 import { describeSlot, isA2APayload, type Slot, TASK_STATES } from '@rendezvous/a2a';
 import { fingerprint } from '@rendezvous/core';
-import { type Home, parseJsonLines, writeAtomic } from '@rendezvous/cli/lib';
+import { appendEvents, eventsStamp, type Home, type LoggedEvent, readEvents, STRANGER_DROPS } from '@rendezvous/cli/lib';
 import { address, agentId, isPlain, oneOf, safe, token, untrusted, uuid } from './untrusted.js';
 
 const TIERS = ['spouse', 'family', 'friend', 'colleague', 'business', 'stranger'];
 const BINDINGS = ['in-person', 'dns', 'mailbox', 'claimed'];
 const KINDS = ['proposed', 'offer-received', 'countered', 'accepted', 'completed', 'rejected', 'canceled', 'expired', 'status', 'duplicate', 'ignored', 'invalid'];
 const state = oneOf(TASK_STATES);
-/** Drop reasons a stranger can trigger at will; not worth the model's attention. */
-const STRANGER_DROPS = [
-  'contact request',
-  'no grant for sender',
-  'out-of-order envelope from a non-contact',
-  'unexpected or invalid grant',
-  'topic doc',
-  'request signer differs',
-  'grant signer differs',
-  'blocked sender',
-];
-/** Events kept in memory and in mcp-events.jsonl (the file is compacted at twice this). */
+/** Events kept in memory (events.jsonl keeps EVENTS_FILE_KEPT lines and is compacted at twice that). */
 export const EVENTS_KEPT = 1000;
 /** Fingerprint only for a well-formed agent ID. */
 const fp = (id: unknown) => (isPlain(agentId(id)) ? fingerprint(id as string) : untrusted(id));
@@ -166,54 +155,98 @@ export function toModelEvent(e: Raw, negotiating: boolean): Omit<McpEvent, 'n' |
   }
 }
 
+/**
+ * The model-facing view of the home's shared `events.jsonl` (issue #9). It is
+ * derived, never written: every `rdv-mcp` on the home (the consumer and any
+ * attached ones) and a restarted one compute the same events with the same
+ * cursors (`n` = the line's cursor in the file). The server's own events
+ * (`append`) go into the file as `{event: 'mcp', item}` lines.
+ *
+ * `sync()` picks up new lines and, after the `beforeCommit` hook (the server
+ * shows confirm phrases to the human there), makes them visible to `since`,
+ * `tail` and `wait`.
+ */
 export class EventLog {
-  private next: number;
   private waiters: Array<() => void> = [];
-  /** The last EVENTS_KEPT events, oldest first; reads never re-parse the file. */
-  private events: McpEvent[];
-  /** Lines in the file, to know when to compact it. */
-  private lines: number;
+  /** The last EVENTS_KEPT visible events, oldest first. */
+  private events: McpEvent[] = [];
+  /** Highest file cursor made visible. */
+  private last = 0;
+  private stamp = '';
+  private syncing: Promise<McpEvent[]> = Promise.resolve([]);
 
-  constructor(private readonly home: Home) {
-    const all = this.readFile();
-    this.events = all.slice(-EVENTS_KEPT);
-    this.lines = all.length;
-    this.next = all.length ? all[all.length - 1].n + 1 : 1;
-    if (this.lines > EVENTS_KEPT) this.compact();
+  constructor(
+    private readonly home: Home,
+    private readonly beforeCommit: (raw: LoggedEvent[]) => Promise<void> = async () => {},
+  ) {
+    const { raw, events } = this.pull();
+    this.commit(raw, events);
   }
 
   get path(): string {
-    return join(this.home.dir, 'mcp-events.jsonl');
+    return this.home.eventsPath;
   }
 
-  /** The cursor the next event will get; `since` = this returns nothing yet. */
+  /** The highest cursor so far; `since` = this returns nothing yet. */
   get cursor(): number {
-    return this.next - 1;
+    return this.last;
   }
 
-  private readFile(): McpEvent[] {
-    if (!existsSync(this.path)) return [];
-    return parseJsonLines<McpEvent>(readFileSync(this.path, 'utf8'));
+  /** New lines in the file since the last pull, mapped. */
+  private pull(): { raw: LoggedEvent[]; events: McpEvent[] } {
+    const stamp = eventsStamp(this.home);
+    if (stamp === this.stamp) return { raw: [], events: [] };
+    const all = readEvents(this.home);
+    this.stamp = stamp;
+    const top = all.length ? all[all.length - 1].n : 0;
+    if (top < this.last) {
+      // The file was replaced (`rdv init --force`): start over.
+      this.events = [];
+      this.last = 0;
+    }
+    const raw = all.filter((e) => e.n > this.last);
+    const events: McpEvent[] = [];
+    for (const e of raw) {
+      const item = e.obj.event === 'mcp' ? (e.obj.item as Omit<McpEvent, 'n' | 'ts'>) : toModelEvent(e.obj, e.negotiated === true);
+      if (item) events.push({ n: e.n, ts: e.ts, ...item } as McpEvent);
+    }
+    return { raw, events };
   }
 
-  /** Rewrite the file with only the events we keep. */
-  private compact(): void {
-    writeAtomic(this.path, this.events.map((e) => JSON.stringify(e) + '\n').join(''), 0o600);
-    this.lines = this.events.length;
-  }
-
-  append(items: Array<Omit<McpEvent, 'n' | 'ts'>>): McpEvent[] {
-    if (items.length === 0) return [];
-    this.home.ensureDir();
-    const ts = new Date().toISOString();
-    const out = items.map((it) => ({ n: this.next++, ts, ...it }) as McpEvent);
-    appendFileSync(this.path, out.map((e) => JSON.stringify(e) + '\n').join(''), { mode: 0o600 });
-    this.events.push(...out);
+  private commit(raw: LoggedEvent[], events: McpEvent[]): void {
+    if (raw.length === 0) return;
+    this.last = Math.max(this.last, raw[raw.length - 1].n);
+    this.events.push(...events);
     if (this.events.length > EVENTS_KEPT) this.events.splice(0, this.events.length - EVENTS_KEPT);
-    this.lines += out.length;
-    if (this.lines > 2 * EVENTS_KEPT) this.compact();
     for (const w of this.waiters.splice(0)) w();
-    return out;
+  }
+
+  /** Make new lines of the file visible; returns the new events (serialized, so each line is handled once). */
+  sync(): Promise<McpEvent[]> {
+    this.syncing = this.syncing
+      .catch(() => [])
+      .then(async () => {
+        const { raw, events } = this.pull();
+        if (raw.length === 0) return [];
+        try {
+          await this.beforeCommit(raw);
+        } catch {
+          // the hook reports its own failures; the events still become visible
+        }
+        this.commit(raw, events);
+        return events;
+      });
+    return this.syncing;
+  }
+
+  /** Write the server's own events to the shared file, then sync. */
+  async append(items: Array<Omit<McpEvent, 'n' | 'ts'>>): Promise<McpEvent[]> {
+    if (items.length === 0) return [];
+    await appendEvents(
+      this.home,
+      items.map((item) => ({ event: 'mcp', item })),
+    );
+    return this.sync();
   }
 
   since(cursor: number, limit: number): McpEvent[] {
@@ -232,7 +265,7 @@ export class EventLog {
     return this.events.slice(-limit);
   }
 
-  /** Resolves when something is appended, or after `ms`. */
+  /** Resolves when new events become visible, or after `ms`. */
   wait(ms: number): Promise<void> {
     return new Promise((resolve) => {
       const done = () => {

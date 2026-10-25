@@ -6,8 +6,10 @@
 //   cards.json   cards found by `rdv lookup` (so `contact request <agent-id>` works)
 //   negotiations.json  dinner negotiations (@rendezvous/a2a engine state)
 //   consent.json  confirm phrases for pending requests (written by the MCP server)
-//   mcp-events.jsonl  the MCP server's event log (rdv_inbox)
+//   events.jsonl  inbound events written by the home's one listener, plus rdv-mcp's own (behind rdv_inbox)
+//   events.lock  held while appending to events.jsonl
 //   lock         held while a command reads and writes state
+//   listener.lock  held for its lifetime by the one inbound consumer (`rdv listen` or `rdv-mcp`)
 import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -82,6 +84,15 @@ export class Home {
   }
   get lockPath() {
     return join(this.dir, 'lock');
+  }
+  get listenerLockPath() {
+    return join(this.dir, 'listener.lock');
+  }
+  get eventsPath() {
+    return join(this.dir, 'events.jsonl');
+  }
+  get eventsLockPath() {
+    return join(this.dir, 'events.lock');
   }
 
   initialized(): boolean {
@@ -187,7 +198,7 @@ export class Home {
 
   /** `rdv init --force`: drop everything derived from the old key. */
   reset(): void {
-    for (const p of [this.agentPath, this.agentBackupPath, this.configPath, this.inboxPath, this.cardsPath, this.negotiationsPath, this.consentPath]) {
+    for (const p of [this.agentPath, this.agentBackupPath, this.configPath, this.inboxPath, this.cardsPath, this.negotiationsPath, this.consentPath, this.eventsPath]) {
       rmSync(p, { force: true });
     }
   }

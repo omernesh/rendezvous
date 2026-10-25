@@ -5,12 +5,15 @@ Desktop, the MCP Inspector) a Rendezvous agent. PLAN.md §6.1, SPEC.md §13.
 
 The server runs one long-lived listening agent in-process. Its state is the
 same home dir as the `rdv` CLI (`agent.json`, `config.json`, `inbox.jsonl`,
-`negotiations.json`, `lock`, plus `consent.json` and `mcp-events.jsonl`), and it
-takes the lock only per operation, like `rdv listen`. So `rdv contact pending`
-or `rdv contact grant` can run in a terminal against the same profile while the
-server is up. Don't also run `rdv listen` on that home: both would answer the
-same envelopes (harmless, but the server's inbox would miss what `listen` saw
-first).
+`negotiations.json`, `lock`, plus `consent.json`, `events.jsonl` and
+`listener.lock`), and it takes the lock only per operation, like `rdv listen`.
+So `rdv contact pending` or `rdv contact grant` can run in a terminal against
+the same profile while the server is up. Only one process per home consumes
+inbound events (whoever holds `listener.lock`); if `rdv listen` or another
+`rdv-mcp` already does, this server runs attached: its tools work, and
+`rdv_inbox` reads the events the consumer writes to `events.jsonl`. It takes
+over when the consumer exits. `rdv_status` says which (`inbound`: `consumer`
+or `attached`). See impl/README.md.
 
 ```bash
 npm run build                              # from impl/

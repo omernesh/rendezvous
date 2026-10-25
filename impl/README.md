@@ -114,8 +114,10 @@ State lives in a directory: `--home <dir>`, else `$RDV_HOME`, else
 | `cards.json` | cards found by `rdv lookup`, so `contact request <agent-id>` can use them |
 | `negotiations.json` | dinner negotiations (the a2a engine state) |
 | `consent.json` | confirm phrases for pending requests (written by `rdv-mcp`; `contact pending` shows them in text mode) |
-| `mcp-events.jsonl` | `rdv-mcp` event log behind `rdv_inbox` |
+| `events.jsonl` | shared event log: what the home's listener handled, plus `rdv-mcp`'s own events; `rdv_inbox` is a view of it |
+| `events.lock` | held while appending to `events.jsonl` |
 | `lock` | held while a command reads and writes state |
+| `listener.lock` | held for its lifetime by the home's one inbound consumer (`rdv listen` or `rdv-mcp`) |
 
 | Command | Does |
 |---|---|
@@ -143,6 +145,22 @@ Exit codes: 0 ok, 1 error, 2 usage error. Every command except `listen` and
 takes the lock only while it handles one inbound item, so a bot can run
 `rdv contact grant` against the same home while `listen` is running; it prints
 an event only after the state behind it is saved.
+
+**One inbound consumer per home.** Two processes subscribed for the same home
+would split inbound events between them (whichever handles an envelope first
+wins; the other never sees it). So whoever consumes holds `listener.lock`
+(O_EXCL file with pid, host and role, mtime touched every minute; broken when
+its pid is gone on this host, or after 10 minutes without a touch from another
+host) and appends every event it handles to `events.jsonl`, after the state
+behind it is saved. A second `rdv listen` exits 1 naming the holder. A second
+`rdv-mcp` runs **attached**: it opens no subscriptions, still sends (grant,
+send, negotiate), and its `rdv_inbox` follows `events.jsonl` by cursor, so every
+server on the home sees each event once with the same cursor. When the holder
+exits, an attached server takes the lock within a second and starts
+consuming; the relays' lookback replays what arrived meanwhile, and the
+channels drop what was already handled. Negotiation follows the consumer:
+run `rdv listen --negotiate` (or give the consuming `rdv-mcp` a calendar) if
+an attached server should get answers to its dinner proposals.
 
 With `--json`, negotiation steps print as `{"event":"dinner","kind":…,"task":…,"peer":…,"state":…}`
 (kinds: proposed, offer-received, countered, accepted, completed, rejected,

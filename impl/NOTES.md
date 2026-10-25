@@ -285,10 +285,26 @@ the marker (CLI behavior, live-run logs, calendar settings) stay here only.
     say whether accepting a meeting needs a per-meeting confirmation, and a
     real deployment probably wants a "hold, then confirm" step (item 36). (folded into SPEC rev 3 §11.8)
 43. **Inbox is an event log, not an ack queue** (§13 says "receive/ack").
-    `rdv_inbox` returns events after a cursor from `mcp-events.jsonl`; nothing
-    is acknowledged back to the peer. One MCP server per home: if `rdv listen`
-    runs on the same home it handles some envelopes first, and those never
-    reach the server's log. (folded into SPEC rev 3 §13)
+    `rdv_inbox` returns events after a cursor from the home's `events.jsonl`;
+    nothing is acknowledged back to the peer. (folded into SPEC rev 3 §13)
+    **One inbound consumer per home** (issue #9): `rdv listen` and `rdv-mcp`
+    used to both subscribe, and whichever handled an envelope first took it,
+    so the MCP inbox missed what `listen` saw. Now the consumer holds
+    `listener.lock` for its lifetime (long-lived variant of item 23's lock:
+    one attempt, pid/host/role, mtime heartbeat every 60 s, stale when the pid
+    is gone on this host or after 10 min without a heartbeat) and appends
+    each handled event to `events.jsonl` (under `events.lock`, after the state
+    is saved; cursor `n` only grows; compacted to 1000 lines at 2000; relay
+    replays and stranger-caused drops are not written). A second `rdv listen`
+    is refused (exit 1, names the holder). A second `rdv-mcp` attaches: no
+    subscriptions, sends work, and its inbox is a view of `events.jsonl`, so
+    all servers on a home show the same events and cursors. It retries the
+    lock every second and takes over when the holder exits; the relays'
+    2-day lookback replays the gap and channel state drops what was handled,
+    so nothing is lost or doubled. Chosen over "refuse both" because several
+    MCP clients on one profile (two Claude sessions) are normal. Limits: the
+    consumer's negotiation settings decide whether peers' dinner replies are
+    answered; `mcp-events.jsonl` from older versions is no longer read.
 44. **Calendar settings** come from the server's arguments; `rdv_init` and
     `rdv_negotiate` may replace them for the server's lifetime (not
     persisted). The responder uses the same window for every peer.
@@ -318,9 +334,9 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
     and the MCP server drop envelopes that don't open for us and invalid
     topic docs before taking the lock (`isJunk`), and skip the `agent.json`
     rewrite when an item changed nothing (relay replays). The MCP event log
-    keeps the last 1000 events in memory, compacts `mcp-events.jsonl` at
-    2000 lines, reads by cursor without re-parsing, and hides drop reasons a
-    stranger can cause at will.
+    keeps the last 1000 events in memory, reads by cursor, and hides drop
+    reasons a stranger can cause at will; the shared `events.jsonl` behind
+    it (item 43) is compacted at 2000 lines and never gets those drops.
 47. **Calendar files are strict, and MCP calendar paths are fenced** (M2).
     A calendar is exactly `{ "busy": [...], "timezone"?: … }` with entries of
     `start`/`end`/`title`; any other JSON is refused before it is read for

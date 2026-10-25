@@ -8,10 +8,10 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import type { ElicitResult } from '@modelcontextprotocol/sdk/types.js';
 import { startTestRelay, type TestRelay } from '@rendezvous/core/testing';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { RDV_BIN, rdv } from '../../cli/scenarios/harness.js';
+import { Listener, RDV_BIN, rdv } from '../../cli/scenarios/harness.js';
 import { checkPhrase, EventLog, EVENTS_KEPT, MAX_ATTEMPTS, normalizePhrase, syncPhrases, toModelEvent, UNTRUSTED_NOTE } from '../src/index.js';
 import { dinnerFlow, type ElicitHandler, INJECTION, makeSide, ok, phraseFromHumanLog, type Side, waitEvent } from './flow.js';
-import { Home } from '@rendezvous/cli/lib';
+import { appendEvents, Home } from '@rendezvous/cli/lib';
 
 const ESC = String.fromCharCode(27);
 
@@ -201,11 +201,11 @@ describe('confirm phrases', () => {
 });
 
 describe('event log (security review M1)', () => {
-  it('is bounded on disk and in memory, keeps cursors, and hides drops any stranger can cause', () => {
+  it('is bounded on disk and in memory, keeps cursors, and hides drops any stranger can cause', async () => {
     root = mkdtempSync(join(tmpdir(), 'rdv-events-'));
     const home = new Home(root);
     const log = new EventLog(home);
-    for (let i = 0; i < 5; i++) log.append(Array.from({ length: 600 }, (_, j) => ({ type: 'message', i: i * 600 + j })));
+    for (let i = 0; i < 5; i++) await log.append(Array.from({ length: 600 }, (_, j) => ({ type: 'message', i: i * 600 + j })));
     const lines = readFileSync(log.path, 'utf8').trim().split('\n').length;
     expect(lines).toBeLessThanOrEqual(2 * EVENTS_KEPT);
     expect(log.cursor).toBe(3000);
@@ -214,7 +214,15 @@ describe('event log (security review M1)', () => {
     expect(log.since(0, 1)[0].n).toBe(3000 - EVENTS_KEPT + 1); // older events are gone
     const reopened = new EventLog(home);
     expect(reopened.cursor).toBe(3000);
-    expect(readFileSync(log.path, 'utf8').trim().split('\n')).toHaveLength(EVENTS_KEPT);
+    expect(reopened.since(0, 1)[0].n).toBe(3000 - EVENTS_KEPT + 1);
+    // Strangers' drops and relay replays never reach the shared file (they would push real events out).
+    const before = readFileSync(log.path, 'utf8');
+    await appendEvents(home, [
+      { event: 'dropped', reason: 'no grant for sender' },
+      { event: 'dropped', reason: 'duplicate envelope' },
+      { event: 'pending-evicted', total: 7 },
+    ]);
+    expect(readFileSync(log.path, 'utf8')).toBe(before);
     for (const reason of ['no grant for sender', 'contact request rate-limited', 'out-of-order envelope from a non-contact']) {
       expect(toModelEvent({ event: 'dropped', reason }, false)).toBeNull();
     }
@@ -330,4 +338,82 @@ describe('hardening (security review)', () => {
     expect(broken.text).toContain('server log');
     expect(omer.humanLog.join('\n')).toContain('negotiations.json');
   });
+});
+
+describe('one inbound consumer per home (issue #9)', () => {
+  it('rdv listen consumes, two rdv-mcp attach, one takes over; every message reaches each inbox once', async () => {
+    root = mkdtempSync(join(tmpdir(), 'rdv-consumer-'));
+    const omerHome = join(root, 'omer');
+    const johnHome = join(root, 'john');
+    await rdv(['init', '--profile', 'omer', '--email', 'omer9@example.com', '--relay', relay.url], omerHome);
+    await rdv(['init', '--profile', 'john', '--email', 'john9@doe.com', '--relay', relay.url, '--public-pointer'], johnHome);
+    await rdv(['card', 'publish'], johnHome);
+    const card = (await rdv(['lookup', 'john9@doe.com'], omerHome)).lines[0].card;
+    const cardFile = join(root, 'john-card.json');
+    writeFileSync(cardFile, JSON.stringify(card));
+
+    let johnL = new Listener('john', johnHome, ['--auto-grant', 'stranger']);
+    const omerL = new Listener('omer', omerHome);
+    const servers: Side[] = [];
+    const send = (n: number) => rdv(['send', card.id, '--json', JSON.stringify({ type: 'note', n })], omerHome);
+    const notes = async (s: Side): Promise<string[]> => {
+      const r = await ok(s, 'rdv_inbox', { since: 0, limit: 200 });
+      return r.events.filter((e: { type: string }) => e.type === 'message').map((e: { payload: unknown }) => JSON.stringify(e.payload));
+    };
+    const atLeast = async (s: Side, count: number): Promise<string[]> => {
+      for (let i = 0; i < 100 && (await notes(s)).length < count; i++) await new Promise((r) => setTimeout(r, 100));
+      return notes(s);
+    };
+    const modes = async () => [(await ok(servers[0], 'rdv_status')).inbound, (await ok(servers[1], 'rdv_status')).inbound].sort();
+    try {
+      await johnL.waitFor((l) => l.event === 'ready', 'john ready', 10_000);
+      await omerL.waitFor((l) => l.event === 'ready', 'omer ready', 10_000);
+      await rdv(['contact', 'request', cardFile, '--in-person', '--greeting', 'hi'], omerHome);
+      await omerL.waitFor((l) => l.event === 'contact' && l.peer === card.id, 'omer contact', 10_000);
+
+      // A second `rdv listen` on the same home is refused, naming the holder.
+      const second = await rdv(['listen'], johnHome, { check: false });
+      expect(second.code).toBe(1);
+      expect(second.stderr).toContain('rdv listen, pid');
+
+      // Two MCP servers on John's home attach to the running listener.
+      servers.push(await makeSide('john-a', johnHome), await makeSide('john-b', johnHome));
+      expect(await modes()).toEqual(['attached', 'attached']);
+      expect(servers[0].humanLog.join('\n')).toContain('attached: rdv listen');
+
+      for (const n of [1, 2, 3]) await send(n);
+      await johnL.waitFor((l) => l.event === 'message' && l.payload?.n === 3, 'john listen sees 3', 10_000);
+      for (const s of servers) expect(await atLeast(s, 3)).toHaveLength(3);
+
+      // The listener stops: exactly one MCP server takes over, and nothing is lost or doubled.
+      await johnL.stop();
+      for (let i = 0; i < 50 && !(await modes()).includes('consumer'); i++) await new Promise((r) => setTimeout(r, 100));
+      expect(await modes()).toEqual(['attached', 'consumer']);
+      await new Promise((r) => setTimeout(r, 500)); // the new consumer replays the relay's lookback (all duplicates)
+      for (const n of [4, 5]) await send(n);
+      for (const s of servers) {
+        await atLeast(s, 5);
+        await new Promise((r) => setTimeout(r, 300));
+        const got = await notes(s);
+        expect(got).toHaveLength(5);
+        expect(new Set(got).size).toBe(5);
+      }
+
+      // Now an MCP server holds the home: `rdv listen` is refused.
+      const third = await rdv(['listen'], johnHome, { check: false });
+      expect(third.code).toBe(1);
+      expect(third.stderr).toContain('rdv-mcp, pid');
+    } finally {
+      for (const s of servers) await s.close();
+      await johnL.stop();
+      await omerL.stop();
+    }
+    // With everything stopped the lock is free again.
+    johnL = new Listener('john', johnHome);
+    try {
+      await johnL.waitFor((l) => l.event === 'ready', 'john ready again', 10_000);
+    } finally {
+      await johnL.stop();
+    }
+  }, 60_000);
 });

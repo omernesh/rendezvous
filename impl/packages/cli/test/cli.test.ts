@@ -35,6 +35,28 @@ describe('lock and atomic writes', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
+  it('listener.lock: one holder, owner named, dead owner broken, age alone never breaks a live one (issue #9)', async () => {
+    const { tryLongLock } = await import('../src/fsutil.js');
+    const dir = tmp();
+    const path = join(dir, 'listener.lock');
+    const first = tryLongLock(path, 'rdv listen', { heartbeatMs: 20, staleMs: 100 });
+    expect(first.release).toBeTypeOf('function');
+    await new Promise((r) => setTimeout(r, 250)); // older than staleMs, but the heartbeat keeps it fresh
+    const second = tryLongLock(path, 'rdv-mcp', { staleMs: 100 });
+    expect(second.owner).toMatch(new RegExp(`^rdv listen, pid ${process.pid} on `));
+    first.release!();
+    const third = tryLongLock(path, 'rdv-mcp');
+    expect(third.release).toBeTypeOf('function');
+    third.release!();
+    // A crashed owner on this host: its lock is broken.
+    writeFileSync(path, JSON.stringify({ pid: 999999, host: hostname(), since: '2020-01-01T00:00:00Z', role: 'rdv listen' }));
+    const taken = tryLongLock(path, 'rdv-mcp');
+    expect(taken.release).toBeTypeOf('function');
+    expect(JSON.parse(readFileSync(path, 'utf8'))).toMatchObject({ pid: process.pid, role: 'rdv-mcp' });
+    taken.release!();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
   it('excludes a second holder until released', async () => {
     const dir = tmp();
     const path = join(dir, 'lock');
