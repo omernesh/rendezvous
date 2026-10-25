@@ -6,6 +6,7 @@ import { createInterface } from 'node:readline/promises';
 import {
   type AddressCard,
   Agent,
+  b64decode,
   cleanLabel,
   DEFAULT_GRANT_SCOPE,
   DEFAULT_RELAYS,
@@ -1226,7 +1227,9 @@ export async function filePrepare({ home, out, values, positionals }: Ctx): Prom
 /** `rdv file list`: prepared files, files peers sent for your tasks, direct-transfer requests, and the setting. */
 export async function fileList({ home, out }: Ctx): Promise<void> {
   home.requireInit();
-  const { files, tasks, direct } = await home.locked(async () => ({ files: home.readFiles(), tasks: home.readTasks(), direct: home.readOwner().direct_transfer === true }));
+  const { files, tasks, owner } = await home.locked(async () => ({ files: home.readFiles(), tasks: home.readTasks(), owner: home.readOwner(b64decode(home.readAgentState().secretKey)) }));
+  const direct = owner.direct_transfer === true;
+  if (owner.forged) out.emit({ event: 'warning', message: 'owner.json is not signed by this agent: ignored' }, `warning: ${clean(home.ownerPath)} is not signed by this agent (written by something else?): ignored, direct transfer is off`);
   out.emit({ event: 'direct-transfer', enabled: direct }, `direct transfer: ${direct ? 'on (requests are shown to you; this agent implements no transfer protocol, so nothing connects)' : 'off (requests are declined)'}`);
   for (const f of Object.values(files.outgoing).sort((a, b) => a.created.localeCompare(b.created))) {
     out.emit({ event: 'file-prepared', ...outgoingView(f) }, `prepared ${f.sha256}  ${clean(JSON.stringify(f.name ?? 'unnamed'))}  ${f.size} bytes  ${f.enc ? 'encrypted' : 'plain'}  from ${clean(f.source)}  upload ${clean(f.upload)}`);
@@ -1276,10 +1279,8 @@ export async function fileDirectTransfer({ home, out, positionals }: Ctx): Promi
   if (v !== 'on' && v !== 'off') throw new CliError('rdv file direct-transfer takes on or off', 2);
   home.requireInit();
   await home.locked(async () => {
-    const owner = home.readOwner();
-    if (v === 'on') owner.direct_transfer = true;
-    else delete owner.direct_transfer;
-    home.writeOwner(owner);
+    const key = b64decode(home.readAgentState().secretKey);
+    home.writeOwner(v === 'on' ? { direct_transfer: true } : {}, key);
   });
   out.emit(
     { event: 'direct-transfer', enabled: v === 'on' },

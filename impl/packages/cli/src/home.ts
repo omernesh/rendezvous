@@ -24,7 +24,9 @@ import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { emptyState, emptyTaskState, type FilePart, type NegotiationState, type TaskEngineState, type TaskPart } from '@rendezvous/a2a';
 import type { AddressCard, AgentState, DiscoveryAddress, FileEnc, GrantScope, InboundPolicy, Payload, RelayStatus, Tier, TransferState } from '@rendezvous/core';
+import { createHmac, timingSafeEqual } from 'node:crypto';
 import { acquireLock, writeAtomic } from './fsutil.js';
+import { stable } from './hash.js';
 
 /**
  * One of our addresses. A public one (no `private`) is listed on the card and
@@ -46,8 +48,10 @@ export interface Config {
 
 /**
  * owner.json: settings only the owner changes, kept out of config.json (which
- * the assistant may read and, through file tools, write); the plugin's consent
- * guard refuses any tool access to this file.
+ * the assistant may read and, through file tools, write). The plugin's consent
+ * guard refuses any tool access to the file, and it is MACed with the agent's
+ * secret key (as autoapprove.json), so a file written by anything that cannot
+ * read agent.json is ignored: the settings stay at their defaults.
  */
 export interface OwnerSettings {
   /**
@@ -295,15 +299,29 @@ export class Home {
     return join(this.dir, 'owner.json');
   }
 
-  readOwner(): OwnerSettings {
+  /**
+   * The owner's settings, verified with the agent's secret key. A file that is
+   * missing, unreadable or not MACed by this key gives the defaults (all off);
+   * `forged` says the file was there but did not verify (warn the human).
+   */
+  readOwner(secretKey: Uint8Array): OwnerSettings & { forged?: true } {
     if (!existsSync(this.ownerPath)) return {};
-    const s = readJson<OwnerSettings>(this.ownerPath);
-    if (typeof s !== 'object' || s === null || Array.isArray(s)) throw new CliError(`unrecognized ${this.ownerPath}`);
-    return { ...(s.direct_transfer === true ? { direct_transfer: true } : {}) };
+    let s: { v?: unknown; direct_transfer?: unknown; mac?: unknown };
+    try {
+      s = JSON.parse(readFileSync(this.ownerPath, 'utf8'));
+    } catch {
+      return { forged: true };
+    }
+    if (typeof s !== 'object' || s === null || s.v !== 1 || typeof s.mac !== 'string' || !/^[0-9a-f]{64}$/.test(s.mac)) return { forged: true };
+    const body: OwnerSettings = s.direct_transfer === true ? { direct_transfer: true } : {};
+    const want = Buffer.from(ownerMac(secretKey, body), 'hex');
+    if (!timingSafeEqual(Buffer.from(s.mac, 'hex'), want) || (s.direct_transfer !== undefined && s.direct_transfer !== true)) return { forged: true };
+    return body;
   }
 
-  writeOwner(s: OwnerSettings): void {
-    writeAtomic(this.ownerPath, JSON.stringify(s, null, 2) + '\n', 0o600);
+  writeOwner(s: OwnerSettings, secretKey: Uint8Array): void {
+    const body: OwnerSettings = s.direct_transfer === true ? { direct_transfer: true } : {};
+    writeAtomic(this.ownerPath, JSON.stringify({ v: 1, ...body, mac: ownerMac(secretKey, body) }, null, 2) + '\n', 0o600);
   }
 
   get filesPath() {
@@ -563,6 +581,10 @@ export class Home {
       rmSync(p, { force: true });
     }
   }
+}
+
+function ownerMac(secretKey: Uint8Array, body: OwnerSettings): string {
+  return createHmac('sha256', secretKey).update(`rdv1/owner-settings\0${stable({ v: 1, ...body })}`).digest('hex');
 }
 
 function isAgentState(s: unknown): s is AgentState {

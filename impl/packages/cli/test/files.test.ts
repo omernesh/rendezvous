@@ -1,7 +1,7 @@
 // Files in the hosts (SPEC §7.7, issue #26): validation of peer file parts,
 // hostile names, the quarantine, the start gate on fetching, prepared files
 // and the release view, and the `rdv file` commands.
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, linkSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { emptyTaskState, type FilePart, FILES_URI, type TaskRecord } from '@rendezvous/a2a';
@@ -298,6 +298,45 @@ describe('outgoing files: prepared, attached, shown at the release gate', () => 
     expect(() => attachFiles(home, [], [join(other, 'tasks.json')])).toThrow(/inside a Rendezvous home/);
     expect(() => prepareFile(home, join(other, 'config.json'))).toThrow(/inside a Rendezvous home/);
   });
+
+  it('a hard link to the secret key from outside the home is refused by identity; any multiply-linked file too (security review)', () => {
+    const home = new Home(tmp());
+    home.ensureDir();
+    writeFileSync(home.agentPath, '{"secretKey":"not really"}');
+    const outside = tmp();
+    const link = join(outside, 'q4-plan.pdf');
+    let linked = false;
+    try {
+      linkSync(home.agentPath, link);
+      linked = true;
+    } catch {
+      /* a filesystem without hard links */
+    }
+    if (linked) {
+      expect(() => prepareFile(home, link)).toThrow(/Rendezvous file|hard links/);
+      expect(() => attachFiles(home, [], [link])).toThrow(/Rendezvous file|hard links/);
+      // An ordinary file with a second link is refused as well: its other name could be anything.
+      const a = join(outside, 'a.txt');
+      writeFileSync(a, 'x');
+      linkSync(a, join(outside, 'b.txt'));
+      expect(() => prepareFile(home, a)).toThrow(/2 hard links/);
+    }
+    expect(existsSync(home.filesPath)).toBe(false);
+  });
+
+  it('the owner setting verifies with the agent key: a hand-written file is ignored', () => {
+    const home = new Home(tmp());
+    home.ensureDir();
+    const key = generateKey().secretKey;
+    home.writeOwner({ direct_transfer: true }, key);
+    expect(home.readOwner(key)).toEqual({ direct_transfer: true });
+    expect(home.readOwner(generateKey().secretKey)).toEqual({ forged: true });
+    writeFileSync(home.ownerPath, JSON.stringify({ v: 1, direct_transfer: true }));
+    expect(home.readOwner(key)).toEqual({ forged: true });
+    const signedOff = JSON.parse(readFileSync((home.writeOwner({}, key), home.ownerPath), 'utf8'));
+    writeFileSync(home.ownerPath, JSON.stringify({ ...signedOff, direct_transfer: true })); // flipped, the MAC kept
+    expect(home.readOwner(key)).toEqual({ forged: true });
+  });
 });
 
 describe('rdv file (commands)', () => {
@@ -324,6 +363,13 @@ describe('rdv file (commands)', () => {
     expect(JSON.parse(readFileSync(join(home, 'owner.json'), 'utf8')).direct_transfer).toBe(true);
     await rdv(['file', 'direct-transfer', 'off'], home);
     expect(JSON.parse(readFileSync(join(home, 'owner.json'), 'utf8')).direct_transfer).toBeUndefined();
+    // A setting written by anything without the agent key (the model, a script) is ignored, with a warning (security review).
+    writeFileSync(join(home, 'owner.json'), JSON.stringify({ v: 1, direct_transfer: true, mac: 'ab'.repeat(32) }));
+    const forged = await rdv(['file', 'list'], home);
+    expect(forged.lines[0]).toMatchObject({ event: 'warning' });
+    expect(forged.lines[1]).toEqual({ event: 'direct-transfer', enabled: false });
+    writeFileSync(join(home, 'owner.json'), '{"direct_transfer": true}');
+    expect((await rdv(['file', 'list'], home)).lines[1]).toEqual({ event: 'direct-transfer', enabled: false });
     expect((await rdv(['file', 'direct-transfer', 'maybe'], home, { check: false })).code).toBe(2);
     expect((await rdv(['file', 'fetch', U(5)], home, { check: false })).stderr).toContain(`no task ${U(5)}`);
     expect((await rdv(['file', 'decline-transfer', U(5)], home, { check: false })).stderr).toContain('no direct-transfer request');

@@ -352,6 +352,14 @@ describe('direct transfer: an offer is shown, never acted on automatically', () 
     expect((await ok(omer, 'rdv_inbox', { since: 0, limit: 200 })).events.filter((e: { type: string; payload_type?: string }) => e.type === 'message')).toEqual([]);
 
     // The model cannot turn the setting on: it is the human's (the consent guard blocks the command). The human does.
+    // A setting written without the agent key (a model, a script) is ignored: the next request is still declined.
+    writeFileSync(join(omer.home.dir, 'owner.json'), JSON.stringify({ v: 1, direct_transfer: true, mac: 'ab'.repeat(32) }));
+    const t0 = newTransferId();
+    await rawSend(john, omerId, transferMessage({ file: ref.sha256, transfer: t0, step: 'propose', protocols: ['webrtc-datachannel/1'] }));
+    expect(await waitEvent(omer, (e) => e.type === 'transfer' && e.transfer_id === t0, 'the forged-setting transfer', T)).toMatchObject({ kind: 'declined', auto_declined: true });
+    while (fromOmer().length < 2 && Date.now() < deadline) await new Promise((r) => setTimeout(r, 100));
+    expect(fromOmer()[1].payload).toMatchObject({ step: 'abort', transfer: t0, reason: 'direct transfer is off' });
+    expect(omer.humanLog.join('\n')).toContain('not signed by this agent');
     execFileSync(process.execPath, [RDV_BIN, 'file', 'direct-transfer', 'on', '--home', omer.home.dir], { encoding: 'utf8' });
     const t2 = newTransferId();
     await rawSend(john, omerId, transferMessage({ file: ref.sha256, transfer: t2, step: 'propose', protocols: ['webrtc-datachannel/1'] }));
@@ -359,18 +367,18 @@ describe('direct transfer: an offer is shown, never acted on automatically', () 
     expect(p).toMatchObject({ kind: 'proposed', protocols: ['webrtc-datachannel/1'] });
     expect(p.next_step).toContain('decline-transfer');
     await new Promise((r) => setTimeout(r, 500));
-    expect(fromOmer()).toHaveLength(1); // still only the first abort: nothing sent, nothing connected
+    expect(fromOmer()).toHaveLength(2); // nothing more sent, nothing connected
     expect((await ok(omer, 'rdv_file', { action: 'list' })).transfers).toEqual(expect.arrayContaining([expect.objectContaining({ transfer_id: t2, phase: 'proposed' })]));
 
     // The human says no through the model: the abort goes out.
     expect(await ok(omer, 'rdv_file', { action: 'decline-transfer', transfer_id: t2 })).toMatchObject({ declined: true });
-    while (fromOmer().length < 2 && Date.now() < deadline) await new Promise((r) => setTimeout(r, 100));
-    expect(fromOmer()[1].payload).toMatchObject({ step: 'abort', transfer: t2, reason: 'declined by the owner' });
+    while (fromOmer().length < 3 && Date.now() < deadline) await new Promise((r) => setTimeout(r, 100));
+    expect(fromOmer()[2].payload).toMatchObject({ step: 'abort', transfer: t2, reason: 'declined by the owner' });
     expect((await omer.call('rdv_file', { action: 'decline-transfer', transfer_id: t2 })).isError).toBe(true);
-    // An abort from John for it is shown; a message for an unknown transfer is ignored.
+    // A message for an unknown transfer is ignored: no reply.
     await rawSend(john, omerId, transferMessage({ file: ref.sha256, transfer: newTransferId(), step: 'accept', protocol: 'webrtc-datachannel/1' }));
     await new Promise((r) => setTimeout(r, 500));
-    expect(fromOmer()).toHaveLength(2);
+    expect(fromOmer()).toHaveLength(3);
   });
 });
 

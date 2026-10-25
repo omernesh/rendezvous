@@ -1716,7 +1716,16 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       name anywhere, nor anything inside a Rendezvous home: this one,
       `$RDV_HOME`, under `.rendezvous`, or any folder that looks like one;
       checked on the given and the real path, so a symlink, a junction or
-      `..` cannot reach them; security review on commit), encrypts it with `encryptFile` (fresh key and nonce; `--plain`
+      `..` cannot reach them; security review on commit). The real path is
+      opened once (`O_NOFOLLOW` where the platform has it) and judged and
+      read through that descriptor: `fstat` must show a regular file whose
+      `dev`/`ino` is none of the secret files in this home, `$RDV_HOME` or
+      any `~/.rendezvous` profile (a hard link from outside is caught), and
+      with one link only (`nlink > 1` is refused). **Windows** has no
+      `O_NOFOLLOW`: a directory in the path swapped for a junction between
+      `realpath` and `open` is still caught by the identity check, but a
+      swap to a file the identity check does not know (in a home it cannot
+      name) is not. Then it encrypts it with `encryptFile` (fresh key and nonce; `--plain`
       skips it) and writes the ciphertext to `files/outgoing/<sha256>.bin`
       for the owner to upload anywhere; nothing is sent and no result
       carries the key. `rdv task submit --file <sha256>=<https-url>` /
@@ -1743,9 +1752,13 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       `untrusted_peer_text`.
     - **Direct transfer** (`rdv/transfer`). `direct_transfer` lives in
       `owner.json` (mode 600), not `config.json`, which the assistant may
-      read and write: the consent guard refuses any tool access to
-      `owner.json`, `files.json` and `tasks.json` in a home (file keys,
-      drafts with inline bytes, owner settings), and `rdv file
+      read and write. It is MACed with the agent's secret key like
+      `autoapprove.json`: a file written without the key (by the model, a
+      script) is ignored, the setting stays off, and the listener and `rdv
+      file list` warn. The consent guard refuses any command mentioning
+      `owner.json` (as it does `agent.json`) and any tool access to
+      `files.json` and `tasks.json` in a home (file keys, drafts with inline
+      bytes), and `rdv file
       direct-transfer on|off` is on its human-only list; no MCP tool changes
       it. Off (absent) by default. `handleInbound` routes `rdv/transfer` from
       contacts to `transfersInbound` (the raw message event is marked
