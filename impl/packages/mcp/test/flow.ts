@@ -276,3 +276,67 @@ export async function moveHold(home: Home, taskId: string): Promise<() => Promis
       home.writeNegotiations(state);
     });
 }
+
+/**
+ * The chat onboarding flow the plugin's skill walks through
+ * (plugins/rendezvous/skills/rendezvous/SKILL.md): status → init → publish →
+ * discover (no card for John) → request by address → John's human approves
+ * (`approve`) → Omer's human confirms the probe answer (`confirm`) → Omer
+ * finds John among his contacts by address → first message, which John's
+ * agent sees as untrusted data.
+ */
+export async function onboardingFlow(
+  omer: Side,
+  john: Side,
+  opts: {
+    relays: string[];
+    tag?: string;
+    timeoutMs: number;
+    approve: (john: Side, requestId: string) => Promise<void>;
+    confirm: (omer: Side, grantId: string) => Promise<void>;
+  },
+): Promise<{ omerId: string; johnId: string }> {
+  const tag = opts.tag ? `+${opts.tag}` : '';
+  const omerAt = `omer${tag}@example.com`;
+  const johnAt = `john${tag}@doe.com`;
+  expect((await ok(omer, 'rdv_status')).initialized).toBe(false);
+  const o = await ok(omer, 'rdv_init', { profile: 'omer', email: omerAt, relays: opts.relays, public_pointer: true });
+  const j = await ok(john, 'rdv_init', { profile: 'john', email: johnAt, relays: opts.relays });
+  expect(o.created && j.created).toBe(true);
+  expect(o.relays).toEqual(opts.relays);
+  // Asking again keeps the agent (the skill may call rdv_init on an existing home).
+  const again = await ok(omer, 'rdv_init', { profile: 'omer', email: omerAt, relays: opts.relays });
+  expect(again).toMatchObject({ created: false, agent_id: o.agent_id });
+  expect((await ok(omer, 'rdv_publish_card')).published).toBe(true);
+  expect((await john.call('rdv_publish_card')).isError).toBe(true); // John chose not to be findable
+  await new Promise((r) => setTimeout(r, 300)); // subscriptions settle
+
+  expect((await ok(omer, 'rdv_discover', { address: johnAt })).found).toBe(0);
+  const r = await ok(omer, 'rdv_request_contact', { target: johnAt, greeting: 'Omer would like to connect.' });
+  expect(r.via).toBe('discovery probe');
+
+  const req = await waitEvent(john, (e) => e.type === 'contact_request', 'the contact request', opts.timeoutMs);
+  expect(req.from).toBe(o.agent_id);
+  const pending = await ok(john, 'rdv_pending_requests');
+  expect(pending.pending.map((p: { request_id: string }) => p.request_id)).toContain(req.request_id);
+  await opts.approve(john, req.request_id);
+
+  const cand = await waitEvent(omer, (e) => e.type === 'contact_candidate', 'the probe answer', opts.timeoutMs);
+  expect(cand.from).toBe(j.agent_id);
+  expect((await ok(omer, 'rdv_status')).contacts).toEqual([]); // not a contact until Omer's human says so
+  await opts.confirm(omer, cand.grant_id);
+  await waitEvent(omer, (e) => e.type === 'contact' && (e.agent_id ?? e.peer) === j.agent_id, 'the contact', opts.timeoutMs);
+
+  // "Tell John I'm running late": the skill finds John by the address his card claims.
+  const contacts = (await ok(omer, 'rdv_status')).contacts;
+  const johnContact = contacts.find((c: { claimed_addresses: unknown[] }) => c.claimed_addresses.includes(johnAt));
+  expect(johnContact?.agent_id).toBe(j.agent_id);
+  const sent = await ok(omer, 'rdv_send', { agent_id: johnContact.agent_id, payload: { type: 'note', text: "I'm running late" } });
+  expect(sent.sent).toBe(true);
+  const msg = await waitEvent(john, (e) => e.type === 'message' && e.from === o.agent_id, 'the first message', opts.timeoutMs);
+  expect(msg.payload_type).toBe('note');
+  expect(msg.payload.untrusted_peer_text).toContain('running late');
+  const omerContact = (await ok(john, 'rdv_status')).contacts.find((c: { agent_id: string }) => c.agent_id === o.agent_id);
+  expect(omerContact.claimed_addresses).toEqual([omerAt]);
+  return { omerId: o.agent_id, johnId: j.agent_id };
+}

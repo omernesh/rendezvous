@@ -29,12 +29,67 @@ may pick other calendar files from),
 listed but not answered. stdout carries MCP; human-facing notices go to stderr.
 Client config examples: [`impl/demo/SCRIPT.md`](../../demo/SCRIPT.md).
 
+## Use it from Claude Code (plugin)
+
+The repo is also a Claude Code plugin marketplace. In Claude Code's chat:
+
+```text
+/plugin marketplace add omernesh/rendezvous
+/plugin install rendezvous@rendezvous
+/reload-plugins
+```
+
+The plugin ([`plugins/rendezvous`](../../../plugins/rendezvous)) registers this
+server through a small launcher (`bin/rdv-mcp.mjs`, run with `node`, so it
+works on Windows too) that loads the build the installer made in
+`~/.rendezvous/src` (or `$RDV_DIR`). It adds the Rendezvous skill (install,
+identity, contact, first message, incoming requests) and a PreToolUse consent
+guard (below). The server uses the same home as `rdv`: `$RDV_HOME`, else
+`~/.rendezvous/$RDV_PROFILE`, else `~/.rendezvous/default`. The skill alone,
+for other agents that load SKILL.md files: `npx skills add omernesh/rendezvous`.
+
+## Use it from other MCP clients
+
+Register `rdv-mcp` as a stdio server; the installer puts it on PATH. Pass
+options (`--profile omer`, `--calendar cal.json`, …) in `args`.
+
+Claude Desktop (`claude_desktop_config.json`) or Cursor (`~/.cursor/mcp.json`
+or `.cursor/mcp.json`):
+
+```json
+{
+  "mcpServers": {
+    "rendezvous": { "command": "rdv-mcp", "args": ["--profile", "omer"] }
+  }
+}
+```
+
+Codex (`~/.codex/config.toml`):
+
+```toml
+[mcp_servers.rendezvous]
+command = "rdv-mcp"
+args = ["--profile", "omer"]
+```
+
+On Windows `rdv-mcp` is a `.cmd` shim, which most clients can't spawn
+directly: use `"command": "cmd", "args": ["/c", "rdv-mcp", "--profile", "omer"]`,
+or `"command": "node"` with the built file
+(`%USERPROFILE%\.rendezvous\src\impl\packages\mcp\dist\src\bin.js`) as the
+first argument. Claude Code without the plugin:
+`claude mcp add rendezvous -- rdv-mcp --profile omer` (Windows:
+`claude mcp add rendezvous -- cmd /c rdv-mcp --profile omer`).
+
+Approval forms need a client that supports MCP elicitation; Claude Code does in
+interactive sessions (not in `-p`). Elsewhere approvals use the confirm phrase
+the human reads in their own terminal (`rdv contact pending`), below.
+
 ## Tools
 
 | Tool | Input | Output |
 |---|---|---|
 | `rdv_init` | profile, email, phone, relays, public_pointer, calendar, window, tz | agent ID, fingerprint; keeps an existing agent (re-key only with `rdv init --force`) |
-| `rdv_status` | — | ID, relays, contacts, pending count, negotiation settings, approval mode |
+| `rdv_status` | — | ID, relays, contacts (with the addresses their cards claim), pending count, negotiation settings, approval mode |
 | `rdv_publish_card` | — | topics published |
 | `rdv_discover` | address | cards found (agent ID, fingerprint, claimed addresses, relays) |
 | `rdv_request_contact` | target (email, +phone, or agent ID), greeting | request ID |
@@ -126,7 +181,14 @@ run `rdv contact grant` itself, or read `agent.json`, which holds the secret
 key, a worse problem. In Claude Code,
 keep the default permission mode (shell commands and reads outside the project
 need approval) and add deny rules for the home dir and `rdv contact pending`
-(example in `demo/SCRIPT.md`). The strongest setup runs `rdv-mcp` as a
+(example in `demo/SCRIPT.md`). The Claude Code plugin adds a PreToolUse hook
+(`plugins/rendezvous/hooks/consent-guard.mjs`) that refuses the consent and
+phrase-showing `rdv` commands (`contact grant`/`confirm`/`resync`, text-mode
+`contact pending` and `dinner list`, `dinner confirm`/`cancel`,
+`listen --auto-grant`/`--auto-confirm`, `init --force`) and reads of
+`agent.json` or `consent.json` under `.rendezvous` or `$RDV_HOME`. It is a
+tripwire against drift and injected text, not a sandbox: a model with a shell
+can still obfuscate a command past it (NOTES 62). The strongest setup runs `rdv-mcp` as a
 different OS user, or on another machine, from the one the assistant's tools
 run as. Revoking and declining need no confirmation: they only reduce access.
 
@@ -161,5 +223,10 @@ init → discover → request → refused grant → human approval (confirm phra
 and elicitation accept / decline) → negotiate → refused model-only dinner
 confirmation → each human confirms (phrase, form) → completed on both sides, plus
 
-a stdio smoke test, phrase rules and hardening. Live:
+a stdio smoke test, phrase rules and hardening. The chat onboarding flow the
+plugin's skill follows (init, request by address, both humans approve by form
+or phrase, first message) runs the same way. `test/plugin.test.ts` checks the
+plugin: manifests, the launcher over stdio, the consent guard, and a lint that
+fails if the skill or its references tell the assistant to run a consent
+command. Live (dinner and onboarding):
 `RDV_LIVE_RELAYS=wss://relay.example npm run test:live -w @rendezvous/mcp`.

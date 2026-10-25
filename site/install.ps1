@@ -137,8 +137,12 @@ Next steps:
   rdv whoami --profile omer
   rdv listen --profile omer
 
-Use it from Claude Code:
-  claude mcp add rendezvous -- node "$($Targets['rdv-mcp'])" --profile omer
+Or let Claude Code do the rest: in its chat, type
+  /plugin marketplace add omernesh/rendezvous
+  /plugin install rendezvous@rendezvous
+  /reload-plugins
+then ask "Set up Rendezvous for me". (Without the plugin:
+  claude mcp add rendezvous -- node "$($Targets['rdv-mcp'])" --profile omer)
 
 Update later by running the installer again. Docs: https://rendezvous.nesher.co
 "@

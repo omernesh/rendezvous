@@ -962,6 +962,8 @@ export class RdvMcpServer {
         return {
           agent_id: safe(v.peer),
           fingerprint: safe(v.fingerprint),
+          // From the peer's own card: self-asserted, so it names the contact but proves nothing.
+          claimed_addresses: (c.card?.discovery?.addresses ?? []).slice(0, 8).map((x) => asAddress(x?.value)),
           tier: oneOf(TIERS)(v.tier),
           binding: v.binding,
           since: v.since,

@@ -88,8 +88,10 @@
 
   // ---- tabs (WAI-ARIA tabs pattern), synced across both install blocks ---
   var tabGroups = Array.prototype.slice.call(document.querySelectorAll('[data-tabs]'));
+  // A selection only touches the groups that offer it (OS tabs sync; the setup mode tabs stand alone).
   function selectOs(os, focusGroup) {
     tabGroups.forEach(function (group) {
+      if (!group.querySelector('[role="tab"][data-os="' + os + '"]')) return;
       Array.prototype.forEach.call(group.querySelectorAll('[role="tab"]'), function (tab) {
         var on = tab.getAttribute('data-os') === os;
         tab.setAttribute('aria-selected', on ? 'true' : 'false');

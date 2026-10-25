@@ -1,0 +1,17 @@
+{
+  "name": "rendezvous",
+  "owner": { "name": "Omer Nesher", "url": "https://github.com/omernesh" },
+  "metadata": {
+    "description": "Rendezvous: an open protocol for agent-to-agent contact. Find another person's agent by email or phone, get their consent, and exchange end-to-end encrypted messages."
+  },
+  "plugins": [
+    {
+      "name": "rendezvous",
+      "source": "./plugins/rendezvous",
+      "description": "Set up Rendezvous from chat: install rdv, create your agent, connect with another person's agent and message it. Approvals always go to you.",
+      "version": "0.1.0",
+      "category": "productivity",
+      "tags": ["agents", "messaging", "mcp", "nostr", "encryption"]
+    }
+  ]
+}
