@@ -279,8 +279,8 @@ export async function init({ home, out, values, tty }: Ctx): Promise<void> {
     const first = await term.secret('Owner passphrase (not shown), or press Enter to skip and set it later with "rdv owner-secret set": ');
     if (first === '') return;
     try {
-      await newOwnerSecret(term, home, first, 'set');
-      out.emit({ event: 'owner-secret', action: 'set' }, 'owner passphrase set');
+      const { autoApproveOff } = await newOwnerSecret(term, home, first, 'set');
+      out.emit({ event: 'owner-secret', action: 'set', auto_approve_off: autoApproveOff }, `owner passphrase set${ownerSecretOffText(autoApproveOff)}`);
     } catch (err) {
       if (!(err instanceof CliError)) throw err;
       term.say(`${err.message}; set it later with "rdv owner-secret set"`);
@@ -836,8 +836,8 @@ export async function ownerSecretSet({ home, out, tty }: Ctx): Promise<void> {
   term.say(OWNER_SECRET_INTRO);
   const first = await term.secret('New owner passphrase (not shown): ');
   const action = had ? 'changed' : 'set';
-  await newOwnerSecret(term, home, first, action);
-  out.emit({ event: 'owner-secret', action }, `owner passphrase ${action} (audited; rdv whoami shows when)`);
+  const { autoApproveOff } = await newOwnerSecret(term, home, first, action);
+  out.emit({ event: 'owner-secret', action, auto_approve_off: autoApproveOff }, `owner passphrase ${action} (audited; rdv whoami shows when)${ownerSecretOffText(autoApproveOff)}`);
 }
 
 const OWNER_SECRET_INTRO = [
@@ -849,12 +849,19 @@ const OWNER_SECRET_INTRO = [
 ].join('\n');
 
 /** Check `first`, ask for it again, store it (audited). */
-async function newOwnerSecret(term: Tty, home: Home, first: string, action: 'set' | 'changed' | 'reset'): Promise<void> {
+async function newOwnerSecret(term: Tty, home: Home, first: string, action: 'set' | 'changed' | 'reset'): Promise<{ autoApproveOff: string[] }> {
   const weak = weakOwnerSecret(first);
   if (weak) throw new CliError(`the passphrase needs ${weak}: nothing was changed`, 2);
   const again = await term.secret('Type it again: ');
   if (again !== first) throw new CliError('the two did not match: nothing was changed', 2);
-  await storeOwnerSecret(home, first, action);
+  return storeOwnerSecret(home, first, action);
+}
+
+/** A new passphrase ends every auto-approve set under the old one (or none): say which, and how to turn each back on. */
+function ownerSecretOffText(peers: string[]): string {
+  return peers.length
+    ? `; auto-approve set under the old passphrase is now off for ${peers.join(', ')} (audited). To turn one back on: rdv contact auto-approve <contact> all`
+    : '';
 }
 
 /**

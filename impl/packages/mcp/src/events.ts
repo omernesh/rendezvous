@@ -270,7 +270,7 @@ export function toModelEvent(e: Raw, negotiating: boolean): Omit<McpEvent, 'n' |
         type: 'auto_approve_off',
         peer: agentId(e.peer),
         fingerprint: fp(e.peer),
-        reason: oneOf(['owner', 'expired', 'revoked', 'blocked', 'grant-changed', 'fork', 'invalid'])(e.reason),
+        reason: oneOf(['owner', 'expired', 'revoked', 'blocked', 'grant-changed', 'fork', 'invalid', 'owner-secret'])(e.reason),
         next_step: `Auto-approve for ${who(e.peer)} is off: its tasks need your user's approval again. Tell your user. Only they can turn it back on, in their own terminal.`,
       };
     case 'task-abuse': {

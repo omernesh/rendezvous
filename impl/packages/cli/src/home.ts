@@ -162,8 +162,12 @@ export interface FilesState {
   transfers: Record<string, TransferRecord>;
 }
 
-/** Why auto-approve for a contact ended (issue #25). `owner`: our human turned it off. */
-export type AutoApproveOff = 'owner' | 'expired' | 'revoked' | 'blocked' | 'grant-changed' | 'fork' | 'invalid';
+/**
+ * Why auto-approve for a contact ended (issue #25). `owner`: our human turned
+ * it off. `owner-secret`: the owner passphrase it was set under was changed,
+ * reset or deleted, or none is set.
+ */
+export type AutoApproveOff = 'owner' | 'expired' | 'revoked' | 'blocked' | 'grant-changed' | 'fork' | 'invalid' | 'owner-secret';
 
 /** One line of audit.jsonl. Never peer text: IDs, URIs, digests and hashes only. */
 export interface AuditEntry {
@@ -202,6 +206,8 @@ export interface AutoApproveEntry {
   grantId: string;
   since: string;
   scope: string;
+  /** The owner passphrase record it was set under (ownerSecretBinding): another passphrase, or none, ends it. */
+  owner: string;
   mac: string;
 }
 
@@ -344,6 +350,10 @@ export class Home {
   /** The owner passphrase (issue #47): a scrypt hash and the failure count, mode 600. */
   get ownerSecretPath() {
     return join(this.dir, 'owner-secret.json');
+  }
+  /** That an owner passphrase was set here once, MACed with the agent key: a deleted owner-secret.json then counts as a reset. */
+  get ownerSecretMarkerPath() {
+    return join(this.dir, 'owner-secret.marker');
   }
   get holdsPath() {
     return join(this.dir, 'holds.json');

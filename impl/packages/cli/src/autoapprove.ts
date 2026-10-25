@@ -11,6 +11,8 @@
 //   cannot read agent.json approves nothing;
 // - bound to the grant it was set on: revoked, blocked, revoked for abuse,
 //   re-granted or widened, or a forked or rolled-back channel, and it is off;
+// - bound to the owner passphrase record it was set under: a change, a reset
+//   or a deleted passphrase file ends it for good (issue #47 follow-up);
 // - optional expiry; an unreadable, expired, future-dated or malformed entry
 //   approves nothing (fail closed) and is removed;
 // - every action it approves, and every set, extend and end, is a line in
@@ -22,7 +24,7 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import { type Agent, type AgentState, b64decode, type Contact, ContactBook, effectiveInvoke, fingerprint, type GrantScope, MEETING_CAPABILITIES, parseTimestamp } from '@rendezvous/core';
 import { type AuditEntry, type AutoApproveEntry, type AutoApproveOff, CliError, type Home } from './home.js';
 import { sha, stable } from './hash.js';
-import { hasOwnerSecret } from './ownersecret.js';
+import { ownerSecretBinding } from './ownersecret.js';
 
 /** What the check reads of an agent: its key (the MAC), its contacts, and its channels. */
 export interface AutoApproveSubject {
@@ -68,11 +70,30 @@ function sameMac(a: string, b: string): boolean {
 
 export type AutoApproveCheck =
   | { ok: true; entry: AutoApproveEntry; capabilities: string[] }
-  /** `clock`: our own clock is unreadable; nothing is approved and nothing removed. */
-  | { ok: false; reason: AutoApproveOff | 'clock' };
+  /** `clock` / `owner-unreadable`: our clock, or owner-secret.json, is unreadable; nothing is approved and nothing removed. */
+  | { ok: false; reason: AutoApproveOff | 'clock' | 'owner-unreadable' };
 
-/** Does `entry` (stored under `peer`) hold at `now`? Every doubt fails closed. */
-export function checkAutoApprove(entry: AutoApproveEntry | undefined, subject: AutoApproveSubject, peer: string, now: Date): AutoApproveCheck {
+/** Is it a reason to remove the entry (and audit that), or only to approve nothing now? */
+const ends = (reason: AutoApproveOff | 'clock' | 'owner-unreadable'): reason is AutoApproveOff => reason !== 'clock' && reason !== 'owner-unreadable';
+
+/**
+ * The owner passphrase record auto-approve is bound to now (ownerSecretBinding):
+ * null when none is set (or it was reset or deleted), undefined when the file
+ * is unreadable.
+ */
+export function ownerBinding(home: Home): string | null | undefined {
+  try {
+    return ownerSecretBinding(home);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Does `entry` (stored under `peer`) hold at `now`, with `owner` the current
+ * passphrase binding (ownerBinding)? Every doubt fails closed.
+ */
+export function checkAutoApprove(entry: AutoApproveEntry | undefined, subject: AutoApproveSubject, peer: string, now: Date, owner: string | null | undefined): AutoApproveCheck {
   const t = now.getTime();
   if (!Number.isFinite(t)) return { ok: false, reason: 'clock' };
   if (!entry || typeof entry !== 'object' || entry.v !== 1 || entry.mode !== 'all' || entry.peer !== peer || typeof entry.mac !== 'string') {
@@ -88,6 +109,9 @@ export function checkAutoApprove(entry: AutoApproveEntry | undefined, subject: A
     if (until === null || until <= set) return { ok: false, reason: 'invalid' };
     if (t >= until) return { ok: false, reason: 'expired' };
   }
+  // Issue #47 follow-up: set under another passphrase record, or none is set now. It never comes back on its own.
+  if (owner === undefined) return { ok: false, reason: 'owner-unreadable' };
+  if (owner === null || typeof entry.owner !== 'string' || entry.owner !== owner) return { ok: false, reason: 'owner-secret' };
   if (subject.isBlocked(peer)) return { ok: false, reason: 'blocked' };
   const c = subject.contact(peer, now);
   if (!c) return { ok: false, reason: 'revoked' };
@@ -111,26 +135,16 @@ const offLine = (now: Date, peer: string, reason: AutoApproveOff): AuditEntry =>
 });
 
 /**
- * Auto-approve holds only while an owner passphrase is set and readable
- * (issue #47): an entry from before it existed, or one left after the file was
- * deleted, approves nothing until the owner sets one in their own terminal.
- * Entries are kept, not removed, so setting it brings them back.
- */
-function ownerSecretHolds(home: Home): boolean {
-  try {
-    return hasOwnerSecret(home);
-  } catch {
-    return false;
-  }
-}
-
-/**
  * The contact's auto-approve, if it holds now. Call inside the home lock: an
  * entry that no longer holds is removed and its end audited. An unreadable
- * file approves nothing (sweepAutoApprove reports it).
+ * file approves nothing (sweepAutoApprove reports it). It holds only under the
+ * owner passphrase record it was set under (issue #47): with none set, or
+ * another one, the entry is removed, and setting a passphrase never brings it
+ * back; the owner turns it on again.
  */
 export function autoApproved(home: Home, subject: AutoApproveSubject, peer: string, now = new Date()): { entry: AutoApproveEntry; capabilities: string[] } | null {
-  if (!ownerSecretHolds(home)) return null;
+  const owner = ownerBinding(home);
+  if (owner === undefined) return null;
   let all: Record<string, AutoApproveEntry>;
   try {
     all = home.readAutoApprove();
@@ -138,9 +152,9 @@ export function autoApproved(home: Home, subject: AutoApproveSubject, peer: stri
     return null;
   }
   if (!Object.hasOwn(all, peer)) return null;
-  const r = checkAutoApprove(all[peer], subject, peer, now);
+  const r = checkAutoApprove(all[peer], subject, peer, now, owner);
   if (r.ok) return r;
-  if (r.reason !== 'clock') {
+  if (ends(r.reason)) {
     delete all[peer];
     home.writeAutoApprove(all);
     home.appendAudit([offLine(now, peer, r.reason)]);
@@ -161,9 +175,10 @@ export function sweepAutoApprove(home: Home, subject: AutoApproveSubject, now = 
     return { ended: [], error: `${(err as Error).message}: no contact is on auto-approve until it is fixed (rdv contact auto-approve <contact> off rewrites it)` };
   }
   const ended: Array<{ peer: string; reason: AutoApproveOff }> = [];
+  const owner = ownerBinding(home);
   for (const peer of Object.keys(all)) {
-    const r = checkAutoApprove(all[peer], subject, peer, now);
-    if (!r.ok && r.reason !== 'clock') {
+    const r = checkAutoApprove(all[peer], subject, peer, now, owner);
+    if (!r.ok && ends(r.reason)) {
       ended.push({ peer, reason: r.reason });
       delete all[peer];
     }
@@ -178,7 +193,8 @@ export function sweepAutoApprove(home: Home, subject: AutoApproveSubject, now = 
 /** Contacts on auto-approve now, for display only (writes nothing). */
 export function autoApproveStatus(home: Home, subject: AutoApproveSubject, now = new Date()): Map<string, { until: string | null; set: string; capabilities: string[] }> {
   const out = new Map<string, { until: string | null; set: string; capabilities: string[] }>();
-  if (!ownerSecretHolds(home)) return out;
+  const owner = ownerBinding(home);
+  if (!owner) return out;
   let all: Record<string, AutoApproveEntry>;
   try {
     all = home.readAutoApprove();
@@ -186,7 +202,7 @@ export function autoApproveStatus(home: Home, subject: AutoApproveSubject, now =
     return out;
   }
   for (const peer of Object.keys(all)) {
-    const r = checkAutoApprove(all[peer], subject, peer, now);
+    const r = checkAutoApprove(all[peer], subject, peer, now, owner);
     if (r.ok) out.set(peer, { until: r.entry.until, set: r.entry.set, capabilities: r.capabilities });
   }
   return out;
@@ -266,13 +282,15 @@ export function autoApproveWarning(c: Contact, capabilities: string[], until: st
  */
 export function setAutoApprove(home: Home, subject: AutoApproveSubject, peer: string, until: string | null, now = new Date()): { action: 'set' | 'extend'; entry: AutoApproveEntry; capabilities: string[] } {
   const { contact, capabilities } = autoApproveTarget(subject, peer, now);
+  const owner = ownerBinding(home);
+  if (!owner) throw new CliError('set your owner passphrase first, in your own terminal: rdv owner-secret set (turning auto-approve on asks for it, so an assistant cannot)');
   let all: Record<string, AutoApproveEntry>;
   try {
     all = home.readAutoApprove();
   } catch {
     all = {}; // unreadable approves nobody; the owner's new decision replaces it
   }
-  const action = Object.hasOwn(all, peer) && checkAutoApprove(all[peer], subject, peer, now).ok ? 'extend' : 'set';
+  const action = Object.hasOwn(all, peer) && checkAutoApprove(all[peer], subject, peer, now, owner).ok ? 'extend' : 'set';
   const body: Omit<AutoApproveEntry, 'mac'> = {
     v: 1,
     peer,
@@ -282,6 +300,7 @@ export function setAutoApprove(home: Home, subject: AutoApproveSubject, peer: st
     grantId: contact.grantId,
     since: contact.since,
     scope: scopeDigest(contact.inboundScope),
+    owner,
   };
   const entry: AutoApproveEntry = { ...body, mac: macOf(subject.secretKey, body) };
   all[peer] = entry;
