@@ -252,7 +252,7 @@ describe('hardening (security review)', () => {
     expect(status.state).toEqual({ untrusted_peer_text: evil });
     expect(String(status.summary)).not.toContain('IGNORE');
     expect(toModelEvent({ event: 'dropped', reason: evil }, false)!.reason).toEqual({ untrusted_peer_text: evil });
-    expect(toModelEvent({ event: 'error', message: evil }, false)!.message).toEqual({ untrusted_peer_text: evil });
+    expect(JSON.stringify(toModelEvent({ event: 'error', message: evil }, false))).not.toContain('IGNORE');
   });
 
   it('the model cannot make the server read local files (card files, calendar errors)', async () => {
@@ -271,5 +271,12 @@ describe('hardening (security review)', () => {
       expect(r.text).not.toContain('SECRET');
     }
     expect((await omer.call('rdv_init', { calendar: join(root, 'x.txt') })).text).toContain('.json');
+    // Unexpected errors (here: a corrupt state file) reach only the human log.
+    writeFileSync(join(root, 'omer', 'negotiations.json'), '{"v":1, SECRET-STATE-456');
+    const broken = await omer.call('rdv_negotiate', { action: 'status' });
+    expect(broken.isError).toBe(true);
+    expect(broken.text).not.toContain('SECRET');
+    expect(broken.text).toContain('server log');
+    expect(omer.humanLog.join('\n')).toContain('negotiations.json');
   });
 });

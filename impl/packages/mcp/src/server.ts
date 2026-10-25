@@ -82,6 +82,8 @@ export interface RdvMcpOptions {
 
 class ToolError extends Error {}
 
+const GENERIC_ERROR = 'Something failed while handling an inbound item; the details are in the rdv-mcp server log (stderr).';
+
 function result(obj: unknown): CallToolResult {
   const text = JSON.stringify(obj, null, 2);
   return { content: [{ type: 'text', text: text.includes(UNTRUSTED_FIELD) ? `${UNTRUSTED_NOTE}\n\n${text}` : text }] };
@@ -183,7 +185,8 @@ export class RdvMcpServer {
       window: opts.window,
       tz: opts.tz,
     };
-    this.humanLog = opts.humanLog ?? ((line) => process.stderr.write(`[rdv-mcp] ${line}\n`));
+    // Lines can quote peer text: clean() keeps terminal escapes out of the human's console.
+    this.humanLog = opts.humanLog ?? ((line) => process.stderr.write(`[rdv-mcp] ${clean(line)}\n`));
     this.sweepMs = opts.sweepMs ?? SWEEP_MS;
     this.elicitTimeoutMs = opts.elicitTimeoutMs ?? 10 * 60_000;
     this.events = new EventLog(this.home);
@@ -254,12 +257,17 @@ export class RdvMcpServer {
     if (!real) return;
     this.chain = this.chain
       .then(async () => this.record(await handleInbound(this.home, real, feed, { negotiate: this.negotiateOpts() }, sweep)))
-      .catch((err: Error) => this.publish([{ type: 'error', message: safe(err.message) }]));
+      .catch((err: Error) => {
+        // Details can carry peer or file content: they go to the human only.
+        this.humanLog(`error handling an inbound item: ${err.message}`);
+        this.publish([{ type: 'error', message: GENERIC_ERROR }]);
+      });
   }
 
   private async record(events: Emitted[]): Promise<void> {
     const negotiating = this.negotiateOpts() !== undefined;
     const items = events.map((e) => toModelEvent(e.obj, negotiating)).filter((x) => x !== null);
+    for (const e of events) if (e.obj.event === 'error') this.humanLog(`error: ${String(e.obj.message)}`);
     if (events.some((e) => e.obj.event === 'request')) await this.refreshPhrases();
     this.publish(items);
   }
@@ -303,6 +311,20 @@ export class RdvMcpServer {
     });
   }
 
+  /**
+   * What the model may see of an error. Our own messages (ToolError, usage
+   * errors about its input, negotiation rules) pass; anything else (fs, JSON
+   * parse, unexpected) can quote file or peer content, so it goes to the human
+   * log and the model gets a generic line.
+   */
+  private modelSafeError(tool: string, err: unknown): string {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (err instanceof ToolError || err instanceof NegotiationError) return msg;
+    if (err instanceof CliError && !msg.startsWith('cannot read ')) return msg;
+    this.humanLog(`error in ${tool}: ${msg}`);
+    return `${tool} failed; the details are in the rdv-mcp server log (stderr).`;
+  }
+
   private supportsElicitation(): boolean {
     const e = this.mcp.server.getClientCapabilities()?.elicitation as Record<string, unknown> | undefined;
     return !!e && (e.form !== undefined || e.url === undefined);
@@ -322,7 +344,7 @@ export class RdvMcpServer {
       try {
         return result(await fn(args));
       } catch (err) {
-        return failure((err as Error).message ?? String(err));
+        return failure(this.modelSafeError(name, err));
       }
     }) as never;
     this.mcp.registerTool(name, { description, inputSchema: shape, annotations }, cb);

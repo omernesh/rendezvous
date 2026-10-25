@@ -94,7 +94,8 @@ export function toModelEvent(e: Raw, negotiating: boolean): Omit<McpEvent, 'n' |
       // Core's reasons are fixed strings, but some carry decoder detail: quarantine them all.
       return { type: 'dropped', reason: untrusted(e.reason) };
     case 'error':
-      return { type: 'error', message: untrusted(e.message) };
+      // May quote peer or calendar-file content: the server logs it for the human (see RdvMcpServer.record).
+      return { type: 'error', message: 'Something failed while handling an inbound item; the details are in the rdv-mcp server log (stderr).' };
     case 'dinner': {
       if (e.kind === 'duplicate') return null;
       const peerText = Array.isArray(e.peer_text) ? e.peer_text.map(untrusted) : undefined;
