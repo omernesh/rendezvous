@@ -130,6 +130,11 @@ import {
   carryOut,
   changeAddress,
   changeRelays,
+  describeRelaysAsk,
+  planRelayChange,
+  RelayPublishError,
+  relaysAsk,
+  relaysTarget,
   mirrorCard,
   mirrorRelaysOf,
   mirrorSummary,
@@ -342,6 +347,15 @@ function result(obj: unknown): CallToolResult {
 
 function failure(message: string): CallToolResult {
   return { isError: true, content: [{ type: 'text', text: clean(message, true) }] };
+}
+
+/** A publish no relay took: our message, and each relay's own text quarantined (it is not ours, and may be hostile). */
+function relayFailure(err: RelayPublishError): CallToolResult {
+  const body = {
+    error: err.message,
+    relays: err.relays.map((r) => ({ url: safe(r.url), kind: safe(r.kind), detail: untrusted(r.message) })),
+  };
+  return { isError: true, content: [{ type: 'text', text: `${UNTRUSTED_NOTE}\n\n${JSON.stringify(body, null, 2)}` }] };
 }
 
 const isAddress = (s: string) => s.includes('@') || s.startsWith('+');
@@ -837,6 +851,8 @@ export class RdvMcpServer {
         ...meetings.map((t) => ({ action: 'meeting' as const, id: t.id, digest: meetingDigest(meetingSnapshot(t)!) })),
         ...agreed.map((t) => ({ action: 'cancel' as const, id: t.id, digest: meetingDigest(agreedSnapshot(t)!) })),
         ...inbound.map((i) => inboundTarget(i.contact, i.terms.tier, i.terms.scope)),
+        // A relay change the model asked for (rdv_relays): kept while it is open, issued only when asked.
+        ...[relaysAsk(this.home)].filter((t): t is PhraseTarget => t !== undefined),
         // Each task at the start gate and each draft waiting for release (SPEC §5.5): bound to its digest, gone when the task ends.
         ...(tasks ? taskPhraseTargets(tasks) : []),
       ];
@@ -861,6 +877,77 @@ export class RdvMcpServer {
       else if (c.tk && c.digest) this.announceTaskPhrase(c.tk, c.phrase, c.digest, c.rel, c.changed);
       else if (c.hr) this.announceHeldRequestPhrase(c.hr, c.phrase, c.changed);
     }
+  }
+
+  /** A relay change's confirm phrase, to the human only: what changes, and the command that does it without the assistant. */
+  private announceRelaysPhrase(t: PhraseTarget, phrase: string): void {
+    this.humanLog(
+      `your assistant asks to change your relays: ${clean(describeRelaysAsk(t))}. To allow it, tell your assistant this confirm phrase: ${phrase} ` +
+        `(also shown by "rdv relays list --home \"${this.home.dir}\"" in your own terminal). Or make the change yourself with rdv relays add|remove, or ignore it.`,
+    );
+  }
+
+  /**
+   * The human's approval for a change to our LISTENING relays (envelopes go
+   * there, so a relay the model was talked into adding sees our traffic, and
+   * removing the good ones cuts us off): an approval form, or a confirm phrase
+   * bound to the change, the URL and the relays as they are now. Mirrors
+   * (card only, public) need none.
+   */
+  private async approveRelayChange(change: 'add' | 'remove', url: string, before: string[], phrase?: string): Promise<PhraseTarget> {
+    const home = this.home;
+    const target = relaysTarget(change, url, before);
+    const words = describeRelaysAsk(target);
+    if (phrase !== undefined) {
+      await this.refreshPhrases();
+      const check = await home.locked(async () => checkPhrase(home, target, phrase));
+      if (check.ok) return target;
+      if (check.reason === 'wrong' && check.rotated) this.announceRelaysPhrase(target, check.rotated);
+      if (check.reason === 'changed' || check.reason === 'terms') {
+        // The phrase is for another change (or the relays moved since): issue one for exactly this change.
+        const issued = await home.locked(async () => issuePhrase(home, target));
+        this.announceRelaysPhrase(target, issued.phrase);
+        throw new ToolError(
+          `that confirm phrase does not approve this change (${words}): it was for another change, or the relays changed since. Nothing changed. ` +
+            'A new phrase for exactly this change was shown to your user, and the old one no longer works; ask them for it.',
+        );
+      }
+      throw new ToolError(
+        check.reason === 'no-phrase'
+          ? 'there is no confirm phrase for this relay change yet: call rdv_relays without confirm_phrase first, so one is issued to your user'
+          : refusal(check, 'this relay change', 'Nothing changed.'),
+      );
+    }
+    if (this.supportsElicitation()) {
+      const res = await this.mcp.server.elicitInput(
+        {
+          mode: 'form',
+          message:
+            `Rendezvous: change the relays your agent listens on?\n\n${clean(words)}.\n\n` +
+            'Your messages and your card go to every relay your agent listens on. Only allow a relay you chose yourself.',
+          requestedSchema: {
+            type: 'object',
+            properties: { approve: { type: 'boolean', title: 'Make this change', default: false } },
+            required: ['approve'],
+          },
+        },
+        { timeout: this.elicitTimeoutMs },
+      );
+      if (res.action !== 'accept' || res.content?.approve !== true) {
+        throw new ToolError(`your user did not approve the relay change (${res.action === 'accept' ? 'left unchecked' : res.action}). Nothing changed.`);
+      }
+      return target;
+    }
+    const issued = await home.locked(async () => {
+      const stored = relaysAsk(home);
+      return stored && stored.digest === target.digest ? undefined : issuePhrase(home, target);
+    });
+    if (issued) this.announceRelaysPhrase(target, issued.phrase);
+    throw new ToolError(
+      `not changed: a change to the relays this agent listens on needs your user. A confirm phrase for exactly this change (${words}) was shown to them: ` +
+        `they can see it by running "rdv relays list --home \"${home.dir}\"" in their own terminal (it is also in this server's log). ` +
+        'Then call rdv_relays again with the same action and url, and confirm_phrase. Or they can make the change themselves in their own terminal.',
+    );
   }
 
   /** A held request's confirm phrase (issue #53), to the human only: to whom, what and which files, and the command that sends it. */
@@ -1024,6 +1111,7 @@ export class RdvMcpServer {
       try {
         return result(await fn(args));
       } catch (err) {
+        if (err instanceof RelayPublishError) return relayFailure(err);
         return failure(this.modelSafeError(name, err));
       }
     }) as never;
@@ -1124,11 +1212,14 @@ export class RdvMcpServer {
       "Manage this agent's own Nostr relays (the owner's setup). list: the relays it listens on (envelopes and its card go there; keep it small) " +
         'and its discovery mirrors (its card only, for lookups and rdv_publish_card with mirror: true). ' +
         'add / remove: a listening relay, or with mirror: true a discovery mirror. A listening relay is on the card: the card is re-signed and, with the public pointer on, republished; ' +
-        'the last listening relay cannot be removed. wss:// only (ws:// for a relay on this machine). Only change relays when your user asks.',
+        'the last listening relay cannot be removed. wss:// only (ws:// for a relay on this machine). Only change relays when your user asks. ' +
+        'A listening change needs your user: an approval form, or a confirm phrase they read in their own terminal and type to you (call once without it, so it is issued). Never guess or look for the phrase. ' +
+        'Mirror changes need no approval.',
       {
         action: z.enum(['list', 'add', 'remove']),
         url: z.string().max(512).optional().describe('A relay URL, wss://… (add, remove)'),
         mirror: z.boolean().optional().describe('add/remove a discovery mirror (cards only) instead of a listening relay'),
+        confirm_phrase: z.string().max(64).optional().describe('A listening change: the phrase your user read in their own terminal'),
       },
       async (a) => {
         if (!home.initialized()) throw new ToolError(`no agent at ${home.dir} yet: call rdv_init first`);
@@ -1141,7 +1232,20 @@ export class RdvMcpServer {
           };
         }
         if (!a.url) throw new ToolError(`url is required to ${a.action}`);
-        const r = await changeRelays(home, a.action === 'add' ? { add: a.url } : { remove: a.url }, a.mirror === true ? 'mirror' : 'listen');
+        const op = a.action === 'add' ? { add: a.url } : { remove: a.url };
+        const set = a.mirror === true ? 'mirror' : 'listen';
+        if (set === 'mirror' && a.confirm_phrase !== undefined) throw new ToolError('confirm_phrase is for a listening relay change only');
+        let expectRelays: string[] | undefined;
+        let approved: PhraseTarget | undefined;
+        if (set === 'listen') {
+          // Check the change before asking anyone (bad URL, duplicate, last relay), then get the human's approval for exactly it.
+          const before = home.readConfig().relays;
+          const { url } = planRelayChange(home.readConfig(), op, set);
+          approved = await this.approveRelayChange(a.action === 'add' ? 'add' : 'remove', url, before, a.confirm_phrase);
+          expectRelays = before;
+        }
+        const r = await changeRelays(home, op, set, { expectRelays });
+        if (approved) await home.locked(async () => dropPhrase(home, approved!));
         this.moveRelays(r.relays, r.mirror_relays);
         return {
           [r.change]: safe(r.url),

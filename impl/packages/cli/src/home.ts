@@ -82,7 +82,7 @@ export interface InboxEntry {
  * dinner, canceling an agreed one, or granting an existing contact rights
  * towards us (`inbound`, issue #1: a reverse grant).
  */
-export type ConsentAction = 'request' | 'candidate' | 'meeting' | 'cancel' | 'inbound' | 'task-start' | 'task-release';
+export type ConsentAction = 'request' | 'candidate' | 'meeting' | 'cancel' | 'inbound' | 'task-start' | 'task-release' | 'relays';
 
 /**
  * One of the owner's files in a draft, as the release gate shows it: what
@@ -288,6 +288,32 @@ export class CliError extends Error {
     readonly exitCode = 1,
   ) {
     super(message);
+  }
+}
+
+/** One relay's answer to a publish that failed everywhere: its text is the relay's, not ours. */
+export interface RelayFailure {
+  url: string;
+  kind: string;
+  message: string;
+}
+
+/**
+ * A publish no relay took. The message is ours alone (it may reach a model);
+ * the relays' own text is in `relays`, for the terminal to print and the MCP
+ * server to quarantine (untrusted_peer_text).
+ */
+export class RelayPublishError extends CliError {
+  constructor(
+    message: string,
+    readonly relays: RelayFailure[],
+  ) {
+    super(message, 1);
+  }
+
+  /** For the human's terminal: the message, then each relay's reason. */
+  detailed(clean: (s: string) => string): string {
+    return [this.message, ...this.relays.map((r) => `  ${clean(r.url)}: ${r.kind}: ${clean(r.message)}`)].join('\n');
   }
 }
 

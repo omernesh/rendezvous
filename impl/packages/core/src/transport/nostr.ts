@@ -193,6 +193,22 @@ export function classifyRelayError(err: unknown): ClassifiedRelayError {
 
 class ConnectError extends Error {}
 
+/**
+ * No relay took the event. The message lists each relay's kind and text (for
+ * a human's terminal); `report` holds the same per relay, so a host that
+ * shows it to a model can quarantine the relays' text (they are parties we do
+ * not trust either).
+ */
+export class NoRelayAcceptedError extends Error {
+  constructor(
+    message: string,
+    readonly report: PublishReport,
+  ) {
+    super(message);
+    this.name = 'NoRelayAcceptedError';
+  }
+}
+
 /** Token bucket: `burst` events at once, then `rate` per second. `take()` says how long to wait first. */
 class Pacer {
   private tokens: number;
@@ -472,7 +488,7 @@ export class NostrTransport implements Transport {
         ...report.rejected.map((r) => `${r.url}: ${r.kind}: ${r.message}`),
         ...skipped.map((u) => `${u}: cooling down`),
       ].join('; ');
-      throw new Error(`no relay accepted the event: ${reasons}`);
+      throw new NoRelayAcceptedError(`no relay accepted the event: ${reasons}`, report);
     }
     return report;
   }

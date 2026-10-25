@@ -2037,6 +2037,27 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       kept. `rdv listen` and rdv-mcp (both modes) watch `config.json`
       (`watchRelays`, a stat per second) and call it, so a change from a
       terminal or from `rdv_relays` applies without a restart.
+    - **The human's gate (security review).** Envelopes go to every
+      listening relay, so a model talked into adding one would route our
+      traffic through it, and removing the good ones cuts the agent off.
+      `rdv_relays` therefore needs the human for a listening change, as
+      `rdv_grant` does: an approval form, or a confirm phrase (consent
+      action `relays`, one open ask) bound to the change, the URL and the
+      relays as they are when it is issued (`relaysTarget`), so it approves
+      nothing else and nothing once the relays moved; `changeRelays` checks
+      the relays again under the lock (`expectRelays`). `rdv relays list`
+      shows the phrase in text mode only; the consent guard refuses `rdv
+      relays add/remove/list` to the assistant. Mirror changes need no
+      approval: only the public card goes there. The CLI is the human's
+      terminal and needs none.
+    - **Relay text stays quarantined.** A publish no relay took throws
+      `NoRelayAcceptedError` (core, with the per-relay report); the CLI
+      turns it into `RelayPublishError`, whose message is ours alone and
+      whose `relays` hold each relay's kind and text. The terminal prints
+      them (cleaned); rdv-mcp returns them as `untrusted_peer_text`, never
+      in the error text (`rdv_relays`, `rdv_addresses`, `rdv_publish_card`
+      with `mirror`). The same fix covers `rdv address add/remove`, which
+      used to put the relays' text into its error.
     - **Not here:** contacts keep the card they got in the handshake, so a
       contact may still send to a removed relay (it also sends to its own
       relays, which may overlap). `rdv relays remove` says so. Pushing the

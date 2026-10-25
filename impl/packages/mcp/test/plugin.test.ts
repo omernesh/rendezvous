@@ -948,6 +948,9 @@ describe('the skill covers general tasks, files and auto-approve (issue #29)', (
     'rdv owner-secret set',
     'rdv owner-secret reset',
     'rdv file direct-transfer',
+    'rdv relays add',
+    'rdv relays remove',
+    'rdv relays list',
   ];
   it.each(humanOnly)('the skill names %s as the human’s, and the guard refuses it', (c) => {
     expect(skill).toContain(c);
@@ -958,7 +961,7 @@ describe('the skill covers general tasks, files and auto-approve (issue #29)', (
   });
 
   it('allows the commands the model may run, and the audit log', () => {
-    for (const c of ['rdv audit', 'rdv audit --since 7d', 'rdv task request rdv1:abc --text "x"', 'rdv file prepare ./a.pdf', 'rdv file list']) {
+    for (const c of ['rdv audit', 'rdv audit --since 7d', 'rdv task request rdv1:abc --text "x"', 'rdv file prepare ./a.pdf', 'rdv file list', 'rdv card publish --mirror']) {
       expect(checkCommand(c), c).toBeUndefined();
     }
   });

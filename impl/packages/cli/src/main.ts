@@ -1,6 +1,7 @@
 import { type ParseArgsConfig, parseArgs } from 'node:util';
 import * as cmd from './commands.js';
-import { CliError, Home } from './home.js';
+import { CliError, Home, RelayPublishError } from './home.js';
+import { clean } from './output.js';
 import { Output } from './output.js';
 
 type Options = NonNullable<ParseArgsConfig['options']>;
@@ -440,7 +441,8 @@ export async function main(argv: string[]): Promise<number> {
     return 0;
   } catch (err) {
     if (err instanceof CliError) {
-      out.error(err.message);
+      // A failed publish: our message, then each relay's own reason (cleaned), for the human at this terminal.
+      out.error(err instanceof RelayPublishError ? err.detailed((t) => clean(t)) : err.message);
       return err.exitCode;
     }
     out.error((err as Error)?.message ?? String(err));

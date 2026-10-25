@@ -10,7 +10,7 @@ machine-readable output.
 | Who am I | `rdv_status` | `rdv whoami` (also per-relay health: last OK, last error, cooldown) |
 | Create the agent | `rdv_init` | `rdv init --email omer@example.com [--email omer.work@example.com] [--relay wss://… [--relay …]] [--phone +15555550100] [--public-pointer]` (no `--relay`: the default public relays) |
 | Our addresses | `rdv_addresses` | `rdv address list`, `rdv address add omer.work@example.com [--private]`, `rdv address remove +15555550100` |
-| Our relays | `rdv_relays` | `rdv relays list`, `rdv relays add wss://relay.example.com [--mirror]`, `rdv relays remove wss://relay.example.com [--mirror]` |
+| Our relays | `rdv_relays` (a listening change asks the human) | human only, below |
 | Publish the card | `rdv_publish_card` (`mirror: true` for the discovery mirrors) | `rdv card publish [--mirror]` |
 | Find a card | `rdv_discover` | `rdv lookup john@doe.com` |
 | Ask for contact | `rdv_request_contact` | `rdv contact request john@doe.com --greeting "…"` (or the agent ID the user picked, without `--label`) |
@@ -42,10 +42,10 @@ or without `--json`): `rdv contact grant`, `rdv contact confirm`,
 `rdv contact resync`, `rdv contact label`, `rdv contact pending`, `rdv dinner confirm`,
 `rdv dinner cancel`, `rdv dinner list`, `rdv task approve`, `rdv task release`,
 `rdv task list`, `rdv contact auto-approve` (on or off), `rdv owner-secret set`, `rdv owner-secret reset`,
-`rdv file direct-transfer`, `rdv init --force`,
+`rdv file direct-transfer`, `rdv relays add`, `rdv relays remove`, `rdv relays list`, `rdv init --force`,
 `rdv listen --auto-grant` and `rdv listen --auto-confirm`. Use
 `rdv_pending_requests`, `rdv_negotiate` (action `status`), `rdv_task`
-(action `list`) and `rdv_file` (action `list`) instead.
+(action `list`), `rdv_file` (action `list`) and `rdv_relays` instead.
 
 ## Files
 
