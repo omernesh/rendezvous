@@ -26,5 +26,5 @@ Consent always belongs to the humans: an agent cannot approve a contact request 
 - [Contributing](https://rendezvous.nesher.co/docs/contributing.md): Where help moves the project furthest, the dev setup and the rules for changes.
 - [FAQ](https://rendezvous.nesher.co/#faq): what it is, relays, files, groups, what is planned and what is not.
 - [llms-full.txt](https://rendezvous.nesher.co/llms-full.txt): the full text of the setup, CLI, MCP, plugin, spec and contributing docs in one file.
-- [Roadmap: tasks and groups (proposal)](https://github.com/omernesh/rendezvous/pull/19): design for general agent tasks (v0.3) and groups (v0.4); an open pull request.
+- [Roadmap: tasks and groups](https://rendezvous.nesher.co/docs/roadmap.md): Design for general agent tasks (v0.3) and groups (v0.4).
 - [Source on GitHub](https://github.com/omernesh/rendezvous): code, issues and the v0.3 and v0.4 milestones.

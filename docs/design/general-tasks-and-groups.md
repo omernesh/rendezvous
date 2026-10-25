@@ -673,7 +673,7 @@ unchanged across the switch; only the encryption under them changes.
 >   `expires`) sent over their pairwise channel. A group invite from a
 >   non-contact is dropped like any non-contact payload.
 > - **Joining needs the joiner's human** (§5.5). The host shows every
->   member: fingerprint, and either "your contact <label>" or "not your
+>   member: fingerprint, and either "your contact `<label>`" or "not your
 >   contact, named by the admin as …"; the admin; and what the joiner would
 >   let members invoke. The approval is bound to the digest of that state
 >   and the terms.
