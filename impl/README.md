@@ -9,9 +9,15 @@ protocol, built toward the two-agent dinner demo in [PLAN.md](../PLAN.md).
 | `@rendezvous/core` | `packages/core` | The protocol library (keys, cards, discovery, consent, envelopes, Nostr transport) |
 | `@rendezvous/a2a` | `packages/a2a` | A2A task semantics: the dinner-negotiation message model, engine, calendar adapter |
 | `@rendezvous/cli` | `packages/cli` | `rdv`, a command-line agent; also the scripted bots and interop scenarios |
+| `@rendezvous/mcp` | `packages/mcp` | `rdv-mcp`, a stdio MCP server so Claude (or any MCP client) can find, contact and book dinner with other agents |
+
+`demo/` holds the showpiece script ([demo/SCRIPT.md](demo/SCRIPT.md)), a
+calendar generator and `relay-dump.mjs` (what the relay stores: ciphertext).
 
 Core never depends on the CLI, the A2A layer, MCP or LLM code. `a2a` has no
-runtime dependencies at all; the CLI glues the two together.
+runtime dependencies at all; the CLI glues the two together. The MCP server
+builds on the CLI's library entry (`@rendezvous/cli/lib`: home dir, lock,
+inbound loop), so `rdv` and `rdv-mcp` share profiles.
 
 ## @rendezvous/core
 
@@ -107,6 +113,8 @@ State lives in a directory: `--home <dir>`, else `$RDV_HOME`, else
 | `inbox.jsonl` | received payloads, one JSON object per line |
 | `cards.json` | cards found by `rdv lookup`, so `contact request <agent-id>` can use them |
 | `negotiations.json` | dinner negotiations (the a2a engine state) |
+| `consent.json` | confirm phrases for pending requests (written by `rdv-mcp`; `contact pending` shows them in text mode) |
+| `mcp-events.jsonl` | `rdv-mcp` event log behind `rdv_inbox` |
 | `lock` | held while a command reads and writes state |
 
 | Command | Does |
@@ -164,6 +172,23 @@ inbox shows it, each step asserted with a timeout. It runs:
 - by hand against any relays, e.g. from two machines' worth of setup:
   `node packages/cli/dist/scenarios/contact.js --relay wss://relay.example [--relay …] [--timeout 30000] [--keep]`.
 
+Crash safety: state is saved right before each envelope leaves (`Agent.beforeSend`),
+so a crash after a send never reuses a `seq` (issue #4).
+
+## rdv-mcp (the MCP server)
+
+PLAN §6.1. Tools `rdv_init`, `rdv_status`, `rdv_publish_card`, `rdv_discover`,
+`rdv_request_contact`, `rdv_pending_requests`, `rdv_grant`, `rdv_revoke`,
+`rdv_send`, `rdv_inbox`, `rdv_negotiate`, and the `rdv://inbox` resource
+(subscribable). `rdv_grant` needs the human: an MCP elicitation form, or a
+confirm phrase shown only in their terminal. Peer text comes back only as
+`untrusted_peer_text`. Details, consent threat model and client config:
+[packages/mcp/README.md](packages/mcp/README.md), [demo/SCRIPT.md](demo/SCRIPT.md).
+
+```bash
+node packages/mcp/dist/src/bin.js --home ~/.rendezvous/omer --calendar cal.json --tz +02:00
+```
+
 ## Develop
 
 Run from `impl/` (works the same in PowerShell and bash):
@@ -171,7 +196,7 @@ Run from `impl/` (works the same in PowerShell and bash):
 ```bash
 npm install
 npm run typecheck        # every workspace
-npm test                 # core: unit, integration, vectors; a2a: engine; cli: commands + scenarios (local relay, no network)
+npm test                 # core, a2a, cli (commands + scenarios), mcp (two servers end to end); local relay, no network
 npm run build            # tsc -b -> packages/*/dist
 npm run test:vectors:update   # regenerate vectors (deliberate wire-format changes only)
 ```

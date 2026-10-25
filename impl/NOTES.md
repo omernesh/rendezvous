@@ -226,6 +226,49 @@ into SPEC.md before v0.2.
     Tue 27 Oct 19:00+02:00); all four variants by hand
     (`dist/scenarios/dinner.js`) passed. Public relays not tried for step 3.
 
+## MCP server (`@rendezvous/mcp`, step 4)
+
+39. **Consent must bypass the model** (**spec change**, §5.3, §13). §13's
+    `rdv_grant` reads as if the assistant approves. An assistant that can
+    grant on its own (or be talked into it by a greeting) defeats consent. The
+    server grants only through an MCP elicitation answered by the human, a
+    per-request confirm phrase shown only on human channels (stderr,
+    `rdv contact pending`), or `rdv contact grant` in a terminal. Phrases
+    approve tiers `friend` and below. The spec should require that approval
+    come from the human through a channel the model can't answer, and say so
+    in §13.
+40. **Peer text is untrusted data** (**spec change**, §5.3, §7). Greetings,
+    text parts and decline reasons are written by the other side and can carry
+    instructions aimed at the reader's assistant. The spec should say they are
+    display-only, that only machine (`data`) parts may drive actions, and that
+    short structural fields (payload `type`, IDs, tiers, states) are validated
+    against strict shapes. The server quarantines everything else as
+    `untrusted_peer_text`.
+41. **A topic probe's greeting is public** (**spec change**, §4.4). A contact
+    request posted on a `dtopic` is cleartext on the relay (greeting and the
+    requester's card); only envelopes are encrypted (`demo/relay-dump.mjs`
+    shows both). The spec should warn that probe greetings are public and keep
+    them short. Requests sent to a known card travel inside an envelope.
+42. **Auto-negotiation within scope** (open). Once a grant has
+    `may_propose_meetings`, the server answers dinner proposals on its own from
+    the calendar (as `rdv listen --negotiate` does) and holds the agreed slot
+    without asking the human per meeting. Fine for the demo; the spec doesn't
+    say whether accepting a meeting needs a per-meeting confirmation, and a
+    real deployment probably wants a "hold, then confirm" step (item 36).
+43. **Inbox is an event log, not an ack queue** (§13 says "receive/ack").
+    `rdv_inbox` returns events after a cursor from `mcp-events.jsonl`; nothing
+    is acknowledged back to the peer. One MCP server per home: if `rdv listen`
+    runs on the same home it handles some envelopes first, and those never
+    reach the server's log.
+44. **Calendar settings** come from the server's arguments; `rdv_init` and
+    `rdv_negotiate` may replace them for the server's lifetime (not
+    persisted). The responder uses the same window for every peer.
+45. **Live run (2026-10-25).** `npm run test:live -w @rendezvous/mcp` (two MCP
+    servers, confirm-phrase approval, dinner to `completed` on both sides):
+    `ws://<relay-host>:7777` alone pass (about 1.1 s); relay-host + `wss://nos.lol`
+    + `wss://relay.primal.net` pass (about 1.6 s); nos.lol + relay.primal.net
+    pass (about 2.7 s). Agreed Wed 28 Oct 19:00+02:00 each time.
+
 ## Not implemented yet
 
 Mailbox probe and invite (§5.2), directories and suggestions (§4.5), DNS TXT

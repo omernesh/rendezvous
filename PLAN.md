@@ -1,6 +1,6 @@
 # Rendezvous: implementation plan (two-agent dinner demo)
 
-**Owner:** Omer Nesher · **Written:** 2026-10-24 · **Status:** steps 1–2 done; step 3 done on `impl/step-3-a2a` (relay-host relay run 2026-10-25); relay.nesher.co Cloudflare step and step 4 open
+**Owner:** Omer Nesher · **Written:** 2026-10-24 · **Status:** steps 1–3 done; step 4 code and demo prep on `impl/step-4-mcp` (MCP server, live runs 2026-10-25); demo recording, deck slide and relay.nesher.co Cloudflare step open
 
 This is the working plan for turning the Rendezvous spec ([SPEC.md](SPEC.md))
 into running code. It is meant to be picked up in a local Claude Code session:
@@ -353,5 +353,11 @@ Update the reading page with `python3 render_html.py` after editing SPEC.md.
 - [x] Step 3: `@rendezvous/a2a` engine, calendar adapter, CLI integration (`impl/step-3-a2a`)
   - [x] in-memory relay, part of `npm test`: overlap, no overlap (rejected in round 3), mid-flight cancel, duplicate delivery
   - [x] relay-host relay (`ws://<relay-host>:7777`) via `test:live` (overlap), and all four variants by hand, 2026-10-25
-- [ ] Step 4: `@rendezvous/mcp`, demo script, recording, deck slide
+- [ ] Step 4: `@rendezvous/mcp`, demo script, recording, deck slide (`impl/step-4-mcp`)
+  - [x] Issue #4: state saved before an envelope leaves (core `Agent.beforeSend`, CLI, MCP)
+  - [x] `@rendezvous/mcp` (`rdv-mcp`): §6.1 tools, inbox resource with subscribe, consent via elicitation or confirm phrase, untrusted-data gate
+  - [x] two MCP servers end to end in `npm test` (in-memory relay, plus a stdio test); `test:live` on relay-host alone and relay-host + nos.lol + relay.primal.net, 2026-10-25
+  - [x] demo prep: `impl/demo/SCRIPT.md`, `make-calendars.mjs`, `relay-dump.mjs`
+  - [ ] scripted demo three times in a row with two Claude Code sessions, recorded
+  - [ ] clip and slide in the deck
 - [ ] Spec rev 3 with the follow-ups in §7

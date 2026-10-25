@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Rendezvous is an open protocol for agent-to-agent contact. Personal AI agents find each other by a human address (email or phone), get consent, then exchange encrypted messages over dumb relays (Nostr first).
 
 - `SPEC.md` is the source of truth. `PLAN.md` holds the implementation plan and current status. Work the plan in order (§9 checklist); each step has its own "done when" check.
-- `impl/` is an npm workspace (Node ≥ 20, ESM, `NodeNext`, so relative imports need a `.js` suffix): the protocol library `@rendezvous/core` in `impl/packages/core`, the A2A negotiation layer `@rendezvous/a2a` in `impl/packages/a2a`, and the `rdv` CLI `@rendezvous/cli` in `impl/packages/cli`. `impl/deploy/` holds the relay deployment.
+- `impl/` is an npm workspace (Node ≥ 20, ESM, `NodeNext`, so relative imports need a `.js` suffix): the protocol library `@rendezvous/core` in `impl/packages/core`, the A2A negotiation layer `@rendezvous/a2a` in `impl/packages/a2a`, the `rdv` CLI `@rendezvous/cli` in `impl/packages/cli`, and the MCP server `@rendezvous/mcp` (`rdv-mcp`) in `impl/packages/mcp`. `impl/deploy/` holds the relay deployment; `impl/demo/` the showpiece script (`SCRIPT.md`), calendar generator and `relay-dump.mjs`.
 - `spec.html` is generated from `SPEC.md` by `render_html.py`. Don't edit it by hand. `deck/` mirrors a pitch deck published elsewhere and isn't built here.
 
 ## Commands
@@ -17,18 +17,19 @@ Run everything from `impl/` (same commands in PowerShell and bash):
 ```bash
 npm install
 npm run typecheck                       # every workspace
-npm test                                # core: unit, integration, vectors; a2a: engine; cli: commands + contact and dinner scenarios (~45s, no network)
+npm test                                # core: unit, integration, vectors; a2a: engine; cli: commands + contact and dinner scenarios; mcp: two servers end to end (~60s, no network)
 npm test -w @rendezvous/core            # one package
 cd packages/core && npx vitest run test/unit.test.ts -t envelope   # one file / test by name
 npm run build                           # tsc -b -> packages/*/dist
 npm run rdv -- whoami --home ./tmp/omer # run the built CLI
+npm run rdv-mcp -- --home ./tmp/omer     # run the built MCP server on stdio
 ```
 
 Run `npm run typecheck` and `npm test` before every commit. **There is no CI** (no GitHub Actions minutes). Local tests are the gate, so don't add workflows. `.githooks/pre-push` enforces them once enabled with `git config core.hooksPath .githooks`.
 
 CLI tests spawn the built `rdv` (`packages/cli/dist/src/bin.js`); the CLI's `test` script runs `tsc -b` first, which also builds core.
 
-**Live relays:** `RDV_LIVE_RELAYS=wss://a,wss://b npm run test:live` (PowerShell: `$env:RDV_LIVE_RELAYS='wss://a,wss://b'; npm run test:live`). Only `*.live.test.ts` run there, they skip when the variable is unset, and they are never part of `npm test`. The scenarios also run by hand: `node packages/cli/dist/scenarios/contact.js --relay wss://…` and `node packages/cli/dist/scenarios/dinner.js --relay wss://… --variant overlap` (variants overlap, no-overlap, cancel, duplicate).
+**Live relays:** `RDV_LIVE_RELAYS=wss://a,wss://b npm run test:live` (PowerShell: `$env:RDV_LIVE_RELAYS='wss://a,wss://b'; npm run test:live`). Only `*.live.test.ts` run there, they skip when the variable is unset, and they are never part of `npm test`. The scenarios also run by hand: `node packages/cli/dist/scenarios/contact.js --relay wss://…` and `node packages/cli/dist/scenarios/dinner.js --relay wss://… --variant overlap` (variants overlap, no-overlap, cancel, duplicate). `npm run test:live -w @rendezvous/mcp` runs the two-MCP-server dinner flow on `RDV_LIVE_RELAYS`.
 
 From the repo root, after editing `SPEC.md`: `python render_html.py` (needs the `markdown` package).
 
@@ -50,7 +51,9 @@ The modules are layered, and each one maps to a spec section (table in `impl/REA
 
 `impl/packages/cli` (`rdv`): `main.ts` parses args (`node:util` parseArgs) and dispatches to `commands.ts`; `home.ts` owns the state dir (`agent.json` mode 600, `config.json`, `inbox.jsonl`, `cards.json`, `negotiations.json`, `lock`); `fsutil.ts` has the lockfile and atomic writes; `listen.ts` keeps relay subscriptions open but takes the lock only per inbound item (reload state, handle, save, then print), so other `rdv` commands can run beside it; with `--negotiate` it also feeds a2a payloads to the engine inside that same critical section (`negotiate.ts` builds the engine context from the calendar, window and grant scope); `output.ts` renders text/JSON lines and `clean()`s every peer-supplied field. `scenarios/` drives real `rdv` processes (PLAN §4.5).
 
-The planned `mcp` package goes under `impl/packages/` too (PLAN.md §1). Keep core free of a2a, CLI, MCP and LLM dependencies.
+`impl/packages/mcp` (`rdv-mcp`): `server.ts` registers the tools on `@modelcontextprotocol/sdk` (pinned) and runs the listening agent through the CLI's library entry `@rendezvous/cli/lib` (`handleInbound`, `withAgent`-style per-operation lock, same home files). `consent.ts` issues confirm phrases (`consent.json`) that reach only the human; `rdv_grant` needs elicitation or a phrase. `untrusted.ts` is the injection gate: peer text only as `untrusted_peer_text`, short peer fields strict-token or quarantined. `events.ts` maps inbound items to the `rdv_inbox` event log (`mcp-events.jsonl`). Never return a confirm phrase, the secret key or raw file contents in a tool result. `Agent.beforeSend` (core) is where every caller saves state before an envelope leaves (issue #4).
+
+Keep core free of a2a, CLI, MCP and LLM dependencies.
 
 ## Spec deltas
 
