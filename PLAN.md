@@ -360,4 +360,4 @@ Update the reading page with `python3 render_html.py` after editing SPEC.md.
   - [x] demo prep: `impl/demo/SCRIPT.md`, `make-calendars.mjs`, `relay-dump.mjs`
   - [ ] scripted demo three times in a row with two Claude Code sessions, recorded
   - [ ] clip and slide in the deck
-- [ ] Spec rev 3 with the follow-ups in §7
+- [x] Spec rev 3 with the follow-ups in §7 (SPEC.md rev 3, 2026-10-25)

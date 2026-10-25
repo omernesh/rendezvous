@@ -1,9 +1,10 @@
 # Implementation notes and spec deltas
 
-Building the reference library surfaced places where SPEC.md (v0.1 rev 2) is
+Building the reference library surfaced places where SPEC.md (v0.1 rev 2) was
 silent, ambiguous, or would be unsafe as written. Each item below says what
-the library does today. Items marked **spec change** should be folded back
-into SPEC.md before v0.2.
+the library does today. Items marked **spec change** were folded back
+into SPEC.md in rev 3 (2026-10-25); each folded item says where. Items without
+the marker (CLI behavior, live-run logs, calendar settings) stay here only.
 
 ## Security
 
@@ -13,30 +14,30 @@ into SPEC.md before v0.2.
    ciphertext encrypted to the recipient; the recipient would accept the
    payload as coming from the header's sender. The library signs the whole
    envelope (everything except `sig`), and also binds the header as AES-GCM
-   associated data.
+   associated data. (folded into SPEC rev 3 §6.4)
 2. **Domain-separated signatures.** Every signed document is signed over
    `"rdv1/sig:" ‖ canonical-JSON(doc without sig)`, so a signature can't be
-   lifted from one context to another.
+   lifted from one context to another. (folded into SPEC rev 3 §4.6)
 
 ## Wire format choices the spec leaves open
 
 3. **Canonical JSON** = RFC 8785 (JCS) subset: sorted keys, no whitespace,
-   `undefined` dropped, integers only.
+   `undefined` dropped, integers only. (folded into SPEC rev 3 §4.6)
 4. **Base32** = RFC 4648 alphabet, lowercase, no padding. An agent ID is
-   `rdv1:` + 52 characters.
+   `rdv1:` + 52 characters. (folded into SPEC rev 3 §4.2, §4.6)
 5. **`sig`** is base64 (standard alphabet, padded) of the 64-byte Ed25519
-   signature.
+   signature. (folded into SPEC rev 3 §4.6)
 6. **Envelope encryption** (`alg: "x25519+aes256gcm"`): an ephemeral X25519
    key per envelope × the recipient's X25519 key (converted from its Ed25519
    identity) → HKDF-SHA256 (salt = `epk ‖ recipient_x25519_pub`, info =
    `"rdv1/envelope"`) → AES-256-GCM, 12-byte random nonce. `content` gains an
    `epk` field (**spec change**: add it to the §6.4 example).
    This has no forward secrecy yet; the conversation-scoped keys from the
-   handshake that §6.2 mentions are future work.
+   handshake that §6.2 mentions are future work. (folded into SPEC rev 3 §6.4)
 7. **`prev`** is the hex SHA-256 of the previous envelope's canonical JSON in
-   the same direction; the first envelope has `prev: null` and `seq: 1`.
+   the same direction; the first envelope has `prev: null` and `seq: 1`. (folded into SPEC rev 3 §4.6, §6.4)
 8. **`canon(address)`** is the bare value: email trimmed and lowercased,
-   phone as `+` and digits (a leading `+` is required). No type prefix.
+   phone as `+` and digits (a leading `+` is required). No type prefix. (folded into SPEC rev 3 §4.6)
 
 ## Nostr
 
@@ -44,17 +45,17 @@ into SPEC.md before v0.2.
    the latest event per (pubkey, kind, `d`), so two envelopes without
    distinct `d` tags would overwrite each other. The library sets
    `d = envelope hash`. **Spec change (recommended):** move to a regular kind
-   (1000–9999) so relays store each envelope as its own event.
+   (1000–9999) so relays store each envelope as its own event. (folded into SPEC rev 3 §6.2)
 10. **Nostr needs secp256k1 keys; agent IDs are Ed25519.** Each agent derives
     a stable Nostr "carrier" key: HKDF-SHA256(seed, info
     `"rdv1/nostr-carrier"`). It signs the Nostr event only; authenticity
     comes from the envelope signature. The `p` tag is the hex Ed25519 public
-    key of the recipient.
+    key of the recipient. (folded into SPEC rev 3 §6.2)
 11. **Discovery on Nostr**: topic documents use the same kind, with a `t` tag
-    holding `dtopic` and `d` = hash of the content.
+    holding `dtopic` and `d` = hash of the content. (folded into SPEC rev 3 §6.2)
 11a. **Public relay survey (2026-10-25, PLAN §4.4 / step 2.4).** Per relay:
     publish two 30417 events (~2 KB, distinct `d`), read back by `#p` and `#t`
-    on a new connection; same for regular kind 4417. Two runs, 5 min apart.
+    on a new connection; same for regular kind 4417. Two runs, 5 min apart. (folded into SPEC rev 3 §6.2 (summary only; raw results stay here))
 
     | relay | software | 30417 + `#p`/`#t` + 2 `d` kept | live scenario (2.5) | note |
     |---|---|---|---|---|
@@ -87,20 +88,20 @@ into SPEC.md before v0.2.
 
 12. **Listen-mode probe = a contact request posted on the target's `dtopic`**,
     with `to_hint` set to the address. The listener gates it exactly like an
-    inbound request with binding `claimed`. No separate probe document is needed.
+    inbound request with binding `claimed`. No separate probe document is needed. (folded into SPEC rev 3 §4.4)
 13. **The grant carries the grantor's card** (**spec change**, §5.3). The
-    requester otherwise has no way to reach the grantor after a topic probe.
+    requester otherwise has no way to reach the grantor after a topic probe. (folded into SPEC rev 3 §5.3)
 14. **Tier cap for `claimed` bindings** applies to the *default* tier offered
     at consent time. An owner who explicitly picks a higher tier counts as the
-    "explicit human confirmation" in §4.4.
+    "explicit human confirmation" in §4.4. (folded into SPEC rev 3 §4.4)
 15. **Grant direction.** A grant authorizes the requester to contact the
     grantor. Because the requester initiated, it accepts the grantor contacting
-    it back within the same scope.
+    it back within the same scope. (folded into SPEC rev 3 §5.3)
 16. **`max_frequency`** is `"<n>/<minute|hour|day>"`; exceeding it revokes the
-    grant (§10).
+    grant (§10). (folded into SPEC rev 3 §5.3)
 17. **Resend**: a gap in `seq` buffers later envelopes and sends
     `{type: "rdv/resend", from_seq, to_seq}`; the sender replays from a
-    64-envelope outbox.
+    64-envelope outbox. (folded into SPEC rev 3 §7)
 
 18. **Who may answer a request** (**spec change**, §5.3). A request sent to a
     specific card is only satisfied by a grant signed by that card's agent;
@@ -109,25 +110,25 @@ into SPEC.md before v0.2.
     grant is always recorded as `claimed`. The spec should say both, and
     should tell the requester to show the grantor's fingerprint (and whether
     its card even claims the probed address) to the human before trusting
-    the new contact.
+    the new contact. (folded into SPEC rev 3 §5.3)
 19. **Requester-side binding.** The requester records how it found the peer
     (`claimed` for a topic probe or a public pointer, `in-person` when the
     owner says the card came from a QR code / face to face). §4.4 says
     bindings attach to the relationship record; it doesn't say the requester
-    keeps one too. It should.
+    keeps one too. It should. (folded into SPEC rev 3 §4.4)
 20. **Gap buffer bounds.** Out-of-order envelopes are buffered only for
     contacts and agents we asked by card, at most 16 peers × 64 envelopes,
     and persisted with the agent state. The spec's resend text (§7) should
-    say receivers may bound and drop.
+    say receivers may bound and drop. (folded into SPEC rev 3 §7)
 21. **Channel state for strangers** (open). `Channels.acceptInbound`
     advances `seq` for any validly signed envelope, before the contact book
     decides whether to admit it. A stranger can't spoof another sender, so
-    this only costs memory per stranger ID; worth bounding in v0.2.
+    this only costs memory per stranger ID; worth bounding in v0.2. (folded into SPEC rev 3 §11.10)
 
 22. **Document IDs are UUIDs** (**spec change**, §5). Request, grant and
     revoke `id` (and a grant's `request_ref`) must be RFC 4122 UUID strings;
     the library rejects anything else, so peer-chosen IDs can't smuggle
-    terminal escapes into a UI. The spec shows UUIDs but doesn't require them.
+    terminal escapes into a UI. The spec shows UUIDs but doesn't require them. (folded into SPEC rev 3 §5.1)
 
 ## CLI (`rdv`)
 
@@ -166,7 +167,7 @@ into SPEC.md before v0.2.
     `a2a/task-update` carrying a `TaskStatusUpdateEvent` (an acknowledgement).
     A whole `Task` object is never sent: each side keeps its own copy.
     A2A assumes a client and a server agent; here both peers are agents, so
-    `role` is always `"agent"`. The spec should say both.
+    `role` is always `"agent"`. The spec should say both. (folded into SPEC rev 3 §7.1)
 29. **Meeting verbs** live in the message's single `data` part as
     `data.rdv`: `meeting/propose` and `meeting/counter` (1–3 `slots`,
     optional `place`, `expires`), `meeting/accept` (one `slot`),
@@ -174,25 +175,25 @@ into SPEC.md before v0.2.
     message's `taskId`). Text parts are for humans and never drive anything.
     The spec defines none of this. Validation is strict (unknown keys,
     unknown verbs, non-UUID ids, more than 3 slots are rejected), which leaves
-    **open how to extend it**: a version field or an A2A extension URI.
+    **open how to extend it**: a version field or an A2A extension URI. (folded into SPEC rev 3 §7.2, open question §11.11)
 30. **Slots** are RFC 3339 date-times with an explicit offset (`Z` or
     `±HH:MM`), compared as instants, so an accept may write the slot in
     another offset. At most 12 h each. Local time in the CLI is a fixed
     offset (`--tz`, the calendar's `timezone`, or the machine's current
-    offset); no IANA zones, so no DST inside a window.
+    offset); no IANA zones, so no DST inside a window. (folded into SPEC rev 3 §7.2)
 31. **Task states.** submitted (proposal out) → input-required (responder
     countered) / working (proposer countered back) → completed | rejected |
     canceled. "Pending" (§7 cancel) = not terminal. A round is one offer;
     the receiver of the third offer declines if nothing fits. An accept must
-    pick a slot from the *latest* offer it answers.
+    pick a slot from the *latest* offer it answers. (folded into SPEC rev 3 §7.3)
 32. **Two dedupe layers.** `Channels` drops a re-delivered envelope (same
     `seq`); the engine drops a re-sent message (same `messageId`, new
     envelope) per task. §7's "receiver deduplicates by ID" should name
-    `messageId` for A2A.
+    `messageId` for A2A. (folded into SPEC rev 3 §7)
 33. **Cancel.** Honored while pending. A cancel that arrives before its
     proposal leaves a tombstone so the proposal is refused when it lands. A
     cancel (or any verb) for a finished task is answered with a status
-    update giving the real end state.
+    update giving the real end state. (folded into SPEC rev 3 §7.3)
 34. **Scope** (**spec change**, §5.3). Meeting verbs need
     `may_propose_meetings: true` in the grant; per item 15 the same scope
     governs both directions, so the CLI uses the contact's `inboundScope`
@@ -201,26 +202,26 @@ into SPEC.md before v0.2.
     negotiation; `full` still only ever shares slots. The calendar adapter
     strips titles, so `free_busy` holds by construction. The spec should
     define these defaults; core's default grant scope has no
-    `may_access_calendar`.
+    `may_access_calendar`. (folded into SPEC rev 3 §7.4)
 35. **Bounded peer state** (security review). Only a meeting-capable grant
     may create tasks or tombstones; at most 32 tasks per peer (finished ones
     and tombstones evicted first; refused when all are pending); finished
     tasks pruned after 30 days; a peer's `expires` defaults to 48 h and is
-    clamped to 7 days.
+    clamped to 7 days. (folded into SPEC rev 3 §7.4)
 36. **No commit phase** (open). The acceptor marks the task completed and
     holds the slot when it sends `meeting/accept`; the proposer confirms with
     a `completed` status update. If the proposer canceled or expired the task
     meanwhile, the acceptor only learns it from the status update
     (`peerState`) and keeps its hold. Concurrent negotiations can also
     double-book a slot (offers are not held). Both need a hold/confirm step
-    for v0.2.
+    for v0.2. (folded into SPEC rev 3 §11.8)
 37. **Crash window** (fixed, issue #4). `Agent.beforeSend` runs after an
     envelope is committed to the channel state and outbox and before it
     leaves; the CLI and the MCP server save agent state there (and, in
     `listen`, the inbox entries first). Negotiation state is saved before its
     replies go out. A crash right after a send can no longer reuse `seq`; the
     worst case is an inbox entry delivered twice. Regression tests: core
-    `agents.test.ts` and CLI `crash.test.ts` (`RDV_TEST_EXIT_AFTER_SEND`).
+    `agents.test.ts` and CLI `crash.test.ts` (`RDV_TEST_EXIT_AFTER_SEND`). (folded into SPEC rev 3 §7)
 38. **Live run (2026-10-25).** `ws://<relay-host>:7777` (relay-host strfry):
     overlap scenario via `npm run test:live` passed in about 5 s (agreed
     Tue 27 Oct 19:00+02:00); all four variants by hand
@@ -236,30 +237,30 @@ into SPEC.md before v0.2.
     `rdv contact pending`), or `rdv contact grant` in a terminal. Phrases
     approve tiers `friend` and below. The spec should require that approval
     come from the human through a channel the model can't answer, and say so
-    in §13.
+    in §13. (folded into SPEC rev 3 §5.5)
 40. **Peer text is untrusted data** (**spec change**, §5.3, §7). Greetings,
     text parts and decline reasons are written by the other side and can carry
     instructions aimed at the reader's assistant. The spec should say they are
     display-only, that only machine (`data`) parts may drive actions, and that
     short structural fields (payload `type`, IDs, tiers, states) are validated
     against strict shapes. The server quarantines everything else as
-    `untrusted_peer_text`.
+    `untrusted_peer_text`. (folded into SPEC rev 3 §5.6)
 41. **A topic probe's greeting is public** (**spec change**, §4.4). A contact
     request posted on a `dtopic` is cleartext on the relay (greeting and the
     requester's card); only envelopes are encrypted (`demo/relay-dump.mjs`
     shows both). The spec should warn that probe greetings are public and keep
-    them short. Requests sent to a known card travel inside an envelope.
+    them short. Requests sent to a known card travel inside an envelope. (folded into SPEC rev 3 §4.4, §5.1, §9)
 42. **Auto-negotiation within scope** (open). Once a grant has
     `may_propose_meetings`, the server answers dinner proposals on its own from
     the calendar (as `rdv listen --negotiate` does) and holds the agreed slot
     without asking the human per meeting. Fine for the demo; the spec doesn't
     say whether accepting a meeting needs a per-meeting confirmation, and a
-    real deployment probably wants a "hold, then confirm" step (item 36).
+    real deployment probably wants a "hold, then confirm" step (item 36). (folded into SPEC rev 3 §11.8)
 43. **Inbox is an event log, not an ack queue** (§13 says "receive/ack").
     `rdv_inbox` returns events after a cursor from `mcp-events.jsonl`; nothing
     is acknowledged back to the peer. One MCP server per home: if `rdv listen`
     runs on the same home it handles some envelopes first, and those never
-    reach the server's log.
+    reach the server's log. (folded into SPEC rev 3 §13)
 44. **Calendar settings** come from the server's arguments; `rdv_init` and
     `rdv_negotiate` may replace them for the server's lifetime (not
     persisted). The responder uses the same window for every peer.

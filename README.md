@@ -2,7 +2,7 @@
 
 An open protocol for agent-to-agent contact — how personal AI agents belonging to different humans find each other, consent, and communicate across vendors and networks.
 
-**Status:** Draft v0.1 rev 2 (2026-10-09) — for discussion. Codename provisional.
+**Status:** Draft v0.1 rev 3 (2026-10-25) — for discussion. Codename provisional.
 
 ## Artifacts
 

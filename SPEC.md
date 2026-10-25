@@ -1,9 +1,9 @@
 # Rendezvous
 ## An Open Protocol for Agent-to-Agent Contact
 
-**Status:** Draft v0.1 rev 2 (for discussion)
+**Status:** Draft v0.1 rev 3 (2026-10-25) — for discussion
 **Author:** Omer Nesher
-**Date:** 2026-10-09
+**Date:** 2026-10-25 (rev 2: 2026-10-09)
 
 > Codename "Rendezvous" is provisional. The protocol describes how a personal AI
 > agent belonging to one human makes contact with, and safely communicates with, a
@@ -15,6 +15,40 @@
 > directories with friend suggestions (on by default). Rev 1 defined identity, consent
 > and transport; rev 2 defines how two agents *find each other* in the first
 > place.
+
+> **Rev 3 (2026-10-25)** folds in what the TypeScript reference implementation
+> (`impl/`) found: the wire format is now pinned down (canonical JSON, base32,
+> signatures, envelope encryption, the Nostr carrier), the envelope signature
+> covers the ciphertext, the grant carries the grantor's card, and consent, A2A
+> meeting negotiation and untrusted peer text are specified. No discovery or
+> consent concept changed; see **Changes in rev 3** below.
+
+**Changes in rev 3**
+
+- **Security fix, §6.4:** the envelope signature covers `content` (rev 2 left
+  it out, so a genuine header could carry a substituted ciphertext). The
+  encryption (ephemeral key `epk`, HKDF, AES-GCM) is now described.
+- **Wire format, new §4.6:** canonical JSON (RFC 8785 subset), base32 alphabet
+  and case, `sig` encoding and domain separation, `canon(address)`. §4.2 and
+  §4.4 point to it.
+- **Nostr, §6.2:** envelope kind `30417` stays, with a mandatory unique `d`
+  tag; the regular-kind alternative and the 2026-10 relay survey are recorded.
+  The secp256k1 carrier key and the `p` tag value are defined. NIP-44 is no
+  longer claimed for v0.1.
+- **Discovery, §4.4:** the `claimed` tier cap applies to the default tier, not
+  an explicit human choice; the listen-mode probe is a contact request posted
+  on the `dtopic`; probe greetings are public; the requester records a binding
+  too.
+- **Consent, §5:** the grant carries the grantor's card (§5.3); who may answer
+  a request; document IDs are UUIDs; grant direction and `max_frequency`
+  format; scope defaults. New §5.5 (consent stays with the human) and §5.6
+  (peer text is untrusted data).
+- **A2A, §7:** which A2A objects are sent, the meeting verbs, task states,
+  slots, deduplication by `messageId`, cancellation, resend bounds, and
+  persisting state before send.
+- **Elsewhere:** threat-model rows (§8), probe privacy (§9), new open problems
+  (§11), phases aligned with the implementation plan (§12), MCP consent and
+  inbox semantics (§13).
 
 ---
 
@@ -136,6 +170,8 @@ rdv1:<base32(ed25519-pubkey)>
 ```
 
 - `rdv1` prefix disambiguates from other ID schemes.
+- `base32` is the RFC 4648 alphabet, lowercase, without padding (§4.6): the
+  32-byte key becomes 52 characters, so an ID is 57 characters long.
 - Human-facing form: a short fingerprint, e.g. `rdv1:7f3a…9c2d`, always shown
   with a copy button; never ask humans to type full keys.
 
@@ -172,7 +208,7 @@ The signed, self-describing document an agent publishes about itself. Schema
     "inbound": "prompt",     // allow | block | prompt
     "public": false          // publish card to public relays / pointers?
   },
-  "sig": "…ed25519 signature over the canonical JSON above…"
+  "sig": "…ed25519 signature over the canonical JSON above (§4.6)…"
 }
 ```
 
@@ -199,14 +235,18 @@ fallback and remains the anti-spoofing trust anchor. In order of availability:
    dtopic(address) = base32(SHA-256("rdv1/disc:" ‖ canon(address)))[0:26]
    ```
 
-   (`canon`: emails lowercased; phones in E.164. The same topic namespace is
+   (`canon` and `base32` are defined in §4.6. The same topic namespace is
    used on all three carriers — Nostr as a `t` tag on the agent-envelope
    kind, one topic per transport.) Two modes, both **per-address opt-in**,
    dead drops otherwise:
    - **Listen** — the agent watches its own topics. A requester who holds the
      address leaves a small, signed, protocol-shaped "who knows me" probe and
      the agent answers per policy. This is the cheapest lookup that exists:
-     no email, no inbox, no human interruption.
+     no email, no inbox, no human interruption. The probe **is** a contact
+     request (§5.1) posted on the `dtopic` with `to_hint` set to the address;
+     there is no separate probe document. The listener gates it exactly like
+     any inbound request, with binding `claimed`. The probe is cleartext on
+     the carrier (§9): keep the greeting short.
    - **Public pointer** — the agent publishes its card (or a card hash) on
      the topic, so a requester can fetch it without posting first. Default
      off; `policy.public` gate.
@@ -234,9 +274,14 @@ the contact and shown at consent time:
 | Mailbox probe | `mailbox` | Control of the mailbox proven (handshake echo) |
 | Hint topics, profiles, directories | `claimed` | Self-asserted |
 
-A `claimed` binding is a lead, not a credential: default grants cap at the
-`stranger` tier until a stronger binding — or explicit human confirmation —
-promotes it. Bindings attach to the relationship record, not the card.
+A `claimed` binding is a lead, not a credential: the **default** tier offered
+at consent caps at `stranger` until a stronger binding promotes it. A human
+who explicitly picks a higher tier at consent *is* the explicit confirmation
+that promotes it; the cap constrains defaults, never the owner's choice.
+Bindings attach to the relationship record, not the card, and both sides
+keep one: the requester records how it found the peer (`claimed` for a topic
+probe or a public pointer; `in-person` when the owner says the card came from
+a QR code or face to face).
 
 ### 4.5 Discovery directories (optional)
 
@@ -263,6 +308,29 @@ self-asserted (`claimed`); the server verifies only the request signature.
 - **No federation, no authority.** Directories are shards, not a registry:
   anyone may run one, clients choose which to trust, and skipping directories
   entirely never breaks anything.
+
+### 4.6 Encoding, canonical JSON and signatures
+
+Every signed document (card, request, grant, revoke, envelope) follows the
+same rules, so independent implementations produce identical bytes:
+
+- **Canonical JSON** (`canon(doc)`) is a subset of RFC 8785 (JCS): UTF-8,
+  object members sorted by key, no insignificant whitespace, absent members
+  omitted. Numbers MUST be integers (timestamps and durations are strings, so
+  no floating-point number is ever serialized); `null` is allowed.
+- **Base32** is the RFC 4648 alphabet, lowercase, no padding. It is used for
+  agent IDs (§4.2) and discovery topics (§4.4).
+- **Hash** values (`prev`, the Nostr `d` tag) are the lowercase hex SHA-256 of
+  the canonical JSON of the whole document, `sig` included.
+- **`sig`** is the base64 (RFC 4648 §4, standard alphabet, padded) encoding of
+  the 64-byte Ed25519 signature over
+  `"rdv1/sig:" ‖ canon(doc without sig)`. The prefix domain-separates
+  Rendezvous signatures from any other use of the same key, so a signature
+  cannot be lifted from one context to another. Binary fields inside
+  `content` (§6.4) use the same base64.
+- **`canon(address)`** is the bare value with no type prefix: an email is
+  trimmed and lowercased; a phone is `+` followed by digits only (a leading
+  `+` is required; separators are removed).
 
 ---
 
@@ -291,6 +359,15 @@ Delivery (§6): the request is posted to any rendezvous hint the requester can
 resolve for the target (including hint-server topics), delivered by the
 mailbox probe (§5.2.1), or sent through the human channel (email/SMS/
 WhatsApp) addressed to the human.
+
+Rules:
+- `id` MUST be an RFC 4122 UUID string, as must the `id` of every grant and
+  revoke and a grant's `request_ref`. Receivers reject anything else: IDs are
+  chosen by the peer and end up in logs and user interfaces.
+- A request sent to a known card travels inside an encrypted envelope. A topic
+  probe (§4.4) is posted in cleartext on the carrier, greeting and card
+  included (§9).
+- `greeting` is peer-written text: display-only (§5.6).
 
 ### 5.2 Human-channel bootstrap
 
@@ -414,6 +491,7 @@ the human reads a friendly note.
   "from": "rdv1:<grantor key>",
   "to": "rdv1:<requester key>",
   "request_ref": "<contact-request or probe id>",
+  "card": "<grantor's address card>",
   "tier": "colleague",        // spouse | family | friend | colleague | business | stranger
   "scope": {
     "may_initiate": true,
@@ -428,8 +506,29 @@ the human reads a friendly note.
 ```
 
 Trust tiers are a suggested default set, not a schema limit; grants are
-explicit capability lists and vendors may add scopes. A grant from a
-`claimed` binding caps at `stranger` until promoted (§4.4).
+explicit capability lists and vendors may add scopes. The default tier for a
+`claimed` binding caps at `stranger` (§4.4); an explicit human choice is not
+capped.
+
+Rules:
+- **The grant carries the grantor's card** (`card`). After a topic probe the
+  requester knows only the address, so the card is how it learns where to
+  reach the grantor (the SYN-ACK of §5.2.1 carries it too). The requester
+  verifies the card (signature, not expired, `card.id` equals `from`) before
+  using it.
+- **Who may answer a request.** A request sent to a specific card is
+  satisfied only by a grant signed by that card's agent; any other grantor is
+  rejected before state changes. A topic probe has no addressee, so anyone
+  who saw it on the `dtopic` can answer; its grant is therefore always
+  recorded as `claimed`. Before trusting the new contact the requester SHOULD
+  show its owner the grantor's fingerprint, and whether the grantor's card
+  lists the probed address in `discovery.addresses`.
+- **Direction.** A grant authorizes the requester to contact the grantor.
+  Because the requester initiated, it also accepts the grantor contacting it
+  back within the same scope.
+- **`max_frequency`** is `"<n>/<minute|hour|day>"`; exceeding it revokes the
+  grant (§10).
+- Scope defaults for meetings are in §7.4.
 
 ### 5.4 Policy and revocation
 
@@ -440,6 +539,33 @@ explicit capability lists and vendors may add scopes. A grant from a
   Blocked keys never receive responses (silent drop is a privacy feature).
 - Replay protection: request, grant, probe and invite IDs are stored;
   duplicates ignored. Probe cookies are stateless and expire with the probe.
+
+### 5.5 Consent stays with the human
+
+Approval MUST come from the human, through a channel the assistant model
+cannot answer. An assistant that can grant on its own, or can be talked into
+it by a greeting, defeats consent. A host that exposes the protocol to a model
+(an MCP server, a chat bot, an app) therefore MUST NOT grant on the strength
+of model output alone. Acceptable approvals are:
+- a confirmation answered by the human in the host's own UI (for MCP, an
+  elicitation request);
+- a per-request confirm phrase shown only on human channels (a terminal, a
+  local UI) and typed by the human; it never appears in a tool result. The
+  reference implementation accepts a phrase only for tiers less close than
+  `family` (`friend` and below);
+- the owner's own command in a terminal;
+- a standing pre-approval the owner set as policy (`allow`, §5.4).
+
+### 5.6 Peer text is untrusted data
+
+Greetings, text parts, decline reasons and card `owner` fields are written by
+the other side and can carry instructions aimed at the reader's assistant.
+They are display-only: they MUST NOT be followed, and only machine (`data`)
+parts and validated fields may drive actions. Short structural fields
+(payload `type`, IDs, tiers, states) are validated against strict shapes and
+rejected if they do not match. A host SHOULD hand peer text to a model only
+when clearly marked as untrusted, and SHOULD strip terminal control
+characters before showing it.
 
 ---
 
@@ -463,11 +589,30 @@ where hole-punching fails (TURN relays carry the ciphertext).
 - The agent posts to one or more public Nostr relays. Relayed delivery covers
   first contact, offline peers, and failed hole-punching — everything a
   direct channel can't reach.
-- Envelope events use a dedicated kind (proposal: `30417`, "agent envelope"),
-  with `p` tags pointing at the recipient's agent ID. Discovery topics ride
-  the same kind as `t` tags (§4.4).
-- Encrypted content per NIP-44 (conversation-scoped keys derived from the
-  contact handshake).
+- Envelope events use a dedicated kind (`30417`, "agent envelope"). The event
+  `content` is the envelope JSON (§6.4). Tags: `p` is the recipient's Ed25519
+  public key as lowercase hex (not the `rdv1:` string); `d` is the envelope
+  hash (§4.6). Discovery topics ride the same kind: `t` holds the `dtopic`
+  (§4.4) and `d` is the hex SHA-256 of the event content.
+- **Kind decision (rev 3).** `30417` is in the addressable range
+  (30000-39999), where relays keep only the latest event per (pubkey, kind,
+  `d`), so two envelopes without distinct `d` tags overwrite each other. Rev 3
+  keeps `30417` and makes a unique `d` (the envelope hash) mandatory.
+  Alternative: a regular kind (1000-9999), which stores every envelope as its
+  own event and removes the `d` fragility. A 2026-10 survey of public relays
+  (nos.lol, relay.primal.net, nostr.mom, relay.damus.io and others) found no
+  relay-side difference: all kept 30417 and a regular test kind alike, with
+  `#p`/`#t` queries and distinct `d` values. The case for a regular kind is
+  therefore semantic, not empirical; it is a wire change to revisit with the
+  test vectors if a relay starts to differ. Not tested: same-`d` overwrite and
+  long-term retention.
+- **Carrier key.** Nostr events are signed with secp256k1, not Ed25519. Each
+  agent derives a stable carrier key: HKDF-SHA256 over its Ed25519 seed, no
+  salt, info `"rdv1/nostr-carrier"`, 32 bytes. It signs the Nostr event only;
+  authenticity comes from the envelope signature, so receivers MUST NOT treat
+  the carrier public key as the sender's identity.
+- Encryption is the envelope's own (§6.4), not NIP-44. Conversation-scoped keys
+  derived from the contact handshake are future work.
 - Why Nostr: key-first identity matches §4, relays are dumb pipes by design,
   hundreds of free public relays exist, and the ecosystem is explicitly open
   to new event kinds. (§14)
@@ -497,42 +642,128 @@ where hole-punching fails (TURN relays carry the ciphertext).
   "from": "rdv1:…",
   "to": "rdv1:…",
   "seq": 42,
-  "prev": "<hash of previous envelope>",
+  "prev": "<hash of previous envelope, null for the first>",
   "created": "…",
   "ttl": "48h",
   "content": {
-    "alg": "x25519+aes256gcm",   // or NIP-44 framing on Nostr
-    "ciphertext": "…",
-    "nonce": "…"
+    "alg": "x25519+aes256gcm",
+    "epk": "…",                  // ephemeral X25519 public key, base64
+    "nonce": "…",                // 12 random bytes, base64
+    "ciphertext": "…"            // base64
   },
-  "sig": "…"                     // over everything outside content
+  "sig": "…"                     // over everything outside sig, content included (§4.6)
 }
 ```
 
-- Relays see `from`, `to`, `seq`, `ttl`, `sig` — nothing else.
-- `seq`/`prev` give ordering and gap detection (§7).
-- `ttl` lets relays garbage-collect and bounds replay windows.
+- **The signature covers `content`.** Rev 2 signed only the header. Anyone
+  holding one genuine envelope could then keep its signed header and swap in
+  a ciphertext of their own, encrypted to the recipient, which the recipient
+  would accept as coming from the header's sender.
+- **Encryption.** The sender generates an ephemeral X25519 key pair per
+  envelope and combines it with the recipient's X25519 key (its Ed25519
+  identity key, converted). The AES-256 key is
+  `HKDF-SHA256(secret, salt = epk ‖ recipient_x25519_pub, info = "rdv1/envelope")`,
+  32 bytes. The cipher is AES-256-GCM with a random 12-byte nonce, and the
+  header (`v`, `from`, `to`, `seq`, `prev`, `created`, `ttl`) is bound as
+  associated data. The plaintext is the payload JSON (§7).
+- Relays see the header and `sig`, plus `epk`, nonce and ciphertext size; they
+  cannot read the payload.
+- `seq`/`prev` give ordering and gap detection (§7). The first envelope in a
+  direction has `seq: 1` and `prev: null`; later ones carry the hash (§4.6) of
+  the previous envelope in the same direction.
+- `ttl` is `<n><s|m|h|d>` (default `48h`); an envelope is expired when
+  `created + ttl` has passed. It lets relays garbage-collect and bounds replay
+  windows.
+- **No forward secrecy yet.** The recipient key is static, so a later key
+  compromise exposes recorded envelopes (§11).
 
 ---
 
 ## 7. Session & task layer (A2A semantics)
 
-- Once contact is granted, agents exchange tasks using **A2A task objects**
-  (`Task`, `Message`, `Part`, artifact updates) inside the envelope's
-  encrypted content.
+- Once contact is granted, agents exchange tasks using **A2A v0.3 objects**
+  (§7.1) inside the envelope's encrypted content. The payload is a JSON
+  document with a `type` field.
 - The protocol is **asynchronous by default**: tasks, proposals, and
   confirmations are documents; no live channel is assumed. (Calendar
   negotiation = propose/accept cycles over store-and-forward.)
-- Idempotency: task IDs are UUIDs; retries re-send the same envelope; the
-  receiver deduplicates by ID.
-- Ordering: `seq` is per-direction monotonic; gaps trigger a resend request.
+- Idempotency: task IDs are UUIDs; retries re-send the same envelope. There
+  are two dedupe layers: the receiver drops an envelope it has already seen
+  (same `seq`), and drops a re-sent A2A message (same `messageId`, new
+  envelope) per task.
+- Ordering: `seq` is per-direction monotonic. A gap buffers later envelopes
+  and triggers `{"type": "rdv/resend", "from_seq": n, "to_seq": m}`; the
+  sender replays from an outbox (the reference implementation keeps 64
+  envelopes). Receivers MAY bound and drop: the reference implementation
+  buffers out-of-order envelopes only from contacts and from agents it asked
+  by card (16 peers x 64 envelopes).
+- Persistence: a sender SHOULD commit the new `seq`, `prev` and its outbox to
+  durable storage before the envelope leaves, so a crash cannot reuse a
+  `seq`. The worst case is then a payload delivered twice.
 - Cancellation: a `rdv/cancel` referencing a task ID, honored when the task
-  is still pending.
+  is still pending (not terminal).
 - Direct-first operation: once both sides have routable endpoints, the
   in-band negotiation opens a direct channel (WebRTC data channel)
   immediately — the default mode of every subsequent session, not an
   upgrade. Relays resume only for offline peers and NAT failures. The
   envelope format is unchanged.
+
+### 7.1 A2A mapping
+
+Two payload types carry A2A v0.3 objects: `a2a/message` holds a `Message`
+(one negotiation turn) and `a2a/task-update` holds a `TaskStatusUpdateEvent`
+(an acknowledgement or end state). A whole `Task` object is never sent; each
+side keeps its own copy. A2A assumes a client and a server agent, but both
+peers here are agents, so `role` is always `"agent"`. `messageId`, `taskId`
+and `contextId` are UUIDs; one `contextId` covers one negotiation.
+
+A message has human parts (`text`) and one machine part (`data`) whose
+`data.rdv` names the verb (§7.2). Text parts are for humans and never drive
+anything (§5.6). Receivers validate strictly and reject unknown keys, unknown
+verbs and non-UUID IDs.
+
+### 7.2 Meeting verbs
+
+| `data.rdv` | Fields | Meaning |
+|---|---|---|
+| `meeting/propose` | 1-3 `slots`, optional `place`, `expires` | open a negotiation |
+| `meeting/counter` | 1-3 `slots`, optional `place`, `expires` | offer different slots |
+| `meeting/accept` | one `slot` | accept a slot from the latest offer |
+| `meeting/decline` | `reason` | refuse; nothing fits |
+| `rdv/cancel` | optional `reason` | withdraw, by the message's `taskId` |
+
+A slot is `{"start", "end"}`, RFC 3339 date-times with an explicit offset
+(`Z` or `±HH:MM`), compared as instants, so an accept may write the slot in
+another offset; at most 12 hours long. `expires` defaults to 48 hours and a
+receiver clamps it to 7 days. How to extend the verb set is open (§11).
+
+### 7.3 Task states
+
+`submitted` (proposal sent) → `input-required` (the responder countered) or
+`working` (the proposer countered back) → `completed` | `rejected` |
+`canceled`. A round is one offer; the receiver of the third offer declines if
+nothing fits, which ends the task `rejected`. An accept MUST pick a slot from
+the latest offer it answers. The reference policy is: offer up to 3 free
+slots, accept the first slot that is free, otherwise counter with 3 of your
+own; implementations MAY choose a different policy within these rules.
+
+A cancel is honored while the task is not terminal. A cancel that arrives
+before its proposal leaves a tombstone so the proposal is refused when it
+lands. A cancel, or any verb, for a finished task is answered with a status
+update giving its real end state.
+
+### 7.4 Scope and defaults
+
+Meeting verbs require `may_propose_meetings: true` in the grant. By §5.3 the
+same scope governs both directions. If `may_access_calendar` is absent it
+counts as `free_busy`, because proposing a slot is a free/busy disclosure;
+`none` blocks negotiation. At every level, including `full`, meeting messages
+carry slots only, never event titles.
+
+Peer state is bounded: only a meeting-capable grant may create tasks (or
+tombstones); a receiver SHOULD cap tasks per peer (reference: 32, evicting
+finished ones and tombstones first and refusing when all are pending) and
+prune finished tasks (reference: after 30 days).
 
 ---
 
@@ -549,6 +780,10 @@ where hole-punching fails (TURN relays carry the ciphertext).
 | Suggestion privacy leak | Suggestions computed locally on the owner's agent; *list me* stays opt-in; OPRF hides queries from the server |
 | MITM on human channel | E2E envelope; Diffie-Hellman keys pinned at handshake; TOFU + change alert |
 | Malicious relay reads content | Ciphertext-only at relay (§6.4); relay trust = zero |
+| Relay swaps the ciphertext under a genuine header | The signature covers `content` (§6.4), and the header is AES-GCM associated data |
+| Assistant approves a contact on its own, or is talked into it | Consent stays with the human, outside the model's reach (§5.5) |
+| Prompt injection through greetings or message text | Peer text is display-only data; only validated machine fields drive actions (§5.6) |
+| Stranger answers a topic probe | Grant recorded as `claimed`; grantor fingerprint shown before trust (§5.3) |
 | Relay logs metadata (who talks to whom) | Envelope minimizes metadata; fallback to human channels if metadata exposure is unacceptable |
 | Spam agents (Sybil) | Consent-first inbound; key-based block; tier-based rate caps; §10 reputation |
 | Replay | Envelope `seq`/`prev` + request/grant/probe IDs; TTL bounds window |
@@ -566,6 +801,10 @@ where hole-punching fails (TURN relays carry the ciphertext).
   someone who holds the address is asking — never identity, never content.
 - Directories see neither queries nor matches (OPRF); *suggest friends*
   is on by default and switchable off; *list me* is opt-in per directory.
+- A topic probe (§4.4) is cleartext on the carrier: its greeting and the
+  requester's card are readable by the relay and by anyone who knows the
+  topic. Keep greetings short and free of private detail. Requests to a known
+  card travel inside an encrypted envelope.
 - Probes and invites are owner-initiated and rate-limited; received probes
   are archived with the consent record as an audit trail.
 - All content is E2E encrypted; relays see envelope metadata only.
@@ -620,16 +859,32 @@ where hole-punching fails (TURN relays carry the ciphertext).
    they are swappable, but a listed agent still trusts its chosen directory
    to stay available and honest about exact matches. Running one is trivial;
    none is required.
+8. **No commit phase for meetings.** The acceptor completes the task and
+   holds the slot when it sends `meeting/accept`; the proposer confirms with
+   a `completed` status update. If the proposer canceled or expired the task
+   meanwhile, the acceptor learns it only from that update, and concurrent
+   negotiations can double-book a slot (offers are not held). Whether
+   accepting a meeting needs a per-meeting human confirmation is also
+   unspecified. A hold-then-confirm step is future work.
+9. **No forward secrecy.** Envelopes are encrypted to a static recipient key
+   (§6.4). Conversation-scoped keys from the handshake are future work.
+10. **Channel state for strangers.** A receiver advances `seq` state for any
+    validly signed envelope before deciding whether to admit the sender. A
+    stranger cannot spoof another sender, so the cost is memory per stranger
+    ID, to be bounded.
+11. **Extending the meeting verbs.** Validation is strict (§7.2); whether
+    extensions use a version field or an A2A extension URI is undecided.
 
 ---
 
 ## 12. Scope & phases
 
-**v0.1 (this document, rev 2):** identity, cards, discovery (hint-server
+**v0.1 (this document, rev 3):** identity, cards, discovery (hint-server
 topics, mailbox probe, invite, optional directories), contact request/grant,
-envelope, Nostr primary, human-channel bootstrap.
+envelope, Nostr primary, human-channel bootstrap, A2A meeting negotiation.
 
-**v0.2:** reference library (Rust or TypeScript), test vectors, interop tests.
+**v0.2:** reference library (TypeScript) and `rdv` CLI, test vectors, interop
+tests, A2A dinner negotiation over a real relay.
 
 **v0.3:** MCP server exposing the tool API (§13); dogfood on a live agent
 fleet — including discovery, probe and invite tools.
@@ -658,10 +913,14 @@ Proposed MCP tool API (v0.3):
 | `rdv_suggestions` | list suggestion hits; flip the two opt-in switches |
 | `rdv_request_contact` | send a contact request (via hint or human channel) |
 | `rdv_pending_requests` | list inbound contact requests (for consent UX) |
-| `rdv_grant` / `rdv_revoke` | approve/reject/revoke contacts with tier+scope |
+| `rdv_grant` / `rdv_revoke` | approve/reject/revoke contacts with tier+scope; a grant needs the human's own approval (§5.5) |
 | `rdv_send` | send an envelope (task, message, proposal) |
-| `rdv_inbox` | receive/ack envelopes (dedupe, ordering) |
+| `rdv_inbox` | read events after a cursor (an event log; nothing is acknowledged to the peer) |
 | `rdv_negotiate` | A2A task exchange lifecycle |
+
+`rdv_grant` MUST NOT succeed on the model's say-so (§5.5), and peer text in
+any result is returned marked as untrusted (§5.6). One server runs per home
+state directory.
 
 A separate, optional **directory service** ships alongside for anyone who
 wants to run one (§4.5); it is not part of the required install.
