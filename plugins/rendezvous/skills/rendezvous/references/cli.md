@@ -34,9 +34,11 @@ These approve something or print a confirm phrase, so the human runs them in
 their own terminal, never you (the plugin's consent guard blocks them, with
 or without `--json`): `rdv contact grant`, `rdv contact confirm`,
 `rdv contact resync`, `rdv contact label`, `rdv contact pending`, `rdv dinner confirm`,
-`rdv dinner cancel`, `rdv dinner list`, `rdv init --force`,
+`rdv dinner cancel`, `rdv dinner list`, `rdv task approve`, `rdv task release`,
+`rdv task list`, `rdv init --force`,
 `rdv listen --auto-grant` and `rdv listen --auto-confirm`. Use
-`rdv_pending_requests` and `rdv_negotiate` (action `status`) instead.
+`rdv_pending_requests`, `rdv_negotiate` (action `status`) and `rdv_task`
+(action `list`) instead.
 
 Approving through the MCP tools: `rdv_grant` asks the client to show the human
 an approval form. A client without forms makes the tool fail with a message

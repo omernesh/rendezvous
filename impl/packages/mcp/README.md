@@ -170,6 +170,20 @@ if the held meeting changes before the confirm runs (another slot, peer or
 stage, or a new negotiation under the same ID), nothing is confirmed, the tool
 says it changed, and a new phrase is issued (NOTES 59).
 
+**Each task from a contact, twice (issue #24).** `rdv_task` routes general
+tasks (SPEC §7.6). A contact's task under a `confirm` or `free-form`
+capability (the general `request/v1` is `free-form`) waits until the human
+approves its start ("approve-start"); `notify` tasks are only shown, `auto`
+ones start on the grant and are written to `audit.jsonl`. Whatever the
+agent sends back ("submit") waits again until the human releases it
+("approve-release"), whatever the class, since the model wrote it. Same
+gate as a grant: a form showing the task (peer text marked untrusted) or
+the draft, or a confirm phrase per gate (stderr and `rdv task list` text
+mode), or the human runs `rdv task approve <task-id> --code <code>` /
+`rdv task release <task-id> --code <code>` in their own terminal. Each is
+bound to a digest of what the human saw: a re-request under the same task
+ID, or a changed draft, approves nothing (NOTES 76).
+
 **Canceling an agreed dinner (issue #20).** `rdv_negotiate` action `cancel`
 on a completed dinner passes the same gate, bound to the agreement shown
 (NOTES 61): a form if the client can elicit (only an explicit yes cancels),

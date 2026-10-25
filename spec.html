@@ -817,6 +817,45 @@ The host MUST bind the approval to what it showed (at least the peer,
 confirmed) and MUST NOT act on it if the held meeting differs when it acts;
 it asks again instead. A confirm phrase for a meeting is bound the same way
 and stops working once the hold changes or the task ends.</p>
+<p><strong>Start and release gates</strong> (<strong>spec change</strong>, issue #24). A grant that
+allows a capability lets the agents exchange that kind of task; it does not
+let the executor act on every task. Two gates apply, by the capability's
+class (§7.6.3):</p>
+<ul>
+<li><strong>Start gate</strong> (<code>confirm</code>, <code>free-form</code>): before the executor acts on a
+  task (fetches its files, runs a model on it, touches owner data or the
+  outside world) its human approves that task.</li>
+<li><strong>Release gate</strong> (<code>confirm</code>, <code>free-form</code>, and any artifact that carries
+  owner data or a model's output): before an artifact, a file, or a status
+  message with free text leaves the agent, its human approves it. The same
+  holds on the requester side for files it attaches: a file from the
+  owner's storage leaves only with the owner's approval.</li>
+</ul>
+<p><code>notify</code> tasks are only shown to the human; <code>auto</code> tasks start on the grant
+alone. A host SHOULD record each gate it passes without asking (an audit
+log the owner can read).</p>
+<p>Approvals are those listed above (a host's own UI, a confirm phrase, the
+owner's command, a standing policy). A standing policy (<code>auto-start</code>,
+<code>auto-release</code>) is set by the owner per contact and per capability, never
+implied by a grant and never set by a model; for <code>free-form</code> it may cover
+release, never start.</p>
+<p>Each approval is bound to a digest of what the human was shown, and the
+host MUST NOT act on it if that has changed; it asks again. For a start
+gate the digest covers the peer, <code>contextId</code>, <code>taskId</code>, the capability,
+the task's <code>created</code>, <code>canon(input)</code>, the SHA-256 of each text part and
+each file's <code>sha256</code> (§7.7), and the step. For a release gate it covers
+the peer, the task, and <code>canon(artifact)</code>. A confirm phrase is bound to
+that digest and stops working when the task changes or ends. A peer can
+cancel and re-request under the same <code>taskId</code>, or send <code>task/input</code> while
+the human reads; the approval must not land on the new content.</p>
+<p>The reference implementation treats everything its host sends for a peer's
+task as owner data or a model's output (the model, or the human at a
+terminal, wrote it), so every artifact and every status message with text
+passes the release gate, whatever the class. Its CLI gates are <code>rdv task
+approve &lt;task-id&gt; --code &lt;code&gt;</code> and <code>rdv task release &lt;task-id&gt; --code
+&lt;code&gt;</code>, where the code is the first 12 hex digits of the digest shown by
+<code>rdv task list</code>; its MCP server asks through elicitation or a confirm phrase
+(<code>rdv_task</code> "approve-start", "approve-release").</p>
 <h3 id="56-peer-text-is-untrusted-data">5.6 Peer text is untrusted data</h3>
 <p>Greetings, text parts, decline reasons and card <code>owner</code> fields are written by
 the other side and can carry instructions aimed at the reader's assistant.
@@ -1771,10 +1810,15 @@ calling card.</strong></p>
 <td><code>rdv_negotiate</code></td>
 <td>A2A task exchange lifecycle</td>
 </tr>
+<tr>
+<td><code>rdv_task</code></td>
+<td>general tasks (§7.6): request one from a contact, list and show them, answer <code>input-required</code>, cancel; for a contact's task, approve its start and release each result, both only with the human's own approval (§5.5)</td>
+</tr>
 </tbody>
 </table></div>
-<p><code>rdv_grant</code> MUST NOT succeed on the model's say-so (§5.5), and peer text in
-any result is returned marked as untrusted (§5.6). One server runs per home
+<p><code>rdv_grant</code> MUST NOT succeed on the model's say-so (§5.5), nor may
+<code>rdv_task</code> pass a start or release gate on it, and peer text in any result
+is returned marked as untrusted (§5.6). One server runs per home
 state directory.</p>
 <p>A separate, optional <strong>directory service</strong> ships alongside for anyone who
 wants to run one (§4.5); it is not part of the required install.</p>

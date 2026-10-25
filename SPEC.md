@@ -752,6 +752,49 @@ confirmed) and MUST NOT act on it if the held meeting differs when it acts;
 it asks again instead. A confirm phrase for a meeting is bound the same way
 and stops working once the hold changes or the task ends.
 
+**Start and release gates** (**spec change**, issue #24). A grant that
+allows a capability lets the agents exchange that kind of task; it does not
+let the executor act on every task. Two gates apply, by the capability's
+class (§7.6.3):
+
+- **Start gate** (`confirm`, `free-form`): before the executor acts on a
+  task (fetches its files, runs a model on it, touches owner data or the
+  outside world) its human approves that task.
+- **Release gate** (`confirm`, `free-form`, and any artifact that carries
+  owner data or a model's output): before an artifact, a file, or a status
+  message with free text leaves the agent, its human approves it. The same
+  holds on the requester side for files it attaches: a file from the
+  owner's storage leaves only with the owner's approval.
+
+`notify` tasks are only shown to the human; `auto` tasks start on the grant
+alone. A host SHOULD record each gate it passes without asking (an audit
+log the owner can read).
+
+Approvals are those listed above (a host's own UI, a confirm phrase, the
+owner's command, a standing policy). A standing policy (`auto-start`,
+`auto-release`) is set by the owner per contact and per capability, never
+implied by a grant and never set by a model; for `free-form` it may cover
+release, never start.
+
+Each approval is bound to a digest of what the human was shown, and the
+host MUST NOT act on it if that has changed; it asks again. For a start
+gate the digest covers the peer, `contextId`, `taskId`, the capability,
+the task's `created`, `canon(input)`, the SHA-256 of each text part and
+each file's `sha256` (§7.7), and the step. For a release gate it covers
+the peer, the task, and `canon(artifact)`. A confirm phrase is bound to
+that digest and stops working when the task changes or ends. A peer can
+cancel and re-request under the same `taskId`, or send `task/input` while
+the human reads; the approval must not land on the new content.
+
+The reference implementation treats everything its host sends for a peer's
+task as owner data or a model's output (the model, or the human at a
+terminal, wrote it), so every artifact and every status message with text
+passes the release gate, whatever the class. Its CLI gates are `rdv task
+approve <task-id> --code <code>` and `rdv task release <task-id> --code
+<code>`, where the code is the first 12 hex digits of the digest shown by
+`rdv task list`; its MCP server asks through elicitation or a confirm phrase
+(`rdv_task` "approve-start", "approve-release").
+
 ### 5.6 Peer text is untrusted data
 
 Greetings, text parts, decline reasons and card `owner` fields are written by
@@ -1571,9 +1614,11 @@ Proposed MCP tool API (v0.3):
 | `rdv_send` | send an envelope (task, message, proposal) |
 | `rdv_inbox` | read events after a cursor (an event log; nothing is acknowledged to the peer) |
 | `rdv_negotiate` | A2A task exchange lifecycle |
+| `rdv_task` | general tasks (§7.6): request one from a contact, list and show them, answer `input-required`, cancel; for a contact's task, approve its start and release each result, both only with the human's own approval (§5.5) |
 
-`rdv_grant` MUST NOT succeed on the model's say-so (§5.5), and peer text in
-any result is returned marked as untrusted (§5.6). One server runs per home
+`rdv_grant` MUST NOT succeed on the model's say-so (§5.5), nor may
+`rdv_task` pass a start or release gate on it, and peer text in any result
+is returned marked as untrusted (§5.6). One server runs per home
 state directory.
 
 A separate, optional **directory service** ships alongside for anyone who

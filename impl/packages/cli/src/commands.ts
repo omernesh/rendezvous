@@ -27,9 +27,30 @@ import {
   topicForHint,
   verifyCard,
 } from '@rendezvous/core';
-import { cancel, cancelMeeting, cardCapabilities, confirmMeeting, describeSlot, meetingSnapshot, NegotiationError, type NegotiationTask, parseInstant, propose, type Step } from '@rendezvous/a2a';
-import { candidateDigest, describeApproval, inboundSubject, reissueForDisplay, requestSubject, type ShownPhrase } from './consent.js';
-import { CliError, type Config, type ConfigAddress, type ConsentAction, consentKey, Home, type InboxEntry, parseJsonLines } from './home.js';
+import { cancel, cancelMeeting, confirmMeeting, REQUEST_URI, describeSlot, meetingSnapshot, NegotiationError, type NegotiationTask, parseInstant, propose, type Step } from '@rendezvous/a2a';
+import { candidateDigest, describeApproval, dropPhrase, inboundSubject, reissueForDisplay, requestSubject, type ShownPhrase } from './consent.js';
+import { CliError, type Config, type ConfigAddress, type ConsentAction, consentKey, Home, type InboxEntry, parseJsonLines, type PendingRelease } from './home.js';
+import {
+  answerPeer,
+  approveRelease,
+  approveStart,
+  cancelPeer,
+  declineStart,
+  describeDraft,
+  gateCode,
+  hostCardCapabilities,
+  hostRegistry,
+  releaseView,
+  requestPeer,
+  startView,
+  submitDraft,
+  taskEventText,
+  taskEventView,
+  taskListText,
+  taskListView,
+  taskPhraseTargets,
+  type TaskRun,
+} from './tasks.js';
 
 import { listen } from './listen.js';
 import { relayTransport } from './transport.js';
@@ -126,6 +147,8 @@ export interface InitOptions {
   phones?: string[];
   publicPointer?: boolean;
   force?: boolean;
+  /** The card's `capabilities` (default: what this host routes, hostCardCapabilities). */
+  capabilities?: string[];
 }
 
 /** `rdv init` without the output: validate, generate key and card, write state. Shared with the MCP server. */
@@ -161,8 +184,8 @@ export async function initHome(home: Home, opts: InitOptions): Promise<{ id: str
       rendezvous: relays.map((relay, i) => ({ type: 'nostr' as const, relay, pref: i + 1 })),
       discovery: addresses.length ? { addresses, public_pointer: publicPointer } : undefined,
       policy: config.policy,
-      // The meeting extensions we support, so contacts learn them from the card (SPEC §7.5).
-      capabilities: cardCapabilities(),
+      // The extensions we route (meetings, tasks/v1 and its capabilities), so contacts learn them from the card (SPEC §4.3, §7.5).
+      capabilities: opts.capabilities ?? hostCardCapabilities(),
     });
     home.writeConfig(config);
     home.writeAgentState(a.toJSON());
@@ -855,3 +878,165 @@ export async function dinnerList({ home, out }: Ctx): Promise<void> {
   for (const t of tasks) out.emit(taskView(t), taskText(t) + phraseLine(t));
 }
 
+// --- general tasks (tasks/v1, SPEC §7.6; issues #24, #36) -------------------------
+
+function emitRun(out: Output, run: TaskRun): void {
+  for (const e of run.events) out.emit(taskEventView(e), taskEventText(e));
+  for (const message of run.errors) out.emit({ event: 'error', message }, `error: ${clean(message)}`);
+}
+
+function jsonArg(v: unknown, what: string): unknown {
+  const raw = str(v);
+  if (raw === undefined) return undefined;
+  try {
+    return JSON.parse(raw);
+  } catch (err) {
+    throw new CliError(`${what} is not JSON: ${(err as Error).message}`, 2);
+  }
+}
+
+/** The code `rdv task list` showed, normalized: the human approves the task or result they reviewed. */
+function codeArg(v: unknown, cmd: string): string {
+  const code = (str(v) ?? '').toLowerCase().replace(/[^0-9a-f]/g, '');
+  if (!code) throw new CliError(`--code <code> is required: the code "rdv task list" shows for this task, so you ${cmd} what you reviewed`, 2);
+  return code;
+}
+
+/** `rdv task request <agent-id>`: ask a contact's agent for a task (default capability request/v1). */
+export async function taskRequest({ home, out, values, positionals }: Ctx): Promise<void> {
+  const capability = str(values.capability) ?? REQUEST_URI;
+  const input = jsonArg(values.input, '--input');
+  const run = await withAgent(home, (agent) =>
+    requestPeer(home, agent, hostRegistry(), positionals[0], capability, { text: list(values.text), input, expires: str(values.expires) }),
+  );
+  emitRun(out, run);
+}
+
+/**
+ * `rdv task list`: every task, and what waits for the human. Like `rdv dinner
+ * list`, text mode re-issues and shows the MCP server's confirm phrases for
+ * the start and release gates (only hashes are stored), so it is the human's
+ * command; `--json` shows the codes only.
+ */
+export async function taskList({ home, out }: Ctx): Promise<void> {
+  home.requireInit();
+  const { s, shown } = await home.locked(async () => {
+    const s = home.readTasks();
+    const targets = out.json ? [] : taskPhraseTargets(s);
+    return { s, shown: targets.length ? reissueForDisplay(home, targets) : new Map<string, ShownPhrase>() };
+  });
+  const tasks = Object.values(s.engine.tasks).sort((a, b) => a.created.localeCompare(b.created));
+  if (tasks.length === 0 && !out.json) out.emit({}, 'no tasks');
+  for (const t of tasks) {
+    const start = shown.get(consentKey('task-start', t.id));
+    const rel = shown.get(consentKey('task-release', t.id));
+    const phrases =
+      (start ? `\n  confirm phrase (tell it to your MCP client to let your agent start this task): ${clean(start.phrase)}  (replaces any phrase shown before)` : '') +
+      (rel ? `\n  confirm phrase (tell it to your MCP client to send this result): ${clean(rel.phrase)}  (replaces any phrase shown before)` : '');
+    out.emit(taskListView(t, s), taskListText(t, s) + phrases);
+  }
+  const dropped = Object.entries(s.engine.dropped).filter(([, n]) => (n ?? 0) > 0);
+  if (dropped.length) {
+    out.emit(
+      { event: 'tasks-dropped', dropped: Object.fromEntries(dropped) },
+      `peer tasks refused or dropped without asking you: ${dropped.map(([k, n]) => `${k} ${n}`).join(', ')}`,
+    );
+  }
+}
+
+/** `rdv task approve <task-id> --code <code>`: the human lets the agent act on a peer's task (start gate). */
+export async function taskApprove({ home, out, values, positionals }: Ctx): Promise<void> {
+  const id = positionals[0];
+  const code = codeArg(values.code, 'approve');
+  const run = await withAgent(home, async (agent) => {
+    const { digest } = startView(home, id);
+    if (gateCode(digest) !== code) {
+      throw new CliError(`task ${clean(id)} is not the task you reviewed (it changed, or the code is wrong). Nothing was started: run "rdv task list" and check it again.`);
+    }
+    const r = await approveStart(home, agent, hostRegistry(), id, digest);
+    dropPhrase(home, { action: 'task-start', id });
+    return r;
+  });
+  emitRun(out, run);
+}
+
+/** `rdv task decline <task-id>`: refuse a peer's task before it starts (reduce-only). */
+export async function taskDecline({ home, out, positionals }: Ctx): Promise<void> {
+  const id = positionals[0];
+  const run = await withAgent(home, async (agent) => {
+    const r = await declineStart(home, agent, hostRegistry(), id);
+    dropPhrase(home, { action: 'task-start', id });
+    return r;
+  });
+  emitRun(out, run);
+}
+
+function draftOut(out: Output, id: string, r: { held?: PendingRelease; digest?: string; run: TaskRun }): void {
+  emitRun(out, r.run);
+  if (r.held && r.digest) {
+    out.emit(
+      { event: 'task-draft', task: id, draft: r.held.content, release_code: gateCode(r.digest) },
+      `held for your release: ${clean(describeDraft(r.held.content))}\n  to send it: rdv task release ${clean(id)} --code ${gateCode(r.digest)}`,
+    );
+  }
+}
+
+/** `rdv task submit <task-id> --text …`: a result for a peer's task, held for the release gate. */
+export async function taskSubmit({ home, out, values, positionals }: Ctx): Promise<void> {
+  const id = positionals[0];
+  const text = list(values.text);
+  if (text.length === 0) throw new CliError('give the result with --text "…" (repeatable)', 2);
+  const name = str(values.name);
+  const r = await withAgent(home, (agent) =>
+    submitDraft(home, agent, hostRegistry(), id, {
+      kind: 'artifact',
+      parts: text.map((t) => ({ kind: 'text' as const, text: t })),
+      ...(name !== undefined ? { name } : {}),
+      complete: values.complete === true,
+    }),
+  );
+  draftOut(out, id, r);
+}
+
+/** `rdv task ask <task-id> --text …`: ask the requester for more (input-required), held for the release gate. */
+export async function taskAsk({ home, out, values, positionals }: Ctx): Promise<void> {
+  const id = positionals[0];
+  const text = str(values.text);
+  if (text === undefined) throw new CliError('give the question with --text "…"', 2);
+  draftOut(out, id, await withAgent(home, (agent) => submitDraft(home, agent, hostRegistry(), id, { kind: 'question', text })));
+}
+
+/** `rdv task finish <task-id> [--failed] [--text …]`: end a started task; a message is held for the release gate. */
+export async function taskFinish({ home, out, values, positionals }: Ctx): Promise<void> {
+  const id = positionals[0];
+  const outcome = values.failed === true ? 'failed' : 'completed';
+  const text = str(values.text);
+  draftOut(out, id, await withAgent(home, (agent) => submitDraft(home, agent, hostRegistry(), id, { kind: 'finish', outcome, ...(text !== undefined ? { text } : {}) })));
+}
+
+/** `rdv task release <task-id> --code <code>`: the human sends the result they reviewed (release gate). */
+export async function taskRelease({ home, out, values, positionals }: Ctx): Promise<void> {
+  const id = positionals[0];
+  const code = codeArg(values.code, 'release');
+  const run = await withAgent(home, async (agent) => {
+    const { digest } = releaseView(home, id);
+    if (gateCode(digest) !== code) {
+      throw new CliError(`the result for task ${clean(id)} is not the one you reviewed (it changed, or the code is wrong). Nothing was sent: run "rdv task list" and check it again.`);
+    }
+    const r = await approveRelease(home, agent, hostRegistry(), id, digest);
+    dropPhrase(home, { action: 'task-release', id });
+    return r;
+  });
+  emitRun(out, run);
+}
+
+/** `rdv task cancel <task-id>`: withdraw a task we requested. */
+export async function taskCancel({ home, out, values, positionals }: Ctx): Promise<void> {
+  emitRun(out, await withAgent(home, (agent) => cancelPeer(home, agent, hostRegistry(), positionals[0], str(values.reason))));
+}
+
+/** `rdv task input <task-id> --text …`: answer the executor's input-required on a task we requested. */
+export async function taskInput({ home, out, values, positionals }: Ctx): Promise<void> {
+  const input = jsonArg(values.input, '--input');
+  emitRun(out, await withAgent(home, (agent) => answerPeer(home, agent, hostRegistry(), positionals[0], { text: list(values.text), ...(input !== undefined ? { input } : {}) })));
+}

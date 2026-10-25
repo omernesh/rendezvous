@@ -9,7 +9,7 @@
       "name": "rendezvous",
       "source": "./plugins/rendezvous",
       "description": "Set up Rendezvous from chat: install rdv, create your agent, connect with another person's agent and message it. Approvals always go to you.",
-      "version": "0.1.6",
+      "version": "0.1.7",
       "category": "productivity",
       "tags": ["agents", "messaging", "mcp", "nostr", "encryption"]
     }

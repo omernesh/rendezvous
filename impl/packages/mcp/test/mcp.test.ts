@@ -784,6 +784,7 @@ describe('rdv-mcp over stdio', () => {
           'rdv_revoke',
           'rdv_send',
           'rdv_status',
+          'rdv_task',
         ].sort(),
       );
       const caps = client.getServerCapabilities();

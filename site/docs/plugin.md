@@ -36,8 +36,9 @@ What it contains:
   `~/.rendezvous/default`.
 - `hooks/hooks.json`: a consent guard on every tool call. It stops Claude
   from running the `rdv` commands that grant consent or print confirm phrases
-  (`rdv contact grant`, `rdv dinner confirm`, `rdv contact pending`,
-  `rdv dinner list`, …) or name a contact (`rdv contact label`, or
+  (`rdv contact grant`, `rdv dinner confirm`, `rdv task approve`,
+  `rdv task release`, `rdv contact pending`, `rdv dinner list`,
+  `rdv task list`, …) or name a contact (`rdv contact label`, or
   `rdv contact request <agent-id> --label`), however the command is quoted or wrapped (`npx`,
   `bash -c`, `$(…)`), and from reading, editing, searching or globbing the
   agent's secret key and consent file with any tool. Those stay with you, in

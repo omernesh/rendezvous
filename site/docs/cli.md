@@ -139,6 +139,8 @@ State lives in a directory: `--home <dir>`, else `$RDV_HOME`, else
 | `inbox.jsonl` | received payloads, one JSON object per line |
 | `cards.json` | cards found by `rdv lookup`, so `contact request <agent-id>` can use them |
 | `negotiations.json` | dinner negotiations (the a2a engine state) |
+| `tasks.json` | general tasks (the tasks/v1 engine state) and, per task, the draft waiting for your release |
+| `audit.jsonl` | each task gate passed: by the grant (`auto`, `notify`) or by you (bounded to its last 1000 lines) |
 | `consent.json` | salted scrypt hashes of the confirm phrases for pending requests, probe answers and held dinners, each bound to what the human was shown (written by `rdv-mcp`; `contact pending` and `dinner list` issue and show a fresh phrase in text mode) |
 | `holds.json` | which calendar file holds each tentative dinner hold, so `dinner confirm`/`cancel` can finalize or release it |
 | `events.jsonl` | shared event log: what the home's listener handled, plus `rdv-mcp`'s own events; `rdv_inbox` is a view of it |
@@ -171,6 +173,12 @@ State lives in a directory: `--home <dir>`, else `$RDV_HOME`, else
 | `rdv dinner confirm <task-id> --hold <code>` | Confirm the dinner a negotiation holds for you: sends `meeting/accept` (their offer) or `meeting/confirm` (they accepted yours). `--hold` is the code `rdv dinner list` shows; it is refused if the meeting changed since |
 | `rdv dinner cancel <task-id> [--reason …]` | Send `rdv/cancel` for a pending negotiation and release its hold; for an agreed (completed) dinner, send `meeting/cancel`: it leaves your calendar and the peer's agent removes it from theirs |
 | `rdv dinner list` | Negotiations with state, round, agreed or held slot (and what it waits for) |
+| `rdv task request <agent-id> --text "…" [--capability <uri>] [--input '{…}'] [--expires <rfc3339>]` | Ask a contact's agent for a task (SPEC §7.6; default capability `request/v1`, a free-text request). Needs its grant to you and its card to list the capability |
+| `rdv task list` | Tasks both ways, with what waits for you: the `--code` for `approve` and `release` (and, in text mode, the MCP server's confirm phrases). Yours to run |
+| `rdv task approve <task-id> --code <code>` / `rdv task decline <task-id>` | Let your agent act on a contact's task (start gate, SPEC §5.5), or refuse it. `--code` is refused if the task changed since you reviewed it. `approve` is yours to run |
+| `rdv task submit <task-id> --text "…" [--name …] [--complete]` / `rdv task ask <task-id> --text "…"` / `rdv task finish <task-id> [--failed] [--text …]` | Draft a result, a question or the end of a contact's task; a draft leaves only when released |
+| `rdv task release <task-id> --code <code>` | Send the draft you reviewed (release gate). Yours to run |
+| `rdv task cancel <task-id>` / `rdv task input <task-id> --text "…"` | Withdraw a task you requested, or answer its executor's question |
 | `rdv inbox [--follow]` | Show received payloads |
 
 Output is human text by default and one JSON object per line with `--json`.

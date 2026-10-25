@@ -110,12 +110,15 @@ describe('rdv commands', () => {
     if (process.platform !== 'win32') expect(statSync(join(home, 'agent.json')).mode & 0o777).toBe(0o600);
     const config = JSON.parse(readFileSync(join(home, 'config.json'), 'utf8'));
     expect(config.addresses).toEqual([{ type: 'email', value: 'omer@example.com' }]);
-    // The card advertises the meeting extensions (SPEC §7.5, issue #4).
+    // The card advertises the meeting extensions (SPEC §7.5, issue #4), and tasks/v1 with the
+    // capability this host routes to it (issue #36: only once routing works, SPEC §4.3).
     expect(state.card.capabilities).toEqual([
       'rdv/v1',
       'a2a/0.3',
       'https://rendezvous.nesher.co/ext/meetings/v1',
       'https://rendezvous.nesher.co/ext/meeting-cancel/v1',
+      'https://rendezvous.nesher.co/ext/tasks/v1',
+      'https://rendezvous.nesher.co/ext/request/v1',
     ]);
 
     const who = await rdv(['whoami'], home);

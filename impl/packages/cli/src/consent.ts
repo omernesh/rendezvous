@@ -31,6 +31,9 @@
 //   which also sends it a reverse grant) is bound to that contact as the
 //   human saw it (`subject`: peer, founding grant, binding, since, local
 //   label) and to the tier and scope shown (`terms`), like a request.
+// - A task phrase (`task-start`, `task-release`, issue #24) is bound to the
+//   startDigest of the task at its start gate, or the releaseDigest of the
+//   draft waiting to leave (tasks.ts), like a meeting phrase.
 import { createHash, randomBytes, randomInt, scryptSync, timingSafeEqual } from 'node:crypto';
 import {
   allowedCapabilities,
@@ -188,7 +191,7 @@ export function inboundAsks(home: Home): Map<string, ConsentTerms> {
   return asks;
 }
 
-const ACTIONS: readonly string[] = ['request', 'candidate', 'meeting', 'cancel', 'inbound'];
+const ACTIONS: readonly string[] = ['request', 'candidate', 'meeting', 'cancel', 'inbound', 'task-start', 'task-release'];
 const isStr = (v: unknown): v is string => typeof v === 'string' && v.length > 0;
 const isHash = (h: unknown): h is ConsentHash =>
   !!h && typeof h === 'object' && isStr((h as ConsentHash).salt) && isStr((h as ConsentHash).hash) && ((h as ConsentHash).digest === undefined || isStr((h as ConsentHash).digest));
