@@ -808,6 +808,80 @@ describe('compatibility with meetings and older peers (C.3)', () => {
   });
 });
 
+describe('security review fixes (issue #22)', () => {
+  it('absent input is validated when a capability has a schema (no bypass by leaving it out)', () => {
+    const omer = new Agent(OMER, 2);
+    // REVIEW requires `focus`: a request with no input at all is refused, not stored.
+    const step = omer.recv(JOHN, rawRequest(U(1), { rdv: 'task/request', capability: REVIEW }));
+    expect(step.events[0]).toMatchObject({ kind: 'refused', code: 'input', reason: `input: ${REVIEW} requires input` });
+    expect(omer.state.tasks).toEqual({});
+    // The same for a task/input answer with no input.
+    const { john, omer: o2 } = pair();
+    const req = john.apply(requestTask(john.state, OMER, FREEBUSY, john.ctx(), { input: { day: '2026-10-26T00:00:00Z' } }));
+    const sent = only(req) as { message: { taskId: string; contextId: string } };
+    o2.recv(JOHN, only(req));
+    o2.apply(askInput(o2.state, req.taskId, o2.ctx(), { text: 'Which day?' }));
+    const bare = rawRequest(sent.message.taskId, { rdv: 'task/input' }, { contextId: sent.message.contextId, messageId: U(2) });
+    expect(o2.recv(JOHN, bare).events[0]).toMatchObject({ kind: 'invalid' });
+    expect(o2.state.tasks[req.taskId].state).toBe('input-required');
+    expect(() => requestTask(john.state, OMER, REVIEW, john.ctx())).toThrow(/requires input/);
+    // A capability that declares its input optional accepts a request without one, and still checks one that is there.
+    const opt = `${BASE}test-optional/v1`;
+    const reg = new CapabilityRegistry([{ uri: opt, approval: 'auto', inputOptional: true, input: s.object({ n: s.int(1, 9) }) }]);
+    const o3 = new Agent(OMER, 3, { [opt]: {} }, 'friend', reg);
+    expect(kinds(o3.recv(JOHN, rawRequest(U(3), { rdv: 'task/request', capability: opt })))).toEqual(['received']);
+    expect(o3.recv(JOHN, rawRequest(U(4), { rdv: 'task/request', capability: opt, input: { n: 99 } })).events[0]).toMatchObject({ code: 'input' });
+    expect(() => new CapabilityRegistry([{ uri: opt, approval: 'auto', inputOptional: 'yes' as unknown as boolean }])).toThrow(/inputOptional/);
+  });
+
+  it('a grant narrowed after receipt stops the task: nothing is started or sent, the task ends with scope', () => {
+    // Waiting at the start gate, then the owner removes REVIEW from the grant.
+    const { john, omer } = pair();
+    const req = john.apply(requestTask(john.state, OMER, REVIEW, john.ctx(), { input: { focus: ['x'] } }));
+    omer.recv(JOHN, only(req));
+    omer.invoke = { [FREEBUSY]: {} };
+    const s1 = omer.apply(startTask(omer.state, req.taskId, omer.ctx()));
+    expect(s1.effects).toEqual([{ kind: 'abort', taskId: req.taskId, peer: JOHN, capability: REVIEW, code: 'scope' }]);
+    expect(omer.state.tasks[req.taskId]).toMatchObject({ state: 'rejected', code: 'scope' });
+    const st = statusOf(only(s1))!;
+    expect(st.status.state).toBe('rejected');
+    expect(st.metadata?.[REASON_KEY]).toBe('scope');
+    expect(john.recv(OMER, only(s1)).events[0]).toMatchObject({ kind: 'rejected', code: 'scope' });
+
+    // Already working (auto), then the grant is revoked: askInput, sendArtifact and finishTask send nothing of their own.
+    const mk = () => {
+      const p = pair();
+      const r = p.john.apply(requestTask(p.john.state, OMER, FREEBUSY, p.john.ctx(), { input: { day: '2026-10-26T00:00:00Z' } }));
+      p.omer.recv(JOHN, only(r));
+      p.omer.invoke = {};
+      return { ...p, taskId: r.taskId };
+    };
+    const calls: [string, (o: Agent, id: string) => TaskStep][] = [
+      ['askInput', (o, id) => askInput(o.state, id, o.ctx(), { text: 'Which day?' }, { released: true })],
+      ['sendArtifact', (o, id) => sendArtifact(o.state, id, o.ctx(), { parts: [{ kind: 'data', data: { rdv: 'freebusy/result', busy: true } }] }, { released: true })],
+      ['finishTask', (o, id) => finishTask(o.state, id, o.ctx(), 'completed')],
+    ];
+    for (const [what, call] of calls) {
+      const { omer: o, taskId } = mk();
+      const step = o.apply(call(o, taskId));
+      expect(step.outgoing.map((x) => x.payload.type), what).toEqual(['a2a/task-update']);
+      expect(statusOf(step.outgoing[0].payload), what).toMatchObject({ status: { state: 'failed' }, metadata: { [REASON_KEY]: 'scope' } });
+      expect(step.effects, what).toEqual([{ kind: 'abort', taskId, peer: JOHN, capability: FREEBUSY, code: 'scope' }]);
+      expect(o.state.tasks[taskId], what).toMatchObject({ state: 'failed', code: 'scope' });
+    }
+    // A capability no longer registered is treated the same.
+    const { omer: o4, taskId } = mk();
+    o4.invoke = INVOKE;
+    const narrowed = startOrFinish(o4, taskId);
+    expect(narrowed.effects[0]).toMatchObject({ kind: 'abort', code: 'scope' });
+  });
+});
+
+/** finishTask with a registry that no longer knows FREEBUSY. */
+function startOrFinish(o: Agent, taskId: string): TaskStep {
+  return finishTask(o.state, taskId, o.ctx({ registry: new CapabilityRegistry([review]) }), 'completed');
+}
+
 describe('capability registry', () => {
   it('rejects bad definitions', () => {
     expect(() => new CapabilityRegistry([{ uri: 'http://insecure.example/x', approval: 'auto' }])).toThrow(/https/);

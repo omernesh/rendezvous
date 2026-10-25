@@ -96,6 +96,11 @@ export interface Capability {
    * input, and a request that carries one is refused.
    */
   input?: Schema;
+  /**
+   * `input` (and a `task/input` answer) may be absent although a schema is
+   * set. Default false: when a schema exists, absent input is refused.
+   */
+  inputOptional?: boolean;
   /** The schema of `task/input`'s `input` (the answer to input-required). Default: `input`. */
   answer?: Schema;
   /** Shapes of `data` parts in its artifacts and status messages. A data part of any other shape is refused. */
@@ -123,6 +128,7 @@ export class CapabilityRegistry {
   register(c: Capability): this {
     if (!isCapabilityUri(c.uri)) throw new TypeError(`capability URI must be https and at most ${MAX_URI_CHARS} characters: ${c.uri}`);
     if (!APPROVAL_CLASSES.includes(c.approval)) throw new TypeError(`unknown approval class ${String(c.approval)}`);
+    if (c.inputOptional !== undefined && typeof c.inputOptional !== 'boolean') throw new TypeError('inputOptional must be a boolean');
     if (c.maxOpen !== undefined && !(Number.isSafeInteger(c.maxOpen) && c.maxOpen >= 1)) throw new TypeError('maxOpen must be a positive integer');
     if (this.#byUri.has(c.uri)) throw new TypeError(`capability ${c.uri} is already registered`);
     this.#byUri.set(c.uri, Object.freeze({ ...c }));
@@ -146,8 +152,15 @@ export class CapabilityRegistry {
 /** Validate a task's `input` (or a `task/input` answer) against its capability. Throws SchemaError. */
 export function checkInput(cap: Capability, input: unknown, answer = false): unknown {
   const schema = answer ? (cap.answer ?? cap.input) : cap.input;
-  if (input === undefined) return undefined;
-  if (!schema) throw new SchemaError(`input: ${cap.uri} takes no input`);
+  if (!schema) {
+    if (input === undefined) return undefined;
+    throw new SchemaError(`input: ${cap.uri} takes no input`);
+  }
+  // A capability with a schema always validates; absent input passes only when it says input is optional.
+  if (input === undefined) {
+    if (cap.inputOptional === true) return undefined;
+    throw new SchemaError(`input: ${cap.uri} requires input`);
+  }
   return schema(input, 'input');
 }
 

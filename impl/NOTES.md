@@ -1264,6 +1264,14 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       reason, for the human. Request input, text and files are kept only
       while the task is open (the gates need them), and peer text never
       becomes a stored `reason`.
+    - **Security review (on commit).** (1) A capability with an `input`
+      schema always validates: absent input is refused unless the
+      capability sets `inputOptional` (it was skipped before). (2)
+      `startTask`, `askInput`, `sendArtifact` and `finishTask` re-check
+      that the capability is still registered and still in the current
+      grant's `invoke` before acting; if not, the task ends with code
+      `scope` (`rejected` before it started, `failed` after, per §7.6.2),
+      an `abort` effect and a status update, and nothing else is sent.
     - **Files** are opaque here: inline `bytes` (base64, at most 16 KiB) or
       a `uri`, exactly one, never fetched. The hash and fetch rules (§7.7)
       are item 72 (core); wiring them into the task engine is the files
