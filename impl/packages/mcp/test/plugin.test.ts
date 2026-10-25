@@ -506,3 +506,90 @@ describe('plugin launcher', () => {
     expect(r.stderr).toContain('/reload-plugins');
   });
 });
+
+describe('docs/agents.md and the agent packaging', () => {
+  const DOCS = join(REPO, 'docs', 'agents.md');
+  const doc = readFileSync(DOCS, 'utf8').replace(/\r\n/g, '\n');
+  const AGENTS = [
+    'Claude Desktop',
+    'Cursor',
+    'VS Code',
+    'Codex CLI',
+    'Gemini CLI',
+    'Windsurf',
+    'Grok Build',
+    'OpenClaw',
+    'Hermes Agent',
+    'Muse Code',
+  ];
+  const sections = (md: string) => md.split(/^## /m).slice(1);
+
+  it('has one section per agent (plus Claude Code), each with a verify step, consent note and primary-doc link', () => {
+    const bodies = new Map(sections(doc).map((s) => [s.split('\n')[0], s]));
+    for (const name of ['Claude Code', ...AGENTS]) {
+      const key = [...bodies.keys()].find((h) => h.startsWith(name));
+      expect(key, `section for ${name}`).toBeTruthy();
+      const body = bodies.get(key!)!;
+      expect(body, `${name}: install`).toMatch(/Install|plugin/);
+      expect(body, `${name}: verify`).toMatch(/\*\*Verify:\*\*/);
+      expect(body, `${name}: consent`).toMatch(/\*\*Consent:\*\*/);
+      // Muse Code has no first-party docs page to link yet; the section says so instead.
+      const linked = /Docs: .*\]\(https:\/\//.test(body) || (name === 'Muse Code' && /\*\*Not verified:\*\*/.test(body));
+      expect(linked, `${name}: docs link`).toBe(true);
+    }
+  });
+
+  it('gives the installer one-liners and the confirm-phrase fallback', () => {
+    expect(doc).toContain('curl -fsSL https://rendezvous.nesher.co/install.sh | sh');
+    expect(doc).toContain('irm https://rendezvous.nesher.co/install.ps1 | iex');
+    expect(doc).toMatch(/Clients without elicitation/);
+    expect(doc).toMatch(/own terminal/);
+  });
+
+  it('never tells the assistant to run a consent command', () => {
+    const files = [DOCS, join(REPO, 'README.md'), join(PLUGIN, 'README.md'), ...skillFiles(SKILLS)];
+    for (const f of files) expect(consentViolations(readFileSync(f, 'utf8')), f).toEqual([]);
+  });
+
+  it('uses only the example personas', () => {
+    for (const m of doc.matchAll(/[\w.+-]+@[\w-]+(\.[\w-]+)+/g)) expect(m[0]).toMatch(/@(example\.com|doe\.com)$/);
+  });
+
+  it('is linked from the README, the skill reference, the MCP README and both installers', () => {
+    const read = (...p: string[]) => readFileSync(join(REPO, ...p), 'utf8');
+    expect(read('README.md')).toContain('docs/agents.md');
+    expect(read('impl', 'packages', 'mcp', 'README.md')).toContain('docs/agents.md');
+    expect(readFileSync(join(SKILL_DIR, 'references', 'clients.md'), 'utf8')).toContain('docs/agents.md');
+    for (const f of ['install.sh', 'install.ps1']) {
+      const s = read('site', f);
+      expect(s, f).toContain('/rdv-onboarding');
+      expect(s, f).toContain('https://github.com/omernesh/rendezvous/blob/main/docs/agents.md');
+      expect(s, f).not.toContain('Set up Rendezvous for me');
+    }
+  });
+
+  it('the site has a tab and a copyable config for every agent, and a Works with row', () => {
+    const html = readFileSync(join(REPO, 'site', 'index.html'), 'utf8');
+    for (const name of ['Claude Code', ...AGENTS]) {
+      expect(html, name).toContain(`>${name}</button>`);
+      expect(html, `works with: ${name}`).toContain(`<li>${name}</li>`);
+    }
+    expect(html).toContain('Works with');
+    expect(html).not.toMatch(/<script(?![^>]*\ssrc=)[^>]*>/); // no inline script: the CSP allows 'self' only
+    expect(html).not.toMatch(/\sstyle=/); // nor inline style attributes
+    // Every agent tab controls an existing panel.
+    for (const m of html.matchAll(/id="agent-tab-([\w-]+)" aria-controls="(agent-panel-[\w-]+)"/g)) expect(html).toContain(`id="${m[2]}"`);
+  });
+
+  it('the OpenClaw skill branch is built from the one skill folder (no second copy of the skill text)', () => {
+    for (const f of ['publish-skill-branch.sh', 'publish-skill-branch.ps1']) {
+      const s = readFileSync(join(REPO, 'scripts', f), 'utf8');
+      expect(s, f).toContain('plugins/rendezvous/skills/rendezvous');
+      expect(s, f).toContain('subtree split');
+    }
+    expect(existsSync(join(SKILL_DIR, 'SKILL.md'))).toBe(true);
+    // A SKILL.md at the repo root would change what `npx skills add omernesh/rendezvous` finds.
+    expect(existsSync(join(REPO, 'SKILL.md'))).toBe(false);
+    expect(doc).toContain('git:omernesh/rendezvous@skill');
+  });
+});

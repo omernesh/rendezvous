@@ -1164,8 +1164,8 @@ pre {
 #setup-panel-agent .steps {
   margin-bottom: 18px;
 }
-#setup-panel-agent .fine {
-  margin: 0 0 56px;
+#setup-panel-agent > .agent-note {
+  margin: 18px 0 56px;
 }
 q {
   font-style: italic;
@@ -1426,4 +1426,53 @@ q {
   .mark .mk-d {
     fill: Highlight;
   }
+}
+
+/* ---------- agent selector (setup, "Or just ask your agent") ---------- */
+.agent-tabs {
+  margin-bottom: 22px;
+}
+.agent-tabs [role='tab'] {
+  padding: 7px 10px;
+  font-size: 0.84rem;
+}
+.cmd-file code::before {
+  content: none;
+}
+.cmd-label code {
+  overflow-wrap: anywhere;
+}
+.agent-fine {
+  margin: 12px 0 0;
+}
+
+/* ---------- works with (hero) ---------- */
+.works-with {
+  margin-top: 22px;
+}
+.ww-label {
+  margin: 0 0 8px;
+  font-size: 0.8rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--on-field-muted);
+}
+.works-with ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.works-with li {
+  padding: 4px 10px;
+  border: 1px solid var(--on-field-line);
+  border-radius: 999px;
+  font-size: 0.84rem;
+  color: var(--on-field);
+  white-space: nowrap;
+}
+.works-with .fine {
+  margin-top: 10px;
 }

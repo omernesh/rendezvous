@@ -50,6 +50,8 @@ for other agents that load SKILL.md files: `npx skills add omernesh/rendezvous`.
 
 ## Use it from other MCP clients
 
+Per-agent setup, skill install and a check that it works for ten agents: [`docs/agents.md`](../../../docs/agents.md).
+
 Register `rdv-mcp` as a stdio server; the installer puts it on PATH. Pass
 options (`--profile omer`, `--calendar cal.json`, …) in `args`.
 
