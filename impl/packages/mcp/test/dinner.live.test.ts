@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { dinnerFlow, makeSide, ok, phraseFromHumanLog } from './flow.js';
+import { confirmWithPhrase, dinnerFlow, makeSide, ok, phraseFromHumanLog } from './flow.js';
 
 const relays = (process.env.RDV_LIVE_RELAYS ?? '')
   .split(',')
@@ -28,6 +28,7 @@ describe.skipIf(relays.length === 0)('rdv-mcp live', () => {
           expect((await j.call('rdv_grant', { request_id: requestId })).isError).toBe(true);
           await ok(j, 'rdv_grant', { request_id: requestId, confirm_phrase: phraseFromHumanLog(j, requestId) });
         },
+        confirm: confirmWithPhrase,
       });
       console.log(`live: agreed ${r.agreed.start} in ${Date.now() - t0} ms`);
     } finally {

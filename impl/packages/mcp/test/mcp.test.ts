@@ -10,7 +10,7 @@ import { startTestRelay, type TestRelay } from '@rendezvous/core/testing';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { Listener, RDV_BIN, rdv } from '../../cli/scenarios/harness.js';
 import { checkPhrase, EventLog, EVENTS_KEPT, MAX_ATTEMPTS, normalizePhrase, syncPhrases, toModelEvent, UNTRUSTED_NOTE } from '../src/index.js';
-import { dinnerFlow, type ElicitHandler, INJECTION, makeSide, ok, phraseFromHumanLog, type Side, waitEvent } from './flow.js';
+import { confirmWithPhrase, dinnerFlow, type ElicitHandler, INJECTION, makeSide, ok, phraseFromHumanLog, type Side, waitEvent } from './flow.js';
 import { appendEvents, Home } from '@rendezvous/cli/lib';
 
 const ESC = String.fromCharCode(27);
@@ -47,7 +47,7 @@ async function expectNoPhraseLeak(side: Side, phrases: string[]) {
 }
 
 describe('rdv-mcp: two Claude sessions book dinner (in-memory relay)', () => {
-  it('confirm-phrase path: the model cannot grant until the human gives it the phrase', async () => {
+  it('confirm-phrase path: the model cannot grant, or confirm a dinner, until the human gives it the phrase', async () => {
     const { omer, john } = await pair();
     await omer.client.subscribeResource({ uri: 'rdv://inbox' });
     const phrases: string[] = [];
@@ -92,6 +92,16 @@ describe('rdv-mcp: two Claude sessions book dinner (in-memory relay)', () => {
         // Single use: the phrase is gone with the request.
         expect(j.home.readConsent()[requestId]).toBeUndefined();
       },
+      confirm: async (side, taskId) => {
+        // The human sees the dinner's phrase in `rdv dinner list` (text mode only) and in the server log.
+        const phrase = phraseFromHumanLog(side, taskId);
+        phrases.push(phrase);
+        const text = execFileSync(process.execPath, [RDV_BIN, 'dinner', 'list', '--home', side.home.dir], { encoding: 'utf8' });
+        expect(text).toContain(`confirm this dinner): ${phrase}`);
+        expect((await rdv(['dinner', 'list'], side.home.dir)).stdout).not.toContain(phrase);
+        await confirmWithPhrase(side, taskId);
+        expect(side.home.readConsent()[taskId]).toBeUndefined(); // single use
+      },
     });
     expect(r.taskId).toMatch(/^[0-9a-f-]{36}$/);
 
@@ -106,9 +116,15 @@ describe('rdv-mcp: two Claude sessions book dinner (in-memory relay)', () => {
 
   it('elicitation path: the human approves in a form; declining grants nothing', async () => {
     const asked: string[] = [];
+    const dinners: string[] = [];
     let answer: 'decline' | 'accept-unchecked' | 'accept' = 'decline';
+    let dinnerAnswer: 'cancel' | 'accept' = 'cancel';
     const { omer, john } = await pair({
       elicit: (params): ElicitResult => {
+        if (params.message.includes('confirm this dinner')) {
+          dinners.push(params.message);
+          return dinnerAnswer === 'cancel' ? { action: 'cancel' } : { action: 'accept', content: { approve: true } };
+        }
         asked.push(params.message);
         if (answer === 'decline') return { action: 'decline' };
         if (answer === 'accept-unchecked') return { action: 'accept', content: { approve: false } };
@@ -135,8 +151,22 @@ describe('rdv-mcp: two Claude sessions book dinner (in-memory relay)', () => {
         expect(asked[0]).toContain('Greeting (untrusted');
         expect(asked[0]).not.toContain(ESC);
       },
+      confirm: async (side, taskId) => {
+        if (side !== john) return confirmWithPhrase(side, taskId); // Omer's client has no forms
+        // Dismissing the form confirms nothing; the slot stays held.
+        const dismissed = await side.call('rdv_negotiate', { action: 'confirm', task_id: taskId });
+        expect(dismissed.isError).toBe(true);
+        expect((await ok(side, 'rdv_negotiate', { action: 'status' })).negotiations[0].waiting_for).toContain('your user');
+        dinnerAnswer = 'accept';
+        const confirmed = await ok(side, 'rdv_negotiate', { action: 'confirm', task_id: taskId });
+        expect(confirmed.next).toContain('until the peer confirms');
+        expect(dinners).toHaveLength(2);
+        expect(dinners[0]).toContain('Fingerprint: rdv1:');
+        expect(dinners[0]).toContain('When: ');
+      },
     });
   });
+
 
   it('rejects reserved payload types and unknown requests', async () => {
     const { omer } = await pair();

@@ -11,7 +11,22 @@ import { address, agentId, isPlain, oneOf, safe, token, untrusted, uuid } from '
 
 const TIERS = ['spouse', 'family', 'friend', 'colleague', 'business', 'stranger'];
 const BINDINGS = ['in-person', 'dns', 'mailbox', 'claimed'];
-const KINDS = ['proposed', 'offer-received', 'countered', 'accepted', 'completed', 'rejected', 'canceled', 'expired', 'status', 'duplicate', 'ignored', 'invalid'];
+const KINDS = [
+  'proposed',
+  'offer-received',
+  'countered',
+  'accepted',
+  'confirm-needed',
+  'completed',
+  'released',
+  'rejected',
+  'canceled',
+  'expired',
+  'status',
+  'duplicate',
+  'ignored',
+  'invalid',
+];
 const state = oneOf(TASK_STATES);
 /** Events kept in memory (events.jsonl keeps EVENTS_FILE_KEPT lines and is compacted at twice that). */
 export const EVENTS_KEPT = 1000;
@@ -47,7 +62,11 @@ function dinnerSummary(e: Raw): string {
     case 'countered':
       return `None of ${peer}'s times work here; countered with: ${slots}.`;
     case 'accepted':
-      return `Accepted ${slot} with ${peer}; it is held in your calendar.`;
+      return `Accepted ${slot} with ${peer}; it is held in your calendar (tentatively) until they confirm.`;
+    case 'confirm-needed':
+      return `Dinner with ${peer} on ${slot} is held for your user and needs their confirmation.`;
+    case 'released':
+      return `Released the tentative hold on ${slot}: the dinner with ${peer} did not go ahead.`;
     case 'completed':
       return `Agreed with ${peer}: dinner ${slot}. It is held in your calendar.`;
     case 'rejected':
@@ -146,6 +165,12 @@ export function toModelEvent(e: Raw, negotiating: boolean): Omit<McpEvent, 'n' |
         slots: e.slots,
         slot: e.slot,
         summary: dinnerSummary(e),
+        next_step:
+          e.kind === 'confirm-needed'
+            ? 'Ask your user whether this dinner works for them. If yes, call rdv_negotiate with action "confirm" and this task_id: it succeeds only with their confirmation ' +
+              '(an approval form, or the confirm phrase they read in their own terminal). If not, use action "cancel".'
+            : undefined,
+
         reason: e.reason === undefined ? undefined : untrusted(e.reason),
         peer_text: peerText?.length ? peerText : undefined,
       };

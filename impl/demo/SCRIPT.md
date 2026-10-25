@@ -3,7 +3,8 @@
 Two Claude Code sessions, "Omer's Claude" and "John's Claude", each with the
 Rendezvous MCP server (`rdv-mcp`) and its own home dir and calendar. They find
 each other by email, John approves the contact, the agents negotiate a dinner
-slot on their own, and the relay never sees anything but ciphertext.
+slot on their own, each human confirms the slot before it is final, and the
+relay never sees anything but ciphertext.
 
 Relays in both cards: `ws://<relay-host>:7777` (own strfry on relay-host, over
 Tailscale), `wss://nos.lol`, `wss://relay.primal.net`.
@@ -104,10 +105,12 @@ Start each session (`claude` in its folder), run `/mcp` and check that
 (`approval form` if this Claude Code supports MCP elicitation, else
 `confirm phrase`).
 
-John also needs a plain terminal next to his Claude window, for the consent beat:
+John also needs a plain terminal next to his Claude window, for the consent beat
+(and, without elicitation, both need one for the dinner confirm phrase):
 
 ```bash
 npm run rdv -- contact pending --home ~/.rendezvous/demo-john
+npm run rdv -- dinner list --home ~/.rendezvous/demo-john     # shows a held dinner's confirm phrase
 ```
 
 ## The five beats
@@ -143,15 +146,23 @@ phrase never appeared in any tool output.
 > John approved. Go ahead with the dinner.
 
 Expected: `rdv_negotiate` (dinner, next week evenings) offers Tue/Wed/Thu
-19:00. John's server answers on its own from his calendar. Both sessions show
-the steps in plain language via `rdv_inbox` ("John's agent offered…",
-"Accepted Wed 28 Oct 19:00–21:00…"). Ask either side "What's happening with
-dinner?" to narrate.
+19:00. John's server picks Wednesday from his calendar and holds it
+tentatively (`"title": "Dinner (tentative, rdv <task-id>)"`), but sends
+nothing yet: John's session reports a dinner waiting for his confirmation.
+Both sessions show the steps in plain language via `rdv_inbox` ("John's
+agent offered…", "Dinner … is held for your user and needs their
+confirmation"). Ask either side "What's happening with dinner?" to narrate.
 
-**4. Agreement.** Both sessions report `completed` on the same slot, and the
-slot is held in each JSON calendar (`"title": "Dinner (rdv <task-id>)"`). If a
-Google Calendar MCP is installed in the session, ask "Add it to my calendar"
-and Claude creates the event from the agreed slot.
+**4. Each human confirms, then agreement.** John says "Yes, Wednesday works."
+Claude calls `rdv_negotiate` with action `confirm`: John ticks the approval
+form, or (no elicitation) reads the dinner's confirm phrase in
+`rdv dinner list` and types it to Claude. Only then does the accept go out.
+Omer's session now reports the held dinner; Omer confirms the same way, and
+his agent sends `meeting/confirm`. Both sessions report `completed` on the
+same slot, held in each JSON calendar (`"title": "Dinner (rdv <task-id>)"`).
+Point to make on camera: the model could not have booked the dinner on its
+own. If a Google Calendar MCP is installed in the session, ask "Add it to my
+calendar" and Claude creates the event from the agreed slot.
 
 **5. Privacy beat.** In a terminal:
 
@@ -180,6 +191,8 @@ Recording and the deck are the owner's part.
 | No contact request on John's side | Is John's session running (the server listens only while Claude Code runs)? `rdv_status` shows `listening: true` |
 | Claude says it can't approve | Expected without elicitation: use the confirm phrase from `rdv contact pending` |
 | Negotiation never starts on John's side | John's server needs `--calendar`; `rdv_status` shows the negotiation settings |
+| Negotiation stops at "held for your user" | Expected: that side's human confirms (`rdv_negotiate` action `confirm`, or `rdv dinner confirm <task-id>` in a terminal) |
+
 | "no free slot in the window" | Re-run `node demo/make-calendars.mjs` (old holds) |
 | Contacts from an earlier take | Re-init both homes with `--force` |
 

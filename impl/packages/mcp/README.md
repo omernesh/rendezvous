@@ -43,7 +43,7 @@ Client config examples: [`impl/demo/SCRIPT.md`](../../demo/SCRIPT.md).
 | `rdv_revoke` | agent_id, or request_id / grant_id (+ block) to decline | revoked / declined / rejected |
 | `rdv_send` | agent_id, payload `{type, …}` (not `a2a/*`, `rdv/*`) | envelope seq |
 | `rdv_inbox` | since cursor, limit, wait_seconds (≤ 60) | events + next_cursor |
-| `rdv_negotiate` | action propose / cancel / status; agent_id, intent `dinner`, window, calendar, tz, minutes, place, area, expires, task_id, reason | task ID and state; progress via `rdv_inbox` |
+| `rdv_negotiate` | action propose / confirm / cancel / status; agent_id, intent `dinner`, window, calendar, tz, minutes, place, area, expires, task_id, reason, confirm_phrase | task ID and state; progress via `rdv_inbox`; `confirm` needs the human (below) |
 
 Resource `rdv://inbox` holds the latest 50 events; the server supports
 `resources/subscribe` and sends `notifications/resources/updated` when events
@@ -51,9 +51,10 @@ arrive, so a client that subscribes needn't poll.
 
 Events: `contact_request`, `contact_candidate` (an answer to our discovery
 probe, confirmed through the same human gate as a grant), `contact`, `message`, `revoked`, `dropped`, `error`,
-and `dinner` (kind proposed / offer-received / countered / accepted / completed
-/ rejected / canceled / expired / status, with a plain-language `summary` we
-write from validated fields).
+and `dinner` (kind proposed / offer-received / countered / confirm-needed /
+accepted / completed / released / rejected / canceled / expired / status, with
+a plain-language `summary` we write from validated fields; `confirm-needed`
+also carries a `next_step`).
 
 Grants issued here always carry `may_initiate: true`,
 `may_access_calendar: "free_busy"`, `max_frequency: "100/day"`, and
@@ -80,6 +81,18 @@ one of these:
    approve tiers `friend` and below; `family`/`spouse` need the form or
    `rdv contact grant --tier …` in a terminal.
 3. **The terminal.** The human runs `rdv contact grant <id>` themselves.
+
+**Each meeting too (issue #8).** The server answers dinner proposals from the
+calendar, but the slot it picks is only held tentatively ("confirm-needed")
+until the human confirms it: `rdv_negotiate` with action `confirm` passes the
+same gate. With elicitation the human gets a form (peer fingerprint, time,
+place marked untrusted); `decline` there cancels the negotiation and
+releases the hold, dismissing it leaves the dinner held. Otherwise the server
+issues a confirm phrase per held dinner (same rules, shown on stderr and in
+`rdv dinner list` text mode), or the human runs `rdv dinner confirm <task-id>`
+(or `rdv dinner cancel`) in a terminal. That happens once per side: the
+accepter's human before the accept goes out, the offerer's before the
+`meeting/confirm`. Holds are released on cancel, decline or expiry.
 
 No tool result ever contains a phrase (tests scan every result and the inbox
 resource). Limits (NOTES 57): `consent.json` keeps phrases in clear text so
@@ -127,6 +140,8 @@ run as. Revoking and declining need no confirmation: they only reduce access.
 `npm test -w @rendezvous/mcp`: two servers (Omer, John) driven by the SDK's
 `Client` over an in-memory MCP transport against the in-memory relay, covering
 init → discover → request → refused grant → human approval (confirm phrase,
-and elicitation accept / decline) → negotiate → completed on both sides, plus
+and elicitation accept / decline) → negotiate → refused model-only dinner
+confirmation → each human confirms (phrase, form) → completed on both sides, plus
+
 a stdio smoke test, phrase rules and hardening. Live:
 `RDV_LIVE_RELAYS=ws://<relay-host>:7777 npm run test:live -w @rendezvous/mcp`.
