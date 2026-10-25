@@ -410,7 +410,11 @@ export async function reviewFlow(
   const url = opts.store.put(`/q4/${prep.sha256}`, new Uint8Array(readFileSync(prep.upload)));
   const input = JSON.stringify({ data: { focus: ['clarity', 'numbers'] } });
   const asked = await terminal(john, ['task', 'request', o.agent_id, '--text', 'Could Omer look over the Q4 plan before Wednesday?', '--input', input, '--file', `${prep.sha256}=${url}`]);
-  const taskId: string = asked.find((l) => l.kind === 'requested').task;
+  // Held until John releases it with the code his terminal showed (requester-side release gate, issue #53).
+  const held = asked.find((l) => l.event === 'task-request-held');
+  expect(held).toMatchObject({ peer: o.agent_id, release_code: expect.any(String) });
+  const released = await terminal(john, ['task', 'release', held.hold, '--code', held.release_code]);
+  const taskId: string = released.find((l) => l.kind === 'requested').task;
   const ev = (kind: string) => (e: { type: string; task_id: string; kind: string }) => e.type === 'task' && e.task_id === taskId && e.kind === kind;
 
   // Start gate: nothing fetched; the model alone can neither start it nor fetch.
