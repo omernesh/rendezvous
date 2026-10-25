@@ -1123,6 +1123,89 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
     groups by pairwise fan-out (v0.4). The envelope size cap it needs is
     item 70.
 
+## File references (v0.3, issue #26, core slice)
+
+72. **File references, file encryption, the fetch helper and `rdv/transfer`**
+    (**spec change**, new SPEC §7.7, from design A.8). Core only; nothing
+    sends or receives them yet except as plain `rdv_send` payloads.
+    - **Names follow the design, not the issue's first draft:** the wire
+      form is an A2A `FilePart` with `file.uri`, `file.mimeType`,
+      `file.name` and the metadata under `…/ext/files/v1` (`sha256`, `size`,
+      `enc {alg: "aes256gcm", key, nonce, plain_sha256}`, `mirrors`, `p2p`,
+      `expires`). `FileRef` is the same thing flattened, which is what the
+      helpers take; `fileRefPart` and `parseFilePart` convert.
+    - **Validation** (`files.ts`): strict and bounded. `https` only (so no
+      `file:`, `data:`, `javascript:`, `http:`), no userinfo, no whitespace,
+      controls or backslashes, at most 2,048 chars; hex hashes lowercase;
+      `size` an integer up to 1 TiB (the receiver's cap applies on fetch);
+      key 32 and nonce 12 bytes; at most 8 mirrors and 8 `p2p` names
+      (`<name>/<version>`), no duplicates; unknown keys refused in the
+      metadata, `enc` and `file` (§7.5: this metadata is not ignorable);
+      other extensions' `metadata` keys ignored. Inline parts at most
+      16 KiB decoded. File names are sanitized on parse (control, bidi and
+      zero-width characters dropped, `/` and `\` replaced by `_`, leading
+      dots and spaces stripped, 255 chars); MIME types lowercased.
+    - **Crypto:** `encryptFile` draws a fresh 32-byte key and 12-byte nonce
+      per call (there is deliberately no API that takes a key), AES-256-GCM
+      with AD `"rdv1/blob"`, so a file ciphertext can't be passed off as an
+      envelope's (AD `canon(header)`). `verifyAndDecrypt` checks length,
+      then `sha256`, then decrypts, then `plain_sha256`, and throws
+      `FileRefError` with a stable `code` at the first failure. The test
+      vectors gain `file_ref` (fixed key and nonce, plaintext, ciphertext
+      and the wire part), a deliberate, additive vector change; nothing
+      else in `v1.json` moved.
+    - **Fetch** (`filefetch.ts`, `fetchFileRef`): `node:https`, not global
+      `fetch`, because Node's fetch can't pin the resolved address without
+      the `undici` package. A custom `lookup` resolves the name once,
+      refuses if **any** answer is a special address, and hands the socket
+      exactly one checked address, so there is no second resolution to
+      rebind; the socket's `remoteAddress` is checked again on connect. IP
+      literals are checked before connecting. `isBlockedAddress` covers
+      IPv4 private, loopback, link-local, CGNAT, documentation,
+      benchmarking, multicast and reserved ranges, and IPv6 `::/96`,
+      IPv4-mapped (by the embedded address), NAT64 `64:ff9b::/96` (by the
+      embedded address) and the local-use prefix, 6to4 (by the embedded
+      address), `2001::/23` (Teredo included), documentation, ULA,
+      link-local, site-local and multicast, plus anything that doesn't
+      parse and zone IDs. At most 3 redirects, each re-validated (scheme,
+      userinfo, `allowHosts`, address). A fresh agent per request: no
+      pooled sockets, no cookie jar, headers are only `accept`,
+      `accept-encoding: identity` and `user-agent`; no client certificate;
+      proxy variables are not consulted. A `Content-Encoding` other than
+      identity is refused, so the cap counts wire bytes. The cap is
+      min(`size`, `maxBytes` [25 MiB]): a bigger `size` is refused unfetched,
+      a bigger `Content-Length` before the body, and the stream is cut the
+      moment it passes the cap. One deadline covers all hops [30 s].
+      `mirrors` are tried in order after `uri`. Options: `allowHosts`
+      (restrict to these names), `resolve` (a custom resolver, still
+      checked and pinned), `ca` (extra trust anchors), `signal`, and the
+      test-only `unsafeAllowAddresses`, which the tests use for
+      `127.0.0.1`. Error messages hold no peer text.
+    - **`rdv/transfer`** (`transfer.ts`): `parseTransfer` and
+      `transferMessage` validate the five steps with per-step fields only;
+      `data` is a plain JSON object of at most 16 KiB canonical JSON,
+      nested at most 16 deep (checked without recursion); `reason` at most
+      200 chars with controls stripped. `stepTransfer` is a pure state
+      machine (propose, accept, signal*, done; abort at any open step) that
+      aborts on no common protocol, an accept outside the proposal, out of
+      order steps and the 17th message, and ignores messages for unknown or
+      finished transfers. `task` is optional until tasks/v1 lands.
+    - **Not done yet (rest of #26):** carrying file parts in tasks and
+      artifacts (#22), fetching only behind the start gate and the release
+      gate covering outgoing files (#24), the owner setting for direct
+      transfer, MCP/CLI tools, an optional `BlobStore` uploader, and an MCP
+      end-to-end test.
+    - Tests: `core/test/files.test.ts` (crypto round trip and every tamper,
+      AD binding, validation tables, a 3,000-case fuzz, parts, the address
+      table, transfer shapes and state machine) and
+      `core/test/filefetch.test.ts` (a local HTTPS server with a certificate
+      generated per run: default block of 127.0.0.1, names resolving to
+      loopback, mixed and rebound resolver answers, redirects to private,
+      metadata, other-loopback, IPv4-mapped, `http:` and `file:`, the
+      redirect limit, no cookie after `Set-Cookie`, the size cap three ways,
+      timeout, hash mismatch, content encoding, untrusted certificate,
+      mirrors and `allowHosts`).
+
 ## Not implemented yet
 
 

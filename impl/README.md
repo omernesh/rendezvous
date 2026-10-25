@@ -29,6 +29,9 @@ inbound loop), so `rdv` and `rdv-mcp` share profiles.
 | `discovery` | §4.4 | `dtopic()`, address canonicalization, binding levels |
 | `contact` | §5 | Contact request / grant / revoke, and the contact book (policy, replay, rate limits) |
 | `envelope` | §6.4, §7 | Encrypted, signed envelopes; `seq`/`prev` ordering with gap detection |
+| `files` | §7.7 | File references (`FilePart` + files extension): strict validation, `encryptFile`, `verifyAndDecrypt`, inline parts |
+| `filefetch` | §7.7 | `fetchFileRef`: https only, SSRF-blocked and DNS-pinned, no credentials, capped, hash-verified |
+| `transfer` | §7.7 | `rdv/transfer` messages and their pure state machine (negotiation only, no transport) |
 | `transport/nostr` | §6.2 | Nostr relay transport (kind 30417): re-subscribes when a relay drops; publishes with retries, per-relay pacing and cooldowns, and per-relay status (`relayStatus()`); `DEFAULT_RELAYS` |
 | `agent` | — | Ties it together: listen, discover, request, grant, send, receive |
 | `testing/relay` | — | In-memory Nostr relay on a localhost WebSocket, for tests and local demos |

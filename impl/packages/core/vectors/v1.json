@@ -185,6 +185,30 @@
       "sig": "0Lg5FpgmVilBflXFqJK6OTrvSwCjYndeuoJwFkHJd/IgH4OaekAzbmx3fN/GHLqu10QhHsQqU10KcsnD/u1QCA=="
     }
   },
+  "file_ref": {
+    "plaintext_hex": "513420706c616e2c20647261667420333a204a6f686e207265766965777320746865206275646765742c204f6d65722074686520636f70792e",
+    "ciphertext_hex": "61a5e4e2a667e14780e6d6f390e9ea4220ac5be508b19f398038bb16699222f33a5d90885419807844e45ee317266b4303cca24e95f9f7eaee38eb940f39933441930aa5ae88c20445",
+    "part": {
+      "kind": "file",
+      "file": {
+        "uri": "https://files.example.com/q4/40185a2a2ff5ec0057ae639c1fb88531bce7e25e120ca60e5d5a361fd995a020",
+        "mimeType": "text/plain",
+        "name": "q4-plan.txt"
+      },
+      "metadata": {
+        "https://rendezvous.nesher.co/ext/files/v1": {
+          "sha256": "40185a2a2ff5ec0057ae639c1fb88531bce7e25e120ca60e5d5a361fd995a020",
+          "size": 73,
+          "enc": {
+            "alg": "aes256gcm",
+            "key": "MzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzM=",
+            "nonce": "RERERERERERERERE",
+            "plain_sha256": "da141cf06a2cf3d99a91fad620ee772803ef09ae99e0b5fe8b8054cc57054091"
+          }
+        }
+      }
+    }
+  },
   "envelope": {
     "recipient_seed_hex": "2222222222222222222222222222222222222222222222222222222222222222",
     "doc": {

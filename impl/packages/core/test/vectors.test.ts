@@ -2,6 +2,7 @@
 // reproduce every deterministic value here and open the sample envelope.
 // Regenerate with: npm run test:vectors:update (works in PowerShell and POSIX shells)
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { gcm } from '@noble/ciphers/aes';
 import { describe, expect, it } from 'vitest';
 import {
   agentTag,
@@ -9,7 +10,14 @@ import {
   canonicalize,
   createCard,
   dtopic,
+  b64encode,
+  FILE_AD,
+  fileRefPart,
   hexToBytes,
+  parseFilePart,
+  sha256Hex,
+  utf8ToBytes,
+  verifyAndDecrypt,
   keyFromSecret,
   nostrCarrierKey,
   openEnvelope,
@@ -77,6 +85,20 @@ function deterministic() {
     },
     omer,
   );
+  // A file reference (SPEC §7.7): AES-256-GCM with associated data "rdv1/blob". Real
+  // senders draw a fresh random key and nonce per file (encryptFile); fixed here.
+  const filePlain = utf8ToBytes('Q4 plan, draft 3: John reviews the budget, Omer the copy.');
+  const fileKey = hexToBytes('33'.repeat(32));
+  const fileNonce = hexToBytes('44'.repeat(12));
+  const fileCipher = gcm(fileKey, fileNonce, utf8ToBytes(FILE_AD)).encrypt(filePlain);
+  const filePart = fileRefPart({
+    uri: 'https://files.example.com/q4/' + sha256Hex(fileCipher),
+    mimeType: 'text/plain',
+    name: 'q4-plan.txt',
+    sha256: sha256Hex(fileCipher),
+    size: fileCipher.length,
+    enc: { alg: 'aes256gcm', key: b64encode(fileKey), nonce: b64encode(fileNonce), plain_sha256: sha256Hex(filePlain) },
+  });
   return {
     keys: [omer, john].map((k) => ({
       seed_hex: bytesToHex(k.secretKey),
@@ -94,6 +116,7 @@ function deterministic() {
     contact_request: { canonical: canonicalize(request), doc: request },
     contact_grant: { canonical: canonicalize(grant), doc: grant },
     reverse_grant: { canonical: canonicalize(reverseGrant), doc: reverseGrant },
+    file_ref: { plaintext_hex: bytesToHex(filePlain), ciphertext_hex: bytesToHex(fileCipher), part: filePart },
   };
 }
 
@@ -120,6 +143,13 @@ describe('test vectors', () => {
     const { contact_grant: g, reverse_grant: r } = saved;
     expect([verifyGrant(g.doc, now), verifyReverseGrant(g.doc, now)]).toEqual([true, false]);
     expect([verifyGrant(r.doc, now), verifyReverseGrant(r.doc, now)]).toEqual([false, true]);
+  });
+
+  it('verifies and decrypts the file reference', () => {
+    const { file_ref: f } = saved;
+    const parsed = parseFilePart(f.part);
+    if (!parsed.ok || parsed.value.kind !== 'ref') throw new Error('file_ref vector does not parse');
+    expect(bytesToHex(verifyAndDecrypt(parsed.value.ref, hexToBytes(f.ciphertext_hex)))).toBe(f.plaintext_hex);
   });
 
   it('opens the sample envelope', () => {
