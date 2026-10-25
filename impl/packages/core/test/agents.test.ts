@@ -410,6 +410,8 @@ describe('reverse grant (issue #14)', () => {
     const c = john.book.contact(omer.id)!;
     expect(c.outboundScope?.may_propose_meetings).toBe(true);
     expect(c.inboundScope).toEqual(johnInbound); // Omer's grant never touches what Omer may do towards John
+    // Only allowInbound sends one: an application payload can't carry a grant (e.g. a model calling send).
+    await expect(omer.send(john.id, { type: 'rdv/contact-grant', grant_ref: c.grantId })).rejects.toThrow(/dedicated method/);
 
     // A stranger's reverse grant (well signed, naming the real grant) is dropped and changes nothing.
     const mallory = generateKey();
