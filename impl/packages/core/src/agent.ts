@@ -185,12 +185,12 @@ export class Agent extends EventEmitter<AgentEvents> {
   async requestContact(
     target: AddressCard | string,
     greeting: string,
-    opts: { binding?: Binding } = {},
+    opts: { binding?: Binding; label?: string } = {},
   ): Promise<ContactRequest> {
     const toHint = typeof target === 'string' ? target : target.id;
     const binding: Binding = typeof target === 'string' ? 'claimed' : (opts.binding ?? 'claimed');
     const req = createContactRequest(this.key, this.card, { toHint, greeting });
-    this.book.trackOutstanding(req, binding, typeof target === 'string' ? undefined : target.id);
+    this.book.trackOutstanding(req, binding, typeof target === 'string' ? undefined : target.id, opts.label);
     if (typeof target === 'string') {
       const topic = topicForHint(target);
       if (!topic) throw new Error(`cannot derive a discovery topic from "${target}"`);
@@ -208,7 +208,7 @@ export class Agent extends EventEmitter<AgentEvents> {
   }
 
   /** Owner approves a pending request. Tier defaults per binding (§4.4). */
-  async grant(requestId: string, opts: { tier?: Tier; scope?: GrantScope; expires?: string | null } = {}): Promise<Contact> {
+  async grant(requestId: string, opts: { tier?: Tier; scope?: GrantScope; expires?: string | null; label?: string } = {}): Promise<Contact> {
     const pending = this.book.state.pending[requestId];
     if (!pending) throw new Error(`no pending request ${requestId}`);
     return this.issueGrant(pending.request, pending.binding, opts);
@@ -224,8 +224,8 @@ export class Agent extends EventEmitter<AgentEvents> {
   }
 
   /** Owner confirms a probe answer: that grantor becomes the contact (outbound per its grant, inbound the local default). */
-  confirmCandidate(grantId: string): Contact {
-    const contact = this.book.confirmCandidate(grantId);
+  confirmCandidate(grantId: string, opts: { label?: string } = {}): Contact {
+    const contact = this.book.confirmCandidate(grantId, new Date(), opts.label);
     this.emit('contact', contact);
     return contact;
   }
@@ -294,14 +294,14 @@ export class Agent extends EventEmitter<AgentEvents> {
   private async issueGrant(
     request: ContactRequest,
     binding: Binding,
-    opts: { tier?: Tier; scope?: GrantScope; expires?: string | null },
+    opts: { tier?: Tier; scope?: GrantScope; expires?: string | null; label?: string },
   ): Promise<Contact> {
     const grant = createGrant(this.key, this.card, request, {
       tier: opts.tier ?? defaultTier(binding),
       scope: opts.scope ?? { ...DEFAULT_GRANT_SCOPE },
       expires: opts.expires,
     });
-    const contact = this.book.recordIssuedGrant(grant, request, binding);
+    const contact = this.book.recordIssuedGrant(grant, request, binding, opts.label);
     await this.deliver(request.from, grant, relaysOf(request.card));
     this.emit('contact', contact);
     return contact;

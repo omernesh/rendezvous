@@ -327,16 +327,20 @@ export async function onboardingFlow(
   await opts.confirm(omer, cand.grant_id);
   await waitEvent(omer, (e) => e.type === 'contact' && (e.agent_id ?? e.peer) === j.agent_id, 'the contact', opts.timeoutMs);
 
-  // "Tell John I'm running late": the skill finds John by the address his card claims.
+  // "Tell John I'm running late": the skill finds John by the address Omer probed (the local label),
+  // never by what John's card claims, and shows the fingerprint before the first send.
   const contacts = (await ok(omer, 'rdv_status')).contacts;
-  const johnContact = contacts.find((c: { claimed_addresses: unknown[] }) => c.claimed_addresses.includes(johnAt));
+  const johnContact = contacts.find((c: { local_label: string | null }) => c.local_label === johnAt);
   expect(johnContact?.agent_id).toBe(j.agent_id);
-  const sent = await ok(omer, 'rdv_send', { agent_id: johnContact.agent_id, payload: { type: 'note', text: "I'm running late" } });
-  expect(sent.sent).toBe(true);
+  expect(johnContact.unverified_claims).toEqual([johnAt]);
+  expect(johnContact).not.toHaveProperty('claimed_addresses');
+  const sent = await ok(omer, 'rdv_send', { to: johnAt, payload: { type: 'note', text: "I'm running late" } });
+  expect(sent).toMatchObject({ sent: true, to: j.agent_id, fingerprint: johnContact.fingerprint, local_label: johnAt });
   const msg = await waitEvent(john, (e) => e.type === 'message' && e.from === o.agent_id, 'the first message', opts.timeoutMs);
   expect(msg.payload_type).toBe('note');
   expect(msg.payload.untrusted_peer_text).toContain('running late');
   const omerContact = (await ok(john, 'rdv_status')).contacts.find((c: { agent_id: string }) => c.agent_id === o.agent_id);
-  expect(omerContact.claimed_addresses).toEqual([omerAt]);
+  expect(omerContact.unverified_claims).toEqual([omerAt]);
+  expect(omerContact.local_label).toBeNull(); // John's human approved a request; nobody named Omer locally
   return { omerId: o.agent_id, johnId: j.agent_id };
 }

@@ -76,6 +76,24 @@ export type Revoke = Signed<RevokeBody>;
 
 const uuid = () => crypto.randomUUID();
 
+/** Longest local label kept (an email address is at most 320). */
+export const LABEL_MAX = 320;
+
+/**
+ * A local label as given by our human: trimmed, 1..LABEL_MAX characters, no
+ * control or format characters. Throws otherwise.
+ */
+export function cleanLabel(label: string): string {
+  const l = label.trim();
+  if (l.length === 0 || l.length > LABEL_MAX || /[\p{Cc}\p{Cf}]/u.test(l)) throw new Error('a label must be 1 to 320 printable characters');
+  return l;
+}
+
+/** Labels compare by address (canonical discovery topic) when they are one, else case-insensitively. */
+export function labelKey(label: string): string {
+  return topicForHint(label.trim()) ?? label.trim().toLowerCase();
+}
+
 export function createContactRequest(
   key: AgentKey,
   card: AddressCard,
@@ -230,6 +248,13 @@ export interface Contact {
   outboundTs?: string;
   /** Id of the last reverse grant from the peer that we applied. */
   reverseGrantId?: string;
+  /**
+   * Local only, never sent: what our own human called this peer when they
+   * asked for or approved the contact (the address they looked up, probed or
+   * typed). Unlike the addresses in the peer's card, which the peer chose,
+   * this is the only name that may resolve "tell John" to a contact.
+   */
+  label?: string;
   binding: Binding;
   grantId: string;
   expires: string | null;
@@ -267,6 +292,8 @@ export interface OutstandingRequest {
   to?: string;
   /** Topic probes: answers refused because the probe already had CANDIDATES_PER_PROBE of them (a flood). */
   dropped?: number;
+  /** Our human's name for the target (Contact.label), carried to the contact the grant creates. */
+  label?: string;
 }
 
 /** A probe got more answers than we keep: someone may be flooding it. */
@@ -389,10 +416,26 @@ export class ContactBook {
    * went to a specific card; omit it for a topic probe (anyone may answer, and
    * the binding is then always `claimed`).
    */
-  trackOutstanding(req: ContactRequestBody, binding: Binding = 'claimed', to?: string): void {
+  trackOutstanding(req: ContactRequestBody, binding: Binding = 'claimed', to?: string, label?: string): void {
+    // A probe is labeled with the address our human probed, unless they named the peer otherwise.
+    const l = label !== undefined ? cleanLabel(label) : to ? undefined : req.to_hint;
     this.state.outstanding[req.id] = to
-      ? { to_hint: req.to_hint, sent: req.ts, binding, to }
-      : { to_hint: req.to_hint, sent: req.ts, binding: 'claimed' };
+      ? { to_hint: req.to_hint, sent: req.ts, binding, to, ...(l ? { label: l } : {}) }
+      : { to_hint: req.to_hint, sent: req.ts, binding: 'claimed', ...(l ? { label: l } : {}) };
+  }
+
+  /** Contacts our human labeled `label` (by labelKey). More than one means the label is ambiguous. */
+  byLabel(label: string, now = new Date()): Contact[] {
+    const key = labelKey(label);
+    return Object.values(this.state.contacts).filter((c) => c.label !== undefined && labelKey(c.label) === key && !isPast(c.expires, now));
+  }
+
+  /** Our human names a contact (local only). */
+  setLabel(peer: string, label: string): Contact {
+    const c = this.state.contacts[peer];
+    if (!c) throw new Error(`no contact ${peer}`);
+    c.label = cleanLabel(label);
+    return c;
   }
 
   /** Inbound contact request: verify, dedupe, apply policy (§5.4). */
@@ -440,8 +483,9 @@ export class ContactBook {
   }
 
   /** The human approved (or the allowlist did): record the relationship we granted. */
-  recordIssuedGrant(grant: ContactGrantBody, request: ContactRequestBody, binding: Binding): Contact {
+  recordIssuedGrant(grant: ContactGrantBody, request: ContactRequestBody, binding: Binding, label?: string): Contact {
     const prev = this.state.contacts[request.from];
+    const l = label !== undefined ? cleanLabel(label) : prev?.label;
     const contact: Contact = {
       peer: request.from,
       card: request.card,
@@ -452,6 +496,7 @@ export class ContactBook {
       ...(prev?.grantedTier ? { grantedTier: prev.grantedTier } : {}),
       ...(prev?.outboundTs ? { outboundTs: prev.outboundTs } : {}),
       ...(prev?.reverseGrantId ? { reverseGrantId: prev.reverseGrantId } : {}),
+      ...(l ? { label: l } : {}),
       binding,
       grantId: grant.id,
       expires: grant.expires,
@@ -489,7 +534,7 @@ export class ContactBook {
       if (g.from !== outstanding.to) return null;
       if (this.isBlocked(g.from) || !this.markSeen(g.id)) return null;
       delete this.state.outstanding[g.request_ref];
-      return { contact: this.addReceivedGrant(g, outstanding.binding ?? 'claimed', now) };
+      return { contact: this.addReceivedGrant(g, outstanding.binding ?? 'claimed', now, outstanding.label) };
     }
     // Topic probe: the grantor's card must at least claim the address we probed (NOTES 18).
     const probed = topicForHint(outstanding.to_hint);
@@ -515,14 +560,16 @@ export class ContactBook {
   }
 
   /** Our human picked this probe answer: it becomes the contact, and the probe's other answers are dropped. */
-  confirmCandidate(grantId: string, now = new Date()): Contact {
+  confirmCandidate(grantId: string, now = new Date(), label?: string): Contact {
     const c = this.state.candidates[grantId];
+    // The probed address is what our human looked for; the candidate's card only claims it.
+    const l = label !== undefined ? cleanLabel(label) : (this.state.outstanding[c?.request_ref]?.label ?? c?.to_hint);
     if (!c) throw new Error(`no grant candidate ${grantId}`);
     if (isPast(c.grant.expires, now)) throw new Error(`grant ${grantId} has expired`);
     if (this.isBlocked(c.grant.from)) throw new Error(`${c.grant.from} is blocked`);
     for (const [id, x] of Object.entries(this.state.candidates)) if (x.request_ref === c.request_ref) delete this.state.candidates[id];
     delete this.state.outstanding[c.request_ref];
-    return this.addReceivedGrant(c.grant, 'claimed', now);
+    return this.addReceivedGrant(c.grant, 'claimed', now, l);
   }
 
   /** Our human turned this probe answer down (optionally blocking the grantor). The probe stays open. */
@@ -585,9 +632,10 @@ export class ContactBook {
     return { contact: c };
   }
 
-  private addReceivedGrant(g: ContactGrant, binding: Binding, now: Date): Contact {
+  private addReceivedGrant(g: ContactGrant, binding: Binding, now: Date, label?: string): Contact {
     const prev = this.state.contacts[g.from];
     const granted = prev?.inboundGranted === true;
+    const l = label ?? prev?.label;
     const contact: Contact = {
       peer: g.from,
       card: g.card,
@@ -597,6 +645,7 @@ export class ContactBook {
       outboundScope: { ...g.scope },
       grantedTier: g.tier,
       outboundTs: g.ts,
+      ...(l ? { label: l } : {}),
       binding,
       grantId: g.id,
       expires: g.expires,

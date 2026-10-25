@@ -69,6 +69,8 @@ export function contactView(c: Contact) {
   return {
     peer: c.peer,
     fingerprint: fingerprint(c.peer),
+    /** Our human's name for the peer (local only); the addresses in its card are only its own claims. */
+    label: c.label,
     tier: c.tier,
     binding: c.binding,
     since: c.since,
@@ -88,7 +90,8 @@ export function contactText(c: Contact): string {
   const theirs = v.granted_tier ? `  their tier for us ${safe(v.granted_tier)}` : '';
   const inbound = v.inbound === 'default' ? '  inbound: default (no meetings; "rdv contact grant <agent-id>" to allow more)' : '';
   const outbound = v.outbound_meetings ? '  you may propose meetings' : '';
-  return `${safe(v.peer)}  tier ${safe(v.tier)}  binding ${safe(v.binding)}  fingerprint ${safe(v.fingerprint)}  since ${safe(v.since)}${expires}${theirs}${inbound}${outbound}`;
+  const label = v.label ? `  label ${safe(v.label)}` : '';
+  return `${safe(v.peer)}${label}  tier ${safe(v.tier)}  binding ${safe(v.binding)}  fingerprint ${safe(v.fingerprint)}  since ${safe(v.since)}${expires}${theirs}${inbound}${outbound}`;
 }
 
 export function overflowView(o: ProbeOverflow) {

@@ -912,6 +912,75 @@ describe('chat onboarding (the plugin skill, plugins/rendezvous)', () => {
     expect(forms.omer[0]).toContain('is this the agent you were looking for');
   });
 
+  it('"tell John" goes to the John the human approved, never to a contact whose card claims his address', async () => {
+    root = mkdtempSync(join(tmpdir(), 'rdv-label-'));
+    const yes: ElicitHandler = () => ({ action: 'accept', content: { approve: true } });
+    const [omer, john, mallory, mallory2] = await Promise.all(['omer', 'john', 'mallory', 'mallory2'].map((n) => makeSide(n, join(root, n), { elicit: yes })));
+    sides.push(omer, john, mallory, mallory2);
+    const tag = randomBytes(3).toString('hex');
+    const omerAt = `omer+${tag}@example.com`;
+    const johnAt = `john+${tag}@doe.com`;
+    const relays = [relay.url];
+    const o = await ok(omer, 'rdv_init', { profile: 'omer', email: omerAt, relays, public_pointer: true });
+    const j = await ok(john, 'rdv_init', { profile: 'john', email: johnAt, relays, public_pointer: true });
+    // Two impostors whose cards claim John's address (a card's addresses are self-asserted).
+    const m = await ok(mallory, 'rdv_init', { profile: 'mallory', email: johnAt, relays });
+    const m2 = await ok(mallory2, 'rdv_init', { profile: 'mallory2', email: johnAt, relays });
+    await ok(omer, 'rdv_publish_card');
+    await ok(john, 'rdv_publish_card');
+    await new Promise((r) => setTimeout(r, 300));
+
+    // Omer looks John up and asks him by card: the contact is labeled with the address Omer looked up.
+    const found = await ok(omer, 'rdv_discover', { address: johnAt });
+    expect(found.cards.map((c: { agent_id: string }) => c.agent_id)).toEqual([j.agent_id]);
+    const asked = await ok(omer, 'rdv_request_contact', { target: j.agent_id });
+    expect(asked.local_label).toBe(johnAt);
+    const toJohn = await waitEvent(john, (x) => x.type === 'contact_request' && x.from === o.agent_id, 'Omer asking John', 10_000);
+    await ok(john, 'rdv_grant', { request_id: toJohn.request_id });
+    await waitEvent(omer, (x) => x.type === 'contact' && x.peer === j.agent_id, 'John as a contact', 10_000);
+
+    // Mallory asks Omer, and Omer's human approves her without naming her.
+    await ok(mallory, 'rdv_discover', { address: omerAt });
+    await ok(mallory, 'rdv_request_contact', { target: o.agent_id });
+    const fromMallory = await waitEvent(omer, (x) => x.type === 'contact_request' && x.from === m.agent_id, "Mallory's request", 10_000);
+    expect((await ok(omer, 'rdv_grant', { request_id: fromMallory.request_id })).local_label).toBeNull();
+
+    const status = (await ok(omer, 'rdv_status')).contacts;
+    const byId = (id: string) => status.find((c: { agent_id: string }) => c.agent_id === id);
+    expect(byId(j.agent_id)).toMatchObject({ local_label: johnAt, unverified_claims: [johnAt] });
+    expect(byId(m.agent_id)).toMatchObject({ local_label: null, unverified_claims: [johnAt] });
+    expect(status.some((c: object) => 'label_conflict' in c)).toBe(false);
+
+    // "Tell John": resolved only through the local label, so it reaches John and not Mallory.
+    const sent = await ok(omer, 'rdv_send', { to: johnAt.toUpperCase(), payload: { type: 'note', text: 'for John only' } });
+    expect(sent).toMatchObject({ sent: true, to: j.agent_id, fingerprint: byId(j.agent_id).fingerprint });
+    await waitEvent(john, (x) => x.type === 'message' && x.from === o.agent_id, 'the note', 10_000);
+    const nobody = await omer.call('rdv_send', { to: `mallory+${tag}@doe.com`, payload: { type: 'note', text: 'x' } });
+    expect(nobody.isError).toBe(true);
+    expect(nobody.text).toContain('never pick a recipient');
+
+    // a second impostor answers Omer's probe for John's address and Omer's human confirms her: now two contacts carry the label.
+    await ok(omer, 'rdv_request_contact', { target: johnAt });
+    const probe = await waitEvent(mallory2, (x) => x.type === 'contact_request' && x.from === o.agent_id, "Omer's probe", 10_000);
+    await ok(mallory2, 'rdv_grant', { request_id: probe.request_id });
+    const cand = await waitEvent(omer, (x) => x.type === 'contact_candidate' && x.from === m2.agent_id, "the second impostor's answer", 10_000);
+    expect((await ok(omer, 'rdv_grant', { grant_id: cand.grant_id })).local_label).toBe(johnAt);
+    const both = (await ok(omer, 'rdv_status')).contacts.filter((c: { local_label: string | null }) => c.local_label === johnAt);
+    expect(both.map((c: { agent_id: string }) => c.agent_id).sort()).toEqual([j.agent_id, m2.agent_id].sort());
+    for (const c of both) expect(c.label_conflict).toContain('rdv_send "to" refuses it');
+    const ambiguous = await omer.call('rdv_send', { to: johnAt, payload: { type: 'note', text: 'which John?' } });
+    expect(ambiguous.isError).toBe(true);
+    expect(ambiguous.text).toContain('2 contacts are labeled');
+    for (const c of both) expect(ambiguous.text).toContain(c.fingerprint);
+
+    // Nothing but the first note reached anyone.
+    await new Promise((r) => setTimeout(r, 500));
+    const notes = async (s: Side) => (await ok(s, 'rdv_inbox', { since: 0, limit: 200 })).events.filter((x: { type: string; from?: string }) => x.type === 'message' && x.from === o.agent_id);
+    expect(await notes(john)).toHaveLength(1);
+    expect(await notes(mallory)).toHaveLength(0);
+    expect(await notes(mallory2)).toHaveLength(0);
+  });
+
   it('without forms, the model alone is refused and the phrase the human typed works', async () => {
     const { omer, john } = await pair();
     await onboardingFlow(omer, john, {

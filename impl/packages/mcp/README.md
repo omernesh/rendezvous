@@ -89,14 +89,14 @@ the human reads in their own terminal (`rdv contact pending`), below.
 | Tool | Input | Output |
 |---|---|---|
 | `rdv_init` | profile, email, phone, relays, public_pointer, calendar, window, tz | agent ID, fingerprint; keeps an existing agent (re-key only with `rdv init --force`) |
-| `rdv_status` | — | ID, relays, contacts (with the addresses their cards claim), pending count, negotiation settings, approval mode |
+| `rdv_status` | — | ID, relays, contacts (`local_label`: what your user called them; `unverified_claims`: the addresses their cards claim; `label_conflict` when two share a label), pending count, negotiation settings, approval mode |
 | `rdv_publish_card` | — | topics published |
 | `rdv_discover` | address | cards found (agent ID, fingerprint, claimed addresses, relays) |
-| `rdv_request_contact` | target (email, +phone, or agent ID), greeting | request ID |
+| `rdv_request_contact` | target (email, +phone, or agent ID), greeting, label | request ID, local_label (default: the address probed, or looked up with `rdv_discover`) |
 | `rdv_pending_requests` | — | requests with fingerprint, binding, how they arrived, untrusted greeting |
-| `rdv_grant` | request_id, tier, may_propose_meetings, confirm_phrase; or grant_id (+ confirm_phrase) to confirm a probe answer | contact (needs the human, below) |
+| `rdv_grant` | request_id, tier, may_propose_meetings, confirm_phrase, label; or grant_id (+ confirm_phrase, label) to confirm a probe answer | contact (needs the human, below) |
 | `rdv_revoke` | agent_id, or request_id / grant_id (+ block) to decline | revoked / declined / rejected |
-| `rdv_send` | agent_id, payload `{type, …}` (not `a2a/*`, `rdv/*`) | envelope seq |
+| `rdv_send` | agent_id or to (a `local_label`), payload `{type, …}` (not `a2a/*`, `rdv/*`) | agent ID, fingerprint, envelope seq; `to` is refused when no contact, or more than one, has that label |
 | `rdv_inbox` | since cursor, limit, wait_seconds (≤ 60) | events + next_cursor |
 | `rdv_negotiate` | action propose / confirm / cancel / status; agent_id, intent `dinner`, window, calendar, tz, minutes, place, area, expires, task_id, reason, confirm_phrase | task ID and state; progress via `rdv_inbox`; `confirm` needs the human (below) |
 
@@ -182,13 +182,14 @@ key, a worse problem. In Claude Code,
 keep the default permission mode (shell commands and reads outside the project
 need approval) and add deny rules for the home dir and `rdv contact pending`
 (example in `demo/SCRIPT.md`). The Claude Code plugin adds a PreToolUse hook
-(`plugins/rendezvous/hooks/consent-guard.mjs`) that refuses the consent and
-phrase-showing `rdv` commands (`contact grant`/`confirm`/`resync`, text-mode
-`contact pending` and `dinner list`, `dinner confirm`/`cancel`,
-`listen --auto-grant`/`--auto-confirm`, `init --force`) and reads of
-`agent.json` or `consent.json` under `.rendezvous` or `$RDV_HOME`. It is a
-tripwire against drift and injected text, not a sandbox: a model with a shell
-can still obfuscate a command past it (NOTES 62). The strongest setup runs `rdv-mcp` as a
+(`plugins/rendezvous/hooks/consent-guard.mjs`) on every tool that refuses the
+consent and phrase-showing `rdv` commands (`contact grant`/`confirm`/`resync`/
+`pending`, `dinner confirm`/`cancel`/`list`, `listen --auto-grant`/
+`--auto-confirm`, `init --force`), any command naming `agent.json`,
+`agent.json.bak` or `consent.json`, and any read, edit, search or glob of a
+Rendezvous home. It parses commands like a shell before matching. It is
+defence in depth, **not a security boundary**: a model with a shell can still
+get a command past it (NOTES 62). The boundary is the consent gate above. The strongest setup runs `rdv-mcp` as a
 different OS user, or on another machine, from the one the assistant's tools
 run as. Revoking and declining need no confirmation: they only reduce access.
 
