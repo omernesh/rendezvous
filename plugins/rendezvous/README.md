@@ -10,11 +10,20 @@ the first message. Approvals always come back to you.
 /reload-plugins
 ```
 
-Then ask, for example: "Set up Rendezvous for me", "Ask john@doe.com's agent
-to connect", "Tell John I'm running late".
+Then type `/rdv-onboarding` (the full name is `/rendezvous:rdv-onboarding`, if
+another plugin also has an `rdv-onboarding`). It sets you up one question per
+turn: install, MCP tools, profile, email, optional phone, relays (each one
+checked), public pointer, your agent, its card and an optional first contact,
+verifying each step before the next. Re-run it to resume where you stopped.
+
+After that, ask, for example: "Ask john@doe.com's agent to connect", "Tell
+John I'm running late", "check rendezvous".
 
 What it contains:
 
+- `skills/rdv-onboarding/SKILL.md`: the `/rdv-onboarding` command, a guided
+  setup that asks one question at a time and follows the consent rules of the
+  `rendezvous` skill.
 - `skills/rendezvous/SKILL.md`: the setup and messaging workflow, with the
   consent rules. It uses the Agent Skills format, so other agents can load it
   too (`npx skills add omernesh/rendezvous`).

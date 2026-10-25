@@ -13,7 +13,9 @@ import { checkCommand, checkPath, checkToolInput, decide } from '../../../../plu
 
 const REPO = join(import.meta.dirname, '..', '..', '..', '..');
 const PLUGIN = join(REPO, 'plugins', 'rendezvous');
-const SKILL_DIR = join(PLUGIN, 'skills', 'rendezvous');
+const SKILLS = join(PLUGIN, 'skills');
+const SKILL_DIR = join(SKILLS, 'rendezvous');
+const ONBOARDING = join(SKILLS, 'rdv-onboarding', 'SKILL.md');
 const LAUNCHER = join(PLUGIN, 'bin', 'rdv-mcp.mjs');
 const GUARD = join(PLUGIN, 'hooks', 'consent-guard.mjs');
 const json = (p: string) => JSON.parse(readFileSync(p, 'utf8'));
@@ -116,9 +118,10 @@ describe('the skill', () => {
     for (const c of ['rdv contact grant', 'rdv dinner confirm']) expect(skill).toContain(c); // named, as the human's
   });
 
-  it('never tells the assistant to run a consent command (SKILL.md and references)', () => {
-    const files = skillFiles();
-    expect(files.length).toBeGreaterThanOrEqual(3);
+  it('never tells the assistant to run a consent command (every skill, its references and the onboarding command)', () => {
+    const files = skillFiles(SKILLS);
+    expect(files).toEqual(expect.arrayContaining([join(SKILL_DIR, 'SKILL.md'), ONBOARDING]));
+    expect(files.length).toBeGreaterThanOrEqual(4);
     for (const f of files) expect(consentViolations(readFileSync(f, 'utf8')), f).toEqual([]);
   });
 
@@ -137,9 +140,53 @@ describe('the skill', () => {
   });
 
   it('uses only the example personas', () => {
-    for (const f of [...skillFiles(), join(PLUGIN, 'README.md')]) {
+    for (const f of [...skillFiles(SKILLS), join(PLUGIN, 'README.md')]) {
       for (const m of readFileSync(f, 'utf8').matchAll(/[\w.+-]+@[\w-]+(\.[\w-]+)+/g)) expect(m[0], f).toMatch(/@(example\.com|doe\.com)$/);
     }
+  });
+});
+
+describe('the /rdv-onboarding command', () => {
+  const md = existsSync(ONBOARDING) ? readFileSync(ONBOARDING, 'utf8').replace(/\r\n/g, '\n') : '';
+  const fm = /^---\n([\s\S]*?)\n---\n/.exec(md)?.[1] ?? '';
+
+  it('exists as a plugin skill whose name gives the bare /rdv-onboarding command', () => {
+    expect(existsSync(ONBOARDING)).toBe(true);
+    // In a plugin skill, frontmatter `name` sets the command: /rendezvous:rdv-onboarding, and bare /rdv-onboarding.
+    expect(/^name: (.+)$/m.exec(fm)?.[1]).toBe('rdv-onboarding');
+    const description = /^description: (.+)$/m.exec(fm)?.[1] ?? '';
+    expect(description.length).toBeGreaterThan(50);
+    expect(description.length).toBeLessThanOrEqual(1024);
+    expect(description).toContain('/rdv-onboarding');
+    expect(description).toMatch(/one question at a time/);
+    // Not hidden from the user, and the rendezvous skill can still hand off to it.
+    expect(fm).not.toMatch(/^user-invocable:\s*false/m);
+    expect(fm).not.toMatch(/^disable-model-invocation:\s*true/m);
+  });
+
+  it('asks one question per turn and verifies every step', () => {
+    expect(md).toMatch(/\*\*Ask ONE question per turn\.\*\*/);
+    expect(md).toMatch(/Never put two questions in one message/);
+    expect(md).toContain('AskUserQuestion');
+    const steps = [...md.matchAll(/^## Step (\d+) of (\d+):/gm)];
+    expect(steps.map((m) => Number(m[1]))).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+    for (const m of steps) expect(m[2]).toBe('11');
+    expect(md).toMatch(/A verification, with its visible result/);
+    expect(md).toMatch(/\*\*Resume\.\*\*/);
+  });
+
+  it("reuses the rendezvous skill's consent rules instead of restating its own", () => {
+    expect(md).toContain('${CLAUDE_PLUGIN_ROOT}/skills/rendezvous/SKILL.md');
+    expect(md).toMatch(/"Consent rules"/);
+    expect(md).toMatch(/does not repeat or relax them/);
+    expect(consentViolations(md)).toEqual([]);
+  });
+
+  it('the rendezvous skill hands setup off to it and never batches the questions', () => {
+    const skill = readFileSync(join(SKILL_DIR, 'SKILL.md'), 'utf8');
+    expect(skill).toContain('/rdv-onboarding');
+    expect(skill).toMatch(/one question per turn/);
+    expect(skill).toMatch(/Never batch the\s+setup questions/);
   });
 });
 
