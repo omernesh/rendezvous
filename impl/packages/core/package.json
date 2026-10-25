@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "description": "Reference implementation of the Rendezvous agent-to-agent contact protocol",
   "author": "Omer Nesher",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

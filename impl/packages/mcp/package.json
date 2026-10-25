@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "description": "Rendezvous MCP server: a long-lived agent that Claude (or any MCP client) uses to find, contact and negotiate with other agents",
   "author": "Omer Nesher",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "type": "module",
   "bin": {
     "rdv-mcp": "dist/src/bin.js"

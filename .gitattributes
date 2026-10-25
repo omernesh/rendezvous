@@ -2,3 +2,4 @@
 .githooks/* text eol=lf
 *.sh text eol=lf
 impl/deploy/** text eol=lf
+site/*.sh text eol=lf

@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rendezvous: an open protocol for agent-to-agent contact</title>
+<meta name="description" content="Rendezvous lets personal AI agents find each other by a human address, ask for consent, and exchange end-to-end encrypted messages over dumb Nostr relays. Draft spec and TypeScript reference implementation.">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#232a7a">
+<link rel="canonical" href="https://rendezvous.nesher.co/">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Rendezvous">
+<meta property="og:title" content="Rendezvous: give your agent a calling card">
+<meta property="og:description" content="An open protocol for agent-to-agent contact. Find by address, the human consents, end-to-end encrypted over dumb relays.">
+<meta property="og:url" content="https://rendezvous.nesher.co/">
+<meta property="og:image" content="https://rendezvous.nesher.co/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="The Rendezvous logo: two arcs closing around a diamond, with the tagline An open protocol for agent-to-agent contact.">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Rendezvous: give your agent a calling card">
+<meta name="twitter:description" content="An open protocol for agent-to-agent contact. Find by address, the human consents, end-to-end encrypted over dumb relays.">
+<meta name="twitter:image" content="https://rendezvous.nesher.co/og.png">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="preload" href="/fonts/sora-600.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/style.css">
+<script src="/theme.js"></script>
+<script src="/app.js" defer></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="site-header">
+  <div class="wrap header-row">
+    <a class="brand" href="#top" aria-label="Rendezvous, back to top">
+      <svg class="mark" viewBox="0 0 32 32" aria-hidden="true" focusable="false"><path class="mk-a" d="M18.98 27.11A11.5 11.5 0 0 1 4.89 13.02"/><path class="mk-a" d="M13.02 4.89A11.5 11.5 0 0 1 27.11 18.98"/><path class="mk-d" d="M16 10.6Q16.6 10.6 17 11L21 15Q21.4 15.4 21.4 16Q21.4 16.6 21 17L17 21Q16.6 21.4 16 21.4Q15.4 21.4 15 21L11 17Q10.6 16.6 10.6 16Q10.6 15.4 11 15L15 11Q15.4 10.6 16 10.6Z"/></svg>
+      <span class="brand-word">rendezvous</span>
+    </a>
+    <nav class="site-nav" aria-label="Sections">
+      <ul>
+        <li><a href="#how">How it works</a></li>
+        <li><a href="#privacy">Privacy</a></li>
+        <li><a href="#setup">Setup</a></li>
+        <li><a href="#install">Install</a></li>
+        <li><a href="#faq">FAQ</a></li>
+        <li><a href="#contribute">Contribute</a></li>
+      </ul>
+    </nav>
+    <div class="header-actions">
+      <a class="gh-link" href="https://github.com/omernesh/rendezvous" aria-label="Rendezvous on GitHub">
+        <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+      </a>
+      <button class="theme-toggle" type="button" aria-label="Color theme: system" title="Color theme">
+        <svg class="ti ti-system" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 0 1 0 16z" class="fill"/></svg>
+        <svg class="ti ti-light" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+        <svg class="ti ti-dark" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/></svg>
+      </button>
+    </div>
+  </div>
+</header>
+
+<main id="main">
+
+<!-- ============ HERO ============ -->
+<section class="hero" id="top" aria-labelledby="hero-title">
+  <svg class="hero-rings" viewBox="0 0 800 800" aria-hidden="true" focusable="false"><circle cx="400" cy="400" r="130"/><circle cx="400" cy="400" r="250"/><circle cx="400" cy="400" r="370"/></svg>
+  <div class="wrap hero-grid">
+    <div class="hero-copy">
+      <p class="status"><span class="dot" aria-hidden="true"></span>Draft spec v0.1 rev 3 · TypeScript reference implementation</p>
+      <h1 id="hero-title">Give your agent a <span class="nowrap">calling card.</span></h1>
+      <p class="lede">Rendezvous is an open protocol for agent-to-agent contact. Your agent finds another person's agent by their email or phone number, that person says yes, and from then on the two agents talk end-to-end encrypted over relays that can't read a word.</p>
+
+      <div class="install-mini" data-tabs>
+        <div class="tablist" role="tablist" aria-label="Install command for your system">
+          <button role="tab" type="button" id="hero-tab-unix" aria-controls="hero-panel-unix" aria-selected="true" data-os="unix">macOS / Linux</button>
+          <button role="tab" type="button" id="hero-tab-win" aria-controls="hero-panel-win" aria-selected="false" tabindex="-1" data-os="win">Windows</button>
+        </div>
+        <div role="tabpanel" id="hero-panel-unix" aria-labelledby="hero-tab-unix" class="cmd cmd-hero"><code>curl -fsSL https://rendezvous.nesher.co/install.sh | sh</code></div>
+        <div role="tabpanel" id="hero-panel-win" aria-labelledby="hero-tab-win" class="cmd cmd-hero" hidden><code>irm https://rendezvous.nesher.co/install.ps1 | iex</code></div>
+        <p class="fine">Needs Node.js 20+, git and npm. No sudo. <a href="#install">What the installer does</a></p>
+      </div>
+    </div>
+
+    <figure class="card-stage">
+      <div class="calling-card" data-face="front">
+        <div class="cc-face cc-front" aria-hidden="false">
+          <div class="cc-top">
+            <svg class="mark" viewBox="0 0 32 32" aria-hidden="true" focusable="false"><path class="mk-a" d="M18.98 27.11A11.5 11.5 0 0 1 4.89 13.02"/><path class="mk-a" d="M13.02 4.89A11.5 11.5 0 0 1 27.11 18.98"/><path class="mk-d" d="M16 10.6Q16.6 10.6 17 11L21 15Q21.4 15.4 21.4 16Q21.4 16.6 21 17L17 21Q16.6 21.4 16 21.4Q15.4 21.4 15 21L11 17Q10.6 16.6 10.6 16Q10.6 15.4 11 15L15 11Q15.4 10.6 16 10.6Z"/></svg>
+            <span class="cc-kind">Address card · v1</span>
+          </div>
+          <p class="cc-addr">john@doe.com</p>
+          <p class="cc-id"><span class="cc-label">Agent</span> <code>rdv1:ucnk…utya</code></p>
+          <dl class="cc-meta">
+            <div><dt>Reach me</dt><dd><code>nostr · wss://relay.example</code></dd></div>
+            <div><dt>Inbound</dt><dd><code>prompt</code> (I decide)</dd></div>
+            <div><dt>Speaks</dt><dd><code>rdv/v1 · a2a/0.3</code></dd></div>
+          </dl>
+          <p class="cc-sig"><span class="cc-label">Signed</span> <code>Ed25519 · wfQ2sZXL…7wLkAg==</code></p>
+        </div>
+        <div class="cc-face cc-back" aria-hidden="true">
+<pre tabindex="-1" aria-label="The signed address card as JSON"><code>{
+  "v": 1,
+  "id": "rdv1:ucnkl5d2m5myal7zkx4nyljkcss4thjdx2l7qzasp74tqncvutya",
+  "created": "2026-10-24T00:00:00.000Z",
+  "expires": null,
+  "capabilities": ["rdv/v1", "a2a/0.3"],
+  "discovery": {
+    "addresses": [{ "type": "email", "value": "john@doe.com" }],
+    "public_pointer": false
+  },
+  "rendezvous": [{ "type": "nostr", "relay": "wss://relay.example", "pref": 1 }],
+  "policy": { "inbound": "prompt", "public": false },
+  "sig": "wfQ2sZXLZpOkZxX/TTdkbfQK0KbKgQ3ye5BNzk26PsN76p3LyCXAZFfKMxVdYV7lF5mtQhR2ERIPOdPi7wLkAg=="
+}</code></pre>
+        </div>
+      </div>
+      <figcaption>
+        <button type="button" class="flip" aria-pressed="false">Turn the card over</button>
+        <span>John's card from the interop test vectors (fixed test keys), signed over canonical JSON.</span>
+      </figcaption>
+    </figure>
+  </div>
+</section>
+
+<!-- ============ HOW IT WORKS ============ -->
+<section class="band" id="how" aria-labelledby="how-title">
+  <div class="wrap split">
+    <div class="split-text">
+      <h2 id="how-title">How it works</h2>
+      <p class="section-lede">Five small layers, each one a signed JSON document or a dumb pipe. Nothing in the stack needs a company server, a registry or a blockchain.</p>
+      <ol class="layer-list">
+        <li><h3>Identity</h3><p>Every agent mints an Ed25519 key at install. Its ID is <code>rdv1:</code> plus the base32 public key. It publishes a signed <strong>address card</strong> saying where it can be reached.</p></li>
+        <li><h3>Discovery by human address</h3><p>Agents meet on a topic derived from an email or phone number: <code>dtopic(address)</code>, a hash of the address. If you know someone's email, your agent can find theirs, if they opted that address in.</p></li>
+        <li><h3>Consent</h3><p>Your agent sends a <strong>contact request</strong>. Their human approves or declines. Approval is a signed, scoped, revocable <strong>grant</strong>: a tier, what the peer may do, and a rate limit.</p></li>
+        <li><h3>Encrypted envelopes</h3><p>Messages travel as envelopes: an ephemeral X25519 key, HKDF, AES-256-GCM. The signature covers the whole envelope, ciphertext included, and <code>seq</code>/<code>prev</code> hash chains catch gaps and replays.</p></li>
+        <li><h3>Dumb relays</h3><p>Envelopes ride public Nostr relays as kind <code>30417</code> events. The relay stores and forwards ciphertext. Trust lives in keys, never in infrastructure.</p></li>
+      </ol>
+      <p>On top: <strong>A2A dinner negotiation</strong> (two agents trade free slots from each person's calendar and agree on one, with each human confirming) and <strong><code>rdv-mcp</code></strong>, an MCP server that gives Claude, or any MCP client, all of the above as tools.</p>
+    </div>
+
+    <figure class="diagram">
+      <svg viewBox="0 0 360 600" role="img" aria-labelledby="dg-title dg-desc">
+        <title id="dg-title">The Rendezvous stack</title>
+        <desc id="dg-desc">Top: A2A dinner negotiation and the rdv-mcp server, built on the protocol. Below them five layers: identity with Ed25519 rdv1 IDs and signed address cards; discovery by human address through dtopic; consent through request and grant, where the human decides; encrypted envelopes with X25519, HKDF and AES-256-GCM, signed with seq and prev chains; and dumb Nostr relays carrying kind 30417 events. Omer's agent and John's agent sit on either side of the relay and exchange ciphertext.</desc>
+        <text class="dg-cap" x="20" y="16">BUILT ON TOP</text>
+        <rect class="dg-app" x="20" y="26" width="155" height="66" rx="12"/>
+        <text class="dg-t" x="34" y="52">A2A negotiation</text>
+        <text class="dg-m" x="34" y="72">propose → confirm</text>
+        <rect class="dg-app" x="185" y="26" width="155" height="66" rx="12"/>
+        <text class="dg-t" x="199" y="52">MCP server</text>
+        <text class="dg-m" x="199" y="72">rdv-mcp · Claude</text>
+
+        <text class="dg-cap" x="20" y="124">THE PROTOCOL</text>
+        <path class="dg-spine" d="M36 140V500"/>
+
+        <rect class="dg-box" x="20" y="134" width="320" height="64" rx="12"/>
+        <circle class="dg-node" cx="36" cy="166" r="5"/>
+        <text class="dg-t" x="54" y="160">Identity</text>
+        <text class="dg-m" x="54" y="181">Ed25519 → rdv1:… · signed card</text>
+
+        <rect class="dg-box" x="20" y="208" width="320" height="64" rx="12"/>
+        <circle class="dg-node" cx="36" cy="240" r="5"/>
+        <text class="dg-t" x="54" y="234">Discovery</text>
+        <text class="dg-m" x="54" y="255">dtopic(john@doe.com)</text>
+
+        <rect class="dg-box dg-consent" x="20" y="282" width="320" height="64" rx="12"/>
+        <circle class="dg-node dg-node-hi" cx="36" cy="314" r="5"/>
+        <text class="dg-t" x="54" y="308">Consent</text>
+        <text class="dg-m" x="54" y="329">request → grant</text>
+        <rect class="dg-pill" x="226" y="300" width="102" height="28" rx="14"/>
+        <text class="dg-pill-t" x="277" y="319" text-anchor="middle">human decides</text>
+
+        <rect class="dg-box" x="20" y="356" width="320" height="64" rx="12"/>
+        <circle class="dg-node" cx="36" cy="388" r="5"/>
+        <text class="dg-t" x="54" y="382">Envelope</text>
+        <text class="dg-m" x="54" y="403">X25519→HKDF→AES-256-GCM · seq/prev</text>
+
+        <rect class="dg-box dg-relay" x="20" y="430" width="320" height="64" rx="12"/>
+        <circle class="dg-node" cx="36" cy="462" r="5"/>
+        <text class="dg-t" x="54" y="456">Relays</text>
+        <text class="dg-m" x="54" y="477">Nostr kind 30417 · ciphertext only</text>
+
+        <g class="dg-wire">
+          <circle class="dg-agent" cx="60" cy="560" r="16"/>
+          <text class="dg-agent-t" x="60" y="565" text-anchor="middle">O</text>
+          <circle class="dg-agent" cx="300" cy="560" r="16"/>
+          <text class="dg-agent-t" x="300" y="565" text-anchor="middle">J</text>
+          <path class="dg-flow" d="M78 560H282"/>
+          <path class="dg-up" d="M60 542V500M300 542V500"/>
+          <rect class="dg-env" x="164" y="550" width="32" height="20" rx="3"/>
+          <path class="dg-env-flap" d="M164 551L180 562L196 551"/>
+          <text class="dg-m dg-small" x="60" y="594" text-anchor="middle">Omer's agent</text>
+          <text class="dg-m dg-small" x="300" y="594" text-anchor="middle">John's agent</text>
+        </g>
+      </svg>
+    </figure>
+  </div>
+</section>
+
+<!-- ============ PRIVACY ============ -->
+<section class="band band-alt" id="privacy" aria-labelledby="privacy-title">
+  <div class="wrap">
+    <h2 id="privacy-title">Privacy &amp; security</h2>
+    <p class="section-lede">Relays are dumb pipes, the human holds consent, and peer text is never treated as instructions. Here is exactly what a relay stores for one message from Omer's agent to John's.</p>
+
+    <div class="relay-view">
+      <figure class="envelope">
+<pre tabindex="0" aria-label="An envelope as the relay stores it"><code>{
+  <span class="clear">"v": 1,</span>
+  <span class="clear">"from": "rdv1:2bflemtufo2kwoqtnc6umfpe43icesvxdiawxl4fecrtfslxq43q",</span>
+  <span class="clear">"to": "rdv1:ucnkl5d2m5myal7zkx4nyljkcss4thjdx2l7qzasp74tqncvutya",</span>
+  <span class="clear">"seq": 1, "prev": null,</span>
+  <span class="clear">"created": "2026-10-24T00:00:00.000Z", "ttl": "7d",</span>
+  "content": {
+    <span class="clear">"alg": "x25519+aes256gcm",</span>
+    <span class="sealed">"epk": "WyIl5GVnhD+zYp2rhbm3lJRoRtcAambHkZa3Xc3sqGo=",</span>
+    <span class="sealed">"nonce": "7UgXqHwKv3viAhFJ",</span>
+    <span class="sealed">"ciphertext": "7YYPpo+ppRm0uLAdOfXnwPaS7TQ7MrRPMpCKm959Gbh9fWUy0T/KNXT2/WFvy4pa6bEQt6uko1JJvAAS2+v+"</span>
+  },
+  <span class="clear">"sig": "5Xi51YE0XLrcFAUULZBnPx775QW+c70Xq7ZTgBbNP9pfgC1tnrGRZFGthNcx97NBWNs2ep4covBzYG1NBzcBAw=="</span>
+}</code></pre>
+        <figcaption>The sample envelope from the interop test vectors. <span class="key key-clear">Readable by the relay</span> <span class="key key-sealed">Opens only with John's key</span></figcaption>
+      </figure>
+
+      <div class="sees">
+        <div>
+          <h3>The relay can see</h3>
+          <ul class="ticks">
+            <li>Sender and recipient agent IDs, <code>seq</code>, timestamps and TTL: who talks to whom, and when.</li>
+            <li>The size of the ciphertext.</li>
+            <li>Public address cards, if an owner chooses to publish one.</li>
+            <li>A first-contact probe on a discovery topic, which is cleartext by design. Keep greetings short.</li>
+          </ul>
+        </div>
+        <div>
+          <h3>The relay cannot</h3>
+          <ul class="crosses">
+            <li>Read a message. AES-256-GCM, keyed per envelope from an ephemeral X25519 key.</li>
+            <li>Swap the ciphertext under a genuine header. The signature covers the whole envelope.</li>
+            <li>Reorder, drop or replay quietly. <code>seq</code>/<code>prev</code> chains expose gaps and duplicates.</li>
+            <li>Learn the email behind a topic. A <code>dtopic</code> is a hash, not an address.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <div class="pillars">
+      <div class="pillar">
+        <h3>Consent stays with the human</h3>
+        <p>The library never auto-grants. A contact request surfaces to the person, who decides. In <code>rdv-mcp</code>, <code>rdv_grant</code> refuses the model's say-so: approval comes from an MCP elicitation form the model never sees, a one-time confirm phrase shown only in the human's terminal, or the human's own <code>rdv contact grant</code>. Each dinner slot gets the same treatment before it is booked.</p>
+      </div>
+      <div class="pillar">
+        <h3>Peer text is untrusted</h3>
+        <p>Greetings, message text and decline reasons are written by the other side and can carry prompt injection. They reach the model only wrapped as <code>untrusted_peer_text</code>, with control and bidi characters stripped. Only validated machine fields drive actions; short fields are checked against strict shapes or quarantined.</p>
+      </div>
+      <div class="pillar">
+        <h3>End-to-end, keys pinned</h3>
+        <p>Every envelope is encrypted to the recipient's key and signed by the sender's. Keys are pinned on first contact, so a changed key is a trust event, not a silent swap. Blocks are by key and permanent.</p>
+      </div>
+    </div>
+
+    <aside class="limits" aria-labelledby="limits-title">
+      <h3 id="limits-title">The honest limits</h3>
+      <ul>
+        <li><strong>No forward secrecy yet.</strong> Envelopes are encrypted to a static key; if it leaks later, recorded traffic opens.</li>
+        <li><strong>Metadata is visible.</strong> Relays see which agent IDs talk, and when.</li>
+        <li><strong>Lose the key, lose the relationships.</strong> Key recovery is an open problem.</li>
+        <li><strong>Sybil.</strong> Keys are free, so consent-first inbound and key blocks are the defence, not a cure.</li>
+        <li><strong>A model with a shell is a different threat.</strong> If your assistant can run arbitrary commands as you, it can read the confirm phrase file, and the secret key. Keep the default permission mode and deny it the Rendezvous home.</li>
+      </ul>
+      <p>Read the <a href="https://github.com/omernesh/rendezvous/blob/main/SPEC.md#8-threat-model">threat model (SPEC §8)</a> and the <a href="https://github.com/omernesh/rendezvous/blob/main/SPEC.md#11-open-problems-honest">open problems (SPEC §11)</a>.</p>
+    </aside>
+  </div>
+</section>
+
+<!-- ============ SETUP ============ -->
+<section class="band" id="setup" aria-labelledby="setup-title">
+  <div class="wrap">
+    <h2 id="setup-title">From install to first message</h2>
+    <p class="section-lede">Two people, Omer and John, each with an agent. Every command below is the real <code>rdv</code> CLI. <code>relay.nesher.co</code> is the reference relay; any Nostr relay that keeps kind 30417 events works, and a card can list several.</p>
+
+    <ol class="steps">
+      <li>
+        <div class="step-text"><h3>Create an agent</h3><p>Generates the key and the address card, and writes the profile to <code>~/.rendezvous/omer</code>. The secret key never leaves that directory.</p></div>
+        <div class="cmd"><code>rdv init --profile omer --email omer@example.com --relay wss://relay.nesher.co</code></div>
+      </li>
+      <li>
+        <div class="step-text"><h3>Check who you are</h3><p>Prints the agent ID, the short fingerprint and the card. Never the secret key.</p></div>
+        <div class="cmd"><code>rdv whoami --profile omer</code></div>
+      </li>
+      <li>
+        <div class="step-text"><h3>Listen</h3><p>John does the same with <code>john@doe.com</code>, then both keep a listener running. It prints events as they arrive.</p></div>
+        <div class="cmd"><code>rdv listen --profile john</code></div>
+      </li>
+      <li>
+        <div class="step-text"><h3>Ask for contact</h3><p>Omer's agent probes the topic for John's address. Nothing is delivered to John's agent until John says yes.</p></div>
+        <div class="cmd"><code>rdv contact request john@doe.com --greeting "Omer's agent would like to plan dinner." --profile omer</code></div>
+      </li>
+      <li>
+        <div class="step-text"><h3>John decides</h3><p>He sees the request, its fingerprint and how it arrived, then grants it with a tier.</p></div>
+        <div class="cmd-stack">
+          <div class="cmd"><code>rdv contact pending --profile john</code></div>
+          <div class="cmd"><code>rdv contact grant &lt;request-id&gt; --tier friend --profile john</code></div>
+        </div>
+      </li>
+      <li>
+        <div class="step-text"><h3>Omer confirms it's really John</h3><p>Anyone who saw a probe could answer it, so Omer checks the fingerprint before the answer becomes a contact.</p></div>
+        <div class="cmd-stack">
+          <div class="cmd"><code>rdv contact pending --profile omer</code></div>
+          <div class="cmd"><code>rdv contact confirm &lt;grant-id&gt; --profile omer</code></div>
+        </div>
+      </li>
+      <li>
+        <div class="step-text"><h3>Talk</h3><p>Send any payload; it arrives encrypted in John's inbox.</p></div>
+        <div class="cmd-stack">
+          <div class="cmd"><code>rdv send &lt;john-agent-id&gt; --json '{"type":"a2a/message","text":"Thursday 20:00?"}' --profile omer</code></div>
+          <div class="cmd"><code>rdv inbox --profile john</code></div>
+        </div>
+      </li>
+    </ol>
+
+    <div class="mcp">
+      <div class="mcp-text">
+        <h3>Plug it into Claude Code</h3>
+        <p><code>rdv-mcp</code> is a stdio MCP server that shares the same profile as <code>rdv</code>. Claude gets <code>rdv_discover</code>, <code>rdv_request_contact</code>, <code>rdv_inbox</code>, <code>rdv_negotiate</code> and the rest, but <code>rdv_grant</code> still needs you. Give it a calendar and it can negotiate dinner with another agent, holding the slot until you confirm.</p>
+        <p class="fine">Then ask Claude: <q>Find John's agent (john@doe.com) and set up dinner with him next week.</q> See the <a href="https://github.com/omernesh/rendezvous/blob/main/impl/demo/SCRIPT.md">two-agent demo script</a>.</p>
+      </div>
+      <div class="mcp-cmds">
+        <p class="cmd-label">macOS / Linux</p>
+        <div class="cmd"><code>claude mcp add rendezvous -- rdv-mcp --profile omer</code></div>
+        <p class="cmd-label">Windows</p>
+        <div class="cmd"><code>claude mcp add rendezvous -- cmd /c rdv-mcp --profile omer</code></div>
+        <p class="cmd-label">With a calendar for dinner negotiation</p>
+        <div class="cmd"><code>rdv-mcp --profile omer --calendar cal.json --window "next week evenings" --tz +02:00</code></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ FEATURES ============ -->
+<section class="band band-alt" id="features" aria-labelledby="features-title">
+  <div class="wrap">
+    <h2 id="features-title">What ships today</h2>
+    <p class="section-lede">The reference implementation is an npm workspace: <code>@rendezvous/core</code>, <code>@rendezvous/a2a</code>, the <code>rdv</code> CLI and the <code>rdv-mcp</code> server.</p>
+    <dl class="features">
+      <div><dt>Keys and cards</dt><dd>Ed25519 identities, <code>rdv1:</code> IDs, fingerprints, signed address cards over canonical JSON.</dd></div>
+      <div><dt>Find by address</dt><dd>Discovery topics from an email or phone number, listen mode and optional public pointers.</dd></div>
+      <div><dt>Consent book</dt><dd>Request, grant, decline, revoke, block. Trust tiers, scopes, replay IDs and <code>max_frequency</code> rate limits that revoke on abuse.</dd></div>
+      <div><dt>Envelopes</dt><dd>X25519, HKDF, AES-256-GCM; signatures over ciphertext; ordered delivery with gap detection and resend from a 64-envelope outbox.</dd></div>
+      <div><dt>Nostr transport</dt><dd>Kind 30417 events with a derived secp256k1 carrier key; re-subscribes when a relay drops.</dd></div>
+      <div><dt>Dinner negotiation</dt><dd>A2A v0.3 payloads, a pure state machine, a JSON calendar adapter that shares free slots and never titles, and a human confirm before any booking.</dd></div>
+      <div><dt><code>rdv</code> CLI</dt><dd>Profiles, a long-running listener that other commands can run beside, JSON output for scripting.</dd></div>
+      <div><dt><code>rdv-mcp</code></dt><dd>MCP tools and a subscribable <code>rdv://inbox</code> resource; elicitation or confirm-phrase consent; the prompt-injection gate.</dd></div>
+      <div><dt>Interop test vectors</dt><dd>Fixed keys, IDs, topics, a signed card, a contact request and an envelope that another implementation should reproduce and open.</dd></div>
+      <div><dt>Offline tests</dt><dd>An in-memory Nostr relay, so the whole suite, two MCP servers included, runs with no network.</dd></div>
+    </dl>
+
+    <div class="next">
+      <h3>Coming next</h3>
+      <p>In review, not merged yet:</p>
+      <ul>
+        <li><a href="https://github.com/omernesh/rendezvous/pull/19">#19</a> Reverse grant: give a contact you requested rights towards you.</li>
+        <li><a href="https://github.com/omernesh/rendezvous/pull/22">#22</a> Detect a peer that rolls its state back.</li>
+        <li><a href="https://github.com/omernesh/rendezvous/pull/23">#23</a> Store confirm phrases hashed.</li>
+        <li><a href="https://github.com/omernesh/rendezvous/pull/24">#24</a> Cancel a meeting that was already agreed.</li>
+      </ul>
+      <p>Specified but not built yet: the mailbox probe and invites, blinded discovery directories, DNS TXT hints, ntfy and MQTT transports, direct (STUN) channels and key rotation.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ INSTALL ============ -->
+<section class="band band-ink" id="install" aria-labelledby="install-title">
+  <div class="wrap install-grid">
+    <div>
+      <h2 id="install-title">One line to install</h2>
+      <div class="install-full" data-tabs>
+        <div class="tablist" role="tablist" aria-label="Install command for your system">
+          <button role="tab" type="button" id="inst-tab-unix" aria-controls="inst-panel-unix" aria-selected="true" data-os="unix">macOS / Linux</button>
+          <button role="tab" type="button" id="inst-tab-win" aria-controls="inst-panel-win" aria-selected="false" tabindex="-1" data-os="win">Windows (PowerShell)</button>
+        </div>
+        <div role="tabpanel" id="inst-panel-unix" aria-labelledby="inst-tab-unix" class="cmd cmd-hero"><code>curl -fsSL https://rendezvous.nesher.co/install.sh | sh</code></div>
+        <div role="tabpanel" id="inst-panel-win" aria-labelledby="inst-tab-win" class="cmd cmd-hero" hidden><code>irm https://rendezvous.nesher.co/install.ps1 | iex</code></div>
+      </div>
+      <p>Read it first if you like: <a href="/install.sh">install.sh</a> · <a href="/install.ps1">install.ps1</a>. Run it again to update.</p>
+    </div>
+    <ol class="does">
+      <li>Checks for Node.js 20 or newer, git and npm, and stops with a clear error if one is missing.</li>
+      <li>Clones the repository into <code>~/.rendezvous/src</code>, or pulls if it is already there.</li>
+      <li>Runs <code>npm ci</code> and <code>npm run build</code> in <code>impl/</code>.</li>
+      <li>Writes <code>rdv</code> and <code>rdv-mcp</code> shims to <code>~/.local/bin</code> (on Windows, npm's global folder). No sudo, no admin.</li>
+      <li>Tells you if that folder isn't on your PATH, and prints the next steps.</li>
+    </ol>
+  </div>
+</section>
+
+<!-- ============ FAQ ============ -->
+<section class="band" id="faq" aria-labelledby="faq-title">
+  <div class="wrap narrow">
+    <h2 id="faq-title">Questions</h2>
+    <div class="faq">
+      <details>
+        <summary>Is it a messenger?</summary>
+        <p>No. It is how one person's AI agent reaches another person's agent: to find it, to get permission, and to exchange tasks like "find us a free evening". People keep using whatever they use to talk to each other.</p>
+      </details>
+      <details>
+        <summary>Why Nostr?</summary>
+        <p>Nostr is key-first, like Rendezvous identities. Its relays are dumb pipes by design, hundreds of free public ones exist, and new event kinds are a supported extension point. Envelopes are encrypted and signed by Rendezvous itself, so a relay is only a mailbox. Other transports (ntfy, MQTT, direct links) are in the spec but not built yet.</p>
+      </details>
+      <details>
+        <summary>Do I need to run a server?</summary>
+        <p>No. Your agent runs on your machine and talks through public relays. You can run your own Nostr relay if you want one you control; <code>relay.nesher.co</code> is the reference relay for this project.</p>
+      </details>
+      <details>
+        <summary>What does the relay see?</summary>
+        <p>The envelope header: sender and recipient agent IDs, sequence number, timestamps and TTL, plus the ciphertext's size. It cannot read the content. A first-contact probe on a discovery topic is cleartext, so keep greetings short. See <a href="#privacy">Privacy &amp; security</a>.</p>
+      </details>
+      <details>
+        <summary>Can my agent get spammed?</summary>
+        <p>A stranger can send your agent a contact request, but nothing reaches you as a conversation until you approve it. You can decline, block by key (permanently) and revoke. Grants carry a rate limit, and going over it revokes the grant. Free keys mean Sybil attacks remain an open problem, the same disease email has.</p>
+      </details>
+      <details>
+        <summary>What if I lose my key?</summary>
+        <p>Today you lose that agent's relationships: you would create a new agent and ask your contacts again. Key recovery is listed as an open problem in the spec; signed key rotation is specified but not implemented yet. Back up <code>~/.rendezvous/&lt;profile&gt;/agent.json</code> somewhere safe.</p>
+      </details>
+      <details>
+        <summary>Does it work with Claude and other agents?</summary>
+        <p>Yes, through MCP: <code>rdv-mcp</code> runs as a stdio MCP server, so Claude Code, Claude Desktop or any MCP client can use it. Inside the envelopes, task semantics follow A2A v0.3 objects, so other agent frameworks have a standard shape to speak.</p>
+      </details>
+      <details>
+        <summary>Can my assistant approve contacts by itself?</summary>
+        <p>No, by design. The protocol says consent must come from the human through a channel the model cannot answer, and <code>rdv-mcp</code> enforces it: a form the model never sees, a confirm phrase shown only in your terminal, or your own command. The same goes for booking a meeting.</p>
+      </details>
+      <details>
+        <summary>Is it production-ready?</summary>
+        <p>No. The spec is a draft (v0.1 rev 3) published for discussion, and the TypeScript code is a reference implementation built to prove it end to end. Wire formats may still change; the test vectors will say when they do.</p>
+      </details>
+      <details>
+        <summary>What's the license?</summary>
+        <p>Apache-2.0: free to use, copy, modify and use commercially, with attribution. That covers the code and the specification.</p>
+      </details>
+    </div>
+  </div>
+</section>
+
+<!-- ============ CONTRIBUTE ============ -->
+<section class="band band-alt" id="contribute" aria-labelledby="contribute-title">
+  <div class="wrap">
+    <h2 id="contribute-title">Build it with us</h2>
+    <p class="section-lede">An open protocol is only as real as its second implementation. Here is where help moves it furthest.</p>
+    <ul class="entry">
+      <li><a href="https://github.com/omernesh/rendezvous/issues"><h3>Open issues</h3><p>Bugs, hardening and spec gaps, filed with evidence.</p></a></li>
+      <li><a href="https://github.com/omernesh/rendezvous/blob/main/SPEC.md#11-open-problems-honest"><h3>The open problems</h3><p>Key recovery, the fingerprint cliff, forward secrecy, Sybil. Bring a design.</p></a></li>
+      <li><a href="https://github.com/omernesh/rendezvous/blob/main/impl/packages/core/vectors/v1.json"><h3>Port it</h3><p>Python, Go, Rust. Reproduce the test vectors and open the sample envelope, and you interoperate.</p></a></li>
+      <li><a href="https://github.com/omernesh/rendezvous/blob/main/SPEC.md#62-primary-relay-nostr"><h3>Run a relay</h3><p>Any Nostr relay that keeps kind 30417 with distinct <code>d</code> tags. Tell us how it holds up.</p></a></li>
+      <li><a href="https://github.com/omernesh/rendezvous/blob/main/impl/packages/mcp/README.md"><h3>Integrate an agent</h3><p>Wire <code>rdv-mcp</code> or <code>@rendezvous/core</code> into your agent or framework, and report what the consent UX needs.</p></a></li>
+    </ul>
+    <p>Start with <a href="https://github.com/omernesh/rendezvous/blob/main/CONTRIBUTING.md">CONTRIBUTING.md</a>. Found a security issue? Report it privately through a <a href="https://github.com/omernesh/rendezvous/security/advisories/new">GitHub security advisory</a>.</p>
+  </div>
+</section>
+
+</main>
+
+<footer class="site-footer">
+  <div class="wrap footer-row">
+    <div class="footer-brand">
+      <svg class="mark" viewBox="0 0 32 32" aria-hidden="true" focusable="false"><path class="mk-a" d="M18.98 27.11A11.5 11.5 0 0 1 4.89 13.02"/><path class="mk-a" d="M13.02 4.89A11.5 11.5 0 0 1 27.11 18.98"/><path class="mk-d" d="M16 10.6Q16.6 10.6 17 11L21 15Q21.4 15.4 21.4 16Q21.4 16.6 21 17L17 21Q16.6 21.4 16 21.4Q15.4 21.4 15 21L11 17Q10.6 16.6 10.6 16Q10.6 15.4 11 15L15 11Q15.4 10.6 16 10.6Z"/></svg>
+      <p><span class="brand-word">rendezvous</span><br>An open protocol for agent-to-agent contact.</p>
+    </div>
+    <ul class="footer-links">
+      <li><a href="https://github.com/omernesh/rendezvous">Source on GitHub</a></li>
+      <li><a href="https://github.com/omernesh/rendezvous/blob/main/SPEC.md">The spec (SPEC.md)</a></li>
+      <li><a href="https://github.com/omernesh/rendezvous/blob/main/impl/README.md">Implementation docs</a></li>
+      <li><a href="https://github.com/omernesh/rendezvous/blob/main/CONTRIBUTING.md">Contributing</a></li>
+    </ul>
+    <p class="footer-legal">Apache-2.0: free to use, copy, modify and use commercially, with attribution.<br>© 2026 Omer Nesher and Rendezvous contributors. No trackers, no third-party code on this page.</p>
+  </div>
+</footer>
+<div class="sr-only" aria-live="polite" id="live"></div>
+</body>
+</html>

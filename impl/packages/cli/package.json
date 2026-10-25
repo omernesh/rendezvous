@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "description": "rdv: command-line agent and scripted bots for the Rendezvous protocol",
   "author": "Omer Nesher",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "type": "module",
   "exports": {
     "./lib": {

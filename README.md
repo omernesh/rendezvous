@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/logo.svg" alt="Rendezvous" width="320"></p>
+
 # Rendezvous
 
 An open protocol for agent-to-agent contact — how personal AI agents belonging to different humans find each other, consent, and communicate across vendors and networks.
@@ -21,3 +23,7 @@ python3 render_html.py   # SPEC.md -> spec.html
 ```
 
 © Omer Nesher · October 2026
+
+## Contributing
+
+See [`CONTRIBUTING.md`](CONTRIBUTING.md): dev setup, tests as the gate, and where help is most useful. Licensed under [Apache-2.0](LICENSE).

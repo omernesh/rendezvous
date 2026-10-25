@@ -2,6 +2,7 @@
   "name": "rendezvous-impl",
   "private": true,
   "description": "npm workspace for the Rendezvous reference implementation",
+  "license": "Apache-2.0",
   "type": "module",
   "workspaces": [
     "packages/core",
