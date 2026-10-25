@@ -129,6 +129,12 @@ import {
   type TaskRun,
   carryOut,
   changeAddress,
+  changeRelays,
+  mirrorCard,
+  mirrorRelaysOf,
+  mirrorSummary,
+  relaySets,
+  watchRelays,
   CliError,
   clean,
   type Config,
@@ -551,6 +557,8 @@ export class RdvMcpServer {
   private topicUnsub?: () => void;
   private sweeper?: ReturnType<typeof setInterval>;
   private poller?: ReturnType<typeof setInterval>;
+  /** Follows config.json's relays (rdv relays from a terminal, or rdv_relays) and moves the transport there. */
+  private relayWatch?: () => void;
   /** `consumer` while holding listener.lock, `attached` while another process does. */
   private mode?: 'consumer' | 'attached';
   private releaseListener?: () => void;
@@ -616,8 +624,11 @@ export class RdvMcpServer {
   startListening(): void {
     if (this.real || !this.home.initialized()) return;
     const config = this.home.readConfig();
-    const boot = Agent.fromJSON(this.home.readAgentState(), (key) => relayTransport(key, config.relays, this.home));
+    const sets = relaySets(config);
+    const boot = Agent.fromJSON(this.home.readAgentState(), (key) => relayTransport(key, sets.relays, this.home, sets.mirror));
     this.real = boot.transport; // sends go out over it in both modes
+    // Both modes: an attached server sends over it too.
+    this.relayWatch = watchRelays(this.home, sets, (r) => this.moveRelays(r.relays, r.mirror), this.pollMs);
     this.boot = { id: boot.id, key: boot.key, topics: (boot.card.discovery?.addresses ?? []).map(dtopic) };
     this.home.ensureDir();
     const lock = tryLongLock(this.home.listenerLockPath, 'rdv-mcp');
@@ -693,6 +704,14 @@ export class RdvMcpServer {
     this.humanLog(`addresses changed: now listening on ${next.length} address topic(s)`);
   }
 
+  /** Our relays changed (rdv relays, rdv_relays): move the transport there, subscriptions included. */
+  private moveRelays(relays: string[], mirror: string[]): void {
+    if (!this.real?.setRelays) return;
+    const now = (this.real as { relays?: string[] }).relays;
+    this.real.setRelays(relays, mirror);
+    if (!now || now.length !== relays.length || now.some((r, i) => r !== relays[i])) this.humanLog(`relays changed: now on ${relays.join(', ')}`);
+  }
+
   /** Follow the shared log; when attached, take over if the consumer has gone. */
   private async tick(): Promise<void> {
     if (this.mode === 'attached' && this.real) {
@@ -709,6 +728,8 @@ export class RdvMcpServer {
   /** Stop subscriptions, let in-flight items finish (they send over the transport), then close it. */
   private async stopListening(): Promise<void> {
     for (const u of this.unsubs.splice(0)) u();
+    this.relayWatch?.();
+    this.relayWatch = undefined;
     if (this.sweeper) clearInterval(this.sweeper);
     this.sweeper = undefined;
     if (this.poller) clearInterval(this.poller);
@@ -1099,11 +1120,69 @@ export class RdvMcpServer {
     );
 
     this.tool(
+      'rdv_relays',
+      "Manage this agent's own Nostr relays (the owner's setup). list: the relays it listens on (envelopes and its card go there; keep it small) " +
+        'and its discovery mirrors (its card only, for lookups and rdv_publish_card with mirror: true). ' +
+        'add / remove: a listening relay, or with mirror: true a discovery mirror. A listening relay is on the card: the card is re-signed and, with the public pointer on, republished; ' +
+        'the last listening relay cannot be removed. wss:// only (ws:// for a relay on this machine). Only change relays when your user asks.',
+      {
+        action: z.enum(['list', 'add', 'remove']),
+        url: z.string().max(512).optional().describe('A relay URL, wss://… (add, remove)'),
+        mirror: z.boolean().optional().describe('add/remove a discovery mirror (cards only) instead of a listening relay'),
+      },
+      async (a) => {
+        if (!home.initialized()) throw new ToolError(`no agent at ${home.dir} yet: call rdv_init first`);
+        if (a.action === 'list') {
+          const config = home.readConfig();
+          return {
+            relays: config.relays.map(safe),
+            mirror_relays: mirrorRelaysOf(config).map(safe),
+            mirror_default: !Array.isArray(config.mirror_relays),
+          };
+        }
+        if (!a.url) throw new ToolError(`url is required to ${a.action}`);
+        const r = await changeRelays(home, a.action === 'add' ? { add: a.url } : { remove: a.url }, a.mirror === true ? 'mirror' : 'listen');
+        this.moveRelays(r.relays, r.mirror_relays);
+        return {
+          [r.change]: safe(r.url),
+          set: r.set,
+          relays: r.relays.map(safe),
+          mirror_relays: r.mirror_relays.map(safe),
+          card_republished: r.published.length > 0,
+          ...(r.warning ? { note: r.warning } : {}),
+        };
+      },
+    );
+
+    this.tool(
       'rdv_publish_card',
       'Publish this agent\'s card on the discovery topics of its addresses (only if public_pointer was set at init). ' +
-        'Then reads it back from the relays: on_relays says, per public address, whether the relays now serve this card (rdv_discover never lists your own card).',
-      {},
-      async () => {
+        'Then reads it back from the relays: on_relays says, per public address, whether the relays now serve this card (rdv_discover never lists your own card). ' +
+        'mirror: true also sends it to the discovery mirrors (rdv_relays), one relay at a time with a pause between them (this takes a while), ' +
+        'and returns per relay accepted / rejected (with the relay\'s reason) / timeout / skipped, and whether it serves the card back.',
+      {
+        mirror: z.boolean().optional().describe('Also mirror the card to the discovery relays, serially, with a per-relay result'),
+      },
+      async (a) => {
+        if (a.mirror === true) {
+          if (!home.initialized()) throw new ToolError(`no agent at ${home.dir} yet: call rdv_init first`);
+          this.startListening();
+          // The mirror run opens its own short-lived connections (serial, one relay at a time), under the home lock.
+          const report = await mirrorCard(home);
+          return {
+            mirrored: true,
+            ...mirrorSummary(report),
+            relays: report.relays.map((r) => ({
+              url: safe(r.url),
+              role: r.role,
+              result: r.result,
+              ...(r.kind ? { kind: oneOf(RELAY_ERROR_KINDS)(r.kind) } : {}),
+              // A relay's own text: a party we do not trust either.
+              ...(r.message ? { detail: untrusted(r.message) } : {}),
+              served: r.served,
+            })),
+          };
+        }
         const { topics, addresses } = await this.withAgent(async (agent) => {
           const addrs = agent.card.discovery?.addresses ?? [];
           if (!agent.card.discovery?.public_pointer || !agent.card.policy.public || addrs.length === 0) {
@@ -1546,6 +1625,7 @@ export class RdvMcpServer {
       addresses: config.addresses.map((a) => a.value),
       our_addresses: addressViews(config).map(addressOut),
       relays: config.relays,
+      mirror_relays: mirrorRelaysOf(config).length,
       // Relay text (an OK-false message, a connection error), never peer text; quarantined all the same.
       relay_health: relayHealth(this.home, config).map((r) => ({
         url: safe(r.url),

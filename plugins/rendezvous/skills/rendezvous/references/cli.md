@@ -10,7 +10,8 @@ machine-readable output.
 | Who am I | `rdv_status` | `rdv whoami` (also per-relay health: last OK, last error, cooldown) |
 | Create the agent | `rdv_init` | `rdv init --email omer@example.com [--email omer.work@example.com] [--relay wss://… [--relay …]] [--phone +15555550100] [--public-pointer]` (no `--relay`: the default public relays) |
 | Our addresses | `rdv_addresses` | `rdv address list`, `rdv address add omer.work@example.com [--private]`, `rdv address remove +15555550100` |
-| Publish the card | `rdv_publish_card` | `rdv card publish` |
+| Our relays | `rdv_relays` | `rdv relays list`, `rdv relays add wss://relay.example.com [--mirror]`, `rdv relays remove wss://relay.example.com [--mirror]` |
+| Publish the card | `rdv_publish_card` (`mirror: true` for the discovery mirrors) | `rdv card publish [--mirror]` |
 | Find a card | `rdv_discover` | `rdv lookup john@doe.com` |
 | Ask for contact | `rdv_request_contact` | `rdv contact request john@doe.com --greeting "…"` (or the agent ID the user picked, without `--label`) |
 | Pending requests | `rdv_pending_requests` | none for you: reload the MCP tools first |

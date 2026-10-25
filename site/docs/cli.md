@@ -32,7 +32,7 @@ inbound loop), so `rdv` and `rdv-mcp` share profiles.
 | `files` | §7.7 | File references (`FilePart` + files extension): strict validation, `encryptFile`, `verifyAndDecrypt`, inline parts |
 | `filefetch` | §7.7 | `fetchFileRef`: https only, SSRF-blocked and DNS-pinned, no credentials, capped, hash-verified |
 | `transfer` | §7.7 | `rdv/transfer` messages and their pure state machine (negotiation only, no transport) |
-| `transport/nostr` | §6.2 | Nostr relay transport (kind 30417): re-subscribes when a relay drops; publishes with retries, per-relay pacing and cooldowns, and per-relay status (`relayStatus()`); `DEFAULT_RELAYS` |
+| `transport/nostr` | §6.2 | Nostr relay transport (kind 30417): re-subscribes when a relay drops; publishes with retries, per-relay pacing and cooldowns, and per-relay status (`relayStatus()`); `setRelays()` moves a live transport; discovery mirrors (`mirrorRelays`, `mirrorTopics()`); `DEFAULT_RELAYS`, `DEFAULT_MIRROR_RELAYS` |
 | `agent` | — | Ties it together: listen, discover, request, grant, send, receive |
 | `testing/relay` | — | In-memory Nostr relay on a localhost WebSocket, for tests and local demos |
 
@@ -61,6 +61,20 @@ twice with jittered backoff. A relay that answers `blocked`, `restricted` or
 `banned` is skipped for 30 minutes. Events are paced per relay (a burst of 6,
 then 3 per second). Each tunable is a `NostrTransportOptions` field (NOTES 69).
 An envelope's plaintext is at most 32 KiB (`MAX_PLAINTEXT_BYTES`, SPEC §6.4).
+
+**Discovery mirrors** (NOTES 81). An agent listens on a few relays, and its
+envelopes go only there. Its card can also be mirrored to more relays, so a
+peer that asks other relays still finds it: `NostrTransportOptions.mirrorRelays`.
+`fetchTopic` (so `Agent.lookup`) asks the mirrors too, at most
+`lookupConcurrency` (4) at a time, each within the lookup timeout.
+`mirrorTopics()` (`Agent.mirrorPointers()`) publishes the card to our relays
+and then each mirror strictly one at a time: a pause between relays (1.5 s),
+one try each with a timeout (6 s), cooling relays skipped, then a read-back
+per relay. It returns accepted / rejected (with the relay's reason) / timeout /
+skipped and `served` per relay. `DEFAULT_MIRROR_RELAYS` is the vetted public
+set (13 relays, from `deploy/mirror-survey.mjs`; never relay.damus.io).
+`Agent.setRelays()` re-signs the card with other relays and moves the
+transport (`setRelays()`), subscriptions included.
 
 Agent state serializes with `agent.toJSON()` and loads with `Agent.fromJSON()`.
 `packages/core/vectors/v1.json` holds interop test vectors: fixed keys, IDs,
@@ -134,7 +148,7 @@ State lives in a directory: `--home <dir>`, else `$RDV_HOME`, else
 | File | Holds |
 |---|---|
 | `agent.json` | `Agent.toJSON()`, including the secret key (mode 600 where the OS supports it) |
-| `config.json` | profile, relays, addresses (public ones are on the card; `private: true` ones are kept here only), policy |
+| `config.json` | profile, relays (listening), `mirror_relays` (discovery mirrors, once changed; absent: the default set for an all-`wss://` agent, none otherwise), addresses (public ones are on the card; `private: true` ones are kept here only), policy |
 | `relays.json` | per-relay diagnostics and cooldowns (last OK, last error), written after each publish and read by `rdv whoami` / `rdv_status` |
 | `inbox.jsonl` | received payloads, one JSON object per line |
 | `cards.json` | cards found by `rdv lookup`, so `contact request <agent-id>` can use them |
@@ -161,8 +175,11 @@ State lives in a directory: `--home <dir>`, else `$RDV_HOME`, else
 | `rdv address list` | Our addresses, each public (on the card, answers probes; with its topic) or private (kept in `config.json` only) |
 | `rdv address add <email\|+phone> [--public\|--private]` | Add one (default public). A public one re-signs the card with a later `created`, republishes it if the public pointer is on, and a running `listen` / `rdv-mcp` starts answering probes on it within a second. Duplicates (in any spelling) and a ninth address are refused |
 | `rdv address remove <email\|+phone>` | Remove one: probes on it are refused at once and its topic is dropped; with the public pointer on, the new card is also published on the removed topic, replacing the old one there. Contacts are kept (NOTES 63) |
-| `rdv card publish` | Publish public pointers (if enabled at init) |
-| `rdv lookup john@doe.com` | Fetch public-pointer cards for an address |
+| `rdv relays list` | The relays the agent listens on (envelopes and the card go there; keep it small), with their health, and its discovery mirrors (the card only) |
+| `rdv relays add <wss://…> [--mirror]` | Listen on another relay (at most 8): re-signs the card with it, republishes it if the public pointer is on, and a running `listen` / `rdv-mcp` subscribes there within a second. `wss://` only; `ws://` only for a relay on this machine. `--mirror`: add a discovery mirror instead (config only) |
+| `rdv relays remove <wss://…> [--mirror]` | Stop listening on a relay (never the last one): re-signs and republishes the card, there too, so it serves the newer card. Contacts keep the card they hold until they get a newer one, so some may still send to the removed relay. `--mirror`: remove a discovery mirror |
+| `rdv card publish [--mirror]` | Publish public pointers (if enabled at init). `--mirror`: to our relays and then each discovery mirror, one relay at a time and paced, one try each, then a read-back; one line per relay (`accepted` / `rejected` with the relay's reason / `timeout` / `skipped` when cooling down, and `served`) and a summary (NOTES 81) |
+| `rdv lookup john@doe.com` | Fetch public-pointer cards for an address, from our relays and the discovery mirrors |
 | `rdv contact request <email\|card-file\|agent-id> [--greeting "…"] [--in-person] [--label john@doe.com]` | Topic probe by email, or direct by card. `--in-person` records the `in-person` binding for a card you got face to face. `--label` is your local name for them (a probe is labeled with the address) |
 | `rdv contact pending` | Pending inbound requests with binding, fingerprint, greeting; answers to your topic probes awaiting confirmation |
 | `rdv contact grant <request-id> [--tier friend] [--scope-file s.json] [--label john@doe.com]` | Approve (`--label`: your local name for them) |
@@ -290,7 +307,7 @@ so a crash after a send never reuses a `seq` (issue #4).
 
 ## rdv-mcp (the MCP server)
 
-PLAN §6.1. Tools `rdv_init`, `rdv_status`, `rdv_publish_card`, `rdv_discover`,
+PLAN §6.1. Tools `rdv_init`, `rdv_status`, `rdv_addresses`, `rdv_relays`, `rdv_publish_card`, `rdv_discover`,
 `rdv_request_contact`, `rdv_pending_requests`, `rdv_grant`, `rdv_revoke`,
 `rdv_send`, `rdv_inbox`, `rdv_negotiate`, and the `rdv://inbox` resource
 (subscribable). `rdv_grant` needs the human: an MCP elicitation form, or a

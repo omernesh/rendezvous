@@ -20,6 +20,9 @@ import {
   MEETING_CAPABILITIES,
   MEETINGS_CAPABILITY,
   MAX_ADDRESSES,
+  type MirrorOptions,
+  type MirrorRelayResult,
+  type MirrorReport,
   normalizeAddresses,
   parseAddress,
   type Payload,
@@ -89,7 +92,7 @@ import {
 
 import { type Attachment, attachFiles, declineTransfer, describeFile, fetchIncoming, fileSummaries, outgoingView, prepareFile, transferEventText, transferView } from './files.js';
 import { listen } from './listen.js';
-import { relayTransport } from './transport.js';
+import { checkRelayUrl, MAX_MIRROR_RELAYS, MAX_RELAYS, mirrorRelaysOf, relaySets, relayTransport } from './transport.js';
 import {
   buildCtx,
   carryOut,
@@ -189,7 +192,8 @@ export async function withAgent<T>(
   home.requireInit();
   return home.locked(async () => {
     const config = home.readConfig();
-    const agent = Agent.fromJSON(home.readAgentState(), (key) => relayTransport(key, config.relays, home));
+    const sets = relaySets(config);
+    const agent = Agent.fromJSON(home.readAgentState(), (key) => relayTransport(key, sets.relays, home, sets.mirror));
     agent.on('error', () => {}); // never started, but don't let a stray error crash us
     agent.beforeSend = (a) => home.writeAgentState(a.toJSON());
     try {
@@ -345,6 +349,7 @@ export async function whoami({ home, out }: Ctx): Promise<void> {
       `addresses:   ${config.addresses.map((a) => (a.private ? `${a.value} (private)` : a.value)).join(', ') || '(none)'}`,
       `relays:      ${config.relays.join(', ')}`,
       ...health.map(relayHealthLine),
+      `mirrors:     ${mirrorRelaysOf(config).length} discovery mirror(s) (rdv relays list)`,
       `public pointer: ${config.public_pointer ? 'on' : 'off'}`,
       'card:',
       JSON.stringify(agent.card, null, 2),
@@ -472,19 +477,186 @@ published the new card on ${r.published.length} topic(s), replacing the old one 
   );
 }
 
-export async function cardPublish({ home, out }: Ctx): Promise<void> {
+export async function cardPublish({ home, out, values }: Ctx): Promise<void> {
+  if (values.mirror === true) {
+    const report = await mirrorCard(home);
+    for (const r of report.relays) out.emit({ event: 'mirror-relay', ...r }, mirrorRelayText(r));
+    out.emit({ event: 'mirrored', ...mirrorSummary(report) }, mirrorSummaryText(report));
+    return;
+  }
   const topics = await withAgent(
     home,
     async (agent) => {
-      const addrs = agent.card.discovery?.addresses ?? [];
-      if (!agent.card.discovery?.public_pointer || !agent.card.policy.public || addrs.length === 0) {
-        throw new CliError('public pointer is off for this agent (re-run "rdv init" with --public-pointer and an address)');
-      }
+      requirePublicPointer(agent);
       return agent.publishPointers();
     },
     { save: false },
   );
   out.emit({ event: 'published', topics }, `published card on ${topics.length} topic(s): ${topics.join(', ')}`);
+}
+
+function requirePublicPointer(agent: Agent): void {
+  const addrs = agent.card.discovery?.addresses ?? [];
+  if (!agent.card.discovery?.public_pointer || !agent.card.policy.public || addrs.length === 0) {
+    throw new CliError('public pointer is off for this agent (re-run "rdv init" with --public-pointer and an address)');
+  }
+}
+
+/**
+ * `rdv card publish --mirror` / `rdv_publish_card` with `mirror: true`
+ * (NOTES 81): our card, on each address topic, to our relays and then each
+ * discovery mirror, one relay at a time, paced, one try each, then read back.
+ * Throws only when no relay took it.
+ */
+export async function mirrorCard(home: Home, opts: Partial<MirrorOptions> = {}): Promise<MirrorReport> {
+  const report = await withAgent(
+    home,
+    async (agent, config) => {
+      requirePublicPointer(agent);
+      return agent.mirrorPointers({ ...opts, relays: opts.relays ?? mirrorRelaysOf(config) });
+    },
+    { save: false },
+  );
+  if (report.accepted === 0) {
+    throw new CliError(`no relay accepted the card: ${report.relays.map((r) => `${r.url}: ${r.result}${r.message ? ` (${clean(r.message)})` : ''}`).join('; ')}`);
+  }
+  return report;
+}
+
+export function mirrorSummary(r: MirrorReport) {
+  return { topics: r.topics, relays: r.relays.length, accepted: r.accepted, rejected: r.rejected, timeout: r.timeout, skipped: r.skipped, served: r.served };
+}
+
+function mirrorRelayText(r: MirrorRelayResult): string {
+  const served = r.served === null ? '' : r.served ? ', served back' : ', NOT served back';
+  return `  ${r.url} (${r.role}): ${r.result}${r.message ? ` (${clean(r.message)})` : ''}${served}`;
+}
+
+function mirrorSummaryText(r: MirrorReport): string {
+  return (
+    `mirrored the card on ${r.topics.length} topic(s) to ${r.relays.length} relay(s): ${r.accepted} accepted, ` +
+    `${r.rejected} rejected, ${r.timeout} timed out, ${r.skipped} skipped (cooling down); ${r.served} serve it back`
+  );
+}
+
+// --- our own relays (the owner's setup) -------------------------------------
+
+export type RelaySet = 'listen' | 'mirror';
+
+export interface RelayChange {
+  change: 'added' | 'removed';
+  set: RelaySet;
+  url: string;
+  relays: string[];
+  mirror_relays: string[];
+  /** The card's new `created`, when the change re-signed it (a listening relay). */
+  card_created?: string;
+  /** Topics the new card was published on (public pointer on). */
+  published: string[];
+  /** Removing a listening relay: contacts that hold the old card may still send there (they keep it until they get a newer one). */
+  warning?: string;
+}
+
+/** Validate a relay URL for `rdv relays` / `rdv_relays` (usage error otherwise). */
+export function parseRelayUrl(raw: string): string {
+  const r = checkRelayUrl(raw);
+  if ('problem' in r) throw new CliError(r.problem, 2);
+  return r.url;
+}
+
+/**
+ * Add or remove a relay, under the lock. A listening relay (the default set)
+ * is on the card: the card is re-signed with the new relays, and with the
+ * public pointer on, published on our topics through the new set (and the
+ * dropped relay, so it serves the newer card) before anything is saved, so a
+ * relay failure changes nothing. The last listening relay cannot be removed.
+ * A mirror changes config.json only. A running `rdv listen` / rdv-mcp moves
+ * to the new relays when it sees config.json change (watchRelays).
+ */
+export async function changeRelays(home: Home, op: { add: string } | { remove: string }, set: RelaySet = 'listen'): Promise<RelayChange> {
+  const url = parseRelayUrl('add' in op ? op.add : op.remove);
+  return withAgent(home, async (agent, config) => {
+    const listenNow = [...config.relays];
+    const mirrorNow = mirrorRelaysOf(config);
+    let relays = listenNow;
+    let mirror = mirrorNow;
+    if (set === 'listen') {
+      if ('add' in op) {
+        if (listenNow.includes(url)) throw new CliError(`${url} is already one of this agent's relays`);
+        if (listenNow.length >= MAX_RELAYS) throw new CliError(`this agent already listens on ${listenNow.length} relays, the most it may; remove one first (or add it as a discovery mirror with --mirror)`);
+        relays = [...listenNow, url];
+      } else {
+        if (!listenNow.includes(url)) throw new CliError(`${url} is not one of this agent's relays`);
+        if (listenNow.length === 1) throw new CliError('that is the last relay this agent listens on; add another first');
+        relays = listenNow.filter((r) => r !== url);
+      }
+      mirror = mirror.filter((r) => !relays.includes(r));
+    } else {
+      if ('add' in op) {
+        if (listenNow.includes(url)) throw new CliError(`${url} is one of this agent's listening relays; the card goes there anyway`);
+        if (mirrorNow.includes(url)) throw new CliError(`${url} is already a discovery mirror`);
+        if (mirrorNow.length >= MAX_MIRROR_RELAYS) throw new CliError(`this agent already has ${mirrorNow.length} discovery mirrors, the most it may`);
+        mirror = [...mirrorNow, url];
+      } else {
+        if (!mirrorNow.includes(url)) throw new CliError(`${url} is not a discovery mirror`);
+        mirror = mirrorNow.filter((r) => r !== url);
+      }
+    }
+    const result: RelayChange = { change: 'add' in op ? 'added' : 'removed', set, url, relays, mirror_relays: mirror, published: [] };
+    if (set === 'listen') {
+      agent.setRelays(relays, { mirrorRelays: mirror });
+      result.card_created = agent.card.created;
+      try {
+        result.published = await agent.publishPointers([], 'remove' in op ? [url] : []);
+      } catch (err) {
+        throw new CliError(`could not publish the new card, so nothing changed (try again): ${(err as Error).message}`);
+      }
+      if ('remove' in op) {
+        result.warning =
+          'contacts keep the card they hold until they get a newer one, so some may still send to the removed relay; keep it for a while if you can';
+      }
+      home.writeAgentState(agent.toJSON());
+    }
+    // The mirror list is written once the owner changed either set, so the default no longer decides it.
+    home.writeConfig({ ...config, relays, mirror_relays: mirror });
+    return result;
+  });
+}
+
+export async function relaysList({ home, out }: Ctx): Promise<void> {
+  home.requireInit();
+  const config = home.readConfig();
+  const health = relayHealth(home, config);
+  const mirror = mirrorRelaysOf(config);
+  out.emit(
+    { event: 'relays', relays: config.relays, relay_health: health, mirror_relays: mirror, mirror_default: !Array.isArray(config.mirror_relays) },
+    [
+      `listening relays (envelopes and the card): ${config.relays.length}`,
+      ...health.map(relayHealthLine),
+      `discovery mirrors (the card only${Array.isArray(config.mirror_relays) ? '' : ', the default set'}): ${mirror.length}`,
+      ...mirror.map((r) => `  ${r}`),
+    ].join('\n'),
+  );
+}
+
+function relayChangeText(r: RelayChange): string {
+  const what = r.set === 'listen' ? 'listening relay' : 'discovery mirror';
+  return [
+    `${r.change} ${what} ${r.url}`,
+    ...(r.set === 'listen' ? [`now listening on ${r.relays.join(', ')}`] : [`${r.mirror_relays.length} discovery mirror(s)`]),
+    ...(r.published.length ? [`published the new card on ${r.published.length} topic(s)`] : []),
+    ...(r.warning ? [`note: ${r.warning}`] : []),
+  ].join('\n');
+}
+
+export async function relaysAdd({ home, out, values, positionals }: Ctx): Promise<void> {
+  const r = await changeRelays(home, { add: positionals[0] }, values.mirror === true ? 'mirror' : 'listen');
+  out.emit({ event: 'relay-added', ...r }, relayChangeText(r));
+}
+
+export async function relaysRemove({ home, out, values, positionals }: Ctx): Promise<void> {
+  const r = await changeRelays(home, { remove: positionals[0] }, values.mirror === true ? 'mirror' : 'listen');
+  out.emit({ event: 'relay-removed', ...r }, relayChangeText(r));
 }
 
 export async function lookup({ home, out, positionals }: Ctx): Promise<void> {

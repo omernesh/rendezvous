@@ -3,7 +3,7 @@
 // judgment calls — the owner (human, CLI script, or MCP host) decides on
 // pending requests through `grant` / `decline`.
 import { EventEmitter } from 'node:events';
-import { type AddressCard, type CardOptions, createCard, type DiscoveryAddress, missingCapabilities, newerCard, reissueCard, reissueCardCapabilities, verifyCard } from './card.js';
+import { type AddressCard, type CardOptions, createCard, type DiscoveryAddress, missingCapabilities, newerCard, reissueCard, reissueCardCapabilities, reissueCardRelays, verifyCard } from './card.js';
 import {
   type Contact,
   ContactBook,
@@ -38,7 +38,7 @@ import {
   sealEnvelope,
 } from './envelope.js';
 import { type AgentKey, generateKey, keyFromSecret } from './identity.js';
-import type { Transport } from './transport/transport.js';
+import type { MirrorOptions, MirrorReport, Transport } from './transport/transport.js';
 
 const OUTBOX_LIMIT = 64;
 /** Gap buffer bounds: per peer (OUTBOX_LIMIT envelopes) and across peers. */
@@ -205,6 +205,19 @@ export class Agent extends EventEmitter<AgentEvents> {
     return true;
   }
 
+  /**
+   * Replace the relays on our card (the owner's own setup, `rdv relays`):
+   * re-signed with a later `created`, the relays as its `nostr` hints in this
+   * order. The transport moves to them if it can (`Transport.setRelays`).
+   * Contacts keep the card they hold until they get a newer one. Call
+   * `publishPointers()` afterwards to replace the card on the relays.
+   */
+  setRelays(relays: readonly string[], opts: { mirrorRelays?: readonly string[]; now?: Date } = {}): AddressCard {
+    this.card = reissueCardRelays(this.key, this.card, relays, opts.now);
+    this.transport.setRelays?.(relays, opts.mirrorRelays);
+    return this.card;
+  }
+
   close(): void {
     this.stop();
     this.transport.close();
@@ -220,14 +233,30 @@ export class Agent extends EventEmitter<AgentEvents> {
    * as a replaceable event, so it supersedes the card we published there
    * before. `alsoOn` are addresses we no longer list (just removed): the
    * current card goes there too, so a lookup for them finds a newer card that
-   * no longer claims them (NOTES 63). Returns the topics published on.
+   * no longer claims them (NOTES 63). `extraRelays` get it too besides ours
+   * (a relay just dropped by `setRelays`, so it serves the newer card). Returns
+   * the topics published on.
    */
-  async publishPointers(alsoOn: DiscoveryAddress[] = []): Promise<string[]> {
+  async publishPointers(alsoOn: DiscoveryAddress[] = [], extraRelays: string[] = []): Promise<string[]> {
     if (!this.card.discovery?.public_pointer || !this.card.policy.public) return [];
     const topics = [...new Set([...this.card.discovery.addresses, ...alsoOn].map(dtopic))];
     const createdAt = Math.floor((parseTimestamp(this.card.created) ?? 0) / 1000);
-    for (const topic of topics) await this.transport.publishTopic(topic, this.card, [], { replaceable: true, createdAt });
+    for (const topic of topics) await this.transport.publishTopic(topic, this.card, extraRelays, { replaceable: true, createdAt });
     return topics;
+  }
+
+  /**
+   * Mirror our card for discovery (NOTES 81): on each of our address topics,
+   * to our relays and then to `opts.relays`, one relay at a time (see
+   * `NostrTransport.mirrorTopics`). Public pointer only, like
+   * `publishPointers`. Throws if the transport cannot mirror.
+   */
+  async mirrorPointers(opts: MirrorOptions): Promise<MirrorReport> {
+    if (!this.card.discovery?.public_pointer || !this.card.policy.public) throw new Error('public pointer is off for this agent');
+    if (!this.transport.mirrorTopics) throw new Error('this transport cannot mirror cards');
+    const createdAt = Math.floor((parseTimestamp(this.card.created) ?? 0) / 1000);
+    const topics = [...new Set(this.card.discovery.addresses.map(dtopic))];
+    return this.transport.mirrorTopics(topics.map((topic) => ({ topic, doc: this.card, createdAt })), opts);
   }
 
   /**
@@ -259,7 +288,8 @@ export class Agent extends EventEmitter<AgentEvents> {
     const topic = topicForHint(address);
     if (!topic) return false;
     let newest: AddressCard | undefined;
-    for (const d of await this.transport.fetchTopic(topic)) {
+    // Our relays only: they are where publishPointers just put it (a mirror may hold an older copy, which loses anyway).
+    for (const d of await this.transport.fetchTopic(topic, undefined, { mirrors: false })) {
       const check = verifyCard(d);
       if (!check.ok || check.card.id !== this.id) continue;
       newest = newest ? newerCard(newest, check.card) : check.card;

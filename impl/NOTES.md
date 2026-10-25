@@ -1998,6 +1998,149 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       variant alone runs about 25 `rdv` commands); run `test:live` with a
       pause between repeats.
 
+## Relays after init and discovery mirrors
+
+81. **`rdv relays`, discovery mirrors and `rdv card publish --mirror`.**
+    - **Two relay sets.** The *listening* relays (`config.json` `relays`,
+      the card's `nostr` hints) carry envelopes, subscriptions and the card;
+      every send goes to all of them, so the set stays small (at most 8).
+      The *discovery mirrors* carry the card only: no envelope, no
+      subscription. Lookups ask them (`NostrTransport.fetchTopic`: our
+      relays at once, the mirrors at most `lookupConcurrency` = 4 at a time,
+      each within the lookup timeout, a mirror's socket closed after its
+      answer, events de-duplicated by id). The read-back after a publish
+      (`Agent.ownCardOn`) asks our relays only (`fetchTopic(…, { mirrors:
+      false })`), since that is where the card was just published.
+    - **Default mirrors.** `DEFAULT_MIRROR_RELAYS` in core (13 relays, the
+      survey below). `config.json` `mirror_relays` is absent until the owner
+      changes a relay set; then it is written. Absent, an agent whose relays
+      are all `wss://` uses the default set and one with a `ws://` relay
+      (a local test or dev setup) uses none, so `npm test` never reaches a
+      public relay and a dev card never leaks to one. Our own relays are
+      never listed as mirrors.
+    - **Changing relays.** `rdv relays list|add|remove [--mirror]` and the
+      MCP tool `rdv_relays` (`action`, `url`, `mirror`). URLs: `wss://`
+      with a host; `ws://` only for localhost, 127.0.0.1 or ::1; no
+      user/password or fragment; lowercased host, no trailing `/` (stricter
+      than `rdv init --relay`, which still takes any `ws://`, so a LAN relay
+      used for a two-machine test keeps working). Duplicates and removing
+      the last listening relay are refused. A listening change re-signs the
+      card (`reissueCardRelays`: the relays as `nostr` hints, `pref` 1…n,
+      other hints kept after them; dated like `reissueCard`), and with the
+      public pointer on publishes it first, through the new set and, on a
+      removal, the removed relay too (so that relay serves the newer card);
+      a failed publish changes nothing. A mirror change is config only.
+    - **Live move.** `NostrTransport.setRelays(relays, mirrors)` moves a
+      running transport: every open subscription joins the added relays
+      (same per-relay reconnect and backoff) and leaves the dropped ones;
+      later publishes and lookups use the new sets; state and cooldowns are
+      kept. `rdv listen` and rdv-mcp (both modes) watch `config.json`
+      (`watchRelays`, a stat per second) and call it, so a change from a
+      terminal or from `rdv_relays` applies without a restart.
+    - **Not here:** contacts keep the card they got in the handshake, so a
+      contact may still send to a removed relay (it also sends to its own
+      relays, which may overlap). `rdv relays remove` says so. Pushing the
+      new card to contacts is `rdv/card-update` (issue #45).
+    - **Mirroring.** `Agent.mirrorPointers()` → `NostrTransport.mirrorTopics()`:
+      the card, as the replaceable event of each address topic, to our
+      relays and then each mirror, strictly one relay at a time. Between two
+      relays it waits `gapMs` (1.5 s); each relay gets one try (no retry
+      burst) with a connect and `OK` timeout (6 s each), through the usual
+      per-relay pacer; a relay cooling down (a ban from item 69, or an
+      earlier failure) is skipped without being contacted; a relay that turns
+      down one topic's event gets no more. Then each relay that took it is
+      read back on its own (by our carrier pubkey and `d`, within 5 s),
+      also serially. The report lists per relay `role` (listen / mirror),
+      `result` (accepted / rejected / timeout / skipped), the error `kind`
+      and the relay's message, and `served`. Mirror cooldowns are saved to
+      `relays.json` with ours (so the next run skips a relay that banned us)
+      but never shown as our relays. `rdv card publish --mirror` prints a
+      line per relay and a summary; it fails only when no relay took the
+      card. `rdv_publish_card` with `mirror: true` returns the same, the
+      relay's message as `untrusted_peer_text`.
+    - **Survey (2026-10-25, 46 relays).** `impl/deploy/mirror-survey.mjs`:
+      one relay at a time, 2 s apart, no retries. Per relay: the NIP-11
+      document, then ONE address card (kind 30417, `d` = `rdv1/card:<topic>`)
+      from a throwaway key for a throwaway `example.com` address, then a
+      read-back by author and `d` on a new connection. relay.damus.io is
+      never surveyed (it banned an earlier test pubkey, item 11a). Result:
+      15 accepted and served it back, 15 rejected, 6 timed out, 10 had no
+      connection. The mirror set is the 15 minus offchain.pub and
+      nostr.bitcoiner.social, which take a few events from an unknown key
+      and then reject it (web of trust, item 11a).
+
+    | relay | software | result | note |
+    |---|---|---|---|
+    | nos.lol | strfry | accepted + served | **mirror** |
+    | relay.primal.net | strfry | accepted + served | **mirror** |
+    | relay.nostr.net | strfry | accepted + served | **mirror** |
+    | nostr.oxtr.dev | strfry | accepted + served | **mirror** |
+    | nostr.mom | strfry | accepted + served | **mirror** |
+    | nostr.data.haus | strfry | accepted + served | **mirror** |
+    | nostr-01.yakihonne.com | strfry | accepted + served | **mirror** |
+    | nostr-pub.wellorder.net | nostr-rs-relay | accepted + served | **mirror** |
+    | offchain.pub | strfry | accepted + served | left out: web of trust after a few events (11a) |
+    | relay.snort.social | memlay | timeout | publish timed out |
+    | nostr.wine | nostr.wine | connection | connection failed |
+    | relay.nostr.bg | n/a | connection | connection failed |
+    | nostr.bitcoiner.social | strfry | accepted + served | left out: web of trust after a few events (11a) |
+    | purplepag.es | purplepag.es | rejected | blocked: kind 30417 is not allowed |
+    | relay.coinos.io | strfry | rejected | blocked: kind 30417 not allowed |
+    | relay.nostr.band | n/a | timeout | connect timed out after 6000 ms |
+    | nostr.land | NFDB | rejected | restricted: Pay on https://nostr.land for access. |
+    | relay.nostrplebs.com | strfry | rejected | blocked: you do not have a Nostr Plebs NIP-05. |
+    | nostr.fmt.wiz.biz | n/a | timeout | connect timed out after 6000 ms |
+    | relay.mostr.pub | ditto-relay | connection | connection failed |
+    | nostr21.com | strfry | rejected | OK false, no reason (NIP-11: payment required) |
+    | relay.nostromo.social | strfry | rejected | blocked: not on white-list |
+    | nostr.einundzwanzig.space | nostr-rs-relay | rejected | blocked: NIP-05 verification needed to publish events |
+    | relay.nostrich.de | n/a | timeout | connect timed out after 6000 ms |
+    | nostr.lu.ke | n/a | connection | connection failed |
+    | relay.orangepill.dev | nostream | rejected | relay connection closed |
+    | nostr.vulpem.com | n/a | timeout | connect timed out after 6000 ms |
+    | relay.0xchat.com | n/a | connection | connection failed |
+    | nostr.thank.eu | nostr-rs-relay | rejected | blocked: NIP-05 verification needed to publish events |
+    | relay.f7z.io | n/a | connection | connection failed |
+    | relay.momostr.pink | rockstr | rejected | pow: need at least 22 difficulty |
+    | nostr.azzamo.net | strfry | accepted + served | **mirror** |
+    | relay.nostr.wirednet.jp | strfry | accepted + served | **mirror** |
+    | yabu.me | strfry | timeout | publish timed out |
+    | relay.siamstr.com | n/a | connection | connection failed |
+    | nostr.rocks | n/a | connection | connection failed |
+    | relay.lexingtonbitcoin.org | wot-relay | rejected | blocked: we are rebuilding the trust network, please try again later |
+    | relay.nos.social | strfry | rejected | blocked: kind not allowed |
+    | nostrue.com | n/a | connection | connection failed |
+    | relay.angor.io | strfry | accepted + served | **mirror** |
+    | relay.ditto.pub | ditto-relay | accepted + served | **mirror** |
+    | relay.westernbtc.com | ditto-relay | rejected | sign up at https://westernbtc.com/signup |
+    | nostr.fbxl.net | unfathomably-be | rejected | restricted: writer is not known to this relay |
+    | relay.nostr.place | strfry | rejected | pow: insufficient leading-zero bits |
+    | nostr.chaima.info | nostr-rs-relay | accepted + served | **mirror** |
+    | relay.agorist.space | n/a | connection | connection failed |
+
+    nostr.wine announces `payment_required` in NIP-11 and refused the
+    connection. Kind filters (`blocked: kind 30417 …`) are the main reason
+    a reachable relay is unusable; NIP-05, payment, PoW and allow-lists
+    come next. Re-run the survey before changing the set:
+    `node deploy/mirror-survey.mjs --out results.json` (needs `npm run build`).
+    **Live check of the code path (same night).** A throwaway agent on the
+    four defaults, `rdv card publish --mirror`: 13 relays in 38 s, 12
+    accepted and served back, nostr.azzamo.net timed out once (kept: it
+    passed the survey). An agent listening only on nostr.chaima.info then
+    found the card with `rdv lookup` in 3.5 s through the mirrors.
+    - Tests: core `test/mirror.test.ts` (serial order and gap, accepted /
+      rejected / timeout per relay, one try for a rejecting relay, a banning
+      mirror skipped on the next run and saved with our state, the read-back,
+      a replaced card, lookups finding a card only a mirror holds with a dead
+      mirror among them, `mirrors: false`, `setRelays` moving a live
+      subscription, `Agent.setRelays`); CLI `test/relays.test.ts` (URL
+      rules, the default-mirror rule, add / remove / last relay, the card
+      republished on the removed relay, a running `rdv listen` following a
+      change, `card publish --mirror` with a rejecting mirror and its
+      cooldown, a lookup found through a mirror); MCP (`rdv_relays`
+      validation, the server moving at once, `rdv_publish_card` mirror with
+      the relay's text quarantined).
+
 ## Not implemented yet
 
 
