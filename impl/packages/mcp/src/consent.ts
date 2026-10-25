@@ -7,10 +7,12 @@
 // dinner, shown only on human-facing channels and never in a tool result.
 // consent.json stores only a salted scrypt hash of it (issue #12). Each
 // phrase is scoped by action and bound to the digest of what the human was
-// shown: the meeting, the probe answer with the local label it gets, or the
-// request together with the tier, scope and label it grants. Another tier,
-// scope or label, another meeting under the same task ID, or another
-// request under the same ID approves nothing.
+// shown: the meeting, the probe answer with the local label it gets, the
+// request together with the tier, scope and label it grants, or the existing
+// contact with the tier and scope it is granted (issue #1). Another tier,
+// scope or label, another meeting under the same task ID, another request
+// under the same ID, or another contact under the same agent ID approves
+// nothing.
 export {
   candidateDigest,
   candidateLabel,
@@ -21,6 +23,9 @@ export {
   describeLabel,
   describeTerms,
   dropPhrase,
+  inboundAsks,
+  inboundSubject,
+  inboundTarget,
   type IssuedPhrase,
   issuePhrase,
   MAX_ATTEMPTS,

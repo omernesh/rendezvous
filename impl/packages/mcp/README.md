@@ -93,11 +93,11 @@ the human reads in their own terminal (`rdv contact pending`), below.
 | `rdv_init` | profile, emails[], phones[] (`email` / `phone`: one of each, kept as aliases), relays, public_pointer, calendar, window, tz | agent ID, fingerprint; keeps an existing agent (re-key only with `rdv init --force`). Every address is public; at most 8 |
 | `rdv_addresses` | action `list` / `add` / `remove`, address, public (add; default true) | our addresses, each public or private; `add` / `remove` re-sign and (pointer on) republish the card and re-subscribe at once, like `rdv address`. The owner's own setup, not a consent decision; strict email / E.164 only; contacts are kept |
 | `rdv_status` | — | ID, our addresses (`addresses`, and `our_addresses` with public or private), relays, contacts (`local_label`: what your user called them; `unverified_claims`: the addresses their cards claim; `label_conflict` when two share a label), pending count, negotiation settings, approval mode |
-| `rdv_publish_card` | — | topics published |
-| `rdv_discover` | address | cards found (agent ID, fingerprint, claimed addresses, relays); never a label (anyone can publish a card for any address) |
+| `rdv_publish_card` | — | topics published, and `on_relays`: per public address, whether the relays now serve this card (read back) |
+| `rdv_discover` | address | cards found (agent ID, fingerprint, claimed addresses, relays); never a label (anyone can publish a card for any address), never our own card (for our own address: `own_card_on_relays`) |
 | `rdv_request_contact` | target (email, +phone, or agent ID), greeting, label (probes only) | request ID, local_label (a probe: the address probed, applied only when the human confirms the answer; by agent ID: none, and a `label` is refused) |
 | `rdv_pending_requests` | — | requests with fingerprint, binding, how they arrived, untrusted greeting |
-| `rdv_grant` | request_id, tier, may_propose_meetings, confirm_phrase, label; or grant_id (+ confirm_phrase, label) to confirm a probe answer | contact (needs the human, below) |
+| `rdv_grant` | request_id, tier, may_propose_meetings, confirm_phrase, label; or grant_id (+ confirm_phrase, label) to confirm a probe answer; or agent_id (+ tier, may_propose_meetings, confirm_phrase) to grant an existing contact more, which also sends it a reverse grant | contact (needs the human, below) |
 | `rdv_revoke` | agent_id, or request_id / grant_id (+ block) to decline | revoked / declined / rejected |
 | `rdv_send` | agent_id or to (a `local_label`), payload `{type, …}` (not `a2a/*`, `rdv/*`) | agent ID, fingerprint, envelope seq; `to` is refused when no contact, or more than one, has that label |
 | `rdv_inbox` | since cursor, limit, wait_seconds (≤ 60) | events + next_cursor |
@@ -172,6 +172,17 @@ otherwise the first call issues a cancel phrase to the human (stderr and
 `rdv dinner list`) and fails; the human can also run `rdv dinner cancel`.
 The peer's agent frees the evening without asking (it only frees time) and
 reports a `meeting-canceled` event.
+
+**Granting an existing contact more (issue #1).** `rdv_grant` with
+`agent_id` gives a contact (for example one the user requested, which by
+default may write but not propose meetings) the tier and
+`may_propose_meetings` asked for, and sends it a reverse grant so it can use
+them. Same gate: a form showing the contact's fingerprint, local label, its
+rights now and exactly what is granted (the human's tier and meetings choice
+win), or a confirm phrase issued on the model's first call and bound to that
+contact and those terms (stderr and `rdv contact pending`). The contact is
+checked again under the lock where the grant happens; one revoked and made
+again under the same agent ID is refused (NOTES 66).
 
 No tool result ever contains a phrase (tests scan every result and the inbox
 resource). Limits (NOTES 57): phrases are not on disk, but a model that can

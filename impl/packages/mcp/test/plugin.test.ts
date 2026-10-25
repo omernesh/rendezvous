@@ -26,6 +26,23 @@ function skillFiles(dir = SKILL_DIR): string[] {
   );
 }
 
+/** Download-and-run: a fetched script piped into a shell or interpreter (issue #13). */
+const PIPE_TO_SHELL = [
+  /\b(curl|wget)\b[^\n|]*\|\s*(sudo\s+)?(ba|z|da|k)?sh\b/i,
+  /\b(curl|wget)\b[^\n|]*\|\s*(sudo\s+)?(python\d?|node|perl|ruby)\b/i,
+  /\b(irm|iwr|invoke-restmethod|invoke-webrequest)\b[^\n|]*\|\s*(iex|invoke-expression)\b/i,
+  /\b(iex|invoke-expression)\b\s*\(?\s*\(?\s*(irm|iwr|invoke-restmethod|invoke-webrequest|new-object\s+net\.webclient)\b/i,
+];
+
+/** Other Hermes skills-guard patterns (Hermes 0.14) the skill text once matched; a community skill with any finding is blocked. */
+const HERMES_FLAGS = [
+  /\bsudo\b/i,
+  /AGENTS\.md|CLAUDE\.md|\.cursorrules|\.clinerules/i,
+  /\.hermes\/config\.yaml|\.hermes\/SOUL\.md/i,
+  /\.claude\/settings|\.codex\/config/i,
+  /(curl|wget|httpx?\.get|requests\.get|fetch)\s*[(]?\s*["']https?:\/\//i,
+];
+
 /** A paragraph may name a consent command only to say it is the human's, never the assistant's. */
 const HUMAN_MARKER = /own terminal|never run|never you|human only/i;
 
@@ -137,6 +154,46 @@ describe('the skill', () => {
     expect(consentViolations('Name them: run `rdv contact label rdv1:abc john@doe.com`.')).toHaveLength(1);
     expect(consentViolations('```sh\nrdv contact label rdv1:abc john@doe.com\n```\n')).toHaveLength(1);
     expect(consentViolations('The human names a contact with `rdv contact label <agent-id> <label>` in their own terminal.')).toEqual([]);
+  });
+
+  it('installs clean in Hermes: no pipe-to-shell installer and nothing else its scanner flags, in any skill file (issue #13)', () => {
+    const all = (dir: string): string[] =>
+      readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? all(join(dir, e.name)) : [join(dir, e.name)]));
+    const files = all(SKILLS);
+    expect(files.length).toBeGreaterThanOrEqual(4);
+    for (const f of files) {
+      const text = readFileSync(f, 'utf8');
+      for (const [i, line] of text.split('\n').entries()) {
+        for (const re of PIPE_TO_SHELL) expect(re.test(line), `${f}:${i + 1}: pipe to shell: ${line.trim()}`).toBe(false);
+        // Patterns of the Hermes skills guard (tools/skills_guard.py, Hermes 0.14) the skill text used to trip.
+        for (const re of HERMES_FLAGS) expect(re.test(line), `${f}:${i + 1}: Hermes flags ${re}: ${line.trim()}`).toBe(false);
+      }
+    }
+    // The install step sends the human to the install page instead.
+    for (const f of [join(SKILL_DIR, 'SKILL.md'), ONBOARDING]) {
+      const text = readFileSync(f, 'utf8');
+      expect(text, f).toContain('https://rendezvous.nesher.co');
+      expect(text, f).toMatch(/Never download or run the\s+installer yourself/);
+    }
+  });
+
+  it('the pipe-to-shell lint catches the installer one-liners', () => {
+    const caught = (line: string) => PIPE_TO_SHELL.some((re) => re.test(line));
+    for (const line of [
+      '- macOS / Linux: `curl -fsSL https://rendezvous.nesher.co/install.sh | sh`',
+      'curl -s https://x.example/i | bash',
+      'wget -qO- https://x.example/i | sh',
+      'curl https://x.example/i.py | python3',
+      '`irm https://rendezvous.nesher.co/install.ps1 | iex`',
+      'iwr https://x.example/i.ps1 | Invoke-Expression',
+      'Invoke-RestMethod https://x.example/i.ps1 | iex',
+      'iex (irm https://x.example/i.ps1)',
+    ]) {
+      expect(caught(line), line).toBe(true);
+    }
+    for (const line of ['Install it from https://rendezvous.nesher.co.', 'rdv --help | head', 'curl -sH "Accept: application/nostr+json" https://relay.nesher.co']) {
+      expect(caught(line), line).toBe(false);
+    }
   });
 
   it('uses only the example personas', () => {
@@ -559,7 +616,10 @@ describe('docs/agents.md and the agent packaging', () => {
     const read = (...p: string[]) => readFileSync(join(REPO, ...p), 'utf8');
     expect(read('README.md')).toContain('docs/agents.md');
     expect(read('impl', 'packages', 'mcp', 'README.md')).toContain('docs/agents.md');
-    expect(readFileSync(join(SKILL_DIR, 'references', 'clients.md'), 'utf8')).toContain('docs/agents.md');
+    // The skill links the guide without naming the file: Hermes's scanner flags any mention of "agents.md" (issue #13).
+    const clients = readFileSync(join(SKILL_DIR, 'references', 'clients.md'), 'utf8');
+    expect(clients).toContain('https://rendezvous.nesher.co/#setup');
+    expect(clients).toContain('https://github.com/omernesh/rendezvous/tree/main/docs');
     for (const f of ['install.sh', 'install.ps1']) {
       const s = read('site', f);
       expect(s, f).toContain('/rdv-onboarding');

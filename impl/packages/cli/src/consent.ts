@@ -27,8 +27,12 @@
 //   62): a label decides who "tell John" reaches, so the model can't pick
 //   one the human never saw. Another label means another phrase, shown to
 //   the human with that label.
+// - An inbound phrase (issue #1: grant an existing contact rights towards us,
+//   which also sends it a reverse grant) is bound to that contact as the
+//   human saw it (`subject`: peer, founding grant, binding, since, local
+//   label) and to the tier and scope shown (`terms`), like a request.
 import { createHash, randomBytes, randomInt, scryptSync, timingSafeEqual } from 'node:crypto';
-import { canonicalize, type GrantCandidate, type GrantScope, type PendingRequest, type Tier } from '@rendezvous/core';
+import { canonicalize, type Contact, type GrantCandidate, type GrantScope, type PendingRequest, type Tier } from '@rendezvous/core';
 import { type ConsentAction, type ConsentEntry, type ConsentHash, type ConsentTerms, consentKey, type Home } from './home.js';
 
 export interface PhraseTarget {
@@ -42,7 +46,7 @@ export interface PhraseTarget {
    * even if it was issued for other terms.
    */
   subject?: string;
-  /** request: the tier and scope the phrase approves, shown to the human. */
+  /** request, inbound: the tier and scope the phrase approves, shown to the human. */
   terms?: ConsentTerms;
   /** request, candidate: the local label the contact gets (none if absent), shown to the human. */
   label?: string;
@@ -143,7 +147,37 @@ export function candidateTarget(c: GrantCandidate, label: string | undefined): P
   return { action: 'candidate', id: c.grant.id, subject, digest: candidateLabelDigest(subject, label), ...(label !== undefined ? { label } : {}) };
 }
 
-const ACTIONS: readonly string[] = ['request', 'candidate', 'meeting', 'cancel'];
+/**
+ * What an inbound phrase is about, apart from the terms: this contact as the
+ * human saw it. A contact revoked and made again (another founding grant or
+ * `since`), or renamed, is another subject, so the phrase approves nothing.
+ */
+export function inboundSubject(c: Contact): string {
+  return sha256('rdv1/inbound-consent', { peer: c.peer, grant_id: c.grantId, binding: c.binding, since: c.since, label: c.label ?? null });
+}
+
+/** The phrase target for granting contact `c` exactly this tier and scope towards us (Agent.allowInbound). */
+export function inboundTarget(c: Contact, tier: Tier, scope: GrantScope): PhraseTarget {
+  const subject = inboundSubject(c);
+  const terms: ConsentTerms = { tier, scope };
+  return { action: 'inbound', id: c.peer, subject, digest: termsDigest(subject, terms), terms };
+}
+
+/**
+ * The terms of each usable inbound phrase, by peer. Inbound phrases are issued
+ * only when the model asks, so a re-sync keeps each one for its contact with
+ * these terms (and drops it when the contact is gone).
+ */
+export function inboundAsks(home: Home): Map<string, ConsentTerms> {
+  const asks = new Map<string, ConsentTerms>();
+  for (const [k, e] of Object.entries(load(home).consent)) {
+    const prefix = consentKey('inbound', '');
+    if (e.action === 'inbound' && e.terms && k.startsWith(prefix)) asks.set(k.slice(prefix.length), e.terms);
+  }
+  return asks;
+}
+
+const ACTIONS: readonly string[] = ['request', 'candidate', 'meeting', 'cancel', 'inbound'];
 const isStr = (v: unknown): v is string => typeof v === 'string' && v.length > 0;
 const isHash = (h: unknown): h is ConsentHash =>
   !!h && typeof h === 'object' && isStr((h as ConsentHash).salt) && isStr((h as ConsentHash).hash) && ((h as ConsentHash).digest === undefined || isStr((h as ConsentHash).digest));
@@ -162,6 +196,7 @@ function valid(e: unknown): e is ConsentEntry {
   if (x.previous !== undefined && (!isHash(x.previous) || 'phrase' in x.previous)) return false;
   if (x.label !== undefined && !isStr(x.label)) return false;
   if (x.action === 'candidate') return isStr(x.subject) && x.digest === candidateLabelDigest(x.subject, x.label);
+  if (x.action === 'inbound' && (x.terms === undefined || x.label !== undefined)) return false; // always bound to terms; never sets a label
   if (x.terms !== undefined) {
     try {
       if (!isStr(x.subject) || x.digest !== termsDigest(x.subject, x.terms, x.label)) return false;

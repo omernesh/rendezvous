@@ -220,6 +220,25 @@ export class Agent extends EventEmitter<AgentEvents> {
   }
 
   /**
+   * Whether the relays serve our own current card on an address's topic: the
+   * check after publishing (lookup never returns our own card, so it can't be
+   * used for that). True only if our newest valid card there is the one we
+   * hold now and it still claims the address. Never a discovered peer.
+   */
+  async ownCardOn(address: string): Promise<boolean> {
+    const topic = topicForHint(address);
+    if (!topic) return false;
+    let newest: AddressCard | undefined;
+    for (const d of await this.transport.fetchTopic(topic)) {
+      const check = verifyCard(d);
+      if (!check.ok || check.card.id !== this.id) continue;
+      newest = newest ? newerCard(newest, check.card) : check.card;
+    }
+    if (!newest || newest.created !== this.card.created || newest.sig !== this.card.sig) return false;
+    return newest.discovery?.addresses.some((a) => topicForHint(a.value) === topic) === true;
+  }
+
+  /**
    * Ask for contact. With a card, the request goes straight to the peer in an
    * envelope; with only an address, it is posted on the address's discovery
    * topic for a listening agent to pick up.

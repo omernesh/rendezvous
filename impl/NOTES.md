@@ -591,9 +591,8 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
     Events: core `reverse-grant`, CLI `listen` `{event: "reverse-grant"}`
     with the contact view (`outbound_meetings` is new in every contact
     view), MCP `reverse_grant` (peer fields through `untrusted.ts`,
-    summary built from validated fields). The MCP server still has no tool
-    to grant an existing contact; that stays `rdv contact grant` in a
-    terminal. Test vectors gained `contact_grant` and `reverse_grant`
+    summary built from validated fields). The MCP server grants an
+    existing contact through `rdv_grant` with `agent_id` (item 66). Test vectors gained `contact_grant` and `reverse_grant`
     (deterministic ids, no other vector changed; regenerating now keeps the
     saved sample envelope unless `UPDATE_VECTORS=envelope`).
 
@@ -927,6 +926,70 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
     - Tests: a2a engine and model (old-style peer answers unsupported and
       the sender learns it, card discovery, critical vs ignorable vs
       malformed, reply bounds), CLI init card, MCP event mapping.
+
+## Fixes after the plugin release (0.1.5)
+
+66. **`rdv_grant` with `agent_id`: grant an existing contact more** (issue
+    #1). An MCP-only user can now let a contact they requested propose
+    meetings: `rdv_grant` takes `agent_id` (exactly one of `request_id`,
+    `grant_id`, `agent_id`) with `tier` and `may_propose_meetings`, and calls
+    `Agent.allowInbound`, which also sends the reverse grant (item 60). An
+    extension of `rdv_grant` rather than a new tool, so the one human-gated
+    tool covers every grant and the skill's rules need no new name. `label`
+    is refused with it (an existing contact keeps its local label). The gate
+    is the one of item 57:
+    - **Form:** shows the contact (agent ID, fingerprint, our local label,
+      binding, its rights now) and exactly what is granted; the human can
+      change the tier and the meetings checkbox, and what they leave is what
+      is granted.
+    - **Phrase:** consent action `inbound`, keyed by agent ID. Unlike a
+      request phrase it is issued only when the model asks (the first call
+      without a phrase), for exactly the terms it asked: `subject` =
+      `inboundSubject` (sha256 of peer, founding grant id, binding, `since`,
+      local label) and `digest` = `termsDigest(subject, terms)`. Other terms
+      are refused and the human is shown a phrase for those; the server
+      keeps the phrase while the contact exists (`inboundAsks` in the re-sync)
+      and drops it when the contact goes. `rdv contact pending` (text mode)
+      shows it and re-issues it like the others. An `inbound` entry without
+      terms, or with a label, approves nothing. Tier cap `PHRASE_TIERS`.
+    - **Checked again where the grant happens:** under the home lock the
+      contact must still have the subject the human reviewed (a contact
+      revoked and made again under the same agent ID, or renamed, is
+      refused, and a new phrase is issued); the phrase is dropped only after
+      `allowInbound` went through.
+    The CLI `rdv contact grant <agent-id>` is unchanged. No new human-only
+    command, so the consent guard is unchanged; the skills offer "let them
+    propose meetings too" after a first contact.
+
+67. **The skill installs clean in Hermes** (issue #13). Hermes 0.14 scans a
+    community skill (`tools/skills_guard.py`) and blocks it on **any**
+    finding, not only critical ones. The skill tripped `curl_pipe_shell`
+    (the installer one-liners), `sudo_usage` ("no sudo"),
+    `agent_config_mod` (a link ending `docs/agents.md`: the pattern is
+    `AGENTS\.md`, case-insensitive), `other_agent_config` (Codex's config
+    path) and `remote_fetch` (the NIP-11 check's `fetch('https://…')`). The
+    scan is static, so showing the one-liner as text for the human trips
+    it as much as running it: the skills now send the human to the Install
+    section of https://rendezvous.nesher.co and say never to run the
+    installer themselves; the relay check takes its URL as an argument.
+    Verified with Hermes's own `scan_skill` (verdict `SAFE` for both skills)
+    and `hermes skills install` from the branch. `plugin.test.ts` lints every
+    file under `plugins/rendezvous/skills` for pipe-to-shell (POSIX and
+    PowerShell forms) and for those Hermes patterns. `docs/agents.md` no
+    longer tells Hermes users to add `--force`.
+
+68. **Checking our own published card** (issue #14). `Agent.lookup` skips
+    our own card, so `rdv_discover` on the user's own address could never
+    confirm a publish, and onboarding step 9 always failed. `lookup` is
+    unchanged (our card is never a discovered peer). New
+    `Agent.ownCardOn(address)`: true only if the newest valid card of ours
+    on that topic is the one we hold now (same `created` and `sig`) and it
+    still claims the address. `rdv_publish_card` reads the card back after
+    publishing (a few short retries) and returns `on_relays` (`address`,
+    `served`) per public address; `rdv_discover` on one of our own
+    addresses adds `own_card_on_relays`. Per-relay OK results were not used:
+    the transport accepts a publish once any relay does, and reading back
+    is what the user actually needs to know.
 
 ## Not implemented yet
 

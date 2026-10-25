@@ -307,7 +307,9 @@ export async function onboardingFlow(
   // Asking again keeps the agent (the skill may call rdv_init on an existing home).
   const again = await ok(omer, 'rdv_init', { profile: 'omer', email: omerAt, relays: opts.relays });
   expect(again).toMatchObject({ created: false, agent_id: o.agent_id });
-  expect((await ok(omer, 'rdv_publish_card')).published).toBe(true);
+  // Onboarding step 9 verifies the publish on what the relays serve back (issue #14).
+  expect(await ok(omer, 'rdv_publish_card')).toMatchObject({ published: true, on_relays: [{ address: omerAt, served: true }] });
+  expect(await ok(omer, 'rdv_discover', { address: omerAt })).toMatchObject({ own_card_on_relays: true, found: 0 });
   expect((await john.call('rdv_publish_card')).isError).toBe(true); // John chose not to be findable
   await new Promise((r) => setTimeout(r, 300)); // subscriptions settle
 
