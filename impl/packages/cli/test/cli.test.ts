@@ -132,6 +132,39 @@ describe('rdv commands', () => {
     expect(usage.code).toBe(2);
   });
 
+  it('first-run text: init prints next steps, whoami words the unpublished relays and the unset passphrase calmly (issue #58)', async () => {
+    const text = (home: string, args: string[]) => execFileSync(process.execPath, [RDV_BIN, ...args, '--home', home], { encoding: 'utf8', windowsHide: true });
+    // Public pointer on: publishing comes first, then whoami and listen.
+    const pub = join(root, 'ux-public');
+    const a = text(pub, ['init', '--profile', 'omer', '--email', 'omer@example.com', '--relay', relay.url, '--public-pointer']);
+    expect(a).toContain('Next steps:');
+    expect(a.indexOf('rdv card publish --profile omer')).toBeGreaterThan(0);
+    expect(a).toContain('rdv card publish --mirror --profile omer');
+    expect(a.indexOf('rdv card publish')).toBeLessThan(a.indexOf('rdv whoami --profile omer'));
+    expect(a.indexOf('rdv whoami --profile omer')).toBeLessThan(a.indexOf('rdv listen --profile omer'));
+    // Public pointer off: nothing to publish, and the default profile needs no --profile.
+    const priv = join(root, 'ux-private');
+    const b = text(priv, ['init', '--email', 'omer@example.com', '--relay', relay.url]);
+    expect(b).not.toContain('rdv card publish');
+    expect(b).toMatch(/rdv whoami\s+#/);
+    expect(b).toContain('rdv listen');
+    const json = await rdv(['init', '--email', 'omer@example.com', '--relay', relay.url], join(root, 'ux-json'));
+    expect(json.lines[0].next_steps).toEqual(['rdv whoami', 'rdv listen']);
+    // whoami on a fresh home: no alarming first line, a calm optional line, relays "not published yet".
+    const w = text(priv, ['whoami']);
+    expect(w.startsWith('OWNER PASSPHRASE')).toBe(false);
+    expect(w).not.toContain('OWNER PASSPHRASE');
+    expect(w).toContain('owner passphrase: not set (optional');
+    expect(w).toContain(`${relay.url}: not published yet`);
+    expect(w).not.toContain('no ok yet');
+  });
+
+  it('init --public is not an option: the error points at --public-pointer (issue #58)', async () => {
+    const r = await rdv(['init', '--email', 'omer@example.com', '--relay', relay.url, '--public'], join(root, 'ux-bad'), { check: false });
+    expect(r.code).toBe(2);
+    expect(`${r.stdout}${r.stderr ?? ''}`).toContain('--public-pointer');
+  });
+
   it('init without --relay uses the default public relays; an agent made with --relay keeps its own (NOTES 69)', async () => {
     const home = join(root, 'defaults');
     await rdv(['init', '--email', 'omer@example.com'], home);
@@ -162,7 +195,7 @@ describe('rdv commands', () => {
       expect(g).toMatchObject({ url: relay.url, last_error: null, cooldown_until: null });
       expect(Date.parse(g.last_ok)).toBeGreaterThan(Date.now() - 60_000);
       const text = execFileSync(process.execPath, [RDV_BIN, 'whoami', '--home', home], { encoding: 'utf8', windowsHide: true });
-      expect(text).toContain(`${bad.url}: no ok yet; last error`);
+      expect(text).toContain(`${bad.url}: not published yet; last error`);
       expect(text).toContain('(blocked): blocked: kind 30417 is not allowed here; cooling down until');
       // The cooldown is saved in the home, so the next process doesn't hammer the relay either.
       await rdv(['card', 'publish'], home);

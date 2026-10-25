@@ -421,7 +421,10 @@ export async function main(argv: string[]): Promise<number> {
       strict: true,
     }) as { values: cmd.Ctx['values']; positionals: string[] });
   } catch (err) {
-    fallbackOut.error(`${(err as Error).message}\nusage: ${command.usage}`);
+    const msg = (err as Error).message;
+    // `rdv init --public` is a natural guess for the public pointer; say which flag it is rather than accept a second spelling.
+    const hint = name === 'init' && /Unknown option '--public'/.test(msg) ? '\nDid you mean --public-pointer (publish your address on a public discovery topic)?' : '';
+    fallbackOut.error(`${msg}${hint}\nusage: ${command.usage}`);
     return 2;
   }
   if (values.help) {

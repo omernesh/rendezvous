@@ -51,6 +51,7 @@ import {
   checkOwnerSecret,
   clearOwnerSecret,
   hasOwnerSecret,
+  NO_OWNER_SECRET_NOTE,
   OWNER_SECRET_MIN,
   ownerSecretInfo,
   ownerSecretLock,
@@ -269,6 +270,21 @@ export async function initHome(home: Home, opts: InitOptions): Promise<{ id: str
   return { id: agent.id, fingerprint: fingerprint(agent.id), config };
 }
 
+/** What to run after `rdv init`: publishing only when a public pointer is on, otherwise just check and listen. */
+function initNextSteps(profile: string, publishable: boolean): { cmd: string; why: string }[] {
+  const p = profile === 'default' ? '' : ` --profile ${profile}`;
+  return [
+    ...(publishable
+      ? [
+          { cmd: `rdv card publish${p}`, why: 'make your address findable on your relays' },
+          { cmd: `rdv card publish --mirror${p}`, why: 'optional: also put it on the discovery mirrors' },
+        ]
+      : []),
+    { cmd: `rdv whoami${p}`, why: 'check your id, addresses and relays' },
+    { cmd: `rdv listen${p}`, why: 'receive contact requests and messages' },
+  ];
+}
+
 export async function init({ home, out, values, tty }: Ctx): Promise<void> {
   const profile = str(values.profile) ?? process.env.RDV_PROFILE ?? 'default';
   const r = await initHome(home, {
@@ -279,9 +295,10 @@ export async function init({ home, out, values, tty }: Ctx): Promise<void> {
     publicPointer: values['public-pointer'] === true,
     force: values.force === true,
   });
+  const next = initNextSteps(profile, r.config.public_pointer && r.config.addresses.some((a) => !a.private));
   out.emit(
-    { event: 'init', id: r.id, fingerprint: r.fingerprint, profile, home: home.dir },
-    `initialized profile "${profile}" at ${home.dir}\nid:          ${r.id}\nfingerprint: ${r.fingerprint}`,
+    { event: 'init', id: r.id, fingerprint: r.fingerprint, profile, home: home.dir, next_steps: next.map((n) => n.cmd) },
+    `initialized profile "${profile}" at ${home.dir}\nid:          ${r.id}\nfingerprint: ${r.fingerprint}\n\nNext steps:\n${next.map((n) => `  ${n.cmd.padEnd(34)} # ${n.why}`).join('\n')}`,
   );
   // Setup is where the owner is surely at their own terminal: offer the owner passphrase now (issue #47), so it
   // is theirs before any assistant could set the first one. Only in a real interactive terminal; Enter skips.
@@ -319,7 +336,7 @@ export function relayHealth(home: Home, config: Config): RelayStatus[] {
 }
 
 function relayHealthLine(r: RelayStatus): string {
-  const parts = [r.last_ok ? `last ok ${r.last_ok}` : 'no ok yet'];
+  const parts = [r.last_ok ? `last ok ${r.last_ok}` : 'not published yet'];
   if (r.last_error) parts.push(`last error ${r.last_error.at} (${r.last_error.kind}): ${clean(r.last_error.message)}`);
   if (r.cooldown_until) parts.push(`cooling down until ${r.cooldown_until}`);
   return `  ${r.url}: ${parts.join('; ')}`;
@@ -342,8 +359,10 @@ export async function whoami({ home, out }: Ctx): Promise<void> {
       card: agent.card,
     },
     [
-      // First, where the owner sees it: the first passphrase is trust on first use (issue #47).
-      `OWNER PASSPHRASE: ${owner.note}${owner.locked_until ? ` (locked until ${owner.locked_until} after wrong answers)` : ''}`,
+      // First, where the owner sees it: the first passphrase is trust on first use (issue #47). A fresh install has
+      // none and nothing to warn about (auto-approve simply cannot be on), so that case is a calm line further down;
+      // every other state (set, reset, deleted, unreadable) keeps the notice up here.
+      ...(owner.note === NO_OWNER_SECRET_NOTE ? [] : [`OWNER PASSPHRASE: ${owner.note}${owner.locked_until ? ` (locked until ${owner.locked_until} after wrong answers)` : ''}`]),
       `id:          ${agent.id}`,
       `fingerprint: ${fp}`,
       `profile:     ${config.profile} (${home.dir})`,
@@ -352,6 +371,7 @@ export async function whoami({ home, out }: Ctx): Promise<void> {
       ...health.map(relayHealthLine),
       `mirrors:     ${mirrorRelaysOf(config).length} discovery mirror(s) (rdv relays list)`,
       `public pointer: ${config.public_pointer ? 'on' : 'off'}`,
+      ...(owner.note === NO_OWNER_SECRET_NOTE ? ['owner passphrase: not set (optional; only needed to turn on auto-approve, with "rdv owner-secret set" in your own terminal)'] : []),
       'card:',
       JSON.stringify(agent.card, null, 2),
     ].join('\n'),

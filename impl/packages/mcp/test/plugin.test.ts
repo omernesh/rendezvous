@@ -934,6 +934,18 @@ describe('the direct-transfer setting is the human’s (issue #26)', () => {
   });
 });
 
+describe('xargs cannot feed any human-only command group (issue #58)', () => {
+  it.each(['contact', 'dinner', 'task', 'file', 'owner-secret', 'relays'])('echo x | xargs rdv %s is refused', (g) => {
+    expect(checkCommand(`echo x | xargs rdv ${g}`)).toBeTruthy();
+    expect(checkCommand(`echo x | xargs npx rdv ${g.toUpperCase()}`)).toBeTruthy();
+    // With a value-taking flag first the tail has two words, so only the group name itself gives it away.
+    expect(checkCommand(`echo x | xargs rdv --home h ${g}`)).toBeTruthy();
+  });
+  it('xargs with a complete, harmless command is still allowed', () => {
+    expect(checkCommand('echo omer | xargs rdv address list --profile')).toBeUndefined();
+  });
+});
+
 describe('the skill covers general tasks, files and auto-approve (issue #29)', () => {
   const skill = readFileSync(join(SKILL_DIR, 'SKILL.md'), 'utf8');
   const tasksRef = readFileSync(join(SKILL_DIR, 'references', 'tasks.md'), 'utf8');

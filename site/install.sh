@@ -31,7 +31,25 @@ step() {
 }
 
 need() {
-  command -v "$1" >/dev/null 2>&1 || die "$1 is required but was not found on PATH"
+  command -v "$1" >/dev/null 2>&1 && return 0
+  case "$1" in
+    git)
+      case "$(uname -s 2>/dev/null)" in
+        Darwin) hint='Install it with: xcode-select --install (or: brew install git)' ;;
+        Linux)
+          if command -v apt-get >/dev/null 2>&1; then hint='Install it with: sudo apt-get install git'
+          elif command -v dnf >/dev/null 2>&1; then hint='Install it with: sudo dnf install git'
+          elif command -v yum >/dev/null 2>&1; then hint='Install it with: sudo yum install git'
+          elif command -v pacman >/dev/null 2>&1; then hint='Install it with: sudo pacman -S git'
+          elif command -v zypper >/dev/null 2>&1; then hint='Install it with: sudo zypper install git'
+          elif command -v apk >/dev/null 2>&1; then hint='Install it with: sudo apk add git'
+          else hint='Install it from https://git-scm.com/downloads'; fi ;;
+        *) hint='Install it from https://git-scm.com/downloads' ;;
+      esac
+      die "git is required but was not found on PATH. $hint, then run this installer again" ;;
+    node | npm) die "$1 is required but was not found on PATH. Get Node.js 20 or newer from https://nodejs.org" ;;
+    *) die "$1 is required but was not found on PATH" ;;
+  esac
 }
 
 # Refuse paths that cannot be embedded safely in a double-quoted shim line.
@@ -41,10 +59,35 @@ check_path() {
   esac
 }
 
+# A repo URL in one spelling: no trailing slash or ".git", and a lowercase scheme
+# and host (the path keeps its case). Local paths only lose the trailing slash/".git".
+norm_repo() {
+  u=$1
+  while :; do
+    case "$u" in
+      */) u=${u%/} ;;
+      *.git) u=${u%.git} ;;
+      *) break ;;
+    esac
+  done
+  case "$u" in
+    *://*)
+      scheme=${u%%://*}
+      rest=${u#*://}
+      host=${rest%%/*}
+      path=${rest#"$host"}
+      scheme=$(printf '%s' "$scheme" | tr 'A-Z' 'a-z')
+      host=$(printf '%s' "$host" | tr 'A-Z' 'a-z')
+      u="$scheme://$host$path" ;;
+  esac
+  printf '%s' "$u"
+}
+
 # Is the existing clone's origin the repo we were asked for? Local paths are
 # compared after resolving them, since git may store them in another spelling.
 same_repo() {
   [ "$1" = "$2" ] && return 0
+  [ "$(norm_repo "$1")" = "$(norm_repo "$2")" ] && return 0
   [ -d "$1" ] && [ -d "$2" ] || return 1
   a=$(git -C "$1" rev-parse --absolute-git-dir 2>/dev/null) || return 1
   b=$(git -C "$2" rev-parse --absolute-git-dir 2>/dev/null) || return 1
@@ -133,7 +176,8 @@ main() {
   cat <<EOF
 
 Next steps:
-  rdv init --profile omer --email omer@example.com   # the default public relays; --relay wss://… for your own
+  rdv init --profile omer --email omer@example.com --public-pointer   # default public relays; --relay wss://… for your own
+  rdv card publish --profile omer    # make the address findable (--public-pointer above is what allows it)
   rdv whoami --profile omer
   rdv listen --profile omer
 

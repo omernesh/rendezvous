@@ -28,18 +28,42 @@
   # Run a native command and stop on a non-zero exit code
   # ($ErrorActionPreference does not cover native commands in PowerShell 5.1).
   function Run([string]$exe, [string[]]$argv) {
+    $real = Tool $exe
+    if ($real) { $exe = $real }
     & $exe @argv
     if ($LASTEXITCODE -ne 0) { Fail "'$exe $($argv -join ' ')' exited with code $LASTEXITCODE" }
   }
+  # Resolve a tool to its real executable. Windows PowerShell 5.1 under a Restricted execution policy refuses
+  # npm.ps1 (a bare `npm` finds it first, with a misleading message), so ask for npm.cmd / git.exe by name.
+  function Tool([string]$name) {
+    $file = switch ($name) { 'npm' { 'npm.cmd' } 'git' { 'git.exe' } 'node' { 'node.exe' } default { $name } }
+    $c = Get-Command $file -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $c) { $c = Get-Command $name -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1 }
+    if ($c) { return $c.Source }
+    return $null
+  }
   function Need([string]$name) {
-    if (-not (Get-Command $name -ErrorAction SilentlyContinue)) {
-      Fail "$name is required but was not found on PATH"
+    if (Tool $name) { return }
+    if ($name -eq 'git') {
+      Fail 'git is required but was not found on PATH. Install it with: winget install --id Git.Git -e (or from https://git-scm.com/download/win), open a new terminal, then run this installer again'
     }
+    if ($name -eq 'node' -or $name -eq 'npm') {
+      Fail "$name is required but was not found on PATH. Get Node.js 20 or newer from https://nodejs.org (or: winget install OpenJS.NodeJS.LTS)"
+    }
+    Fail "$name is required but was not found on PATH"
+  }
+  # A repo URL in one spelling: no trailing slash or ".git", lowercase scheme and host (the path keeps its case).
+  function NormRepo([string]$u) {
+    $u = $u.Trim()
+    while ($u -match '(/|\.git)$') { $u = $u -replace '(/|\.git)$', '' }
+    if ($u -match '^([A-Za-z][A-Za-z0-9+.-]*)://([^/]*)(.*)$') { $u = $Matches[1].ToLower() + '://' + $Matches[2].ToLower() + $Matches[3] }
+    return $u
   }
 
   # --- prerequisites -------------------------------------------------------
   Need 'git'; Need 'node'; Need 'npm'
-  $nodeVersion = (& node -p 'process.versions.node')
+  $Node = Tool 'node'; $Npm = Tool 'npm'; $Git = Tool 'git'
+  $nodeVersion = (& $Node -p 'process.versions.node')
   if ($LASTEXITCODE -ne 0 -or -not $nodeVersion) { Fail 'could not read the Node.js version' }
   $nodeMajor = [int]($nodeVersion.Trim().Split('.')[0])
   if ($nodeMajor -lt 20) { Fail "Node.js 20 or newer is required (found v$nodeVersion). Get it from https://nodejs.org" }
@@ -49,17 +73,17 @@
   if ($env:RDV_BIN_DIR) {
     $BinDir = $env:RDV_BIN_DIR
   } else {
-    $BinDir = (& npm prefix -g)
+    $BinDir = (& $Npm prefix -g)
     if ($LASTEXITCODE -ne 0 -or -not $BinDir) { Fail "could not read npm's global prefix (npm prefix -g)" }
     $BinDir = $BinDir.Trim()
   }
-  Step "node v$nodeVersion, $(& git --version), npm $(& npm --version)"
+  Step "node v$nodeVersion, $(& $Git --version), npm $(& $Npm --version)"
 
   # --- clone or update ------------------------------------------------------
   if (Test-Path -LiteralPath (Join-Path $Dir '.git')) {
-    $origin = (& git -C $Dir remote get-url origin)
+    $origin = (& $Git -C $Dir remote get-url origin)
     if ($LASTEXITCODE -ne 0) { Fail "$Dir is a git clone without an 'origin' remote" }
-    if ($origin.Trim() -ne $Repo) {
+    if ((NormRepo "$origin") -ne (NormRepo $Repo) -and $origin.Trim() -ne $Repo) {
       Fail "$Dir is a clone of '$($origin.Trim())', not '$Repo'. Move it away or set RDV_DIR"
     }
     Step "Updating $Dir"
@@ -133,7 +157,8 @@
   Write-Host @"
 
 Next steps:
-  rdv init --profile omer --email omer@example.com   # the default public relays; --relay wss://... for your own
+  rdv init --profile omer --email omer@example.com --public-pointer   # default public relays; --relay wss://... for your own
+  rdv card publish --profile omer    # make the address findable (--public-pointer above is what allows it)
   rdv whoami --profile omer
   rdv listen --profile omer
 
