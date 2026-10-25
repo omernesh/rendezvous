@@ -13,13 +13,26 @@
 // own. A "round" is one offer; after 3 offers without agreement the receiver
 // of the third declines and the task ends `rejected` on both sides.
 //
+// Agreement is a two-step handshake (issue #5), with our human in the loop
+// (issue #8) unless `ctx.autoConfirm`:
+//   accepter  picks a slot and holds it tentatively ('human-accept': waits for
+//             its human, confirmMeeting), then sends meeting/accept
+//             ('peer-confirm': waits for the offerer)
+//   offerer   checks the slot is still free, holds it tentatively
+//             ('human-confirm'), then sends meeting/confirm → completed
+//   accepter  on meeting/confirm → completed, acknowledged by a status update
+// A tentative hold is released (a `release` effect) when the task is canceled,
+// declined or expires instead. Every hold, tentative or final, makes the slot
+// busy for all our other tasks.
+//
 // Task states (A2A v0.3), the same on both sides once messages arrive:
 //   submitted       proposal sent, no answer yet
 //   input-required  the responder countered (the proposer must answer)
 //   working         the proposer countered back (the responder must answer)
-//   completed       a slot was accepted        → both sides hold it
+//   completed       a slot was accepted and confirmed → both sides hold it
 //   rejected        declined, rounds used up, or expired
 //   canceled        rdv/cancel while pending (or before the proposal arrived)
+// `task.hold` and its stage refine a pending state while a slot is held.
 import {
   type A2AMessage,
   type A2APayload,
@@ -38,6 +51,17 @@ export interface MeetingScope {
   may_propose_meetings?: boolean;
   may_access_calendar?: string;
   [extra: string]: unknown;
+}
+
+/** A slot held for a task before it is final, and what the task waits for. */
+export interface Hold {
+  slot: Slot;
+  /**
+   * human-accept   we want to accept the peer's slot; our human must confirm (confirmMeeting)
+   * human-confirm  the peer accepted our slot; our human must confirm (confirmMeeting)
+   * peer-confirm   we sent meeting/accept; the peer must send meeting/confirm
+   */
+  stage: 'human-accept' | 'human-confirm' | 'peer-confirm';
 }
 
 export interface NegotiationTask {
@@ -59,6 +83,8 @@ export interface NegotiationTask {
   place?: Place;
   expires: string | null;
   agreed?: Slot;
+  /** Tentatively held slot while pending (issue #5). */
+  hold?: Hold;
   /** Why it ended (for rejected/canceled). Peer-supplied when the peer declined. */
   reason?: string;
   /** Last state the peer reported in an a2a/task-update (informational only). */
@@ -94,6 +120,12 @@ export interface Ctx {
   minutes?: number;
   maxRounds?: number;
   newId?: () => string;
+  /**
+   * Skip the human: accept and confirm on the policy alone (scripted bots,
+   * demos, tests). Default false: the task waits in a `human-*` hold stage
+   * until `confirmMeeting` (issue #8).
+   */
+  autoConfirm?: boolean;
 }
 
 export type EventKind =
@@ -101,7 +133,9 @@ export type EventKind =
   | 'offer-received'
   | 'countered'
   | 'accepted'
+  | 'confirm-needed'
   | 'completed'
+  | 'released'
   | 'rejected'
   | 'canceled'
   | 'expired'
@@ -123,13 +157,25 @@ export interface NegotiationEvent {
   peerText?: string[];
 }
 
+/** Block `slot` in the calendar: tentatively (pending) or for good (completed). */
 export interface HoldEffect {
   kind: 'hold';
   taskId: string;
   peer: string;
   slot: Slot;
   place?: Place;
+  tentative: boolean;
 }
+
+/** Remove this task's tentative hold of `slot` from the calendar. */
+export interface ReleaseEffect {
+  kind: 'release';
+  taskId: string;
+  peer: string;
+  slot: Slot;
+}
+
+export type Effect = HoldEffect | ReleaseEffect;
 
 export interface Outgoing {
   to: string;
@@ -139,7 +185,7 @@ export interface Outgoing {
 export interface Step {
   state: NegotiationState;
   outgoing: Outgoing[];
-  effects: HoldEffect[];
+  effects: Effect[];
   events: NegotiationEvent[];
 }
 
@@ -158,6 +204,12 @@ export const MAX_TASKS_PER_PEER = 32;
 /** `expires` for tasks a peer creates: default when absent, and the latest we accept. */
 export const PEER_EXPIRES_DEFAULT_MS = 48 * 3_600_000;
 export const PEER_EXPIRES_MAX_MS = 7 * 86_400_000;
+/**
+ * How long past `expires` an accepter keeps its tentative hold while waiting
+ * for meeting/confirm. The offerer never confirms after `expires`, so a
+ * confirm sent in time has this long to arrive (relays store for days).
+ */
+export const CONFIRM_GRACE_MS = 24 * 3_600_000;
 
 /** Does the grant let us exchange meeting verbs at all? */
 export function checkScope(scope: MeetingScope | null | undefined): { ok: true } | { ok: false; reason: string } {
@@ -177,7 +229,7 @@ export function checkScope(scope: MeetingScope | null | undefined): { ok: true }
 class Run {
   readonly state: NegotiationState;
   readonly outgoing: Outgoing[] = [];
-  readonly effects: HoldEffect[] = [];
+  readonly effects: Effect[] = [];
   readonly events: NegotiationEvent[] = [];
   readonly now: number;
   readonly nowIso: string;
@@ -258,10 +310,20 @@ class Run {
 
   // --- our calendar -------------------------------------------------------
 
-  isFree(slot: Slot): boolean {
+  /**
+   * Free in our calendar and not held by another of our tasks (tentatively or
+   * agreed): holds are exclusive across tasks, even before the calendar file
+   * shows them (issue #5).
+   */
+  isFree(slot: Slot, taskId?: string): boolean {
     const s = toSpan(slot);
     if (s.start < this.now || !within(s, toSpan(this.ctx.busyRange))) return false;
-    return !this.ctx.busy.some((b) => overlaps(toSpan(b), s));
+    if (this.ctx.busy.some((b) => overlaps(toSpan(b), s))) return false;
+    return !Object.values(this.state.tasks).some((t) => {
+      if (t.id === taskId) return false;
+      const held = t.hold && !isTerminal(t.state) ? t.hold.slot : t.state === 'completed' ? t.agreed : undefined;
+      return held !== undefined && overlaps(toSpan(held), s);
+    });
   }
 
   inWindow(slot: Slot): boolean {
@@ -270,12 +332,12 @@ class Run {
   }
 
   /** Up to 3 free slots from our window, one per local day first, avoiding our earlier offers. */
-  pickSlots(minutes: number, previous: Slot[]): Slot[] {
+  pickSlots(minutes: number, previous: Slot[], taskId?: string): Slot[] {
     const off = this.ctx.offsetMinutes;
     const prev = previous.map(toSpan);
     const free = candidateSlots(this.ctx.window, { now: this.now, minutes, offsetMinutes: off })
       .map((s) => toSlot(s, off))
-      .filter((s) => this.isFree(s) && !prev.some((p) => overlaps(p, toSpan(s))));
+      .filter((s) => this.isFree(s, taskId) && !prev.some((p) => overlaps(p, toSpan(s))));
     const picked: Slot[] = [];
     const days = new Set<number>();
     for (const s of free) {
@@ -299,17 +361,15 @@ class Run {
   /** The peer just made an offer (task.peerOffer). Accept, counter or decline. */
   respond(task: NegotiationTask): void {
     const offer = task.peerOffer ?? [];
-    const pick = offer.find((s) => this.isFree(s) && this.inWindow(s));
+    const pick = offer.find((s) => this.isFree(s, task.id) && this.inWindow(s));
     if (pick) {
-      this.setState(task, 'completed');
-      task.agreed = pick;
-      this.message(task, { rdv: 'meeting/accept', slot: pick, ...(task.place ? { place: task.place } : {}) }, `${describeSlot(pick)} works for me. See you then.`);
-      this.effects.push({ kind: 'hold', taskId: task.id, peer: task.peer, slot: pick, place: task.place });
-      this.event({ kind: 'accepted', taskId: task.id, peer: task.peer, state: task.state, slot: pick, round: task.round });
+      if (this.ctx.autoConfirm) return this.sendAccept(task, pick);
+      this.placeHold(task, pick, 'human-accept');
+      this.event({ kind: 'confirm-needed', taskId: task.id, peer: task.peer, state: task.state, slot: pick, round: task.round });
       return;
     }
     if (task.round >= this.maxRounds) return this.decline(task, `no common time after ${task.round} rounds`);
-    const slots = this.pickSlots(task.minutes, task.ourOffers.flat());
+    const slots = this.pickSlots(task.minutes, task.ourOffers.flat(), task.id);
     if (slots.length === 0) return this.decline(task, 'no free time left in my window');
     task.round += 1;
     task.ourOffers.push(slots);
@@ -319,17 +379,64 @@ class Run {
     this.event({ kind: 'countered', taskId: task.id, peer: task.peer, state: task.state, slots, round: task.round });
   }
 
+  // --- holds and the accept → confirm handshake ---------------------------
+
+  /** Hold `slot` for `task` (tentatively) at `stage`; the calendar effect only once. */
+  placeHold(task: NegotiationTask, slot: Slot, stage: Hold['stage']): void {
+    if (!task.hold) this.effects.push({ kind: 'hold', taskId: task.id, peer: task.peer, slot, place: task.place, tentative: true });
+    task.hold = { slot, stage };
+    task.turn = stage === 'peer-confirm' ? 'peer' : 'us';
+    task.updated = this.nowIso;
+  }
+
+  /** Drop the task's tentative hold, if any (cancel, decline, expiry). */
+  release(task: NegotiationTask): void {
+    if (!task.hold) return;
+    const { slot } = task.hold;
+    delete task.hold;
+    this.effects.push({ kind: 'release', taskId: task.id, peer: task.peer, slot });
+    this.event({ kind: 'released', taskId: task.id, peer: task.peer, slot });
+  }
+
+  /** The meeting is final on our side: the hold stays, for good. */
+  complete(task: NegotiationTask, slot: Slot): void {
+    this.setState(task, 'completed');
+    task.agreed = slot;
+    delete task.hold;
+    this.effects.push({ kind: 'hold', taskId: task.id, peer: task.peer, slot, place: task.place, tentative: false });
+  }
+
+  /** Accepter: send meeting/accept and wait for the offerer's confirm. */
+  sendAccept(task: NegotiationTask, slot: Slot): void {
+    this.placeHold(task, slot, 'peer-confirm');
+    this.message(task, { rdv: 'meeting/accept', slot, ...(task.place ? { place: task.place } : {}) }, `${describeSlot(slot)} works for me. Please confirm.`);
+    this.event({ kind: 'accepted', taskId: task.id, peer: task.peer, state: task.state, slot, round: task.round });
+  }
+
+  /** Offerer: the peer accepted `slot`; make it final and tell them. */
+  sendConfirm(task: NegotiationTask, slot: Slot, peerText?: string[]): void {
+    this.complete(task, slot);
+    this.message(task, { rdv: 'meeting/confirm', slot }, `Confirmed: ${describeSlot(slot)}. See you then.`);
+    this.event({ kind: 'completed', taskId: task.id, peer: task.peer, state: task.state, slot, round: task.round, peerText });
+  }
+
   decline(task: NegotiationTask, reason: string): void {
+    this.release(task);
     this.setState(task, 'rejected', reason);
     this.message(task, { rdv: 'meeting/decline', reason }, `Sorry, I couldn't find a time: ${reason}.`);
     this.event({ kind: 'rejected', taskId: task.id, peer: task.peer, state: task.state, reason, round: task.round });
   }
 
-  /** Pending task past its `expires`: reject it and tell the peer. */
+  /**
+   * Pending task past its `expires`: reject it, release its hold and tell the
+   * peer. An accepter waiting for meeting/confirm waits CONFIRM_GRACE_MS longer.
+   */
   expireIfDue(task: NegotiationTask): boolean {
     if (isTerminal(task.state) || task.expires === null) return false;
     const exp = parseInstant(task.expires);
-    if (exp !== null && !(this.now > exp)) return false; // an unreadable expires counts as expired (fail closed)
+    const grace = task.hold?.stage === 'peer-confirm' ? CONFIRM_GRACE_MS : 0;
+    if (exp !== null && !(this.now > exp + grace)) return false; // an unreadable expires counts as expired (fail closed)
+    this.release(task);
     this.setState(task, 'rejected', 'expired');
     this.message(task, { rdv: 'meeting/decline', reason: 'expired' }, 'This dinner proposal expired.');
     this.event({ kind: 'expired', taskId: task.id, peer: task.peer, state: task.state, reason: 'expired' });
@@ -439,10 +546,18 @@ function handle(run: Run, from: string, payload: unknown, ctx: Ctx): void {
       run.event({ kind: 'ignored', taskId: u.taskId, peer: from, reason: 'status update for an unknown task' });
       return;
     }
-    // Informational: the peer's view never overrides ours.
+    // Informational: the peer's view never overrides ours, with one exception
+    // that only reduces: a peer that reports the task ended (canceled or
+    // rejected) while we hold a slot for it will never confirm (issue #5).
     if (task.peerState !== u.status.state) {
       task.peerState = u.status.state;
       run.event({ kind: 'status', taskId: task.id, peer: from, state: task.state, reason: `peer reports ${u.status.state}` });
+    }
+    const ended = u.status.state;
+    if ((ended === 'canceled' || ended === 'rejected') && task.hold && !isTerminal(task.state)) {
+      run.release(task);
+      run.setState(task, ended, `peer reports ${ended}`);
+      run.event({ kind: ended, taskId: task.id, peer: from, state: task.state, reason: task.reason });
     }
     return;
   }
@@ -498,6 +613,7 @@ function handle(run: Run, from: string, payload: unknown, ctx: Ctx): void {
       return;
     }
     existing.seen.push(m.messageId);
+    run.release(existing);
     run.setState(existing, 'canceled', data.reason ?? 'canceled by peer');
     run.statusUpdate(existing);
     run.event({ kind: 'canceled', taskId: existing.id, peer: from, state: existing.state, reason: existing.reason, peerText: text });
@@ -547,10 +663,23 @@ function handle(run: Run, from: string, payload: unknown, ctx: Ctx): void {
   }
   if (data.rdv === 'meeting/decline') {
     existing.seen.push(m.messageId);
+    run.release(existing);
     run.setState(existing, 'rejected', data.reason);
     run.event({ kind: 'rejected', taskId: existing.id, peer: from, state: existing.state, reason: data.reason, peerText: text });
     return;
   }
+  const awaitingConfirm = existing.hold?.stage === 'peer-confirm' ? existing.hold : undefined;
+  if (data.rdv === 'meeting/confirm') {
+    if (!awaitingConfirm) return invalid('meeting/confirm without an accept from us');
+    if (!sameSpan(toSpan(data.slot), toSpan(awaitingConfirm.slot))) return invalid('confirm of a slot we did not accept');
+    existing.seen.push(m.messageId);
+    // Honored even past `expires`: within the grace, the offerer confirmed in time.
+    run.complete(existing, awaitingConfirm.slot);
+    run.statusUpdate(existing);
+    run.event({ kind: 'completed', taskId: existing.id, peer: from, state: existing.state, slot: existing.agreed, round: existing.round, peerText: text });
+    return;
+  }
+  if (awaitingConfirm) return invalid(`${data.rdv} while waiting for meeting/confirm`);
   if (existing.turn !== 'peer') return invalid(`${data.rdv} out of turn`);
 
   if (data.rdv === 'meeting/counter') {
@@ -570,13 +699,13 @@ function handle(run: Run, from: string, payload: unknown, ctx: Ctx): void {
   const ours = lastOffer.find((s) => sameSpan(toSpan(s), wanted));
   if (!ours) return invalid('accept of a slot that was never offered');
   existing.seen.push(m.messageId);
-  // Honored even if `expires` passed meanwhile: the peer may have accepted in time and already holds the slot.
-  run.setState(existing, 'completed');
-  existing.agreed = ours;
-  run.effects.push({ kind: 'hold', taskId: existing.id, peer: from, slot: ours, place: existing.place });
-  run.statusUpdate(existing);
-  run.event({ kind: 'completed', taskId: existing.id, peer: from, state: existing.state, slot: ours, round: existing.round, peerText: text });
-  return;
+  // The accepter holds only tentatively until we confirm, so a late accept is declined (and released there).
+  if (run.expireIfDue(existing)) return;
+  // Offers are not held: another task may have taken the slot since (holds are exclusive).
+  if (!run.isFree(ours, existing.id)) return run.decline(existing, 'that time is no longer free');
+  if (ctx.autoConfirm) return run.sendConfirm(existing, ours, text);
+  run.placeHold(existing, ours, 'human-confirm');
+  run.event({ kind: 'confirm-needed', taskId: existing.id, peer: from, state: existing.state, slot: ours, round: existing.round, peerText: text });
 }
 
 /** The owner cancels a pending task (`rdv/cancel`). */
@@ -585,13 +714,39 @@ export function cancel(state: NegotiationState, taskId: string, ctx: Pick<Ctx, '
   const task = run.state.tasks[taskId];
   if (!task) throw new NegotiationError(`no negotiation ${taskId}`);
   if (isTerminal(task.state)) throw new NegotiationError(`negotiation ${taskId} already ${task.state}`);
+  run.release(task);
   run.setState(task, 'canceled', reason ?? 'canceled by us');
   run.message(task, { rdv: 'rdv/cancel', ...(reason ? { reason } : {}) }, 'I need to cancel this dinner proposal.');
   run.event({ kind: 'canceled', taskId, peer: task.peer, state: task.state, reason: task.reason });
   return run.result();
 }
 
-/** Reject every pending task past its `expires` (telling the peer), and prune old finished tasks. */
+/**
+ * Our human confirms the meeting a task is waiting on (issue #8): in
+ * `human-accept` this sends meeting/accept, in `human-confirm` it sends
+ * meeting/confirm and completes the task. A task past `expires` expires
+ * instead. Throws NegotiationError when there is nothing to confirm.
+ */
+export function confirmMeeting(state: NegotiationState, taskId: string, ctx: Pick<Ctx, 'now' | 'newId'>): Step {
+  const run = new Run(state, ctx as Ctx);
+  const task = Object.hasOwn(run.state.tasks, taskId) ? run.state.tasks[taskId] : undefined;
+  if (!task) throw new NegotiationError(`no negotiation ${taskId}`);
+  if (isTerminal(task.state)) throw new NegotiationError(`negotiation ${taskId} already ${task.state}`);
+  const hold = task.hold;
+  if (hold?.stage === 'peer-confirm') throw new NegotiationError(`negotiation ${taskId} is waiting for the peer to confirm, not for you`);
+  if (!hold) throw new NegotiationError(`negotiation ${taskId} has no meeting waiting for your confirmation`);
+  if (run.expireIfDue(task)) return run.result();
+  if (hold.stage === 'human-accept') run.sendAccept(task, hold.slot);
+  else run.sendConfirm(task, hold.slot);
+  return run.result();
+}
+
+/** Does this task wait for our human to confirm a meeting? */
+export const awaitingHuman = (t: NegotiationTask): boolean =>
+  !isTerminal(t.state) && (t.hold?.stage === 'human-accept' || t.hold?.stage === 'human-confirm');
+
+/** Reject every pending task past its `expires`
+ (telling the peer), and prune old finished tasks. */
 export function expire(state: NegotiationState, ctx: Pick<Ctx, 'now' | 'newId'>): Step {
   const run = new Run(state, ctx as Ctx);
   for (const task of Object.values(run.state.tasks)) run.expireIfDue(task);

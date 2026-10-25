@@ -5,7 +5,8 @@
 //   inbox.jsonl  received payloads, one JSON object per line
 //   cards.json   cards found by `rdv lookup` (so `contact request <agent-id>` works)
 //   negotiations.json  dinner negotiations (@rendezvous/a2a engine state)
-//   consent.json  confirm phrases for pending requests (written by the MCP server)
+//   consent.json  confirm phrases for pending requests and meetings (written by the MCP server)
+//   holds.json   which calendar file holds each tentative dinner hold (to release or finalize it)
 //   events.jsonl  inbound events written by the home's one listener, plus rdv-mcp's own (behind rdv_inbox)
 //   events.lock  held while appending to events.jsonl
 //   lock         held while a command reads and writes state
@@ -81,6 +82,9 @@ export class Home {
   }
   get consentPath() {
     return join(this.dir, 'consent.json');
+  }
+  get holdsPath() {
+    return join(this.dir, 'holds.json');
   }
   get lockPath() {
     return join(this.dir, 'lock');
@@ -187,6 +191,15 @@ export class Home {
     writeAtomic(this.consentPath, JSON.stringify(consent, null, 2) + '\n', 0o600);
   }
 
+  /** Task ID → calendar file of its tentative hold. */
+  readHolds(): Record<string, string> {
+    return existsSync(this.holdsPath) ? readJson(this.holdsPath) : {};
+  }
+
+  writeHolds(holds: Record<string, string>): void {
+    writeAtomic(this.holdsPath, JSON.stringify(holds, null, 2) + '\n', 0o600);
+  }
+
   appendInbox(entry: InboxEntry): void {
     appendFileSync(this.inboxPath, JSON.stringify(entry) + '\n', { mode: 0o600 });
   }
@@ -198,7 +211,18 @@ export class Home {
 
   /** `rdv init --force`: drop everything derived from the old key. */
   reset(): void {
-    for (const p of [this.agentPath, this.agentBackupPath, this.configPath, this.inboxPath, this.cardsPath, this.negotiationsPath, this.consentPath, this.eventsPath]) {
+    for (const p of [
+      this.agentPath,
+      this.agentBackupPath,
+      this.configPath,
+      this.inboxPath,
+      this.cardsPath,
+      this.negotiationsPath,
+      this.consentPath,
+      this.eventsPath,
+      this.holdsPath,
+    ]) {
+
       rmSync(p, { force: true });
     }
   }

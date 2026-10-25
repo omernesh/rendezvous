@@ -60,6 +60,7 @@ describe('parsePayload', () => {
       expect(r.value.text).toEqual(['How about Thursday?']);
     }
     expect(reason(msg({ rdv: 'meeting/accept', slot }))).toBe('ok');
+    expect(reason(msg({ rdv: 'meeting/confirm', slot }))).toBe('ok');
     expect(reason(msg({ rdv: 'meeting/decline', reason: 'busy' }))).toBe('ok');
     expect(reason(msg({ rdv: 'rdv/cancel' }))).toBe('ok');
     expect(reason(msg({ rdv: 'meeting/counter', slots: [slot] }, { metadata: { x: 1 }, referenceTaskIds: [U(9)] }))).toBe('ok');
@@ -83,6 +84,7 @@ describe('parsePayload', () => {
     expect(reason(msg({ rdv: 'meeting/propose', slots: [{ ...slot, title: 'Dentist' }] }))).toMatch(/unknown field "title"/);
     expect(reason(msg({ rdv: 'meeting/propose', slots: [slot], expires: 'tomorrow' }))).toMatch(/expires/);
     expect(reason(msg({ rdv: 'meeting/accept', slots: [slot] }))).toMatch(/missing "slot"/);
+    expect(reason(msg({ rdv: 'meeting/confirm', slot, place: { area: 'x' } }))).toMatch(/unknown field "place"/);
     expect(reason(msg({ rdv: 'meeting/decline' }))).toMatch(/missing "reason"/);
     expect(reason(msg({ rdv: 'meeting/decline', reason: 'x'.repeat(201) }))).toMatch(/1–200/);
     expect(reason(msg({ rdv: 'meeting/propose', slots: [slot], place: { name: 'x', url: 'http://evil' } }))).toMatch(/unknown field/);

@@ -17,12 +17,13 @@ import {
   topicForHint,
   verifyCard,
 } from '@rendezvous/core';
-import { cancel, NegotiationError, parseInstant, propose } from '@rendezvous/a2a';
+import { awaitingHuman, cancel, confirmMeeting, NegotiationError, parseInstant, propose, type Step } from '@rendezvous/a2a';
 import { CliError, type Config, Home, type InboxEntry, parseJsonLines } from './home.js';
 import { listen } from './listen.js';
 import { relayTransport } from './transport.js';
 import {
   buildCtx,
+  carryOut,
   DEFAULT_LISTEN_WINDOW,
   dinnerText,
   dinnerView,
@@ -403,10 +404,10 @@ export async function listenCmd({ home, out, values }: Ctx): Promise<void> {
   home.requireInit();
   let negotiate: NegotiateOptions | undefined;
   if (values.negotiate === true) {
-    negotiate = negotiateOpts(values, DEFAULT_LISTEN_WINDOW);
+    negotiate = { ...negotiateOpts(values, DEFAULT_LISTEN_WINDOW), autoConfirm: values['auto-confirm'] === true };
     await validateNegotiateOptions(negotiate);
-  } else if (values.calendar !== undefined || values.window !== undefined) {
-    throw new CliError('--calendar and --window go with --negotiate', 2);
+  } else if (values.calendar !== undefined || values.window !== undefined || values['auto-confirm'] !== undefined) {
+    throw new CliError('--calendar, --window and --auto-confirm go with --negotiate', 2);
   }
   const autoGrant = tierOf(values['auto-grant']);
   const anyTier = values['auto-grant-any-tier'] === true;
@@ -494,27 +495,43 @@ export async function dinnerPropose({ home, out, values, positionals }: Ctx): Pr
   for (const e of step.events) out.emit(dinnerView(e), dinnerText(e));
 }
 
-export async function dinnerCancel({ home, out, values, positionals }: Ctx): Promise<void> {
-  const step = await withAgent(home, async (agent) => {
+/** Run an owner action on the negotiations under the lock: save state, release/hold in the calendar, then send. */
+async function ownerStep(home: Home, out: Ctx['out'], calendar: string | undefined, act: () => Step): Promise<void> {
+  const { step, errors } = await withAgent(home, async (agent) => {
     let s;
     try {
-      s = cancel(home.readNegotiations(), positionals[0], { now: new Date() }, str(values.reason));
+      s = act();
     } catch (err) {
       if (err instanceof NegotiationError) throw new CliError(err.message);
       throw err;
     }
     // Task state first: a crash mid-send leaves a task that expires, not a reply to an unknown task.
     home.writeNegotiations(s.state);
-    for (const o of s.outgoing) await agent.send(o.to, o.payload as unknown as Payload);
-    return s;
+    return { step: s, errors: await carryOut(agent, home, calendar, s) };
   });
   for (const e of step.events) out.emit(dinnerView(e), dinnerText(e));
+  for (const message of errors) out.emit({ event: 'error', message }, `error: ${clean(message)}`);
+}
+
+export async function dinnerCancel({ home, out, values, positionals }: Ctx): Promise<void> {
+  await ownerStep(home, out, str(values.calendar), () => cancel(home.readNegotiations(), positionals[0], { now: new Date() }, str(values.reason)));
+}
+
+/** The human confirms the meeting a negotiation waits on (issue #8): sends meeting/accept or meeting/confirm. */
+export async function dinnerConfirm({ home, out, values, positionals }: Ctx): Promise<void> {
+  await ownerStep(home, out, str(values.calendar), () => confirmMeeting(home.readNegotiations(), positionals[0], { now: new Date() }));
 }
 
 export async function dinnerList({ home, out }: Ctx): Promise<void> {
   home.requireInit();
-  const tasks = await home.locked(async () => Object.values(home.readNegotiations().tasks));
+  const { tasks, consent } = await home.locked(async () => ({ tasks: Object.values(home.readNegotiations().tasks), consent: home.readConsent() }));
   tasks.sort((a, b) => a.created.localeCompare(b.created));
   if (tasks.length === 0 && !out.json) out.emit({}, 'no negotiations');
-  for (const t of tasks) out.emit(taskView(t), taskText(t));
+  // The MCP server's confirm phrase for a meeting, like `contact pending`: text mode only, for the human.
+  const phraseLine = (id: string) => {
+    const phrase = consent[id]?.phrase;
+    return phrase ? `\n  confirm phrase (tell it to your MCP client to confirm this dinner): ${clean(phrase)}` : '';
+  };
+  for (const t of tasks) out.emit(taskView(t), taskText(t) + (awaitingHuman(t) ? phraseLine(t.id) : ''));
 }
+

@@ -320,6 +320,7 @@ describe('negotiation scope by direction (security review H2)', () => {
     window,
     offsetMinutes: 120,
     scope,
+    autoConfirm: true,
   });
   const loud = { may_initiate: true, may_propose_meetings: true, may_access_calendar: 'full' } as const;
   // We requested Mallory; her grant gave us `loud`, our human gave her nothing yet.

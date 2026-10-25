@@ -61,16 +61,18 @@ export interface Place {
   area?: string;
 }
 
-export type Verb = 'meeting/propose' | 'meeting/counter' | 'meeting/accept' | 'meeting/decline' | 'rdv/cancel';
-export const VERBS: readonly Verb[] = ['meeting/propose', 'meeting/counter', 'meeting/accept', 'meeting/decline', 'rdv/cancel'];
+export type Verb = 'meeting/propose' | 'meeting/counter' | 'meeting/accept' | 'meeting/confirm' | 'meeting/decline' | 'rdv/cancel';
+export const VERBS: readonly Verb[] = ['meeting/propose', 'meeting/counter', 'meeting/accept', 'meeting/confirm', 'meeting/decline', 'rdv/cancel'];
 
 export type ProposeData = { rdv: 'meeting/propose'; slots: Slot[]; place?: Place; expires?: string };
 export type CounterData = { rdv: 'meeting/counter'; slots: Slot[]; place?: Place; expires?: string };
 export type OfferData = ProposeData | CounterData;
 export type AcceptData = { rdv: 'meeting/accept'; slot: Slot; place?: Place };
+/** The offerer's answer to an accept: the meeting is final (issue #5). */
+export type ConfirmData = { rdv: 'meeting/confirm'; slot: Slot };
 export type DeclineData = { rdv: 'meeting/decline'; reason: string };
 export type CancelData = { rdv: 'rdv/cancel'; reason?: string };
-export type MeetingData = ProposeData | CounterData | AcceptData | DeclineData | CancelData;
+export type MeetingData = ProposeData | CounterData | AcceptData | ConfirmData | DeclineData | CancelData;
 
 export type ParsedPayload =
   | { kind: 'message'; message: A2AMessage; data: MeetingData; text: string[] }
@@ -179,6 +181,9 @@ function parseData(v: unknown): MeetingData {
       if (v.place !== undefined) out.place = parsePlace(v.place);
       return out;
     }
+    case 'meeting/confirm':
+      keys(v, ['rdv', 'slot'], [], verb);
+      return { rdv: 'meeting/confirm', slot: parseSlot(v.slot) };
     case 'meeting/decline':
       keys(v, ['rdv', 'reason'], [], verb);
       return { rdv: 'meeting/decline', reason: shortString(v.reason, 'reason') };

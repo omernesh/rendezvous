@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
   type A2APayload,
+  awaitingHuman,
   cancel,
+  CONFIRM_GRACE_MS,
+  confirmMeeting,
+  type Effect,
   type Ctx,
   emptyState,
   expire,
@@ -19,6 +23,7 @@ import {
   receive,
   type Slot,
   type Span,
+  sameSpan,
   toSpan,
 } from '../src/index.js';
 
@@ -53,9 +58,10 @@ interface Side {
   holds: Slot[];
   events: NegotiationEvent[];
   newId: () => string;
+  autoConfirm: boolean;
 }
 
-function side(id: string, n: number, opts: Partial<Pick<Side, 'busy' | 'window' | 'offset' | 'scope'>> = {}): Side {
+function side(id: string, n: number, opts: Partial<Pick<Side, 'busy' | 'window' | 'offset' | 'scope' | 'autoConfirm'>> = {}): Side {
   const offset = opts.offset ?? TZ;
   return {
     id,
@@ -67,6 +73,7 @@ function side(id: string, n: number, opts: Partial<Pick<Side, 'busy' | 'window' 
     holds: [],
     events: [],
     newId: ids(n),
+    autoConfirm: opts.autoConfirm ?? true,
   };
 }
 
@@ -78,11 +85,18 @@ const ctxOf = (s: Side, now = NOW): Ctx => ({
   offsetMinutes: s.offset,
   scope: s.scope,
   newId: s.newId,
+  autoConfirm: s.autoConfirm,
 });
 
-function apply(s: Side, step: { state: NegotiationState; effects: { slot: Slot }[]; events: NegotiationEvent[] }) {
+/** Apply a step; `holds` mirrors the calendar (a tentative hold and its final form are one entry). */
+function apply(s: Side, step: { state: NegotiationState; effects: Effect[]; events: NegotiationEvent[] }) {
   s.state = step.state;
-  for (const e of step.effects) s.holds.push(e.slot);
+  for (const e of step.effects) {
+    const i = s.holds.findIndex((h) => sameSpan(toSpan(h), toSpan(e.slot)));
+    if (e.kind === 'release') {
+      if (i >= 0) s.holds.splice(i, 1);
+    } else if (i < 0) s.holds.push(e.slot);
+  }
   s.events.push(...step.events);
 }
 
@@ -126,7 +140,7 @@ describe('negotiation', () => {
     const omer = side(OMER, 1);
     const john = side(JOHN, 2, { busy: [evening(0)] }); // Monday is out for John
     const { taskId, wire } = start(omer, john, { place: { area: 'Tel Aviv' } });
-    expect(verbs(wire)).toEqual(['meeting/propose', 'meeting/accept', 'update:completed']);
+    expect(verbs(wire)).toEqual(['meeting/propose', 'meeting/accept', 'meeting/confirm', 'update:completed']);
     const sent = (wire[0].payload as Extract<A2APayload, { type: 'a2a/message' }>).message;
     const offered = (sent.parts[1] as { data: { slots: Slot[] } }).data.slots;
     // One per day, starting on the first free evening hour.
@@ -136,15 +150,16 @@ describe('negotiation', () => {
       expect(task(s, taskId).agreed).toEqual(evening(1, 19, 21));
       expect(task(s, taskId).place).toEqual({ area: 'Tel Aviv' });
       expect(s.holds).toEqual([evening(1, 19, 21)]);
+      expect(task(s, taskId).hold).toBeUndefined();
     }
-    expect(task(john, taskId).peerState).toBe('completed');
+    expect(task(omer, taskId).peerState).toBe('completed'); // John acknowledged the confirm
   });
 
   it('agrees on round 2 when none of the first offer fits', () => {
     const omer = side(OMER, 1);
     const john = side(JOHN, 2, { busy: [evening(0), evening(1), evening(2)] });
     const { taskId, wire } = start(omer, john);
-    expect(verbs(wire)).toEqual(['meeting/propose', 'meeting/counter', 'meeting/accept', 'update:completed']);
+    expect(verbs(wire)).toEqual(['meeting/propose', 'meeting/counter', 'meeting/accept', 'meeting/confirm', 'update:completed']);
     expect(task(omer, taskId).agreed).toEqual(evening(3, 19, 21));
     expect(task(john, taskId).agreed).toEqual(evening(3, 19, 21));
     expect(task(omer, taskId).round).toBe(2);
@@ -268,11 +283,23 @@ describe('negotiation', () => {
     expect(kinds(receive(omer.state, MALLORY, make({ rdv: 'rdv/cancel' }), ctxOf(omer)))).toEqual(['invalid:task belongs to another peer']);
     expect(task(omer, p.taskId).state).toBe('submitted');
 
-    // John counters; then a second counter from John is out of turn once Omer has answered.
+    // John counters; Omer accepts it and waits for John's confirm: anything else is refused.
     const j = receive(john.state, OMER, p.outgoing[0].payload, ctxOf(john));
     apply(john, j);
     const o = receive(omer.state, JOHN, j.outgoing[0].payload, ctxOf(omer));
     apply(omer, o);
+    expect(task(omer, p.taskId).hold?.stage).toBe('peer-confirm');
+    r = receive(omer.state, JOHN, make({ rdv: 'meeting/counter', slots: [evening(5, 19, 21)] }), ctxOf(omer));
+    expect(kinds(r)).toEqual(['invalid:meeting/counter while waiting for meeting/confirm']);
+    r = receive(omer.state, JOHN, make({ rdv: 'meeting/confirm', slot: evening(5, 19, 21) }), ctxOf(omer));
+    expect(kinds(r)).toEqual(['invalid:confirm of a slot we did not accept']);
+    // A confirm John never had reason to send: Omer is not waiting for one on a fresh task.
+    expect(kinds(receive(emptyState(), JOHN, make({ rdv: 'meeting/confirm', slot: offered[0] }), ctxOf(omer)))).toEqual([
+      'invalid:meeting/confirm for an unknown task',
+    ]);
+    const jc = receive(john.state, OMER, o.outgoing[0].payload, ctxOf(john));
+    apply(john, jc);
+    apply(omer, receive(omer.state, JOHN, jc.outgoing[0].payload, ctxOf(omer)));
     expect(task(omer, p.taskId).state).toBe('completed');
     r = receive(omer.state, JOHN, make({ rdv: 'meeting/counter', slots: [evening(5, 19, 21)] }), ctxOf(omer));
     expect(kinds(r)).toEqual(['ignored:meeting/counter after completed']);
@@ -321,7 +348,7 @@ describe('negotiation', () => {
     const r = receive(omer.state, JOHN, accept, ctxOf(omer));
     expect(r.state.tasks[p.taskId].state).toBe('completed');
     expect(r.state.tasks[p.taskId].agreed).toEqual(evening(1, 19, 21)); // our own representation
-    expect(r.effects).toHaveLength(1);
+    expect(r.effects).toEqual([expect.objectContaining({ kind: 'hold', tentative: false })]);
   });
 
   it('negotiates across time zones', () => {
@@ -332,7 +359,7 @@ describe('negotiation', () => {
       window: parseWindow('2026-10-27T12:00:00-05:00/2026-10-27T16:00:00-05:00', { now: NOW, offsetMinutes: -300 }),
     });
     const { taskId, wire } = start(omer, john);
-    expect(verbs(wire)).toEqual(['meeting/propose', 'meeting/accept', 'update:completed']);
+    expect(verbs(wire)).toEqual(['meeting/propose', 'meeting/accept', 'meeting/confirm', 'update:completed']);
     expect(task(john, taskId).agreed).toEqual({ start: '2026-10-27T19:00:00+02:00', end: '2026-10-27T21:00:00+02:00' });
     // And John's own offers are written in his offset.
     const john2 = side(JOHN, 3, { offset: -300, busy: [], window: parseWindow('next week evenings', { now: NOW, offsetMinutes: -300 }) });
@@ -516,7 +543,160 @@ describe('negotiation', () => {
     });
   });
 
+  describe('human confirmation and the accept → confirm handshake (issues #5, #8)', () => {
+    it('nothing is accepted or confirmed until each human confirms', () => {
+      const omer = side(OMER, 1, { autoConfirm: false });
+      const john = side(JOHN, 2, { autoConfirm: false, busy: [evening(0)] });
+      const p = propose(omer.state, JOHN, ctxOf(omer));
+      apply(omer, p);
+      // John's agent picks Tuesday but only holds it tentatively: no accept goes out.
+      const j = receive(john.state, OMER, p.outgoing[0].payload, ctxOf(john));
+      apply(john, j);
+      expect(j.outgoing).toEqual([]);
+      expect(j.events.map((e) => e.kind)).toEqual(['offer-received', 'confirm-needed']);
+      expect(j.effects).toEqual([expect.objectContaining({ kind: 'hold', tentative: true, slot: evening(1, 19, 21) })]);
+      expect(awaitingHuman(task(john, p.taskId))).toBe(true);
+      // The peer-confirm stage and finished tasks have nothing for the human to confirm.
+      expect(() => confirmMeeting(omer.state, p.taskId, ctxOf(omer))).toThrow(/no meeting waiting/);
+      expect(() => confirmMeeting(omer.state, '00000000-0000-4000-8000-00000000beef', ctxOf(omer))).toThrow(/no negotiation/);
+
+      // John's human confirms: now the accept goes out.
+      const jc = confirmMeeting(john.state, p.taskId, ctxOf(john));
+      apply(john, jc);
+      expect(verbs(jc.outgoing)).toEqual(['meeting/accept']);
+      expect(task(john, p.taskId).hold?.stage).toBe('peer-confirm');
+      expect(() => confirmMeeting(john.state, p.taskId, ctxOf(john))).toThrow(/waiting for the peer/);
+
+      // Omer's agent gets the accept: tentative hold, waits for Omer.
+      const o = receive(omer.state, JOHN, jc.outgoing[0].payload, ctxOf(omer));
+      apply(omer, o);
+      expect(o.outgoing).toEqual([]);
+      expect(o.events.map((e) => e.kind)).toEqual(['confirm-needed']);
+      expect(task(omer, p.taskId).state).toBe('submitted');
+      const oc = confirmMeeting(omer.state, p.taskId, ctxOf(omer));
+      apply(omer, oc);
+      expect(verbs(oc.outgoing)).toEqual(['meeting/confirm']);
+      expect(task(omer, p.taskId).state).toBe('completed');
+      apply(john, receive(john.state, OMER, oc.outgoing[0].payload, ctxOf(john)));
+      for (const s of [omer, john]) {
+        expect(task(s, p.taskId)).toMatchObject({ state: 'completed', agreed: evening(1, 19, 21) });
+        expect(s.holds).toEqual([evening(1, 19, 21)]);
+      }
+      expect(() => confirmMeeting(john.state, p.taskId, ctxOf(john))).toThrow(/already completed/);
+    });
+
+    it('a cancel racing the accept releases the holds on both sides', () => {
+      const omer = side(OMER, 1, { autoConfirm: false });
+      const john = side(JOHN, 2, { busy: [evening(0)] });
+      const p = propose(omer.state, JOHN, ctxOf(omer));
+      apply(omer, p);
+      const j = receive(john.state, OMER, p.outgoing[0].payload, ctxOf(john)); // John accepts, holds Tuesday
+      apply(john, j);
+      expect(john.holds).toEqual([evening(1, 19, 21)]);
+      // Omer cancels before the accept lands; the two cross on the wire.
+      const c = cancel(omer.state, p.taskId, ctxOf(omer), 'change of plans');
+      apply(omer, c);
+      const wire = run(omer, john, [...j.outgoing, ...c.outgoing]);
+      expect(verbs(wire)).toEqual(['meeting/accept', 'rdv/cancel', 'update:canceled', 'update:canceled']);
+      for (const s of [omer, john]) {
+        expect(task(s, p.taskId).state).toBe('canceled');
+        expect(task(s, p.taskId).hold).toBeUndefined();
+        expect(s.holds).toEqual([]);
+      }
+      expect(john.events.map((e) => e.kind)).toContain('released');
+
+      // Same race, with Omer's human sitting on the accept: his cancel releases his tentative hold too.
+      const omer2 = side(OMER, 3, { autoConfirm: false });
+      const john2 = side(JOHN, 4, { busy: [evening(0)] });
+      const p2 = propose(omer2.state, JOHN, ctxOf(omer2));
+      apply(omer2, p2);
+      run(omer2, john2, p2.outgoing);
+      expect(omer2.holds).toEqual([evening(1, 19, 21)]);
+      expect(john2.holds).toEqual([evening(1, 19, 21)]);
+      const c2 = cancel(omer2.state, p2.taskId, ctxOf(omer2));
+      apply(omer2, c2);
+      run(omer2, john2, c2.outgoing);
+      expect([omer2.holds, john2.holds]).toEqual([[], []]);
+
+      // The cancel is lost; the status update answering the late accept still releases John's hold.
+      const omer3 = side(OMER, 5);
+      const john3 = side(JOHN, 6, { busy: [evening(0)] });
+      const p3 = propose(omer3.state, JOHN, ctxOf(omer3));
+      apply(omer3, p3);
+      const j3 = receive(john3.state, OMER, p3.outgoing[0].payload, ctxOf(john3));
+      apply(john3, j3);
+      apply(omer3, cancel(omer3.state, p3.taskId, ctxOf(omer3))); // never delivered
+      const o3 = receive(omer3.state, JOHN, j3.outgoing[0].payload, ctxOf(omer3));
+      expect(verbs(o3.outgoing)).toEqual(['update:canceled']);
+      apply(john3, receive(john3.state, OMER, o3.outgoing[0].payload, ctxOf(john3)));
+      expect(task(john3, p3.taskId).state).toBe('canceled');
+      expect(john3.holds).toEqual([]);
+    });
+
+    it('expiry racing the accept: a late accept is declined and the accepter releases', () => {
+      const omer = side(OMER, 1);
+      const john = side(JOHN, 2, { busy: [evening(0)] });
+      const p = propose(omer.state, JOHN, ctxOf(omer), { expires: '2026-10-25T12:00:00Z' });
+      apply(omer, p);
+      const j = receive(john.state, OMER, p.outgoing[0].payload, ctxOf(john)); // in time
+      apply(john, j);
+      const late = new Date('2026-10-25T13:00:00Z');
+      const wire = run(omer, john, j.outgoing, late);
+      expect(verbs(wire)).toEqual(['meeting/accept', 'meeting/decline']);
+      expect([task(omer, p.taskId).state, task(john, p.taskId).state]).toEqual(['rejected', 'rejected']);
+      expect([omer.holds, john.holds]).toEqual([[], []]);
+      // An accepter whose confirm never comes gives up CONFIRM_GRACE_MS after expires.
+      const john2 = side(JOHN, 3, { busy: [evening(0)] });
+      apply(john2, receive(john2.state, OMER, p.outgoing[0].payload, ctxOf(john2)));
+      const exp = Date.parse('2026-10-25T12:00:00Z');
+      expect(expire(john2.state, { now: new Date(exp + 60_000) }).state).toEqual(john2.state);
+      const swept = expire(john2.state, { now: new Date(exp + CONFIRM_GRACE_MS + 60_000), newId: john2.newId });
+      apply(john2, swept);
+      expect(task(john2, p.taskId)).toMatchObject({ state: 'rejected', reason: 'expired' });
+      expect(swept.effects).toEqual([expect.objectContaining({ kind: 'release', slot: evening(1, 19, 21) })]);
+      expect(john2.holds).toEqual([]);
+    });
+
+    it('two concurrent negotiations cannot book the same slot', () => {
+      // Omer proposes to John and to Mallory with the same three evenings.
+      const omer = side(OMER, 1);
+      const john = side(JOHN, 2, { busy: [evening(0)] });
+      const mallory = side(MALLORY, 3, { busy: [evening(0)] });
+      const pj = propose(omer.state, JOHN, ctxOf(omer));
+      apply(omer, pj);
+      const pm = propose(omer.state, MALLORY, ctxOf(omer));
+      apply(omer, pm);
+      expect(task(omer, pm.taskId).ourOffers[0]).toEqual(task(omer, pj.taskId).ourOffers[0]); // offers are not held
+      const aj = receive(john.state, OMER, pj.outgoing[0].payload, ctxOf(john));
+      const am = receive(mallory.state, OMER, pm.outgoing[0].payload, ctxOf(mallory));
+      apply(john, aj);
+      apply(mallory, am);
+      // Both accept Tuesday 19:00. John's accept lands first and wins; Mallory's is declined.
+      const oj = receive(omer.state, JOHN, aj.outgoing[0].payload, ctxOf(omer));
+      apply(omer, oj);
+      const om = receive(omer.state, MALLORY, am.outgoing[0].payload, ctxOf(omer));
+      apply(omer, om);
+      expect(verbs(oj.outgoing)).toEqual(['meeting/confirm']);
+      expect(om.events.map((e) => `${e.kind}:${e.reason ?? ''}`)).toEqual(['rejected:that time is no longer free']);
+      apply(mallory, receive(mallory.state, OMER, om.outgoing[0].payload, ctxOf(mallory)));
+      expect(task(mallory, pm.taskId).state).toBe('rejected');
+      expect(mallory.holds).toEqual([]);
+      expect(omer.holds).toEqual([evening(1, 19, 21)]);
+
+      // On the accepting side too: a slot held tentatively for one task is busy for the next.
+      const pending = side(JOHN, 4, { autoConfirm: false, busy: [evening(0)] });
+      const fromOmer = propose(emptyState(), JOHN, { ...ctxOf(side(OMER, 5)), busy: [] });
+      const fromMallory = propose(emptyState(), JOHN, { ...ctxOf(side(MALLORY, 6)), busy: [] });
+      apply(pending, receive(pending.state, OMER, fromOmer.outgoing[0].payload, ctxOf(pending)));
+      apply(pending, receive(pending.state, MALLORY, fromMallory.outgoing[0].payload, ctxOf(pending)));
+      const picked = Object.values(pending.state.tasks).map((t) => t.hold?.slot);
+      expect(picked).toEqual([evening(1, 19, 21), evening(2, 19, 21)]);
+      expect(pending.holds).toHaveLength(2);
+    });
+  });
+
   it('refuses to propose with nothing free', () => {
+
     const omer = side(OMER, 1, { busy: [{ start: '2026-10-26T00:00:00+02:00', end: '2026-11-02T00:00:00+02:00' }] });
     expect(() => propose(omer.state, JOHN, ctxOf(omer))).toThrow(/no free slot/);
   });

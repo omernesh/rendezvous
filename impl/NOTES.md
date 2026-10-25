@@ -236,13 +236,11 @@ the marker (CLI behavior, live-run logs, calendar settings) stay here only.
     and tombstones evicted first; refused when all are pending); finished
     tasks pruned after 30 days; a peer's `expires` defaults to 48 h and is
     clamped to 7 days. (folded into SPEC rev 3 §7.4)
-36. **No commit phase** (open). The acceptor marks the task completed and
-    holds the slot when it sends `meeting/accept`; the proposer confirms with
-    a `completed` status update. If the proposer canceled or expired the task
-    meanwhile, the acceptor only learns it from the status update
-    (`peerState`) and keeps its hold. Concurrent negotiations can also
-    double-book a slot (offers are not held). Both need a hold/confirm step
-    for v0.2. (folded into SPEC rev 3 §11.8)
+36. **No commit phase** (fixed, issue #5; was open, SPEC rev 3 §11.8). Now
+    accept → confirm, see item 58. Before: the acceptor completed and held the
+    slot when it sent `meeting/accept`, kept the hold if the proposer had
+    canceled or expired meanwhile, and concurrent negotiations could
+    double-book a slot.
 37. **Crash window** (fixed, issue #4). `Agent.beforeSend` runs after an
     envelope is committed to the channel state and outbox and before it
     leaves; the CLI and the MCP server save agent state there (and, in
@@ -278,12 +276,16 @@ the marker (CLI behavior, live-run logs, calendar settings) stay here only.
     requester's card); only envelopes are encrypted (`demo/relay-dump.mjs`
     shows both). The spec should warn that probe greetings are public and keep
     them short. Requests sent to a known card travel inside an envelope. (folded into SPEC rev 3 §4.4, §5.1, §9)
-42. **Auto-negotiation within scope** (open). Once a grant has
-    `may_propose_meetings`, the server answers dinner proposals on its own from
-    the calendar (as `rdv listen --negotiate` does) and holds the agreed slot
-    without asking the human per meeting. Fine for the demo; the spec doesn't
-    say whether accepting a meeting needs a per-meeting confirmation, and a
-    real deployment probably wants a "hold, then confirm" step (item 36). (folded into SPEC rev 3 §11.8)
+42. **Auto-negotiation within scope** (fixed, issue #8; was open, SPEC rev 3
+    §11.8). The server still counters on its own from the calendar, but a
+    slot it would accept, or a peer's accept of our slot, is only held
+    tentatively until the human confirms that meeting: `rdv_negotiate`
+    action `confirm` through elicitation or a per-dinner confirm phrase
+    (same rules as item 39; shown on stderr and in `rdv dinner list` text
+    mode, never in a tool result), or `rdv dinner confirm` in a terminal.
+    `rdv listen --negotiate` waits the same way unless `--auto-confirm`
+    (bots, the scenarios' `duplicate` variant). Each side's human confirms
+    once. **spec change**, SPEC §5.5 and §7.3 (rev 3, amended).
 43. **Inbox is an event log, not an ack queue** (§13 says "receive/ack").
     `rdv_inbox` returns events after a cursor from the home's `events.jsonl`;
     nothing is acknowledged back to the peer. (folded into SPEC rev 3 §13)
@@ -411,7 +413,35 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
     hash and show the phrase once (stderr at creation), and fold the tier
     and scope shown to the human into the phrase (HMAC). Not done here.
 
+58. **Accept → confirm, exclusive holds** (**spec change**, §7.2, §7.3,
+    issue #5). New verb `meeting/confirm` (`slot`), sent by the offerer in
+    answer to `meeting/accept`. The accepter holds the slot tentatively
+    from the moment it decides (before its human confirms, so concurrent
+    tasks can't take it), sends accept, and completes only on the confirm,
+    acknowledging with a `completed` status update. The offerer re-checks
+    the slot when the accept arrives (offers are not held): busy (another
+    task holds it, or the calendar changed) or past `expires` → decline,
+    which releases the accepter's hold. The engine counts every other
+    task's tentative hold and every completed agreement as busy, so one
+    `receive` batch can't double-book either. Releases: cancel (either
+    side, incl. the owner's while the human sits on it), decline, expiry,
+    and a peer status update reporting `canceled`/`rejected` while we hold
+    (reduce-only exception to "status is informational"). The pending
+    sub-state lives in `task.hold.stage` (`human-accept`, `human-confirm`,
+    `peer-confirm`); task states on the wire are unchanged, so old peers
+    only fail on the new verb. Calendar: `Dinner (tentative, rdv <task>)`
+    becomes `Dinner (rdv <task>)`; the CLI remembers which calendar holds
+    each tentative hold in `holds.json`. Residual race, open: an accepter
+    gives up `CONFIRM_GRACE_MS` (24 h) after `expires`; a confirm sent in
+    time but delayed longer, or the accepter's owner canceling while the
+    confirm is in flight, ends `completed` on the offerer and `canceled`/
+    `rejected` on the accepter. The accepter answers the late confirm with
+    its real state, so the offerer sees it as `peerState` (and a `status`
+    event) but keeps its hold, because a cancel after completion is not
+    honored (§7.3). Cancelling an agreed meeting is a v0.2 verb.
+
 ## Not implemented yet
+
 
 Mailbox probe and invite (§5.2), directories and suggestions (§4.5), DNS TXT
 lookup, key rotation, ntfy/MQTT fallbacks, direct (ICE/WebRTC) channels,

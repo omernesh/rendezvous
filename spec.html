@@ -120,7 +120,9 @@ consent concept changed; see <strong>Changes in rev 3</strong> below.</p>
   (peer text is untrusted data).</li>
 <li><strong>A2A, §7:</strong> which A2A objects are sent, the meeting verbs, task states,
   slots, deduplication by <code>messageId</code>, cancellation, resend bounds, and
-  persisting state before send.</li>
+  persisting state before send. Amended: agreement is an accept → confirm
+  handshake (<code>meeting/confirm</code>) with tentative, exclusive holds, and each
+  human confirms the specific meeting (§5.5, §7.3; was §11.8).</li>
 <li><strong>Elsewhere:</strong> threat-model rows (§8), probe privacy (§9), new open problems
   (§11), phases aligned with the implementation plan (§12), MCP consent and
   inbox semantics (§13).</li>
@@ -652,6 +654,12 @@ the peer (§5.3), and choosing which answer to a topic probe is the real peer
 needs one of the approvals above. Widening what a peer may do towards the
 agent (meetings, calendar, a higher rate) is always the agent's own owner's
 grant.</p>
+<p>A grant that allows meetings lets the agents negotiate, not book. Before an
+agent accepts a specific meeting, or confirms a peer's accept, the host
+SHOULD get its human's confirmation of that meeting through one of the same
+approvals (a standing <code>auto-confirm</code> policy the owner set counts; the
+reference CLI calls it <code>--auto-confirm</code>). The slot is held tentatively while
+the human decides (§7.3).</p>
 <h3 id="56-peer-text-is-untrusted-data">5.6 Peer text is untrusted data</h3>
 <p>Greetings, text parts, decline reasons and card <code>owner</code> fields are written by
 the other side and can carry instructions aimed at the reader's assistant.
@@ -833,6 +841,11 @@ verbs and non-UUID IDs.</p>
 <td>accept a slot from the latest offer</td>
 </tr>
 <tr>
+<td><code>meeting/confirm</code></td>
+<td>one <code>slot</code></td>
+<td>the offerer makes an accepted slot final</td>
+</tr>
+<tr>
 <td><code>meeting/decline</code></td>
 <td><code>reason</code></td>
 <td>refuse; nothing fits</td>
@@ -856,6 +869,18 @@ nothing fits, which ends the task <code>rejected</code>. An accept MUST pick a s
 the latest offer it answers. The reference policy is: offer up to 3 free
 slots, accept the first slot that is free, otherwise counter with 3 of your
 own; implementations MAY choose a different policy within these rules.</p>
+<p>Agreement takes two messages. The accepter holds the slot tentatively and
+sends <code>meeting/accept</code>; the task stays pending. The offerer checks the slot
+is still free (offers are not held) and that the task has not expired, then
+sends <code>meeting/confirm</code> with the same slot and completes; otherwise it
+declines. The accepter completes on the confirm and acknowledges with a
+<code>completed</code> status update. A tentative hold MUST be released when the task
+is canceled, declined or expires, or when the peer reports it <code>canceled</code> or
+<code>rejected</code>, and a slot held for one task (tentatively or agreed) is busy for
+every other task. An accepter waiting for the confirm SHOULD keep its hold
+for a grace period past <code>expires</code> (reference: 24 hours), since the offerer
+may have confirmed in time. Either side MAY wait for its human before its
+step (§5.5).</p>
 <p>A cancel is honored while the task is not terminal. A cancel that arrives
 before its proposal leaves a tombstone so the proposal is refused when it
 lands. A cancel, or any verb, for a finished task is answered with a status
@@ -1025,15 +1050,19 @@ prune finished tasks (reference: after 30 days).</p>
    they are swappable, but a listed agent still trusts its chosen directory
    to stay available and honest about exact matches. Running one is trivial;
    none is required.</li>
-<li><strong>No commit phase for meetings.</strong> The acceptor completes the task and
-   holds the slot when it sends <code>meeting/accept</code>; the proposer confirms with
-   a <code>completed</code> status update. If the proposer canceled or expired the task
-   meanwhile, the acceptor learns it only from that update, and concurrent
-   negotiations can double-book a slot (offers are not held). Whether
-   accepting a meeting needs a per-meeting human confirmation is also
-   unspecified. A hold-then-confirm step is future work.</li>
-<li><strong>No forward secrecy.</strong> Envelopes are encrypted to a static recipient key
-   (§6.4). Conversation-scoped keys from the handshake are future work.</li>
+<li>
+<p><strong>Ending an agreed meeting.</strong> Accept → confirm with tentative holds
+   (§7.3) closes most races, but not all: a confirm delayed past the
+   accepter's grace period, or the accepter's owner canceling while the
+   confirm is in flight, leaves the offerer <code>completed</code> and the accepter not.
+   The accepter answers the late confirm with its real state; the offerer
+   keeps its hold because a cancel after completion is not honored. A verb to
+   cancel an agreed meeting is future work.</p>
+</li>
+<li>
+<p><strong>No forward secrecy.</strong> Envelopes are encrypted to a static recipient key
+   (§6.4). Conversation-scoped keys from the handshake are future work.</p>
+</li>
 <li><strong>Channel state for strangers.</strong> A receiver advances <code>seq</code> state for any
     validly signed envelope before deciding whether to admit the sender. A
     stranger cannot spoof another sender, so the cost is memory per stranger

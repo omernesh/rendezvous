@@ -119,16 +119,23 @@ const COMMANDS: Record<string, Command> = {
     run: cmd.dinnerPropose,
   },
   'dinner cancel': {
-    usage: 'rdv dinner cancel <task-id> [--reason "…"]',
-    summary: 'Cancel a pending dinner negotiation (rdv/cancel)',
+    usage: 'rdv dinner cancel <task-id> [--reason "…"] [--calendar cal.json]',
+    summary: 'Cancel a pending dinner negotiation (rdv/cancel); releases its tentative hold',
     args: 1,
-    options: { reason: { type: 'string' } },
+    options: { reason: { type: 'string' }, calendar: { type: 'string' } },
     run: cmd.dinnerCancel,
+  },
+  'dinner confirm': {
+    usage: 'rdv dinner confirm <task-id> [--calendar cal.json]',
+    summary: 'Confirm the dinner a negotiation is holding for you (sends meeting/accept or meeting/confirm)',
+    args: 1,
+    options: { calendar: { type: 'string' } },
+    run: cmd.dinnerConfirm,
   },
   'dinner list': { usage: 'rdv dinner list', summary: 'List dinner negotiations and their state', args: 0, run: cmd.dinnerList },
   listen: {
     usage:
-      'rdv listen [--auto-grant <tier> [--auto-grant-any-tier]] [--exec <script>] [--negotiate --calendar cal.json [--window "next week evenings"] [--tz +02:00]]',
+      'rdv listen [--auto-grant <tier> [--auto-grant-any-tier]] [--exec <script>] [--negotiate --calendar cal.json [--window "next week evenings"] [--tz +02:00] [--auto-confirm]]',
     summary: 'Long-running: print events; optionally auto-grant (demo only), pipe events to a script, or negotiate dinner',
     args: 0,
     options: {
@@ -136,6 +143,8 @@ const COMMANDS: Record<string, Command> = {
       'auto-grant-any-tier': { type: 'boolean' },
       exec: { type: 'string' },
       negotiate: { type: 'boolean' },
+      'auto-confirm': { type: 'boolean' },
+
       calendar: { type: 'string' },
       window: { type: 'string' },
       tz: { type: 'string' },

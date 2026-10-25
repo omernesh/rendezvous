@@ -4,7 +4,9 @@
 import {
   type Ctx,
   describeSlot,
+  isTerminal,
   JsonFileCalendar,
+
   type MeetingScope,
   type NegotiationEvent,
   type NegotiationState,
@@ -16,7 +18,7 @@ import {
 } from '@rendezvous/a2a';
 import type { Agent, Contact, Payload } from '@rendezvous/core';
 import { writeAtomic } from './fsutil.js';
-import { CliError } from './home.js';
+import { CliError, type Home } from './home.js';
 import { clean } from './output.js';
 
 export const DEFAULT_LISTEN_WINDOW = 'next week evenings';
@@ -27,6 +29,8 @@ export interface NegotiateOptions {
   /** Fixed UTC offset like "+02:00"; else the calendar's "timezone"; else this machine's current offset. */
   tz?: string;
   minutes?: number;
+  /** Accept and confirm meetings without the human (`listen --auto-confirm`: bots, demos, tests). */
+  autoConfirm?: boolean;
 }
 
 export function openCalendar(path: string): JsonFileCalendar {
@@ -87,6 +91,7 @@ export async function buildCtx(opts: NegotiateOptions, scope: MeetingScope, now 
     offsetMinutes,
     scope,
     minutes: opts.minutes,
+    autoConfirm: opts.autoConfirm === true,
   };
 }
 
@@ -100,15 +105,36 @@ export async function validateNegotiateOptions(opts: NegotiateOptions): Promise<
   }
 }
 
-/** Carry out a step: hold agreed slots, then send messages. Returns send errors (the step is still applied). */
-export async function carryOut(agent: Agent, calendarPath: string | undefined, step: Step): Promise<string[]> {
+/** Calendar titles of our holds: tentative while the handshake runs, then final. */
+export const holdNote = (taskId: string, tentative: boolean) => (tentative ? `Dinner (tentative, rdv ${taskId})` : `Dinner (rdv ${taskId})`);
+
+/**
+ * Carry out a step: calendar holds and releases, then send messages. Returns
+ * errors (the step is still applied). A tentative hold is released or
+ * finalized in the calendar it was placed in (`holds.json`), so `dinner
+ * confirm` and `dinner cancel` need no --calendar.
+ */
+export async function carryOut(agent: Agent, home: Home, calendarPath: string | undefined, step: Step): Promise<string[]> {
   const errors: string[] = [];
   if (step.effects.length) {
-    if (!calendarPath) errors.push('no calendar to hold the agreed slot in');
-    else {
-      const cal = openCalendar(calendarPath);
-      for (const e of step.effects) await cal.hold(e.slot, `Dinner (rdv ${e.taskId})`);
+    const holds = home.readHolds();
+    for (const e of step.effects) {
+      const path = (Object.hasOwn(holds, e.taskId) ? holds[e.taskId] : undefined) ?? calendarPath;
+      if (!path) {
+        errors.push(`no calendar to ${e.kind === 'release' ? 'release' : 'hold'} the slot in`);
+        continue;
+      }
+      const cal = openCalendar(path);
+      if (e.kind === 'hold' && e.tentative) {
+        await cal.hold(e.slot, holdNote(e.taskId, true));
+        holds[e.taskId] = path;
+      } else {
+        await cal.release(e.slot, holdNote(e.taskId, true));
+        if (e.kind === 'hold') await cal.hold(e.slot, holdNote(e.taskId, false));
+        delete holds[e.taskId];
+      }
     }
+    home.writeHolds(holds);
   }
   for (const o of step.outgoing) {
     try {
@@ -155,8 +181,18 @@ export function taskView(t: NegotiationTask) {
   return { event: 'task', ...rest };
 }
 
+/** What a pending task with a held slot waits for, in words. */
+export function holdText(t: NegotiationTask): string | undefined {
+  if (!t.hold || isTerminal(t.state)) return undefined;
+  const slot = safe(describeSlot(t.hold.slot));
+  return t.hold.stage === 'peer-confirm'
+    ? `held ${slot} (tentative): waiting for the peer to confirm`
+    : `held ${slot} (tentative): waiting for YOUR confirmation (rdv dinner confirm ${safe(t.id)}, or rdv dinner cancel)`;
+}
+
 export function taskText(t: NegotiationTask): string {
   const agreed = t.agreed ? `  agreed ${safe(describeSlot(t.agreed))}` : '';
+  const held = holdText(t);
   const reason = t.reason ? `  reason (untrusted if from peer) ${safe(JSON.stringify(t.reason))}` : '';
-  return `${safe(t.id)}  ${t.role} with ${safe(t.peer)}  ${safe(t.state)}  round ${t.round}${agreed}${reason}`;
+  return `${safe(t.id)}  ${t.role} with ${safe(t.peer)}  ${safe(t.state)}  round ${t.round}${agreed}${held ? `  ${held}` : ''}${reason}`;
 }

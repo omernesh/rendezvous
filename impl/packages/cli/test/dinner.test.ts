@@ -11,7 +11,7 @@ describe('dinner scenarios (in-memory relay)', () => {
   });
   afterAll(() => relay.close());
 
-  it('overlap: both sides complete with the same slot', async () => {
+  it('overlap: each human confirms, then both sides complete with the same slot', async () => {
     const r = await runDinnerScenario({ relays: [relay.url], variant: 'overlap' });
     expect(r.omer.state).toBe('completed');
     expect(r.john.agreed).toEqual(r.omer.agreed);
@@ -27,6 +27,12 @@ describe('dinner scenarios (in-memory relay)', () => {
   it('mid-flight rdv/cancel: canceled on both sides', async () => {
     const r = await runDinnerScenario({ relays: [relay.url], variant: 'cancel' });
     expect([r.omer.state, r.john.state]).toEqual(['canceled', 'canceled']);
+  });
+
+  it('cancel while the accepter holds a slot for its human: the hold is released', async () => {
+    const r = await runDinnerScenario({ relays: [relay.url], variant: 'cancel-hold' });
+    expect([r.omer.state, r.john.state]).toEqual(['canceled', 'canceled']);
+    expect(r.john.hold).toBeUndefined();
   });
 
   it('duplicate deliveries change nothing', async () => {
@@ -59,6 +65,9 @@ describe('dinner commands', () => {
       expect((await run(['listen', '--negotiate', '--calendar', cal, '--tz', 'CET'])).code).toBe(2);
       expect((await run(['dinner', 'list'])).lines).toEqual([]);
       expect((await run(['dinner', 'cancel', '00000000-0000-4000-8000-000000000001'])).code).toBe(1);
+      expect((await run(['dinner', 'confirm', '00000000-0000-4000-8000-000000000001'])).code).toBe(1);
+      expect((await run(['listen', '--auto-confirm'])).code).toBe(2); // --auto-confirm without --negotiate
+
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

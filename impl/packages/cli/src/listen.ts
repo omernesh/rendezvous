@@ -250,7 +250,7 @@ async function negotiateInbound(
   }
   if (JSON.stringify(state) !== before) home.writeNegotiations(state);
   for (const step of steps) {
-    const errors = await carryOut(agent, n.calendar, step);
+    const errors = await carryOut(agent, home, n.calendar, step);
     for (const ev of step.events) events.push({ obj: dinnerView(ev), human: dinnerText(ev) });
     for (const message of errors) events.push({ obj: { event: 'error', message }, human: `error: ${clean(message)}` });
   }

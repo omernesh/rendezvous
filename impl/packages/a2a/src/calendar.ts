@@ -20,6 +20,8 @@ export interface CalendarAdapter {
   freeBusy(range: Slot): Promise<Slot[]>;
   /** Block `slot` (idempotent: holding the same slot twice keeps one entry). */
   hold(slot: Slot, note?: string): Promise<void>;
+  /** Remove the hold of `slot` with exactly this note (e.g. a tentative hold that fell through). Missing: no-op. */
+  release(slot: Slot, note: string): Promise<void>;
 }
 
 export interface CalendarEntry extends Slot {
@@ -80,6 +82,18 @@ function addHold(entries: CalendarEntry[], slot: Slot, note?: string): boolean {
   return true;
 }
 
+/** Drop entries for `slot` titled `note`. False if there were none. */
+function removeHold(entries: CalendarEntry[], slot: Slot, note: string): boolean {
+  const s = toSpan(slot);
+  const keep = entries.filter((e) => {
+    const x = toSpan(e);
+    return !(x.start === s.start && x.end === s.end && e.title === note);
+  });
+  if (keep.length === entries.length) return false;
+  entries.splice(0, entries.length, ...keep);
+  return true;
+}
+
 /** In-memory calendar for tests. */
 export class MemoryCalendar implements CalendarAdapter {
   readonly entries: CalendarEntry[];
@@ -91,6 +105,9 @@ export class MemoryCalendar implements CalendarAdapter {
   }
   async hold(slot: Slot, note?: string): Promise<void> {
     addHold(this.entries, slot, note);
+  }
+  async release(slot: Slot, note: string): Promise<void> {
+    removeHold(this.entries, slot, note);
   }
 }
 
@@ -133,6 +150,13 @@ export class JsonFileCalendar implements CalendarAdapter {
     if (!addHold(cal.busy, slot, note)) return;
     this.write(this.path, JSON.stringify(cal, null, 2) + '\n');
   }
+
+  async release(slot: Slot, note: string): Promise<void> {
+    const cal = this.read();
+    if (!removeHold(cal.busy, slot, note)) return;
+    this.write(this.path, JSON.stringify(cal, null, 2) + '\n');
+  }
+
 }
 
 function writeAtomicSimple(path: string, data: string): void {
