@@ -1928,6 +1928,65 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       malformed parts, the transfer offer and request), `a2a` (p2p-only
       parts, `extensions`) and the consent guard.
 
+## The document-review scenario (v0.3, issue #30)
+
+80. **Design A.9 end to end, five variants** (no wire or SPEC change).
+    `packages/cli/scenarios/review.ts` drives real `rdv` processes (`node
+    dist/scenarios/review.js --variant ok|decline|cancel|rate|auto|all`);
+    `cli/test/review.test.ts` runs all five on the in-memory relay,
+    `review.live.test.ts` on `RDV_LIVE_RELAYS`. `mcp/test/flow.ts`
+    `reviewFlow` is the two-MCP-server `ok` run (`mcp/test/review.test.ts`
+    offline, `review.live.test.ts` live).
+    - **Where it departs from A.9.** (a) The capability is `request/v1`,
+      not the example `review/v1`: no host registers `review/v1` and A.9
+      calls it non-normative. The focus and due date travel as `input.data`,
+      the verdict as a `request/data` part holding `{rdv: "review/result",
+      verdict, comments}`. (b) The document is Markdown, not a PDF, so the
+      decrypted text can be checked. (c) The requester-side release is
+      John's own terminal: `rdv file prepare`, an upload to the store, `rdv
+      task request --file` (the MCP `request` takes no files, item 77).
+    - **Human gates go through the human paths.** CLI: the codes `rdv task
+      list` shows (`approve --code`, `release --code`; a wrong code and the
+      code of the first draft are refused). MCP: the phrases on the
+      server's human log; the model alone is refused at each gate.
+    - **Test seams used, none added.** The file store is a local HTTPS
+      server on 127.0.0.1, reached through the fetch helper's test-only
+      options (`fetchIncoming(…, { ca, unsafeAllowAddresses })`, the MCP
+      server's `fileFetch`); the ok variant also checks that production
+      `rdv file fetch` refuses it (`blocked-address`). Auto-approve is set
+      through `contactAutoApprove`'s `Tty` seam with John's fingerprint
+      retyped, after a spawned `rdv contact auto-approve` is refused for
+      having no terminal.
+    - **What each variant checks.** ok: the start gate holds the task and
+      the listing shows the text, focus and file (name, hash, encrypted); a
+      fetch before the gate is refused and the store sees nothing; after
+      approval the file is fetched once (no credentials), verified,
+      decrypted into `files/incoming/<task>/`; the first draft and an edited
+      one get different codes and nothing reaches John before the release;
+      John gets the edited text and the data, then `completed`; audit
+      `start`/`release` by `human`; the relay sees no plaintext. decline:
+      `rejected`, store untouched. cancel: John cancels after Omer read the
+      code; the code is refused, nothing starts, nothing saved. rate: Omer's
+      grant has `max_frequency: "5/day"`; five reviews declined; the sixth
+      is refused by John's own agent (outbound limit), and the same request
+      sent raw (`rdv send`) is rejected by Omer's agent with code `rate`,
+      no `start-needed`, `dropped.rate` 1, no state. auto: no
+      `start-needed`, the draft leaves at once, audit `auto-approve set`,
+      `start`, `release` by `auto-approve`; the fetch is still the agent's.
+    - **CLI addition.** `rdv task submit --data '{…}'` (repeatable) adds a
+      data part beside the text, as `rdv_task` submit `data` already did;
+      the engine checks its shape. Without it the CLI could not send the
+      review/result.
+    - **Live run (2026-10-25)** on `wss://nos.lol,wss://relay.primal.net`,
+      `npm run test:live`: cli review ok 13,980 ms, decline 8,463 ms,
+      cancel 9,850 ms, rate 18,711 ms, auto 11,450 ms; mcp review 4,224 ms.
+      Agreed outputs: ok and auto end `completed` on both sides with the
+      review text and `changes-requested`, 3 comments; decline and rate
+      `rejected` (the sixth for `rate`); cancel `canceled`. The binary
+      (`--variant all`) passed the same day: 14.1 s, 9.2 s, 10.5 s, 19.8 s,
+      10.1 s. One unrelated live test (contact scenario on nos.lol alone)
+      failed once with nos.lol refusing the connection and passed on rerun.
+
 ## Not implemented yet
 
 

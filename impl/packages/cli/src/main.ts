@@ -228,11 +228,12 @@ const COMMANDS: Record<string, Command> = {
     run: cmd.taskDecline,
   },
   'task submit': {
-    usage: 'rdv task submit <task-id> [--text "…"]... [--file <sha256>=<https-url>]... [--inline <path>]... [--name "…"] [--complete]',
+    usage: 'rdv task submit <task-id> [--text "…"]... [--data \'{…}\']... [--file <sha256>=<https-url>]... [--inline <path>]... [--name "…"] [--complete]',
     summary: "Draft a result for a peer's task, with your files if any (rdv file prepare); it leaves only when you release it (rdv task release)",
     args: 1,
     options: {
       text: { type: 'string', multiple: true },
+      data: { type: 'string', multiple: true },
       file: { type: 'string', multiple: true },
       inline: { type: 'string', multiple: true },
       name: { type: 'string' },

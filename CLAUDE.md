@@ -29,7 +29,7 @@ Run `npm run typecheck` and `npm test` before every commit. **There is no CI** (
 
 CLI tests spawn the built `rdv` (`packages/cli/dist/src/bin.js`); the CLI's `test` script runs `tsc -b` first, which also builds core.
 
-**Live relays:** `RDV_LIVE_RELAYS=wss://a,wss://b npm run test:live` (PowerShell: `$env:RDV_LIVE_RELAYS='wss://a,wss://b'; npm run test:live`). Only `*.live.test.ts` run there, they skip when the variable is unset, and they are never part of `npm test`. The scenarios also run by hand: `node packages/cli/dist/scenarios/contact.js --relay wss://…` and `node packages/cli/dist/scenarios/dinner.js --relay wss://… --variant overlap` (variants overlap, no-overlap, cancel, cancel-hold, duplicate, reverse). `npm run test:live -w @rendezvous/mcp` runs the two-MCP-server dinner flow on `RDV_LIVE_RELAYS`.
+**Live relays:** `RDV_LIVE_RELAYS=wss://a,wss://b npm run test:live` (PowerShell: `$env:RDV_LIVE_RELAYS='wss://a,wss://b'; npm run test:live`). Only `*.live.test.ts` run there, they skip when the variable is unset, and they are never part of `npm test`. The scenarios also run by hand: `node packages/cli/dist/scenarios/contact.js --relay wss://…` and `node packages/cli/dist/scenarios/dinner.js --relay wss://… --variant overlap` (variants overlap, no-overlap, cancel, cancel-hold, duplicate, reverse), and `node packages/cli/dist/scenarios/review.js --relay wss://… --variant ok` (the A.9 document review: ok, decline, cancel, rate, auto, all). `npm run test:live -w @rendezvous/mcp` runs the two-MCP-server dinner flow on `RDV_LIVE_RELAYS`.
 
 From the repo root, after editing `SPEC.md`: `python render_html.py` (needs the `markdown` package).
 

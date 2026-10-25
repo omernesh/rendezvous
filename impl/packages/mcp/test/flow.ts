@@ -1,8 +1,10 @@
 // Test helpers: an RdvMcpServer driven by the SDK's own Client over an
 // in-memory MCP transport, one per person, plus the two-person dinner flow
 // (used by the in-memory test and the live-relay test).
+import { execFile } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { promisify } from 'node:util';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import {
@@ -11,9 +13,11 @@ import {
   type ElicitResult,
   ResourceUpdatedNotificationSchema,
 } from '@modelcontextprotocol/sdk/types.js';
-import { type Capability, parseWindow, type Slot, toSlot, toSpan } from '@rendezvous/a2a';
+import { type Capability, parseWindow, REQUEST_URI, type Slot, toSlot, toSpan } from '@rendezvous/a2a';
 import { type FetchTestOptions, Home } from '@rendezvous/cli/lib';
+import type { TestFileServer } from '@rendezvous/core/testing';
 import { expect } from 'vitest';
+import { RDV_BIN } from '../../cli/scenarios/harness.js';
 import { RdvMcpServer } from '../src/index.js';
 
 export const TZ = '+02:00';
@@ -349,4 +353,94 @@ export async function onboardingFlow(
   expect(omerContact.unverified_claims).toEqual([omerAt]);
   expect(omerContact.local_label).toBeNull(); // John's human approved a request; nobody named Omer locally
   return { omerId: o.agent_id, johnId: j.agent_id };
+}
+
+const execFileAsync = promisify(execFile);
+
+/** One `rdv` command in a side's home, as its human runs it in their own terminal (JSON lines out). */
+export async function terminal(side: Side, args: string[]): Promise<any[]> { // eslint-disable-line @typescript-eslint/no-explicit-any
+  const { stdout } = await execFileAsync(process.execPath, [RDV_BIN, ...args, '--home', side.home.dir, '--json'], { windowsHide: true, timeout: 30_000 });
+  return stdout
+    .split('\n')
+    .filter((l) => l.trim())
+    .map((l) => JSON.parse(l));
+}
+
+export const REVIEW_DOC = '# Q4 plan\n\n1. Hire two engineers.\n2. Ship v0.3.\n3. Totals: 40 + 25 = 70.\n';
+export const REVIEW_RESULT = "Section 3's totals don't add up: 40 + 25 is 65, not 70.";
+
+/**
+ * Design A.9 between two MCP servers (issue #30): John's agent asks Omer's to
+ * review the Q4 plan. John's human releases the file from his own terminal
+ * (`rdv file prepare`, upload, `rdv task request --file`; the MCP request
+ * takes no files). Omer's human approves the start and the release with the
+ * phrases his terminal shows; his agent fetches the file (the server's
+ * test-only `fileFetch`, as the store is on loopback), verifies and decrypts it
+ * into quarantine. John's agent shows the review as a quotation, with the
+ * review/result data.
+ */
+export async function reviewFlow(
+  omer: Side,
+  john: Side,
+  opts: { relays: string[]; root: string; store: TestFileServer; tag?: string; timeoutMs: number },
+): Promise<{ taskId: string; omerId: string; johnId: string }> {
+  const tag = opts.tag ? `+${opts.tag}` : '';
+  const T = opts.timeoutMs;
+  const o = await ok(omer, 'rdv_init', { profile: 'omer', email: `omer${tag}@example.com`, relays: opts.relays, public_pointer: true });
+  const j = await ok(john, 'rdv_init', { profile: 'john', email: `john${tag}@doe.com`, relays: opts.relays });
+  await ok(omer, 'rdv_publish_card');
+  await new Promise((r) => setTimeout(r, 300));
+  let found: any; // eslint-disable-line @typescript-eslint/no-explicit-any
+  const deadline = Date.now() + T;
+  do {
+    found = await ok(john, 'rdv_discover', { address: `omer${tag}@example.com` });
+  } while (found.found === 0 && Date.now() < deadline && (await new Promise((r) => setTimeout(r, 500)), true));
+  expect(found.cards[0].agent_id).toBe(o.agent_id);
+  await ok(john, 'rdv_request_contact', { target: o.agent_id });
+  // Omer's human grants John request/v1: the model alone is refused, the phrase from his terminal works.
+  const req = await waitEvent(omer, (e) => e.type === 'contact_request', 'the request (omer)', T);
+  expect((await omer.call('rdv_grant', { request_id: req.request_id, invoke: [REQUEST_URI] })).isError).toBe(true);
+  await ok(omer, 'rdv_grant', { request_id: req.request_id, invoke: [REQUEST_URI], confirm_phrase: phraseFromHumanLog(omer, req.request_id) });
+  await waitEvent(john, (e) => e.type === 'contact' && e.peer === o.agent_id, 'the grant (john)', T);
+
+  // John's human releases the plan: encrypted under a fresh key, uploaded, sent by reference.
+  const src = join(opts.root, 'q4-plan.md');
+  writeFileSync(src, REVIEW_DOC);
+  const prep = (await terminal(john, ['file', 'prepare', src, '--mime', 'text/markdown']))[0];
+  const url = opts.store.put(`/q4/${prep.sha256}`, new Uint8Array(readFileSync(prep.upload)));
+  const input = JSON.stringify({ data: { focus: ['clarity', 'numbers'] } });
+  const asked = await terminal(john, ['task', 'request', o.agent_id, '--text', 'Could Omer look over the Q4 plan before Wednesday?', '--input', input, '--file', `${prep.sha256}=${url}`]);
+  const taskId: string = asked.find((l) => l.kind === 'requested').task;
+  const ev = (kind: string) => (e: { type: string; task_id: string; kind: string }) => e.type === 'task' && e.task_id === taskId && e.kind === kind;
+
+  // Start gate: nothing fetched; the model alone can neither start it nor fetch.
+  await waitEvent(omer, ev('start-needed'), 'the start gate (omer)', T);
+  expect((await omer.call('rdv_file', { action: 'fetch', task_id: taskId })).isError).toBe(true);
+  expect((await omer.call('rdv_task', { action: 'approve-start', task_id: taskId })).isError).toBe(true);
+  expect(opts.store.seen.filter((x) => x.path.includes(prep.sha256))).toEqual([]);
+  expect(await ok(omer, 'rdv_task', { action: 'approve-start', task_id: taskId, confirm_phrase: phraseFromHumanLog(omer, taskId) })).toMatchObject({ state: 'working' });
+  await waitEvent(john, (e) => e.type === 'task' && e.task_id === taskId && e.state === 'working', 'working (john)', T);
+
+  // Work: fetch, verify, decrypt into quarantine; the content reaches the model only as untrusted text.
+  const got = await ok(omer, 'rdv_file', { action: 'fetch', task_id: taskId, file: 1 });
+  expect(got).toMatchObject({ verified: true, decrypted: true, name: 'q4-plan.md' });
+  expect(got.content.untrusted_peer_text).toContain('Totals: 40 + 25 = 70');
+
+  // Release gate: the draft (text + review/result data) waits for Omer's human.
+  const data = { rdv: 'request/data', data: { rdv: 'review/result', verdict: 'changes-requested', comments: 3 } };
+  expect(await ok(omer, 'rdv_task', { action: 'submit', task_id: taskId, text: REVIEW_RESULT, data, name: 'review' })).toMatchObject({ held_for_release: true });
+  expect((await omer.call('rdv_task', { action: 'approve-release', task_id: taskId })).isError).toBe(true);
+  expect(await ok(omer, 'rdv_task', { action: 'approve-release', task_id: taskId, confirm_phrase: phraseFromHumanLog(omer, taskId) })).toMatchObject({ state: 'completed' });
+
+  // John's side: the review as a quotation, the data validated.
+  const art = await waitEvent(john, ev('artifact'), 'the review (john)', T);
+  expect(art.peer_text[0].untrusted_peer_text).toBe(REVIEW_RESULT);
+  expect(JSON.stringify(art)).toContain('changes-requested');
+  await waitEvent(john, ev('completed'), 'completed (john)', T);
+  const audit = omer.home.readAudit().filter((a) => a.task === taskId);
+  expect(audit.map((a) => [a.gate, a.by])).toEqual([
+    ['start', 'human'],
+    ['release', 'human'],
+  ]);
+  return { taskId, omerId: o.agent_id, johnId: j.agent_id };
 }
