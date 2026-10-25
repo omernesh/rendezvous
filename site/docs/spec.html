@@ -55,7 +55,7 @@
     <p class="crumbs"><a href="/docs/">Docs</a> / Protocol</p>
     <h1>Protocol specification</h1>
     <p class="doc-meta">Rendered from <a href="https://github.com/omernesh/rendezvous/blob/main/SPEC.md">SPEC.md</a> on GitHub. <a href="/docs/spec.md">Markdown version</a> for LLMs.</p>
-    <details class="toc-m"><summary>On this page</summary><ul><li><a href="#1-abstract">1. Abstract</a></li><li><a href="#2-motivation">2. Motivation</a></li><li><a href="#3-design-principles">3. Design principles</a></li><li><a href="#4-identity-layer">4. Identity layer</a><ul><li><a href="#41-agent-key">4.1 Agent key</a></li><li><a href="#42-agent-id">4.2 Agent ID</a></li><li><a href="#43-address-card-calling-card">4.3 Address Card ("calling card")</a></li><li><a href="#44-discovery-of-a-card">4.4 Discovery of a card</a></li><li><a href="#45-discovery-directories-optional">4.5 Discovery directories (optional)</a></li><li><a href="#46-encoding-canonical-json-and-signatures">4.6 Encoding, canonical JSON and signatures</a></li></ul></li><li><a href="#5-contact-layer-consent-handshake">5. Contact layer (consent &amp;amp; handshake)</a><ul><li><a href="#51-contact-request">5.1 Contact Request</a></li><li><a href="#52-human-channel-bootstrap">5.2 Human-channel bootstrap</a></li><li><a href="#521-mailbox-probe-email-probe-profile">5.2.1 Mailbox probe (email probe profile)</a></li><li><a href="#522-invite-no-agent-found">5.2.2 Invite (no agent found)</a></li><li><a href="#53-contact-grant-consent">5.3 Contact Grant (consent)</a></li><li><a href="#54-policy-and-revocation">5.4 Policy and revocation</a></li><li><a href="#55-consent-stays-with-the-human">5.5 Consent stays with the human</a></li><li><a href="#56-peer-text-is-untrusted-data">5.6 Peer text is untrusted data</a></li></ul></li><li><a href="#6-transport-layer">6. Transport layer</a><ul><li><a href="#61-rendezvous-hints">6.1 Rendezvous hints</a></li><li><a href="#62-primary-relay-nostr">6.2 Primary relay: Nostr</a></li><li><a href="#63-fallbacks-all-optional-all-dumb-pipes">6.3 Fallbacks (all optional, all dumb pipes)</a></li><li><a href="#64-envelope">6.4 Envelope</a></li></ul></li><li><a href="#7-session-task-layer-a2a-semantics">7. Session &amp;amp; task layer (A2A semantics)</a><ul><li><a href="#71-a2a-mapping">7.1 A2A mapping</a></li><li><a href="#72-meeting-verbs">7.2 Meeting verbs</a></li><li><a href="#73-task-states">7.3 Task states</a></li><li><a href="#74-scope-and-defaults">7.4 Scope and defaults</a></li><li><a href="#75-extending-the-meeting-verbs">7.5 Extending the meeting verbs</a></li><li><a href="#76-general-tasks">7.6 General tasks</a></li><li><a href="#77-files">7.7 Files</a></li></ul></li><li><a href="#8-threat-model">8. Threat model</a></li><li><a href="#9-privacy">9. Privacy</a></li><li><a href="#10-anti-spam-reputation">10. Anti-spam &amp;amp; reputation</a></li><li><a href="#11-open-problems-honest">11. Open problems (honest)</a></li><li><a href="#12-scope-phases">12. Scope &amp;amp; phases</a></li><li><a href="#13-reference-implementation-distribution">13. Reference implementation &amp;amp; distribution</a></li><li><a href="#14-appendix">14. Appendix</a></li></ul></details>
+    <details class="toc-m"><summary>On this page</summary><ul><li><a href="#1-abstract">1. Abstract</a></li><li><a href="#2-motivation">2. Motivation</a></li><li><a href="#3-design-principles">3. Design principles</a></li><li><a href="#4-identity-layer">4. Identity layer</a><ul><li><a href="#41-agent-key">4.1 Agent key</a></li><li><a href="#42-agent-id">4.2 Agent ID</a></li><li><a href="#43-address-card-calling-card">4.3 Address Card ("calling card")</a></li><li><a href="#44-discovery-of-a-card">4.4 Discovery of a card</a></li><li><a href="#45-discovery-directories-optional">4.5 Discovery directories (optional)</a></li><li><a href="#46-encoding-canonical-json-and-signatures">4.6 Encoding, canonical JSON and signatures</a></li></ul></li><li><a href="#5-contact-layer-consent-handshake">5. Contact layer (consent &amp;amp; handshake)</a><ul><li><a href="#51-contact-request">5.1 Contact Request</a></li><li><a href="#52-human-channel-bootstrap">5.2 Human-channel bootstrap</a></li><li><a href="#521-mailbox-probe-email-probe-profile">5.2.1 Mailbox probe (email probe profile)</a></li><li><a href="#522-invite-no-agent-found">5.2.2 Invite (no agent found)</a></li><li><a href="#53-contact-grant-consent">5.3 Contact Grant (consent)</a></li><li><a href="#54-policy-and-revocation">5.4 Policy and revocation</a></li><li><a href="#55-consent-stays-with-the-human">5.5 Consent stays with the human</a></li><li><a href="#551-auto-approve-all-per-contact">5.5.1 Auto-approve-all per contact</a></li><li><a href="#56-peer-text-is-untrusted-data">5.6 Peer text is untrusted data</a></li></ul></li><li><a href="#6-transport-layer">6. Transport layer</a><ul><li><a href="#61-rendezvous-hints">6.1 Rendezvous hints</a></li><li><a href="#62-primary-relay-nostr">6.2 Primary relay: Nostr</a></li><li><a href="#63-fallbacks-all-optional-all-dumb-pipes">6.3 Fallbacks (all optional, all dumb pipes)</a></li><li><a href="#64-envelope">6.4 Envelope</a></li></ul></li><li><a href="#7-session-task-layer-a2a-semantics">7. Session &amp;amp; task layer (A2A semantics)</a><ul><li><a href="#71-a2a-mapping">7.1 A2A mapping</a></li><li><a href="#72-meeting-verbs">7.2 Meeting verbs</a></li><li><a href="#73-task-states">7.3 Task states</a></li><li><a href="#74-scope-and-defaults">7.4 Scope and defaults</a></li><li><a href="#75-extending-the-meeting-verbs">7.5 Extending the meeting verbs</a></li><li><a href="#76-general-tasks">7.6 General tasks</a></li><li><a href="#77-files">7.7 Files</a></li></ul></li><li><a href="#8-threat-model">8. Threat model</a></li><li><a href="#9-privacy">9. Privacy</a></li><li><a href="#10-anti-spam-reputation">10. Anti-spam &amp;amp; reputation</a></li><li><a href="#11-open-problems-honest">11. Open problems (honest)</a></li><li><a href="#12-scope-phases">12. Scope &amp;amp; phases</a></li><li><a href="#13-reference-implementation-distribution">13. Reference implementation &amp;amp; distribution</a></li><li><a href="#14-appendix">14. Appendix</a></li></ul></details>
     <div class="prose">
 <p><strong>Status:</strong> Draft v0.1 rev 3 (2026-10-25) — for discussion<br>
 <strong>Author:</strong> Omer Nesher<br>
@@ -852,7 +852,8 @@ log the owner can read).</p>
 owner's command, a standing policy). A standing policy (<code>auto-start</code>,
 <code>auto-release</code>) is set by the owner per contact and per capability, never
 implied by a grant and never set by a model; for <code>free-form</code> it may cover
-release, never start.</p>
+release, never start. The one policy that covers everything a contact
+asks, <code>auto_approve: all</code>, is §5.5.1.</p>
 <p>Each approval is bound to a digest of what the human was shown, and the
 host MUST NOT act on it if that has changed; it asks again. For a start
 gate the digest covers the peer, <code>contextId</code>, <code>taskId</code>, the capability,
@@ -870,6 +871,75 @@ approve &lt;task-id&gt; --code &lt;code&gt;</code> and <code>rdv task release &l
 &lt;code&gt;</code>, where the code is the first 12 hex digits of the digest shown by
 <code>rdv task list</code>; its MCP server asks through elicitation or a confirm phrase
 (<code>rdv_task</code> "approve-start", "approve-release").</p>
+<h3 id="551-auto-approve-all-per-contact">5.5.1 Auto-approve-all per contact<a class="anchor" href="#551-auto-approve-all-per-contact" title="Link to this section" aria-label="Link to this section">#</a></h3>
+<p>(<strong>spec change</strong>, issue #25.) Approving every task by hand is safe and
+tiring. For a contact the owner trusts as much as their own agent, the owner
+MAY set <code>auto_approve: "all"</code> on that contact, optionally with an expiry
+(<code>auto_approve_until</code>). Its effect, limits and risks:</p>
+<ul>
+<li><strong>What it approves.</strong> For tasks <em>from that contact</em>, under capabilities
+    that contact's grant already allows (<code>scope.invoke</code>), the start gate and
+    the release gate pass without asking, for every approval class,
+    <code>free-form</code> included; so does the release of results back to that
+    contact. A host MAY also let it cover the meeting confirm of a
+    negotiation that contact started (the reference does not). It widens
+    nothing else: the grant, <code>invoke</code>, per-capability limits, bounds (§7.4),
+    sizes, the untrusted-content rules (§5.6) and the file-fetch rules
+    (§7.7) all still apply, and gross abuse still revokes (§5.3).</li>
+<li><strong>What it never covers.</strong> Creating a contact (approving a request or a
+    discovery candidate); joining a group, or approving a group newcomer;
+    granting anyone, or widening any grant, this contact's included;
+    attaching the owner's files to a task <em>we</em> send; cancelling an agreed
+    meeting; and setting, extending or changing auto-approve itself. Each of
+    these still needs the human every time.</li>
+<li><strong>Only the human sets it.</strong> It is set in the owner's own terminal or
+    through a consent form the host shows the owner, never by a model, a
+    tool call, a confirm phrase relayed by a model, or a peer: it is local
+    state that never goes on the wire, so a peer cannot see, request or set
+    it. A host MUST NOT offer a model any tool that sets or extends it; a
+    tool MAY show it. Hosts list the setting command as human-only wherever
+    they list the contact grant command.</li>
+<li><strong>Warning at set time.</strong> Before it is set the owner is shown, in plain
+    words: that the contact's agent can now make this agent act and answer
+    without asking; which capabilities that covers today; that text and
+    files from that contact reach this agent's model with its tools, so
+    prompt injection from that contact gets the power of those tools; the
+    expiry; and how to turn it off.</li>
+<li><strong>Bound to the grant.</strong> The setting is bound to the grant it was set
+    on. It is off at once when the owner turns it off (narrowing needs no
+    confirmation), when it expires, and when the contact is revoked or
+    blocked, its grant is revoked for abuse, changed or widened, or its
+    channel shows a fork or rollback (§6.4). Re-enabling is a new human
+    decision. A setting whose times cannot be read, that was set in the
+    future, or whose integrity cannot be checked approves nothing.</li>
+<li><strong>Audit log.</strong> Every action approved this way appends one line to an
+    audit log the owner can read: time, contact, capability, <code>taskId</code>,
+    which gate, the approval digest, and what left (hashes and sizes).
+    Setting, extending, expiring and turning off are logged too. Peer text
+    is not stored. The log is bounded.</li>
+</ul>
+<p><strong>Risk.</strong> Auto-approve-all trusts the contact's <em>agent</em>, not only its
+human. Anything that can write into that agent's messages (its own model
+following an injected document, a compromised device, a stolen seed) can
+then make this agent run tasks with its tools and send back whatever those
+tasks produce, with no human seeing either side. The quarantine rule (§5.6)
+still limits a host that runs peer content in a tool-less model, but many
+hosts today run one model that both reads peer text and holds tools: there,
+prompt injection from that contact gets this agent's tools for every
+capability in the grant. The grant's <code>invoke</code> and limits are then the only
+boundary, so keep them narrow.</p>
+<p>The reference implementation sets it with <code>rdv contact auto-approve
+&lt;agent-id|label&gt; all [--until &lt;time|duration&gt;]</code>, which needs an interactive
+terminal, shows the warning and has the owner retype the contact's
+fingerprint; <code>... off</code> turns it off from anywhere. The setting lives in
+<code>autoapprove.json</code> in the home (mode 600), each entry MACed with the agent's
+secret key and bound to the contact's grant ID, <code>since</code> and a digest of its
+inbound scope; it is checked under the home lock at each gate. The audit log
+is <code>audit.jsonl</code> (<code>rdv audit [--contact] [--since]</code>, 1000 lines kept);
+<code>rdv contact list</code>, <code>rdv_status</code> and <code>rdv_task</code> show who is on auto-approve
+and until when, and <code>rdv_inbox</code> shows tasks it started and when it ends. The
+reference MCP server has no tool that sets it, and the plugin's consent
+guard refuses the command and the file to the model.</p>
 <h3 id="56-peer-text-is-untrusted-data">5.6 Peer text is untrusted data<a class="anchor" href="#56-peer-text-is-untrusted-data" title="Link to this section" aria-label="Link to this section">#</a></h3>
 <p>Greetings, text parts, decline reasons and card <code>owner</code> fields are written by
 the other side and can carry instructions aimed at the reader's assistant.
@@ -1645,6 +1715,10 @@ a proxy or decline the transfer. The relay sees nothing new.</p>
 <td>Consent stays with the human, outside the model's reach (§5.5)</td>
 </tr>
 <tr>
+<td>A contact on auto-approve is compromised or prompt-injected</td>
+<td>Owner-only switch with a warning, per contact; grant <code>invoke</code> and limits still bound it; off on revoke, block, abuse, a changed grant or a fork; every action audited (§5.5.1)</td>
+</tr>
+<tr>
 <td>Prompt injection through greetings or message text</td>
 <td>Peer text is display-only data; only validated machine fields drive actions (§5.6)</td>
 </tr>
@@ -1887,7 +1961,7 @@ lookups.</p>
 vendor-neutral and unowned.</p>
     </div>
   </article>
-  <div class="docs-toc"><nav class="page-toc" aria-label="On this page"><p class="side-group">On this page</p><ul><li><a href="#1-abstract">1. Abstract</a></li><li><a href="#2-motivation">2. Motivation</a></li><li><a href="#3-design-principles">3. Design principles</a></li><li><a href="#4-identity-layer">4. Identity layer</a><ul><li><a href="#41-agent-key">4.1 Agent key</a></li><li><a href="#42-agent-id">4.2 Agent ID</a></li><li><a href="#43-address-card-calling-card">4.3 Address Card ("calling card")</a></li><li><a href="#44-discovery-of-a-card">4.4 Discovery of a card</a></li><li><a href="#45-discovery-directories-optional">4.5 Discovery directories (optional)</a></li><li><a href="#46-encoding-canonical-json-and-signatures">4.6 Encoding, canonical JSON and signatures</a></li></ul></li><li><a href="#5-contact-layer-consent-handshake">5. Contact layer (consent &amp;amp; handshake)</a><ul><li><a href="#51-contact-request">5.1 Contact Request</a></li><li><a href="#52-human-channel-bootstrap">5.2 Human-channel bootstrap</a></li><li><a href="#521-mailbox-probe-email-probe-profile">5.2.1 Mailbox probe (email probe profile)</a></li><li><a href="#522-invite-no-agent-found">5.2.2 Invite (no agent found)</a></li><li><a href="#53-contact-grant-consent">5.3 Contact Grant (consent)</a></li><li><a href="#54-policy-and-revocation">5.4 Policy and revocation</a></li><li><a href="#55-consent-stays-with-the-human">5.5 Consent stays with the human</a></li><li><a href="#56-peer-text-is-untrusted-data">5.6 Peer text is untrusted data</a></li></ul></li><li><a href="#6-transport-layer">6. Transport layer</a><ul><li><a href="#61-rendezvous-hints">6.1 Rendezvous hints</a></li><li><a href="#62-primary-relay-nostr">6.2 Primary relay: Nostr</a></li><li><a href="#63-fallbacks-all-optional-all-dumb-pipes">6.3 Fallbacks (all optional, all dumb pipes)</a></li><li><a href="#64-envelope">6.4 Envelope</a></li></ul></li><li><a href="#7-session-task-layer-a2a-semantics">7. Session &amp;amp; task layer (A2A semantics)</a><ul><li><a href="#71-a2a-mapping">7.1 A2A mapping</a></li><li><a href="#72-meeting-verbs">7.2 Meeting verbs</a></li><li><a href="#73-task-states">7.3 Task states</a></li><li><a href="#74-scope-and-defaults">7.4 Scope and defaults</a></li><li><a href="#75-extending-the-meeting-verbs">7.5 Extending the meeting verbs</a></li><li><a href="#76-general-tasks">7.6 General tasks</a></li><li><a href="#77-files">7.7 Files</a></li></ul></li><li><a href="#8-threat-model">8. Threat model</a></li><li><a href="#9-privacy">9. Privacy</a></li><li><a href="#10-anti-spam-reputation">10. Anti-spam &amp;amp; reputation</a></li><li><a href="#11-open-problems-honest">11. Open problems (honest)</a></li><li><a href="#12-scope-phases">12. Scope &amp;amp; phases</a></li><li><a href="#13-reference-implementation-distribution">13. Reference implementation &amp;amp; distribution</a></li><li><a href="#14-appendix">14. Appendix</a></li></ul></nav></div>
+  <div class="docs-toc"><nav class="page-toc" aria-label="On this page"><p class="side-group">On this page</p><ul><li><a href="#1-abstract">1. Abstract</a></li><li><a href="#2-motivation">2. Motivation</a></li><li><a href="#3-design-principles">3. Design principles</a></li><li><a href="#4-identity-layer">4. Identity layer</a><ul><li><a href="#41-agent-key">4.1 Agent key</a></li><li><a href="#42-agent-id">4.2 Agent ID</a></li><li><a href="#43-address-card-calling-card">4.3 Address Card ("calling card")</a></li><li><a href="#44-discovery-of-a-card">4.4 Discovery of a card</a></li><li><a href="#45-discovery-directories-optional">4.5 Discovery directories (optional)</a></li><li><a href="#46-encoding-canonical-json-and-signatures">4.6 Encoding, canonical JSON and signatures</a></li></ul></li><li><a href="#5-contact-layer-consent-handshake">5. Contact layer (consent &amp;amp; handshake)</a><ul><li><a href="#51-contact-request">5.1 Contact Request</a></li><li><a href="#52-human-channel-bootstrap">5.2 Human-channel bootstrap</a></li><li><a href="#521-mailbox-probe-email-probe-profile">5.2.1 Mailbox probe (email probe profile)</a></li><li><a href="#522-invite-no-agent-found">5.2.2 Invite (no agent found)</a></li><li><a href="#53-contact-grant-consent">5.3 Contact Grant (consent)</a></li><li><a href="#54-policy-and-revocation">5.4 Policy and revocation</a></li><li><a href="#55-consent-stays-with-the-human">5.5 Consent stays with the human</a></li><li><a href="#551-auto-approve-all-per-contact">5.5.1 Auto-approve-all per contact</a></li><li><a href="#56-peer-text-is-untrusted-data">5.6 Peer text is untrusted data</a></li></ul></li><li><a href="#6-transport-layer">6. Transport layer</a><ul><li><a href="#61-rendezvous-hints">6.1 Rendezvous hints</a></li><li><a href="#62-primary-relay-nostr">6.2 Primary relay: Nostr</a></li><li><a href="#63-fallbacks-all-optional-all-dumb-pipes">6.3 Fallbacks (all optional, all dumb pipes)</a></li><li><a href="#64-envelope">6.4 Envelope</a></li></ul></li><li><a href="#7-session-task-layer-a2a-semantics">7. Session &amp;amp; task layer (A2A semantics)</a><ul><li><a href="#71-a2a-mapping">7.1 A2A mapping</a></li><li><a href="#72-meeting-verbs">7.2 Meeting verbs</a></li><li><a href="#73-task-states">7.3 Task states</a></li><li><a href="#74-scope-and-defaults">7.4 Scope and defaults</a></li><li><a href="#75-extending-the-meeting-verbs">7.5 Extending the meeting verbs</a></li><li><a href="#76-general-tasks">7.6 General tasks</a></li><li><a href="#77-files">7.7 Files</a></li></ul></li><li><a href="#8-threat-model">8. Threat model</a></li><li><a href="#9-privacy">9. Privacy</a></li><li><a href="#10-anti-spam-reputation">10. Anti-spam &amp;amp; reputation</a></li><li><a href="#11-open-problems-honest">11. Open problems (honest)</a></li><li><a href="#12-scope-phases">12. Scope &amp;amp; phases</a></li><li><a href="#13-reference-implementation-distribution">13. Reference implementation &amp;amp; distribution</a></li><li><a href="#14-appendix">14. Appendix</a></li></ul></nav></div>
 </div>
 </main>
 

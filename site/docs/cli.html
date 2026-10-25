@@ -484,6 +484,14 @@ npm run rdv -- --help                     # or: node packages/cli/dist/src/bin.j
 <td>Withdraw a task you requested, or answer its executor's question</td>
 </tr>
 <tr>
+<td><code>rdv contact auto-approve &lt;agent-id\|label&gt; all [--until 7d]</code> / <code>… off</code></td>
+<td>Let one trusted contact's tasks start and their results leave without asking you (SPEC §5.5.1, "dangerous mode"): needs your own terminal, shows a warning, asks you to retype the fingerprint. Ends on expiry, <code>off</code>, a revoke, block or new grant, or a fork (NOTES 77). Yours to run</td>
+</tr>
+<tr>
+<td><code>rdv audit [--contact &lt;agent-id\|label&gt;] [--since 7d]</code></td>
+<td>The audit log: gates passed without asking (<code>auto</code>, <code>notify</code>, auto-approve), your approvals, auto-approve changes; no peer text</td>
+</tr>
+<tr>
 <td><code>rdv inbox [--follow]</code></td>
 <td>Show received payloads</td>
 </tr>

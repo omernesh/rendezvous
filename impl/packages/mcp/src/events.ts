@@ -261,6 +261,15 @@ export function toModelEvent(e: Raw, negotiating: boolean): Omit<McpEvent, 'n' |
     }
     case 'revoked':
       return { type: 'revoked', peer: agentId(e.peer) };
+    case 'auto-approve-off':
+      // Our own sweep (issue #25): the contact's auto-approve ended. The fields are ours; checked anyway.
+      return {
+        type: 'auto_approve_off',
+        peer: agentId(e.peer),
+        fingerprint: fp(e.peer),
+        reason: oneOf(['owner', 'expired', 'revoked', 'blocked', 'grant-changed', 'fork', 'invalid'])(e.reason),
+        next_step: `Auto-approve for ${who(e.peer)} is off: its tasks need your user's approval again. Tell your user. Only they can turn it back on, in their own terminal.`,
+      };
     case 'task-abuse': {
       // Our own agent revoked the contact (§5.3 (b), issue #28). The fields are ours; checked anyway.
       const n = (v: unknown) => (typeof v === 'number' && Number.isSafeInteger(v) ? v : null);
@@ -339,7 +348,9 @@ export function toModelEvent(e: Raw, negotiating: boolean): Omit<McpEvent, 'n' |
         code: e.code === undefined ? undefined : reasonCode(e.code),
         artifact_id: e.artifact === undefined ? undefined : uuid(e.artifact),
         last_chunk: typeof e.last_chunk === 'boolean' ? e.last_chunk : undefined,
-        summary: taskSummary(e),
+        // Started without asking: our user put this contact on auto-approve (issue #25; audited).
+        auto_approved: e.auto_approved === true ? true : undefined,
+        summary: e.auto_approved === true && e.kind === 'started' ? `${who(e.peer)} asked for a task; it started without asking because your user put this contact on auto-approve.` : taskSummary(e),
         next_step: taskNextStep(e),
         // Everything below was written by the peer (data parts too: their shape was checked, not their content).
         reason: e.reason === undefined ? undefined : untrusted(e.reason),

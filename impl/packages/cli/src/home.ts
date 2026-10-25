@@ -6,7 +6,9 @@
 //   cards.json   cards found by `rdv lookup` (so `contact request <agent-id>` works)
 //   negotiations.json  dinner negotiations (@rendezvous/a2a engine state)
 //   tasks.json   general tasks (tasks/v1 engine state) and results waiting for release (mode 600)
-//   audit.jsonl  gates passed without asking the human (an `auto` start, a `notify`), and every approval (bounded)
+//   audit.jsonl  gates passed without asking the human (an `auto` start, a `notify`, auto-approve), every approval,
+//                and every auto-approve set/extend/off (bounded)
+//   autoapprove.json  contacts our human put on auto-approve (issue #25; mode 600, MACed with the agent key, local only)
 //   consent.json  confirm phrases for pending requests and meetings (written by the MCP server)
 //   holds.json   which calendar file holds each dinner hold, tentative or agreed (to release or finalize it)
 //   relays.json  per-relay diagnostics and cooldowns (last OK, last error), written after each publish
@@ -82,17 +84,47 @@ export interface TaskHostState {
   releases: Record<string, PendingRelease>;
 }
 
-/** One line of audit.jsonl. */
+/** Why auto-approve for a contact ended (issue #25). `owner`: our human turned it off. */
+export type AutoApproveOff = 'owner' | 'expired' | 'revoked' | 'blocked' | 'grant-changed' | 'fork' | 'invalid';
+
+/** One line of audit.jsonl. Never peer text: IDs, URIs, digests and hashes only. */
 export interface AuditEntry {
   ts: string;
   peer: string;
-  capability: string;
-  task: string;
-  gate: 'start' | 'release' | 'notify';
-  /** Who let it pass: the grant (class `auto`/`notify`), or the human (form, phrase, terminal). */
-  by: 'grant' | 'human';
+  /** Gate lines: the task's capability and ID. */
+  capability?: string;
+  task?: string;
+  /** A gate (start, release, notify), or a change to the contact's auto-approve setting. */
+  gate: 'start' | 'release' | 'notify' | 'auto-approve';
+  /** Who let it pass: the grant (class `auto`/`notify`), the human (form, phrase, terminal), or the human's standing auto-approve. */
+  by: 'grant' | 'human' | 'auto-approve';
   approval?: string;
   digest?: string;
+  /** Release lines: SHA-256 and size of each payload that left (ours, never the peer's). */
+  sent?: Array<{ sha256: string; bytes: number }>;
+  /** gate `auto-approve`: what changed. */
+  action?: 'set' | 'extend' | 'off';
+  /** gate `auto-approve`, action `off`: why. */
+  reason?: AutoApproveOff;
+  /** gate `auto-approve`, set/extend: the expiry (null: until turned off) and the capabilities it covered then. */
+  until?: string | null;
+  capabilities?: string[];
+}
+
+/** One contact on auto-approve (autoapprove.json). Bound to the grant it was set on; `mac` keys it to this agent. */
+export interface AutoApproveEntry {
+  v: 1;
+  peer: string;
+  mode: 'all';
+  /** When our human set (or last extended) it. */
+  set: string;
+  /** Expiry, or null: until turned off. */
+  until: string | null;
+  /** The contact's grant and inbound scope when it was set: another grant (revoked and re-made, widened) ends it. */
+  grantId: string;
+  since: string;
+  scope: string;
+  mac: string;
 }
 
 /**
@@ -188,6 +220,10 @@ export class Home {
   }
   get auditPath() {
     return join(this.dir, 'audit.jsonl');
+  }
+
+  get autoApprovePath() {
+    return join(this.dir, 'autoapprove.json');
   }
   get holdsPath() {
     return join(this.dir, 'holds.json');
@@ -325,6 +361,19 @@ export class Home {
     return parseJsonLines(readFileSync(this.auditPath, 'utf8'));
   }
 
+  /** Contacts on auto-approve. Unreadable fails closed: nobody is (the caller reports it). */
+  readAutoApprove(): Record<string, AutoApproveEntry> {
+    if (!existsSync(this.autoApprovePath)) return {};
+    const s = readJson<unknown>(this.autoApprovePath);
+    if (!s || typeof s !== 'object' || Array.isArray(s)) throw new CliError(`unrecognized ${this.autoApprovePath}`);
+    return s as Record<string, AutoApproveEntry>;
+  }
+
+  writeAutoApprove(entries: Record<string, AutoApproveEntry>): void {
+    if (Object.keys(entries).length === 0) rmSync(this.autoApprovePath, { force: true });
+    else writeAtomic(this.autoApprovePath, JSON.stringify(entries, null, 2) + '\n', 0o600);
+  }
+
   readConsent(): Record<string, ConsentEntry> {
     return existsSync(this.consentPath) ? readJson(this.consentPath) : {};
   }
@@ -391,6 +440,7 @@ export class Home {
       this.negotiationsPath,
       this.tasksPath,
       this.auditPath,
+      this.autoApprovePath,
       this.consentPath,
       this.eventsPath,
       this.holdsPath,

@@ -38,10 +38,10 @@ What it contains:
   from running the `rdv` commands that grant consent or print confirm phrases
   (`rdv contact grant`, `rdv dinner confirm`, `rdv task approve`,
   `rdv task release`, `rdv contact pending`, `rdv dinner list`,
-  `rdv task list`, …) or name a contact (`rdv contact label`, or
+  `rdv task list`, …), put a contact on auto-approve (`rdv contact auto-approve`), or name a contact (`rdv contact label`, or
   `rdv contact request <agent-id> --label`), however the command is quoted or wrapped (`npx`,
   `bash -c`, `$(…)`), and from reading, editing, searching or globbing the
-  agent's secret key and consent file with any tool. Those stay with you, in
+  agent's secret key, consent file and auto-approve file with any tool. Those stay with you, in
   your own terminal.
 
   **The hook is defence in depth, not a security boundary.** A model with a
