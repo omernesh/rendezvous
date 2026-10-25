@@ -18,6 +18,7 @@ import {
   type MeetingScope,
   MAX_TASKS_PER_PEER,
   MeetingChangedError,
+  meetingsAllowed,
   meetingSnapshot,
   MemoryCalendar,
   type NegotiationEvent,
@@ -393,6 +394,36 @@ describe('negotiation', () => {
     expect(r.outgoing).toEqual([]);
     expect(r.state.tasks).toEqual({});
     expect(r.events[0]).toMatchObject({ kind: 'invalid', reason: expect.stringMatching(/may_propose_meetings/) });
+  });
+
+  it('scope.invoke decides meetings: invoke first, the boolean as fallback, the narrower on disagreement (issue #23)', () => {
+    const M = EXTENSIONS.meeting;
+    const REVIEW = 'https://rendezvous.nesher.co/ext/review/v1';
+    const cases: Array<[MeetingScope | undefined, boolean]> = [
+      [undefined, false],
+      [{}, false],
+      [{ may_propose_meetings: true }, true],
+      [{ may_propose_meetings: false }, false],
+      [{ invoke: { [M]: {} } }, true],
+      [{ invoke: { [REVIEW]: {} } }, false],
+      [{ may_propose_meetings: true, invoke: { [M]: {} } }, true],
+      [{ may_propose_meetings: true, invoke: { [REVIEW]: {} } }, false],
+      [{ may_propose_meetings: false, invoke: { [M]: {} } }, false],
+      [{ may_propose_meetings: true, invoke: [M] as never }, false],
+      [{ may_propose_meetings: true, invoke: { [M]: true } }, false],
+    ];
+    for (const [scope, ok] of cases) expect(meetingsAllowed(scope), JSON.stringify(scope)).toBe(ok);
+    // A proposal from a peer whose grant lists no meetings in invoke is refused before any state is kept.
+    const omer = side(OMER, 1);
+    const p = propose(omer.state, JOHN, ctxOf(omer));
+    const john = side(JOHN, 2, { scope: { may_initiate: true, may_propose_meetings: true, invoke: { [REVIEW]: {} } } });
+    const r = receive(john.state, OMER, p.outgoing[0].payload, ctxOf(john));
+    expect([r.outgoing, r.state.tasks]).toEqual([[], {}]);
+    expect(r.events[0]).toMatchObject({ kind: 'invalid', reason: expect.stringMatching(/invoke/) });
+    // Listed in invoke: negotiated as before.
+    const ok = side(JOHN, 2, { scope: { may_initiate: true, may_propose_meetings: true, invoke: { [M]: {} } } });
+    expect(Object.keys(receive(ok.state, OMER, p.outgoing[0].payload, ctxOf(ok)).state.tasks)).toHaveLength(1);
+    expect(() => propose(omer.state, JOHN, { ...ctxOf(omer), scope: { may_propose_meetings: true, invoke: {} } })).toThrow(NegotiationError);
   });
 
   it('free_busy: event titles never leave the calendar', async () => {

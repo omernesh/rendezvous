@@ -6,12 +6,17 @@ import {
   type AddressCard,
   Agent,
   cleanLabel,
+  DEFAULT_GRANT_SCOPE,
   DEFAULT_RELAYS,
   type DiscoveryAddress,
   dtopic,
   fingerprint,
   type GrantScope,
+  grantScope,
   isAgentId,
+  isCapabilityUri,
+  MEETING_CAPABILITIES,
+  MEETINGS_CAPABILITY,
   MAX_ADDRESSES,
   normalizeAddresses,
   parseAddress,
@@ -541,6 +546,30 @@ function labelOf(v: unknown): string | undefined {
   }
 }
 
+/**
+ * The scope the contact-grant command grants (§5.3): the scope file, or the
+ * default (meetings), plus each `--invoke <capability-uri>`, minus the meeting
+ * capabilities with `--no-meetings`. Deny by default: nothing else is allowed.
+ * Checked (and both meeting fields made consistent) before anything is sent.
+ */
+function invokeScope(scope: GrantScope | undefined, invoke: unknown, noMeetings: boolean): GrantScope | undefined {
+  const uris = Array.isArray(invoke) ? (invoke as unknown[]) : invoke === undefined ? [] : [invoke];
+  try {
+    if (uris.length === 0 && !noMeetings) return scope === undefined ? undefined : grantScope(scope);
+    const base = grantScope(scope ?? DEFAULT_GRANT_SCOPE);
+    const inv = { ...base.invoke };
+    for (const u of uris) {
+      if (!isCapabilityUri(u)) throw new Error(`--invoke takes a capability URI (https, at most 200 characters, no wildcard): ${clean(String(u))}`);
+      if (MEETING_CAPABILITIES.includes(u)) throw new Error('meetings are granted by default; leave them out with --no-meetings');
+      inv[u] = inv[u] ?? {};
+    }
+    if (noMeetings) for (const u of MEETING_CAPABILITIES) delete inv[u];
+    return grantScope({ ...base, invoke: inv, may_propose_meetings: Object.hasOwn(inv, MEETINGS_CAPABILITY) });
+  } catch (err) {
+    throw new CliError((err as Error).message, 2);
+  }
+}
+
 export async function contactGrant({ home, out, values, positionals }: Ctx): Promise<void> {
   const tier = tierOf(values.tier);
   const scopeFile = str(values['scope-file']);
@@ -550,6 +579,7 @@ export async function contactGrant({ home, out, values, positionals }: Ctx): Pro
     if (!s || typeof s !== 'object' || Array.isArray(s)) throw new CliError('scope file must hold a JSON object', 2);
     scope = s as GrantScope;
   }
+  scope = invokeScope(scope, values.invoke, values['no-meetings'] === true);
   const label = labelOf(values.label);
   const target = positionals[0];
   const contact = await withAgent(home, async (agent) => {

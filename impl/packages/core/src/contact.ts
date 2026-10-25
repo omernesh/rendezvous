@@ -15,11 +15,139 @@ export const isTier = (t: unknown): t is Tier => typeof t === 'string' && (TIERS
 
 export interface GrantScope {
   may_initiate?: boolean;
+  /** Read as `invoke` holding MEETING_CAPABILITIES (§5.3). Written beside `invoke` until v0.5. */
   may_propose_meetings?: boolean;
   may_access_calendar?: 'none' | 'free_busy' | 'full';
   /** "<n>/<minute|hour|day>" */
   max_frequency?: string;
+  /** Capability URIs the grantee may invoke on the grantor, each with its own limits. Deny by default, no wildcard. */
+  invoke?: Record<string, InvokeLimits>;
   [extra: string]: unknown;
+}
+
+/** Per-capability limits in `scope.invoke` (§5.3). Unknown fields are ignored, like other open scope fields. */
+export interface InvokeLimits {
+  /** "<n>/<minute|hour|day>", as the grant-wide one. */
+  max_frequency?: string;
+  /** Tasks for this capability not yet terminal (default 4). */
+  max_open?: number;
+  [extra: string]: unknown;
+}
+
+/** The meeting capabilities: `may_propose_meetings: true` means `invoke` holds both (§5.3, §7.4). */
+export const MEETINGS_CAPABILITY = 'https://rendezvous.nesher.co/ext/meetings/v1';
+export const MEETING_CANCEL_CAPABILITY = 'https://rendezvous.nesher.co/ext/meeting-cancel/v1';
+export const MEETING_CAPABILITIES: readonly string[] = Object.freeze([MEETINGS_CAPABILITY, MEETING_CANCEL_CAPABILITY]);
+/** Bounds on `scope.invoke`: keys (as card capabilities, §4.3) and URI length. */
+export const INVOKE_MAX = 32;
+export const CAPABILITY_URI_MAX = 200;
+/** Default `max_open` per capability (§5.3). */
+export const DEFAULT_MAX_OPEN = 4;
+
+const isPlainObject = (v: unknown): v is Record<string, unknown> =>
+  !!v && typeof v === 'object' && !Array.isArray(v) && (Object.getPrototypeOf(v) === Object.prototype || Object.getPrototypeOf(v) === null);
+
+/** A capability URI as `invoke` keys and card capabilities use it: https, at most 200 characters, no wildcard. */
+export function isCapabilityUri(v: unknown): v is string {
+  if (typeof v !== 'string' || v.length === 0 || v.length > CAPABILITY_URI_MAX) return false;
+  if (!/^https:\/\/[\x21-\x7e]+$/.test(v) || v.includes('*')) return false;
+  try {
+    const u = new URL(v);
+    return u.protocol === 'https:' && u.hostname.length > 0 && u.username === '' && u.password === '';
+  } catch {
+    return false;
+  }
+}
+
+/** Why `invoke` is malformed, or null when it is well formed. */
+export function invokeProblem(invoke: unknown): string | null {
+  if (!isPlainObject(invoke)) return 'scope.invoke must be a JSON object';
+  const keys = Object.keys(invoke);
+  if (keys.length > INVOKE_MAX) return `scope.invoke may list at most ${INVOKE_MAX} capabilities`;
+  for (const k of keys) {
+    if (!isCapabilityUri(k)) return `scope.invoke: not a capability URI (https, at most ${CAPABILITY_URI_MAX} characters, no wildcard)`;
+    const l = invoke[k];
+    if (!isPlainObject(l)) return 'scope.invoke: each capability maps to an object of limits';
+    if (l.max_frequency !== undefined && (typeof l.max_frequency !== 'string' || !parseFrequency(l.max_frequency))) {
+      return 'scope.invoke: max_frequency must be "<n>/<minute|hour|day>"';
+    }
+    if (l.max_open !== undefined && !(Number.isSafeInteger(l.max_open) && (l.max_open as number) >= 1)) {
+      return 'scope.invoke: max_open must be a positive integer';
+    }
+  }
+  return null;
+}
+
+/**
+ * Does `scope` let its grantee invoke `capability` (§5.3)? The v0.3 reading
+ * rule: `invoke` first, then `may_propose_meetings` for the meeting
+ * capabilities. Deny by default: a capability that is not a key of `invoke`
+ * is refused, and with no `invoke` only the meeting capabilities can be
+ * allowed, by the boolean. When both fields are present and disagree on
+ * meetings, the narrower wins (no meetings). A malformed `invoke` allows
+ * nothing. Applied as is to stored contacts: nothing is rewritten on disk.
+ */
+export function scopeAllows(scope: GrantScope | null | undefined, capability: string): boolean {
+  if (!isPlainObject(scope)) return false;
+  const meeting = MEETING_CAPABILITIES.includes(capability);
+  if (scope.invoke === undefined) return meeting && scope.may_propose_meetings === true;
+  if (invokeProblem(scope.invoke) !== null || !Object.hasOwn(scope.invoke, capability)) return false;
+  return !meeting || scope.may_propose_meetings === undefined || scope.may_propose_meetings === true;
+}
+
+/** The limits `scope` sets on `capability`, or null when it is not allowed (scopeAllows). */
+export function invokeLimits(scope: GrantScope | null | undefined, capability: string): InvokeLimits | null {
+  if (!scopeAllows(scope, capability)) return null;
+  const l = scope!.invoke?.[capability];
+  return { ...(l ?? {}), max_open: typeof l?.max_open === 'number' ? l.max_open : DEFAULT_MAX_OPEN };
+}
+
+/** The capabilities `scope` allows, in a stable order (the migration rule applied). */
+export function allowedCapabilities(scope: GrantScope | null | undefined): string[] {
+  if (!isPlainObject(scope)) return [];
+  const keys = scope.invoke === undefined ? [...MEETING_CAPABILITIES] : isPlainObject(scope.invoke) ? Object.keys(scope.invoke) : [];
+  return keys.filter((k) => scopeAllows(scope, k)).sort();
+}
+
+/**
+ * The `invoke` map a scope stands for, the reading rule applied: what a task
+ * engine is given (never the raw field). A malformed `invoke` gives `{}`; a
+ * grant without `invoke` gives the meeting URIs when its boolean allows them.
+ */
+export function effectiveInvoke(scope: GrantScope | null | undefined): Record<string, InvokeLimits> {
+  return Object.fromEntries(allowedCapabilities(scope).map((u) => [u, { ...(scope?.invoke?.[u] ?? {}) }]));
+}
+
+/**
+ * A scope as v0.3 writes it in a grant (§5.3): `invoke` validated and copied,
+ * and `may_propose_meetings` written beside it, consistent with it, so an
+ * older peer that reads only the boolean reaches the same answer. A scope
+ * without `invoke` gets one from the boolean (`true` = the meeting
+ * capabilities, nothing else). Throws on a malformed `invoke` or one that
+ * disagrees with the boolean: our human's grant must say one thing.
+ */
+export function grantScope(scope: GrantScope): GrantScope {
+  if (!isPlainObject(scope)) throw new Error('scope must be a JSON object');
+  const out: GrantScope = { ...scope };
+  if (scope.invoke === undefined) {
+    const meet = scope.may_propose_meetings === true;
+    out.may_propose_meetings = meet;
+    out.invoke = meet ? Object.fromEntries(MEETING_CAPABILITIES.map((u) => [u, {}])) : {};
+    return out;
+  }
+  const problem = invokeProblem(scope.invoke);
+  if (problem) throw new Error(problem);
+  const invoke: Record<string, InvokeLimits> = {};
+  for (const [k, l] of Object.entries(scope.invoke)) invoke[k] = { ...l };
+  const meet = Object.hasOwn(invoke, MEETINGS_CAPABILITY);
+  if (!meet && Object.hasOwn(invoke, MEETING_CANCEL_CAPABILITY)) throw new Error('scope.invoke: meeting-cancel goes with meetings');
+  if (scope.may_propose_meetings !== undefined && scope.may_propose_meetings !== meet) {
+    throw new Error('scope: may_propose_meetings and scope.invoke disagree on meetings');
+  }
+  if (meet && !Object.hasOwn(invoke, MEETING_CANCEL_CAPABILITY)) invoke[MEETING_CANCEL_CAPABILITY] = {};
+  out.invoke = invoke;
+  out.may_propose_meetings = meet;
+  return out;
 }
 
 export interface ContactRequestBody {
@@ -187,6 +315,8 @@ export function verifyContactRequest(input: unknown, now = new Date()): input is
 function verifyGrantDoc(g: ContactGrant | ReverseGrant, now: Date): boolean {
   if (g.v !== 1 || g.type !== 'rdv/contact-grant' || !isDocId(g.id)) return false;
   if (!isTier(g.tier) || !g.scope || typeof g.scope !== 'object' || Array.isArray(g.scope)) return false;
+  // `invoke` is optional (older peers never send it); when present it must be well formed (§5.3).
+  if (g.scope.invoke !== undefined && invokeProblem(g.scope.invoke) !== null) return false;
   if (parseTimestamp(g.ts) === null || (g.expires !== null && parseTimestamp(g.expires) === null)) return false;
   if (!isAgentId(g.from) || !isAgentId(g.to) || !verifyDoc(g, g.from)) return false;
   const card = verifyCard(g.card, now);
@@ -229,7 +359,11 @@ export const DEFAULT_INBOUND_SCOPE: Readonly<GrantScope> = Object.freeze({
   may_propose_meetings: false,
   may_access_calendar: 'none',
   max_frequency: '50/day',
+  invoke: Object.freeze({}) as Record<string, InvokeLimits>,
 });
+
+/** A fresh, mutable copy of DEFAULT_INBOUND_SCOPE. */
+const defaultInbound = (): GrantScope => ({ ...DEFAULT_INBOUND_SCOPE, invoke: {} });
 
 export interface Contact {
   peer: string;
@@ -398,6 +532,17 @@ export class ContactBook {
     this.state.seenIds.push(id);
     if (this.state.seenIds.length > SEEN_LIMIT) this.state.seenIds.splice(0, this.state.seenIds.length - SEEN_LIMIT);
     return true;
+  }
+
+  /**
+   * May `peer` invoke `capability` on us (`inbound`, the scope our human
+   * granted), or may we invoke it on `peer` (`outbound`, the peer's grant)?
+   * The migration rule of scopeAllows; false for no active contact.
+   */
+  mayInvoke(peer: string, capability: string, direction: 'inbound' | 'outbound' = 'inbound', now = new Date()): boolean {
+    const c = this.contact(peer, now);
+    if (!c || this.isBlocked(peer)) return false;
+    return scopeAllows(direction === 'inbound' ? c.inboundScope : c.outboundScope, capability);
   }
 
   isBlocked(peer: string): boolean {
@@ -589,8 +734,9 @@ export class ContactBook {
     const c = this.state.contacts[peer];
     if (!c) throw new Error(`no contact ${peer}`);
     if (!isTier(opts.tier)) throw new Error(`unknown tier ${String(opts.tier)}`);
+    const scope = grantScope(opts.scope); // throws on a malformed or self-contradicting invoke
     c.tier = opts.tier;
-    c.inboundScope = { ...opts.scope };
+    c.inboundScope = scope;
     c.inboundGranted = true;
     delete this.state.rate[peer];
     return c;
@@ -640,7 +786,7 @@ export class ContactBook {
       peer: g.from,
       card: g.card,
       tier: granted ? prev.tier : CLAIMED_TIER_CAP,
-      inboundScope: granted ? prev.inboundScope : { ...DEFAULT_INBOUND_SCOPE },
+      inboundScope: granted ? prev.inboundScope : defaultInbound(),
       inboundGranted: granted,
       outboundScope: { ...g.scope },
       grantedTier: g.tier,

@@ -7,8 +7,8 @@ import { execFileSync } from 'node:child_process';
 import { Listener, RDV_BIN, rdv, until } from '../scenarios/harness.js';
 import { acquireLock, LockTimeoutError, writeAtomic } from '../src/fsutil.js';
 import { clean, contactText, inboxText, requestText } from '../src/output.js';
-import { DEFAULT_INBOUND_SCOPE, DEFAULT_RELAYS, type Contact, type PendingRequest } from '@rendezvous/core';
-import { type Ctx, emptyState, type MeetingScope, parseWindow, propose, receive } from '@rendezvous/a2a';
+import { DEFAULT_INBOUND_SCOPE, DEFAULT_RELAYS, type Contact, MEETINGS_CAPABILITY, type PendingRequest, scopeAllows } from '@rendezvous/core';
+import { type Ctx, emptyState, type MeetingScope, meetingsAllowed, parseWindow, propose, receive } from '@rendezvous/a2a';
 import { inboundMeetingScope, meetingScope } from '../src/negotiate.js';
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'rdv-test-'));
@@ -284,6 +284,49 @@ describe('rdv commands', () => {
       await Promise.all([johnL.stop(), omerL.stop()]);
     }
   });
+
+  it('grant with --invoke: deny by default, checked before sending, and the reverse grant carries invoke to the peer (issue #23)', async () => {
+    const REVIEW = 'https://rendezvous.nesher.co/ext/review/v1';
+    const omerHome = join(root, 'omer-inv');
+    const johnHome = join(root, 'john-inv');
+    await rdv(['init', '--profile', 'omer', '--email', 'omer@example.com', '--relay', relay.url], omerHome);
+    await rdv(['init', '--profile', 'john', '--email', 'john@doe.com', '--relay', relay.url], johnHome);
+    const cardFile = join(root, 'john-inv-card.json');
+    writeFileSync(cardFile, JSON.stringify((await rdv(['whoami'], johnHome)).lines[0].card));
+    const johnL = new Listener('john', johnHome, ['--auto-grant', 'friend', '--auto-grant-any-tier']);
+    const omerL = new Listener('omer', omerHome);
+    try {
+      await johnL.waitFor((l) => l.event === 'ready', 'ready', 10_000);
+      await omerL.waitFor((l) => l.event === 'ready', 'ready', 10_000);
+      await rdv(['contact', 'request', cardFile, '--greeting', 'hi'], omerHome);
+      const omerC = await omerL.waitFor((l) => l.event === 'contact', 'omer contact', 10_000);
+      const john = omerC.peer as string;
+      // Main's behaviour is unchanged: John's default grant lets Omer propose meetings, nothing else.
+      expect(omerC).toMatchObject({ outbound_meetings: true, inbound_invoke: [] });
+      expect([...omerC.outbound_invoke].sort()).toEqual(['https://rendezvous.nesher.co/ext/meeting-cancel/v1', 'https://rendezvous.nesher.co/ext/meetings/v1']);
+
+      // Refused before anything is recorded or sent: not a capability URI, a wildcard, meetings through --invoke, a self-contradicting scope file.
+      const scopeFile = join(root, 'bad-scope.json');
+      writeFileSync(scopeFile, JSON.stringify({ may_propose_meetings: true, invoke: { [REVIEW]: {} } }));
+      for (const extra of [['--invoke', 'review'], ['--invoke', 'https://example.com/*'], ['--invoke', 'https://rendezvous.nesher.co/ext/meetings/v1'], ['--scope-file', scopeFile]]) {
+        const bad = await rdv(['contact', 'grant', john, ...extra], omerHome, { check: false });
+        expect(bad.code, extra.join(' ')).toBe(2);
+      }
+      expect((await rdv(['contact', 'list'], omerHome)).lines[0]).toMatchObject({ inbound: 'default', inbound_invoke: [] });
+
+      const g = await rdv(['contact', 'grant', john, '--tier', 'friend', '--invoke', REVIEW, '--no-meetings'], omerHome);
+      expect(g.lines[0]).toMatchObject({ event: 'granted', peer: john, inbound: 'granted', inbound_invoke: [REVIEW] });
+      const rev = await johnL.waitFor((l) => l.event === 'reverse-grant', 'john gets the reverse grant', 10_000);
+      expect(rev).toMatchObject({ outbound_meetings: false, outbound_invoke: [REVIEW] });
+      // It set only what John may do towards Omer: Omer's rights towards John are still John's own grant (meetings).
+      const jc = (await rdv(['contact', 'list'], johnHome)).lines[0];
+      expect(jc).toMatchObject({ outbound_invoke: [REVIEW], outbound_meetings: false, inbound: 'granted' });
+      expect(jc.inbound_invoke).toContain('https://rendezvous.nesher.co/ext/meetings/v1');
+      expect(jc.inbound_invoke).not.toContain(REVIEW);
+    } finally {
+      await Promise.all([johnL.stop(), omerL.stop()]);
+    }
+  });
 });
 
 describe('terminal safety (security regression)', () => {
@@ -514,6 +557,33 @@ describe('negotiation scope by direction (security review H2)', () => {
     expect(step.events[0]).toMatchObject({ kind: 'invalid' });
     expect(step.outgoing).toEqual([]);
     expect(step.effects).toEqual([]);
+  });
+
+  it("core's reading rule decides, and the engine agrees with it on every shape (issue #23)", () => {
+    const M = MEETINGS_CAPABILITY;
+    const REVIEW = 'https://rendezvous.nesher.co/ext/review/v1';
+    const shapes: object[] = [
+      {},
+      { may_propose_meetings: true },
+      { may_propose_meetings: false },
+      { invoke: { [M]: {} } },
+      { invoke: {} },
+      { may_propose_meetings: true, invoke: { [M]: {} } },
+      { may_propose_meetings: true, invoke: { [REVIEW]: {} } },
+      { may_propose_meetings: false, invoke: { [M]: {} } },
+      { may_propose_meetings: true, invoke: { [M]: {}, '*': {} } },
+    ];
+    for (const s of shapes) {
+      expect(meetingsAllowed(s as MeetingScope), JSON.stringify(s)).toBe(scopeAllows(s, M));
+      const c = { ...contact, inboundScope: s, outboundScope: s } as unknown as Contact;
+      expect(meetingsAllowed(meetingScope(c, 'inbound')), JSON.stringify(s)).toBe(scopeAllows(s, M));
+    }
+    // A peer whose inbound grant lists only review/v1 (and a stale boolean) cannot start a negotiation.
+    const narrow = { ...contact, inboundScope: { may_propose_meetings: true, invoke: { [REVIEW]: {} } } } as unknown as Contact;
+    const theirs = propose(emptyState(), 'rdv1:us', ctx(loud));
+    const state = emptyState();
+    const step = receive(state, 'rdv1:mallory', theirs.outgoing[0].payload, ctx(inboundMeetingScope(narrow, state, theirs.outgoing[0].payload)));
+    expect([step.outgoing, step.state.tasks]).toEqual([[], {}]);
   });
 
   it('replies on a negotiation we proposed ride our outbound grant', () => {

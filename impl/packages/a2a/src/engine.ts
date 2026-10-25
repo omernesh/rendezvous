@@ -54,6 +54,7 @@
 import {
   type A2AMessage,
   type A2APayload,
+  EXTENSIONS,
   type MeetingData,
   isTerminal,
   LIMITS,
@@ -74,7 +75,28 @@ import { candidateSlots } from './window.js';
 export interface MeetingScope {
   may_propose_meetings?: boolean;
   may_access_calendar?: string;
+  /** Capability URIs the grant allows (core's `scope.invoke`, §5.3). */
+  invoke?: Record<string, unknown>;
   [extra: string]: unknown;
+}
+
+const isObject = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
+
+/**
+ * Does the grant allow the meeting verbs? The v0.3 rule of core's
+ * `scopeAllows` (this package does not import core): `invoke` first, which
+ * must hold the meetings URI, and `may_propose_meetings` when there is no
+ * `invoke`. When both are present and disagree, the narrower wins.
+ */
+export function meetingsAllowed(scope: MeetingScope | null | undefined): scope is MeetingScope {
+  if (!isObject(scope)) return false;
+  if (scope.invoke === undefined) return scope.may_propose_meetings === true;
+  const inv = scope.invoke;
+  if (!isObject(inv) || !Object.hasOwn(inv, EXTENSIONS.meeting)) return false;
+  // A malformed invoke allows nothing, as in core (the same key and value shapes, at most 32 keys).
+  const keys = Object.keys(inv);
+  if (keys.length > 32 || keys.some((k) => k.length > 200 || !/^https:\/\/[!-~]+$/.test(k) || k.includes('*') || !isObject(inv[k]))) return false;
+  return scope.may_propose_meetings === undefined || scope.may_propose_meetings === true;
 }
 
 /** A slot held for a task before it is final, and what the task waits for. */
@@ -248,8 +270,8 @@ export const CONFIRM_GRACE_MS = 24 * 3_600_000;
 
 /** Does the grant let us exchange meeting verbs at all? */
 export function checkScope(scope: MeetingScope | null | undefined): { ok: true } | { ok: false; reason: string } {
-  if (!scope || scope.may_propose_meetings !== true) {
-    return { ok: false, reason: 'the grant does not allow meetings (may_propose_meetings)' };
+  if (!meetingsAllowed(scope)) {
+    return { ok: false, reason: 'the grant does not allow meetings (may_propose_meetings / invoke)' };
   }
   // free_busy and full both work: we only ever share slots. Absent counts as
   // free_busy, since proposing a slot is itself a free/busy disclosure.

@@ -408,7 +408,7 @@ npm run rdv -- --help                     # or: node packages/cli/dist/src/bin.j
 <td>Name a contact locally; sending by name (<code>rdv_send</code> <code>to</code>) resolves through this, never through the addresses its card claims. Yours to run: an assistant may only suggest a label, which you approve with the contact (NOTES 62)</td>
 </tr>
 <tr>
-<td><code>rdv contact grant &lt;agent-id&gt; [--tier …] [--scope-file …]</code></td>
+<td><code>rdv contact grant &lt;agent-id&gt; [--tier …] [--scope-file …] [--invoke &lt;capability-uri&gt;]… [--no-meetings]</code></td>
 <td>Give a contact you requested rights towards you (by default it may write, not propose meetings); the contact gets a reverse grant, so it can then propose (NOTES 60)</td>
 </tr>
 <tr>

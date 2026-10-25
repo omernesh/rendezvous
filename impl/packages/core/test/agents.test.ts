@@ -11,6 +11,8 @@ import {
   type Envelope,
   envelopeHash,
   generateKey,
+  MEETING_CAPABILITIES,
+  MEETINGS_CAPABILITY,
   NostrTransport,
   openEnvelope,
   type Payload,
@@ -568,6 +570,93 @@ describe('reverse grant (issue #14)', () => {
     }
     await settle(john);
     expect(reasons.map((r) => r[0])).toContain('reverse grant rate-limited');
+  });
+
+  const REVIEW = 'https://rendezvous.nesher.co/ext/review/v1';
+  const linked = async () => {
+    const { t, deliver } = bus();
+    const omer = Agent.create(t, card);
+    const john = Agent.create(t, card);
+    omer.start();
+    john.start();
+    const pending = waitFor<{ request: { id: string } }>(john, 'request');
+    await omer.requestContact(john.card, 'hi');
+    const contact = waitFor(omer, 'contact');
+    await john.grant((await pending).request.id, { tier: 'friend' });
+    await contact;
+    return { omer, john, deliver };
+  };
+
+  it('a reverse grant carries scope.invoke; it sets only what the receiver may invoke on the sender (issue #23)', async () => {
+    const { omer, john } = await linked();
+    const johnInbound = structuredClone(john.book.contact(omer.id)!.inboundScope);
+    // Omer's human lets John invoke review/v1 (no meetings).
+    const mine = await omer.allowInbound(john.id, { tier: 'friend', scope: { may_initiate: true, invoke: { [REVIEW]: { max_frequency: '5/day', max_open: 2 } } } });
+    // Written as v0.3 writes it: both fields, consistent.
+    expect(mine.inboundScope).toMatchObject({ may_propose_meetings: false, invoke: { [REVIEW]: { max_frequency: '5/day', max_open: 2 } } });
+    expect([omer.book.mayInvoke(john.id, REVIEW), omer.book.mayInvoke(john.id, MEETINGS_CAPABILITY)]).toEqual([true, false]);
+    await settle(omer, john);
+    const c = john.book.contact(omer.id)!;
+    expect(c.outboundScope?.invoke).toEqual({ [REVIEW]: { max_frequency: '5/day', max_open: 2 } });
+    expect(c.outboundScope?.may_propose_meetings).toBe(false);
+    expect([john.book.mayInvoke(omer.id, REVIEW, 'outbound'), john.book.mayInvoke(omer.id, MEETINGS_CAPABILITY, 'outbound')]).toEqual([true, false]);
+    // The invariant: a received grant never sets what the sender may invoke on the receiver.
+    expect(c.inboundScope).toEqual(johnInbound);
+    expect(john.book.mayInvoke(omer.id, REVIEW)).toBe(false);
+  });
+
+  it('a forward grant carries invoke to the requester, written with the boolean beside it', async () => {
+    const { t } = bus();
+    const omer = Agent.create(t, card);
+    const john = Agent.create(t, card);
+    omer.start();
+    john.start();
+    const pending = waitFor<{ request: { id: string } }>(john, 'request');
+    await omer.requestContact(john.card, 'hi');
+    const contact = waitFor(omer, 'contact');
+    await expect(john.grant((await pending).request.id, { scope: { invoke: { '*': {} } } })).rejects.toThrow(/capability URI/);
+    expect(john.book.contact(omer.id)).toBeUndefined(); // nothing recorded, nothing sent
+    await john.grant((await pending).request.id, { tier: 'friend', scope: { may_initiate: true, invoke: { [REVIEW]: {} } } });
+    await contact;
+    expect(omer.book.contact(john.id)?.outboundScope).toEqual({ may_initiate: true, may_propose_meetings: false, invoke: { [REVIEW]: {} } });
+    expect(omer.book.mayInvoke(john.id, REVIEW, 'outbound')).toBe(true);
+    expect(omer.book.mayInvoke(john.id, REVIEW)).toBe(false); // the grant set only what Omer may do
+  });
+
+  it('a malformed or self-contradicting invoke is refused before anything is recorded or sent', async () => {
+    const { omer, john } = await linked();
+    const before = JSON.stringify(omer.book.contact(john.id));
+    const outSeq = omer.channels.state[john.id]?.outSeq;
+    for (const scope of [
+      { invoke: { '*': {} } },
+      { invoke: { 'http://example.com/ext/x/v1': {} } },
+      { invoke: { [REVIEW]: { max_open: 0 } } },
+      { invoke: [REVIEW] },
+      { may_propose_meetings: true, invoke: { [REVIEW]: {} } },
+    ]) {
+      await expect(omer.allowInbound(john.id, { scope: scope as never })).rejects.toThrow(/invoke/);
+    }
+    expect(JSON.stringify(omer.book.contact(john.id))).toBe(before);
+    expect(omer.channels.state[john.id]?.outSeq).toBe(outSeq);
+  });
+
+  it('an older peer: its boolean-only grant still decides meetings, and ours reads the same to it', async () => {
+    const { omer, john, deliver } = await linked();
+    // John runs a version before scope.invoke: a reverse grant with the boolean only.
+    const grantId = john.book.contact(omer.id)!.grantId;
+    const old = createReverseGrant(john.key, john.card, { peer: omer.id, grantId }, { tier: 'friend', scope: { may_initiate: true, may_propose_meetings: true } });
+    const n = john.channels.nextOutbound(omer.id);
+    const env = sealEnvelope(john.key, omer.id, old, n);
+    john.channels.commitOutbound(omer.id, env);
+    deliver(env);
+    await settle(omer);
+    expect(omer.book.contact(john.id)?.outboundScope).toEqual({ may_initiate: true, may_propose_meetings: true });
+    expect(omer.book.mayInvoke(john.id, MEETINGS_CAPABILITY, 'outbound')).toBe(true);
+    expect(omer.book.mayInvoke(john.id, REVIEW, 'outbound')).toBe(false); // nothing else without invoke
+    // What our default grant says to a reader of the boolean only is what invoke says.
+    const s = john.book.contact(omer.id)!.inboundScope!;
+    expect(s.may_propose_meetings).toBe(true);
+    expect(Object.keys(s.invoke ?? {}).sort()).toEqual([...MEETING_CAPABILITIES].sort());
   });
 });
 

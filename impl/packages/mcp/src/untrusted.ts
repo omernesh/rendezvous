@@ -38,6 +38,8 @@ const AGENT_ID_RE = /^rdv1:[a-z2-7]{52}$/;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const EMAIL_RE = /^[a-z0-9._%+-]{1,64}@[a-z0-9-]{1,63}(\.[a-z0-9-]{1,63})+$/i;
 const PHONE_RE = /^\+[0-9]{4,15}$/;
+/** A capability URI (§5.3, §7.5): https, a host, a path of plain URL characters; at most 200 characters. */
+const CAPABILITY_RE = /^https:\/\/[a-z0-9.-]+(:[0-9]{1,5})?(\/[a-z0-9._~/-]*)?$/i;
 const RELAY_RE = /^wss?:\/\/[a-z0-9.-]+(:[0-9]{1,5})?(\/[a-z0-9._~/-]*)?$/i;
 
 const strict =
@@ -50,5 +52,6 @@ export const agentId = strict((v) => AGENT_ID_RE.test(v));
 export const uuid = strict((v) => UUID_RE.test(v));
 export const address = strict((v) => EMAIL_RE.test(v) || PHONE_RE.test(v));
 export const relayUrl = strict((v) => RELAY_RE.test(v));
+export const capability = strict((v) => v.length <= 200 && CAPABILITY_RE.test(v));
 export const oneOf = (allowed: readonly string[]) => strict((v) => allowed.includes(v));
 export const isPlain = (v: unknown): v is string => typeof v === 'string';

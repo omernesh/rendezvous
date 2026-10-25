@@ -32,7 +32,18 @@
 //   human saw it (`subject`: peer, founding grant, binding, since, local
 //   label) and to the tier and scope shown (`terms`), like a request.
 import { createHash, randomBytes, randomInt, scryptSync, timingSafeEqual } from 'node:crypto';
-import { canonicalize, type Contact, type GrantCandidate, type GrantScope, type PendingRequest, type Tier } from '@rendezvous/core';
+import {
+  allowedCapabilities,
+  canonicalize,
+  type Contact,
+  type GrantCandidate,
+  type GrantScope,
+  MEETING_CAPABILITIES,
+  MEETINGS_CAPABILITY,
+  type PendingRequest,
+  scopeAllows,
+  type Tier,
+} from '@rendezvous/core';
 import { type ConsentAction, type ConsentEntry, type ConsentHash, type ConsentTerms, consentKey, type Home } from './home.js';
 
 export interface PhraseTarget {
@@ -380,9 +391,12 @@ export function dropPhrase(home: Home, target: PhraseTarget): void {
 /** "tier friend, may propose meetings, calendar free_busy": the terms in words for the human. */
 export function describeTerms(t: ConsentTerms): string {
   const s = t.scope;
+  // Read like any grant (scope.invoke first, §5.3), so the words match what the peer will be allowed.
+  const others = allowedCapabilities(s).filter((u) => !MEETING_CAPABILITIES.includes(u));
   return [
     `tier ${t.tier}`,
-    s.may_propose_meetings ? 'may propose meetings' : 'no meetings',
+    scopeAllows(s, MEETINGS_CAPABILITY) ? 'may propose meetings' : 'no meetings',
+    ...(others.length ? [`may invoke ${others.join(' ')}`] : []),
     `calendar ${s.may_access_calendar ?? 'none'}`,
     ...(s.max_frequency ? [`up to ${s.max_frequency}`] : []),
   ].join(', ');

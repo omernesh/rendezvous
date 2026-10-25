@@ -169,7 +169,7 @@ the human reads in their own terminal (<code>rdv contact pending</code>), below.
 </tr>
 <tr>
 <td><code>rdv_grant</code></td>
-<td>request_id, tier, may_propose_meetings, confirm_phrase, label; or grant_id (+ confirm_phrase, label) to confirm a probe answer; or agent_id (+ tier, may_propose_meetings, confirm_phrase) to grant an existing contact more, which also sends it a reverse grant</td>
+<td>request_id, tier, may_propose_meetings, invoke, confirm_phrase, label; or grant_id (+ confirm_phrase, label) to confirm a probe answer; or agent_id (+ tier, may_propose_meetings, invoke, confirm_phrase) to grant an existing contact more, which also sends it a reverse grant</td>
 <td>contact (needs the human, below)</td>
 </tr>
 <tr>
@@ -199,14 +199,19 @@ the human reads in their own terminal (<code>rdv contact pending</code>), below.
 arrive, so a client that subscribes needn't poll.</p>
 <p>Events: <code>contact_request</code>, <code>contact_candidate</code> (an answer to our discovery
 probe, confirmed through the same human gate as a grant), <code>contact</code>, <code>message</code>, <code>revoked</code>, <code>dropped</code>, <code>error</code>,
+<code>reverse_grant</code> (what a contact's human now lets us do: <code>may_propose_meetings</code> and <code>invoke</code>, the capability URIs),
 and <code>dinner</code> (kind proposed / offer-received / countered / confirm-needed /
 accepted / completed / released / rejected / canceled / expired / status, with
 a plain-language <code>summary</code> we write from validated fields; <code>confirm-needed</code>
 also carries a <code>next_step</code>).</p>
 <p>Grants issued here always carry <code>may_initiate: true</code>,
 <code>may_access_calendar: "free_busy"</code>, <code>max_frequency: "100/day"</code>, and
-<code>may_propose_meetings</code> (default true). The calendar adapter only ever shares
-free slots, never titles.</p>
+<code>may_propose_meetings</code> (default true), and <code>scope.invoke</code> (NOTES 74): the
+meeting capabilities when meetings are allowed, plus exactly the capability
+URIs passed in <code>invoke</code>, nothing else (deny by default, no wildcard). The form
+names those capabilities with one checkbox, and a confirm phrase approves only
+the list it was shown with. The calendar adapter only ever shares free slots,
+never titles.</p>
 <h2 id="consent-the-human-decides-demo-critical">Consent: the human decides (demo-critical)<a class="anchor" href="#consent-the-human-decides-demo-critical" title="Link to this section" aria-label="Link to this section">#</a></h2>
 <p><code>rdv_grant</code> must not succeed on the model's say-so. It succeeds only through
 one of these:</p>

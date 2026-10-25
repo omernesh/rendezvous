@@ -160,7 +160,7 @@ State lives in a directory: `--home <dir>`, else `$RDV_HOME`, else
 | `rdv contact pending` | Pending inbound requests with binding, fingerprint, greeting; answers to your topic probes awaiting confirmation |
 | `rdv contact grant <request-id> [--tier friend] [--scope-file s.json] [--label john@doe.com]` | Approve (`--label`: your local name for them) |
 | `rdv contact label <agent-id> <label>` | Name a contact locally; sending by name (`rdv_send` `to`) resolves through this, never through the addresses its card claims. Yours to run: an assistant may only suggest a label, which you approve with the contact (NOTES 62) |
-| `rdv contact grant <agent-id> [--tier …] [--scope-file …]` | Give a contact you requested rights towards you (by default it may write, not propose meetings); the contact gets a reverse grant, so it can then propose (NOTES 60) |
+| `rdv contact grant <agent-id> [--tier …] [--scope-file …] [--invoke <capability-uri>]… [--no-meetings]` | Give a contact you requested rights towards you (by default it may write, not propose meetings); the contact gets a reverse grant, so it can then propose (NOTES 60) |
 | `rdv contact confirm <grant-id>` / `rdv contact reject <grant-id> [--block]` | Accept or turn down an answer to your topic probe (anyone who saw the probe can answer; check the fingerprint) |
 | `rdv contact decline <request-id> [--block]` | Decline |
 | `rdv contact list` / `rdv contact revoke <agent-id>` | Manage contacts |

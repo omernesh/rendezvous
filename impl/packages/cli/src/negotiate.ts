@@ -19,7 +19,7 @@ import {
   WindowError,
 } from '@rendezvous/a2a';
 import { createHash } from 'node:crypto';
-import type { Agent, Contact, Payload } from '@rendezvous/core';
+import { type Agent, type Contact, type GrantScope, MEETINGS_CAPABILITY, type Payload, scopeAllows } from '@rendezvous/core';
 import { writeAtomic } from './fsutil.js';
 import { CliError, type Home } from './home.js';
 import { clean } from './output.js';
@@ -47,7 +47,9 @@ export function openCalendar(path: string): JsonFileCalendar {
  * to us). A grant we received never widens `inbound`.
  */
 export function meetingScope(contact: Contact | null | undefined, direction: 'outbound' | 'inbound'): MeetingScope {
-  return ((direction === 'outbound' ? contact?.outboundScope : contact?.inboundScope) ?? {}) as MeetingScope;
+  const scope = ((direction === 'outbound' ? contact?.outboundScope : contact?.inboundScope) ?? {}) as MeetingScope;
+  // Core's reading rule decides (invoke first, then the boolean; the narrower on disagreement), so the engine's agrees.
+  return { ...scope, may_propose_meetings: scopeAllows(scope as GrantScope, MEETINGS_CAPABILITY) };
 }
 
 /**

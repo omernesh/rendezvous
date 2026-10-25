@@ -535,7 +535,11 @@ the human reads a friendly note.
     "may_initiate": true,
     "may_propose_meetings": true,
     "may_access_calendar": "free_busy",
-    "max_frequency": "20/day"
+    "max_frequency": "20/day",
+    "invoke": {
+      "https://rendezvous.nesher.co/ext/meetings/v1": {},
+      "https://rendezvous.nesher.co/ext/meeting-cancel/v1": {}
+    }
   },
   "expires": "2027-10-08T00:00:00Z",
   "ts": "…",
@@ -611,7 +615,60 @@ Rules:
   own grant triggers one; an agent never sends one on its own.
 - **`max_frequency`** is `"<n>/<minute|hour|day>"`; exceeding it revokes the
   grant (§10).
-- Scope defaults for meetings are in §7.4.
+- **`scope.invoke`** is an object whose keys are capability URIs the grantee
+  may invoke on the grantor, each mapping to its limits:
+
+  ```json
+  "scope": {
+    "may_initiate": true,
+    "max_frequency": "100/day",
+    "invoke": {
+      "https://rendezvous.nesher.co/ext/meetings/v1": {},
+      "https://rendezvous.nesher.co/ext/meeting-cancel/v1": {},
+      "https://rendezvous.nesher.co/ext/review/v1": { "max_frequency": "5/day", "max_open": 2 }
+    },
+    "may_propose_meetings": true,
+    "may_access_calendar": "free_busy"
+  }
+  ```
+
+  - **Deny by default.** A task whose capability is not a key of `invoke` is
+    refused with a `rejected` status and creates no state. There is no
+    wildcard: each capability is a separate human decision.
+  - **Shape.** Keys are `https` URIs of at most 200 characters, at most 32 of
+    them; each value is an object. A grant whose `invoke` is not of this
+    shape is invalid (§5.3 rules above). Limit fields a receiver does not
+    know are ignored.
+  - **Limits.** `max_frequency` per capability (same format as above) and
+    `max_open` (tasks not yet terminal, a positive integer; default 4).
+    Going over a capability's limit rejects that task only (`rejected`,
+    reason `rate`), creates no state, and is counted for the human. It does
+    not revoke the grant.
+  - **Gross abuse revokes.** The grant is revoked (§10, with a `rdv/revoke`
+    and the human told) only when the peer (a) goes over the grant-wide
+    `max_frequency`, as today; or (b) has more tasks rejected for one
+    capability's limit in that capability's window than three times the
+    limit itself (more than 15 rejected on a `5/day` capability), or more
+    than 50 tasks rejected for any per-capability limit in 24 hours.
+    Rejections for a closed gate, a human's "no" or an unsupported capability
+    never count towards (b).
+  - **Free messages** (`rdv_send` notes, any payload that is not a task) need
+    only `may_initiate`, as today.
+  - **Meetings.** `may_propose_meetings: true` is read as `invoke` holding the
+    meetings and meeting-cancel URIs. A grant that has `invoke` MUST also
+    write `may_propose_meetings`, consistent with it, until the field is
+    retired; a receiver that finds the two inconsistent applies the narrower
+    (no meetings). `may_access_calendar` is unchanged.
+  - **Direction** is unchanged: a received grant sets what we may invoke on
+    the peer; the reverse grant is how our owner's grant reaches it.
+  - **Migration.** `invoke` is a backward-compatible addition, since `scope`
+    is an open object: an older peer stores it, ignores it, and still reads
+    `may_propose_meetings`. A receiver reads `invoke` first and falls back to
+    the boolean when it is absent; stored grants are read through the same
+    rule and need no rewriting. `may_propose_meetings` is retired in v0.5.
+- Scope defaults for meetings are in §7.4. Default scopes put nothing in
+  `invoke` except the meeting URIs where they already allow meetings: no
+  capability is ever granted by default.
 
 ### 5.4 Policy and revocation
 
@@ -636,7 +693,8 @@ of model output alone. Acceptable approvals are:
   local UI) and typed by the human; it never appears in a tool result. The
   phrase approves the request on the terms shown with it (tier and scope),
   and nothing else: the host MUST refuse it for any other tier or scope the
-  model asks for, and show the human a new phrase for those terms instead.
+  model asks for (another list of capabilities in `scope.invoke` included),
+  and show the human a new phrase for those terms instead.
   A host SHOULD store only a salted, slow hash of the phrase, so that it
   cannot be read back from disk. The reference implementation accepts a
   phrase only for tiers less close than `family` (`friend` and below);
@@ -952,8 +1010,11 @@ other person know directly.
 
 ### 7.4 Scope and defaults
 
-Meeting verbs require `may_propose_meetings: true` in the grant that covers
-the direction (§5.3): proposing to a peer, and answering on a negotiation we
+Meeting verbs require the meetings capability in the grant that covers the
+direction (§5.3): `scope.invoke` holding
+`https://rendezvous.nesher.co/ext/meetings/v1`, or, in a grant without
+`invoke`, `may_propose_meetings: true`; when both are present and disagree,
+there are no meetings. Proposing to a peer, and answering on a negotiation we
 proposed, need the peer's grant to us; a peer proposing to us needs the grant
 our owner gave the peer. For the agent that granted the contact, "the peer's
 grant to us" is the peer's reverse grant (§5.3): until the requester's owner
@@ -962,8 +1023,9 @@ counts as `free_busy`, because proposing a slot is a free/busy disclosure;
 `none` blocks negotiation. At every level, including `full`, meeting messages
 carry slots only, never event titles.
 
-Peer state is bounded: only a meeting-capable grant may create tasks (or
-tombstones); a receiver SHOULD cap tasks per peer (reference: 32, evicting
+Peer state is bounded: only a grant whose `invoke` covers the capability
+(for meetings, the rule above) may create a task or a tombstone; anything else
+is refused before state is kept; a receiver SHOULD cap tasks per peer (reference: 32, evicting
 finished ones and tombstones first and refusing when all are pending) and
 prune finished tasks (reference: after 30 days).
 
@@ -1477,7 +1539,7 @@ Proposed MCP tool API (v0.3):
 | `rdv_suggestions` | list suggestion hits; flip the two opt-in switches |
 | `rdv_request_contact` | send a contact request (via hint or human channel) |
 | `rdv_pending_requests` | list inbound contact requests (for consent UX) |
-| `rdv_grant` / `rdv_revoke` | approve/reject/revoke contacts with tier+scope; a grant needs the human's own approval (§5.5) |
+| `rdv_grant` / `rdv_revoke` | approve/reject/revoke contacts with tier+scope (meetings and the capabilities in `scope.invoke`); a grant needs the human's own approval (§5.5) |
 | `rdv_send` | send an envelope (task, message, proposal) |
 | `rdv_inbox` | read events after a cursor (an event log; nothing is acknowledged to the peer) |
 | `rdv_negotiate` | A2A task exchange lifecycle |
