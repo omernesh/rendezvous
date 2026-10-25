@@ -4,8 +4,8 @@
 import { existsSync, linkSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
-import { emptyTaskState, type FilePart, FILES_URI, type TaskRecord } from '@rendezvous/a2a';
-import { b64encode, encryptFile, fileRefPart, generateKey, inlineFilePart, plainFileRef, sha256Hex } from '@rendezvous/core';
+import { emptyTaskState, type FilePart, FILES_URI, REQUEST_URI, TASKS_URI, type TaskRecord } from '@rendezvous/a2a';
+import { type Agent, b64encode, type Contact, encryptFile, fileRefPart, fingerprint, generateKey, inlineFilePart, plainFileRef, sha256Hex } from '@rendezvous/core';
 import { startTestFileServer, startTestRelay, type TestFileServer, type TestRelay } from '@rendezvous/core/testing';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { rdv } from '../scenarios/harness.js';
@@ -21,7 +21,21 @@ import {
   rememberReceived,
 } from '../src/files.js';
 import { Home, type TaskHostState } from '../src/home.js';
-import { describeDraft, pruneReleases, taskListText, taskListView } from '../src/tasks.js';
+import {
+  approveHeldRequest,
+  describeDraft,
+  describeHeldRequest,
+  discardHeldRequest,
+  heldRequest,
+  heldRequestView,
+  holdRequest,
+  hostRegistry,
+  pruneReleases,
+  TaskChangedError,
+  taskListText,
+  taskListView,
+  taskPhraseTargets,
+} from '../src/tasks.js';
 
 const PEER = generateKey().id;
 const SHA = 'ab'.repeat(32);
@@ -222,6 +236,92 @@ describe('fetching: only after the start gate, verified, quarantined', () => {
     expect(fetchableFiles(s, U(9)).files).toEqual([]);
     s.engine.tasks[U(9)].gate = { kind: 'start', step: 'input', since: 'x' };
     expect(() => fetchableFiles(s, U(9))).toThrow(/has not been started/);
+  });
+});
+
+describe('a request of ours with the owner’s files is held for the release gate (issue #53)', () => {
+  /** Enough of an Agent to request from: one contact whose card lists tasks, request/v1 and files, a send that records. */
+  function requester() {
+    const sent: Array<{ to: string; payload: unknown }> = [];
+    const contact = {
+      peer: PEER,
+      tier: 'friend',
+      inboundScope: { invoke: {} },
+      outboundScope: { invoke: { [REQUEST_URI]: {} } },
+      card: { capabilities: [TASKS_URI, REQUEST_URI, FILES_URI] },
+    } as unknown as Contact;
+    const agent = { book: { contact: (p: string) => (p === PEER ? contact : undefined) }, send: async (to: string, payload: unknown) => (sent.push({ to, payload }), {}) } as unknown as Agent;
+    return { agent, sent };
+  }
+
+  it('nothing leaves before release; the human is shown each file; a request or a file that changed after display is refused', async () => {
+    const home = new Home(tmp());
+    home.ensureDir();
+    const { agent, sent } = requester();
+    const src = join(tmp(), 'brief.txt');
+    writeFileSync(src, 'Brief: one page, three sections.');
+    const att = attachFiles(home, [], [src]);
+    const { held, digest } = await holdRequest(home, agent, hostRegistry(), PEER, REQUEST_URI, { text: ['Please read the brief.'], files: att.parts, notes: att.notes });
+    expect(sent).toEqual([]);
+    expect(home.readTasks().engine.tasks).toEqual({});
+    // Shown with name, size, hash, source and recipient; offered for the release gate like a draft.
+    const shown = describeHeldRequest(held);
+    for (const s of ['brief.txt', `sha256 ${att.notes[0].sha256}`, `read from ${src}`, PEER, fingerprint(PEER), 'Please read the brief.']) expect(shown).toContain(s);
+    expect(taskPhraseTargets(home.readTasks())).toEqual([{ action: 'task-release', id: held.id, digest }]);
+    expect(heldRequestView(home, held.id).digest).toBe(digest);
+
+    // A held request edited on disk (another recipient, another file) is not what the human approved.
+    const s = home.readTasks();
+    const original = structuredClone(s.requests![held.id]);
+    s.requests![held.id].notes[0].source = join(tmp(), 'other.txt');
+    home.writeTasks(s);
+    await expect(approveHeldRequest(home, agent, hostRegistry(), held.id, digest)).rejects.toThrow(TaskChangedError);
+    s.requests![held.id] = original;
+    home.writeTasks(s);
+    // The file changed after it was shown: refused, nothing sent, still held.
+    writeFileSync(src, 'Brief: something else entirely.');
+    await expect(approveHeldRequest(home, agent, hostRegistry(), held.id, digest)).rejects.toThrow(/changed since you reviewed it/);
+    rmSync(src);
+    await expect(approveHeldRequest(home, agent, hostRegistry(), held.id, digest)).rejects.toThrow(/changed since you reviewed it/);
+    expect(sent).toEqual([]);
+    expect(heldRequest(home.readTasks(), held.id)).toBeDefined();
+
+    // Back as it was shown: the release sends exactly that, audited with what left; the hold is gone.
+    writeFileSync(src, 'Brief: one page, three sections.');
+    const run = await approveHeldRequest(home, agent, hostRegistry(), held.id, digest);
+    expect(sent).toHaveLength(1);
+    const msg = (sent[0].payload as { message: { parts: Array<{ kind: string; text?: string; file?: { bytes?: string } }> } }).message;
+    expect(msg.parts.some((p) => p.kind === 'text' && p.text === 'Please read the brief.')).toBe(true);
+    expect(msg.parts.filter((p) => p.kind === 'file')).toEqual(att.parts);
+    expect(home.readTasks().engine.tasks[run.taskId]).toMatchObject({ role: 'requester', peer: PEER });
+    expect(heldRequest(home.readTasks(), held.id)).toBeUndefined();
+    expect(home.readAudit().at(-1)).toMatchObject({ gate: 'release', by: 'human', task: run.taskId, digest, sent: [expect.objectContaining({ sha256: expect.any(String) })] });
+    // Released once: the same approval sends nothing again.
+    await expect(approveHeldRequest(home, agent, hostRegistry(), held.id, digest)).rejects.toThrow(TaskChangedError);
+    expect(sent).toHaveLength(1);
+  });
+
+  it('a held request can be dropped (reduce-only); one past its deadline is pruned; one that could not be sent is refused at once', async () => {
+    const home = new Home(tmp());
+    home.ensureDir();
+    const { agent, sent } = requester();
+    const src = join(tmp(), 'a.txt');
+    writeFileSync(src, 'a');
+    const att = attachFiles(home, [], [src]);
+    const { held } = await holdRequest(home, agent, hostRegistry(), PEER, REQUEST_URI, { files: att.parts, notes: att.notes });
+    expect(discardHeldRequest(home, held.id)).toBe(true);
+    expect(discardHeldRequest(home, held.id)).toBe(false);
+    expect(home.readTasks().requests).toBeUndefined();
+    const soon = await holdRequest(home, agent, hostRegistry(), PEER, REQUEST_URI, { files: att.parts, notes: att.notes, expires: new Date(Date.now() + 60_000).toISOString() });
+    const s = home.readTasks();
+    pruneReleases(s, new Date(Date.now() + 120_000));
+    expect(heldRequest(s, soon.held.id)).toBeUndefined();
+    // Not a contact, a capability the peer's card does not list, a past deadline: refused before anything is held.
+    await expect(holdRequest(home, agent, hostRegistry(), generateKey().id, REQUEST_URI, { files: att.parts, notes: att.notes })).rejects.toThrow(/no active contact/);
+    await expect(holdRequest(home, agent, hostRegistry(), PEER, 'https://example.com/ext/nope/v1', { files: att.parts, notes: att.notes })).rejects.toThrow();
+    await expect(holdRequest(home, agent, hostRegistry(), PEER, REQUEST_URI, { files: att.parts, notes: att.notes, expires: '2000-01-01T00:00:00Z' })).rejects.toThrow(/future/);
+    expect(Object.keys(home.readTasks().requests ?? {})).toEqual([soon.held.id]);
+    expect(sent).toEqual([]);
   });
 });
 

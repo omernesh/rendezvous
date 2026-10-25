@@ -23,12 +23,12 @@ import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-export const SECRET_FILES = ['agent.json', 'agent.json.bak', 'consent.json', 'autoapprove.json', 'owner.json', 'owner-secret.json'];
+export const SECRET_FILES = ['agent.json', 'agent.json.bak', 'consent.json', 'autoapprove.json', 'owner.json', 'owner-secret.json', 'owner-secret.marker'];
 /** Files in a home that hold file keys and drafts (files.json, tasks.json): refused by path when they are in a home. */
 export const OWNER_FILES = ['files.json', 'tasks.json'];
 /** Names distinctive enough to refuse in any folder, not only in a home: writing either one by hand is setting auto-approve. */
-const ANYWHERE_FILES = ['autoapprove.json', 'owner-secret.json'];
-const SECRET_MENTION = /agent\.json|consent\.json|autoapprove\.json|owner\.json|owner-secret\.json/i;
+const ANYWHERE_FILES = ['autoapprove.json', 'owner-secret.json', 'owner-secret.marker'];
+const SECRET_MENTION = /agent\.json|consent\.json|autoapprove\.json|owner\.json|owner-secret\.(json|marker)/i;
 /**
  * `src` with quoting, escapes, string concatenation and whitespace removed
  * (sh, PowerShell, cmd and script-language spellings alike), so that a word
@@ -61,6 +61,8 @@ const TASK_LIST =
   'rdv task list is for the human, in their own terminal (it shows confirm phrases meant only for them). Use rdv_task with action "list".';
 const TASK_GATE =
   'That Rendezvous command is for the human, in their own terminal. Use the MCP tools: rdv_task "approve-start" and "approve-release" ask the human through an approval form or a confirm phrase they type to you.';
+const TASK_REQUEST_FILES =
+  'rdv task request with --file or --inline sends your user\'s files to another agent: it is for the human, in their own terminal, and even then the request waits until they release it. Ask with rdv_task "request" (no files), or ask your user to attach the files themselves.';
 const AUTO_APPROVE =
   "rdv contact auto-approve is for the human, in their own terminal: it lets a contact's tasks run and their results leave without asking anyone. You may never set, extend or turn it on, and never suggest it to get past a gate; to have it turned off, ask your user (rdv_status shows it).";
 const DIRECT_TRANSFER =
@@ -480,6 +482,18 @@ function checkWords(words, ctx, depth) {
     const at = words.findIndex((w, k) => k > feeder && isRdv(w));
     const tail = words.slice(at + 1).filter((w) => !w.startsWith('-'));
     if (tail.length < 2 || ['contact', 'dinner', 'task', 'file'].includes(tail[tail.length - 1].toLowerCase())) throw new Refusal(OPAQUE);
+  }
+  // `rdv task request … --file|--inline`: the owner's files in a request we send (issue #53). The CLI holds it for
+  // the human's release; the guard keeps the model from even making one. `--file=x`, `--inline=x`, and a word built at
+  // run time where a flag could be (it could expand to one), count.
+  const taskReqAt = words.findIndex((w, k) => k + 1 < words.length && couldBe(w, 'task', ctx.cwd) && couldBe(words[k + 1], 'request', ctx.cwd));
+  if (taskReqAt >= 0) {
+    for (let k = taskReqAt + 2; k < words.length; k++) {
+      const w = words[k];
+      if (braces(w).some((x) => /^--?(file|inline)(=|$)/i.test(x))) throw new Refusal(TASK_REQUEST_FILES);
+      if (/^--(text|capability|expires|input|home|profile)$/i.test(w)) k++; // its value may be anything
+      else if (dynamic(w)) throw new Refusal(TASK_REQUEST_FILES);
+    }
   }
   const listenAt = words.findIndex((w) => couldBe(w, 'listen', ctx.cwd));
   if (listenAt >= 0 && words.slice(listenAt + 1).some((w) => braces(w).some((x) => /^--auto-(grant|confirm)/i.test(x)))) {

@@ -27,6 +27,7 @@ import {
   artifactExtensions,
   askInput,
   type Capability,
+  type FilePart,
   CapabilityRegistry,
   cancelTask,
   cardCapabilities,
@@ -54,8 +55,8 @@ import {
 } from '@rendezvous/a2a';
 import { Agent, type Contact, effectiveInvoke, fingerprint, type Payload, type Transport } from '@rendezvous/core';
 import type { PhraseTarget } from './consent.js';
-import { describeFile, describeNote, fileSummaries, fileSummary, normalizeTaskFiles, pruneReceived, redactFilePart, rememberReceived } from './files.js';
-import { type AuditEntry, CliError, type FileNote, type Home, type InboxEntry, type PendingRelease, type ReleaseContent, type TaskHostState } from './home.js';
+import { changedAttachment, describeFile, describeNote, fileSummaries, fileSummary, normalizeTaskFiles, pruneReceived, redactFilePart, rememberReceived } from './files.js';
+import { type AuditEntry, CliError, type FileNote, type HeldRequest, type Home, type InboxEntry, type PendingRelease, type ReleaseContent, type TaskHostState } from './home.js';
 import { clean } from './output.js';
 import { sha, sha256, stable } from './hash.js';
 import { autoApproved, subjectOf } from './autoapprove.js';
@@ -187,8 +188,39 @@ export function taskPhraseTargets(s: TaskHostState): PhraseTarget[] {
     const r = releaseDigest(t, Object.hasOwn(s.releases, t.id) ? s.releases[t.id] : undefined);
     if (r) out.push({ action: 'task-release', id: t.id, digest: r });
   }
+  // Our requests that carry the owner's files (issue #53): released like a draft. Hold IDs are ours (UUIDs).
+  for (const h of Object.values(s.requests ?? {})) out.push({ action: 'task-release', id: h.id, digest: heldRequestDigest(h) });
   return out;
 }
+
+/** The digest a held request's release is bound to: the recipient and exactly what would leave, files as shown. */
+export const heldRequestDigest = (h: HeldRequest): string =>
+  sha('rdv1/task-request-release', {
+    id: h.id,
+    peer: h.peer,
+    fingerprint: fingerprint(h.peer),
+    capability: h.capability,
+    text: h.text ?? null,
+    input: h.input ?? null,
+    expires: h.expires ?? null,
+    files: h.files,
+    notes: h.notes,
+    created: h.created,
+  });
+
+/** A held request in words: to whom, what, and each file (name, size, hash, encryption, URL, source). */
+export function describeHeldRequest(h: HeldRequest): string {
+  const parts = [
+    ...(h.text ?? []).map((t) => `text: ${JSON.stringify(t)}`),
+    ...(h.input !== undefined ? [`input: ${JSON.stringify(h.input)}`] : []),
+    ...h.notes.map((n) => `file: ${describeNote(n)}`),
+  ];
+  return `request to ${h.peer} (${fingerprint(h.peer)}) for ${h.capability}: ${parts.join('; ')}`;
+}
+
+/** At most this many held requests are kept, and none past its deadline or a week old. */
+export const MAX_HELD_REQUESTS = 32;
+const HELD_REQUEST_MAX_MS = 7 * 86_400_000;
 
 /** The task changed between the human's review and the step (same ID, other content): nothing was done. */
 export class TaskChangedError extends CliError {}
@@ -196,8 +228,18 @@ export class TaskChangedError extends CliError {}
 // --- state -----------------------------------------------------------------------
 
 /** Drop drafts whose task ended, vanished or went back to a start gate: they approve nothing now (and received files whose task is gone). */
-export function pruneReleases(s: TaskHostState): void {
+export function pruneReleases(s: TaskHostState, now = new Date()): void {
   pruneReceived(s);
+  if (s.requests) {
+    const t = now.getTime();
+    const held = Object.values(s.requests).sort((a, b) => a.created.localeCompare(b.created));
+    for (const [i, h] of held.entries()) {
+      const created = Date.parse(h.created);
+      const expires = h.expires === undefined ? NaN : Date.parse(h.expires);
+      if (!(created <= t && t - created < HELD_REQUEST_MAX_MS) || expires <= t || i < held.length - MAX_HELD_REQUESTS) delete s.requests[h.id];
+    }
+    if (Object.keys(s.requests).length === 0) delete s.requests;
+  }
   for (const [id, r] of Object.entries(s.releases)) {
     const t = Object.hasOwn(s.engine.tasks, id) ? s.engine.tasks[id] : undefined;
     if (!t || t.role !== 'executor' || isFinished(t.state) || t.gate || r.taskId !== id || r.peer !== t.peer) delete s.releases[id];
@@ -570,6 +612,103 @@ export async function requestPeer(
   );
   s.engine = step.state;
   return { ...(await commit(home, agent, s, [step], [])), taskId: step.taskId };
+}
+
+/**
+ * A request that carries the owner's files (issue #53): checked as it would be
+ * sent (contact, card, capability, limits, files extension), then held for the
+ * release gate, like a draft for a peer's task. Nothing is sent. The human
+ * releases exactly what they were shown (`rdv task release <hold-id> --code`,
+ * or rdv_task "approve-release" with a form or a confirm phrase).
+ */
+export async function holdRequest(
+  home: Home,
+  agent: Agent,
+  registry: CapabilityRegistry,
+  peer: string,
+  capability: string,
+  opts: { text?: string[]; input?: unknown; expires?: string; files: TaskPart[]; notes: FileNote[] },
+): Promise<{ held: HeldRequest; digest: string }> {
+  const contact = agent.book.contact(peer);
+  if (!contact) throw new CliError(`no active contact ${peer}`);
+  needsFilesExtension(agent, peer);
+  const s = home.readTasks();
+  const now = new Date();
+  const held: HeldRequest = {
+    id: randomUUID(),
+    peer,
+    capability,
+    ...(opts.text?.length ? { text: opts.text } : {}),
+    ...(opts.input !== undefined ? { input: opts.input } : {}),
+    ...(opts.expires !== undefined ? { expires: opts.expires } : {}),
+    files: opts.files.filter((p): p is FilePart => p.kind === 'file'),
+    notes: opts.notes,
+    created: now.toISOString(),
+  };
+  // Refused now, not at release, if it could not be sent as it stands (a dry run on a copy; nothing is kept of it).
+  engine(() => requestTask(structuredClone(s.engine), peer, capability, taskCtx(registry, contact, 'outbound', now), requestOptions(held, contact)));
+  s.requests = { ...(s.requests ?? {}), [held.id]: held };
+  pruneReleases(s, now);
+  if (!s.requests || !Object.hasOwn(s.requests, held.id)) throw new CliError('that request could not be held (its deadline has passed)');
+  home.writeTasks(s);
+  return { held, digest: heldRequestDigest(held) };
+}
+
+const requestOptions = (h: HeldRequest, contact: Contact) => ({
+  ...(h.text?.length ? { text: h.text } : {}),
+  ...(h.input !== undefined ? { input: h.input } : {}),
+  ...(h.expires !== undefined ? { expires: h.expires } : {}),
+  files: h.files,
+  peerCapabilities: contact.card?.capabilities ?? [],
+});
+
+/** A held request, as it is now, with the digest the human releases. */
+export function heldRequestView(home: Home, id: string): { held: HeldRequest; digest: string } {
+  const h = heldRequest(home.readTasks(), id);
+  if (!h) throw new CliError(`no request ${id} waiting for your release`);
+  return { held: h, digest: heldRequestDigest(h) };
+}
+
+/** The held request `id` in `s`, if any. */
+export function heldRequest(s: TaskHostState, id: string): HeldRequest | undefined {
+  const h = s.requests && Object.hasOwn(s.requests, id) ? s.requests[id] : undefined;
+  return h && h.id === id ? h : undefined;
+}
+
+/**
+ * The release gate passed for a held request (the human approved exactly
+ * `digest`): send it. Refused with TaskChangedError, nothing sent, if the
+ * request changed since it was shown, or if any of its files changed on disk
+ * (or is no longer prepared). Audited like a release, with the new task's ID.
+ */
+export async function approveHeldRequest(home: Home, agent: Agent, registry: CapabilityRegistry, id: string, digest: string): Promise<TaskRun & { taskId: string }> {
+  const s = home.readTasks();
+  const h = heldRequest(s, id);
+  if (!h || heldRequestDigest(h) !== digest) throw new TaskChangedError(`request ${id} changed since it was reviewed (or it is gone). Nothing was sent.`);
+  const changed = changedAttachment(home, h.notes);
+  if (changed) {
+    throw new TaskChangedError(`${changed.source} changed since you reviewed it (or can no longer be read). Nothing was sent: discard it (rdv task cancel ${id}) and request again.`);
+  }
+  const contact = agent.book.contact(h.peer);
+  if (!contact) throw new CliError(`no active contact ${h.peer}`);
+  needsFilesExtension(agent, h.peer);
+  const now = new Date();
+  const step = engine(() => requestTask(s.engine, h.peer, h.capability, taskCtx(registry, contact, 'outbound', now), requestOptions(h, contact)));
+  s.engine = step.state;
+  delete s.requests![id];
+  const sent = step.outgoing.filter((o) => o.to === h.peer).map((o) => ({ sha256: sha256(stable(o.payload)), bytes: Buffer.byteLength(stable(o.payload)) }));
+  const audits: AuditEntry[] = [{ ...audit(now, { peer: h.peer, capability: h.capability, id: step.taskId }, 'release', 'human', digest), sent }];
+  return { ...(await commit(home, agent, s, [step], audits)), taskId: step.taskId };
+}
+
+/** Throw away a held request (the human said no). Reduce-only. */
+export function discardHeldRequest(home: Home, id: string): boolean {
+  const s = home.readTasks();
+  if (!heldRequest(s, id)) return false;
+  delete s.requests![id];
+  if (Object.keys(s.requests!).length === 0) delete s.requests;
+  home.writeTasks(s);
+  return true;
 }
 
 /** File parts go only to a peer whose card lists the files extension (SPEC §7.7: one that does not answers unsupported). */
