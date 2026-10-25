@@ -21,15 +21,17 @@
 //   rate    Five reviews in a day, each declined; the sixth is refused by
 //           John's own agent (rate), and a sixth sent raw past it is
 //           rejected by Omer's for rate, with no prompt for Omer.
-//   auto    Omer turns on auto-approve for John (his terminal, the
-//           fingerprint retyped): both gates pass without asking, each
-//           written to Omer's audit log; the fetch is still the agent's.
+//   auto    Omer sets his owner passphrase and turns on auto-approve for
+//           John (his terminal, the passphrase typed): both gates pass
+//           without asking, each written to Omer's audit log; the fetch is
+//           still the agent's.
 //
 // Fetching from the local store goes through the fetch helper's test-only
 // options (`fetchIncoming(..., { ca, unsafeAllowAddresses })`, NOTES 77):
 // production `rdv file fetch` refuses loopback, which the ok variant checks.
-// Turning auto-approve on uses the command's terminal seam (`Tty`): spawned
-// `rdv` has no TTY and is refused, which the auto variant checks.
+// Setting the passphrase and auto-approve uses the commands' terminal seam
+// (`Tty`, issue #47): spawned `rdv` has no TTY and is refused, which the auto
+// variant checks.
 //
 //   node packages/cli/dist/scenarios/review.js --relay ws://… [--variant ok|decline|cancel|rate|auto|all] [--timeout ms] [--keep]
 import { randomBytes, randomUUID } from 'node:crypto';
@@ -41,7 +43,7 @@ import { parseArgs } from 'node:util';
 import { REQUEST_URI, TASKS_URI } from '@rendezvous/a2a';
 import { fingerprint } from '@rendezvous/core';
 import { startTestFileServer, type TestFileServer } from '@rendezvous/core/testing';
-import { contactAutoApprove, type Tty } from '../src/commands.js';
+import { contactAutoApprove, ownerSecretSet, type Tty } from '../src/commands.js';
 import { fetchIncoming } from '../src/files.js';
 import { Home } from '../src/home.js';
 import { Output } from '../src/output.js';
@@ -81,6 +83,7 @@ export const REVIEW_DRAFT = "Section 3's totals don't add up: 40 + 25 is 65.";
 export const REVIEW_TEXT = "Section 3's totals don't add up: 40 + 25 is 65, not 70. Two more comments inline.";
 export const REVIEW_DATA = { rdv: 'request/data', data: { rdv: 'review/result', verdict: 'changes-requested', comments: 3 } };
 const RATE = '5/day';
+const OWNER_PASSPHRASE = 'OWNER-PASS correct horse battery';
 
 export async function runReviewScenario(opts: ReviewScenarioOptions): Promise<ReviewScenarioResult> {
   if (opts.relays.length === 0) throw new Error('no relays given');
@@ -136,15 +139,25 @@ export async function runReviewScenario(opts: ReviewScenarioOptions): Promise<Re
     });
 
     if (variant === 'auto') {
-      await step("omer's human turns on auto-approve for john (his terminal, fingerprint retyped)", async () => {
+      await step("omer's human turns on auto-approve for john (his terminal, his owner passphrase)", async () => {
         // Spawned `rdv` has no terminal: refused, so no assistant or script can do this.
-        const piped = await rdv(['contact', 'auto-approve', john, 'all'], dirs.omer, { check: false });
-        assert(piped.code === 1 && piped.stderr.includes('interactive terminal'), `a spawned rdv is refused (${piped.stderr})`);
-        // The owner's terminal (the command's Tty seam): he reads the warning and retypes John's fingerprint.
+        for (const args of [['owner-secret', 'set'], ['contact', 'auto-approve', john, 'all']]) {
+          const piped = await rdv(args, dirs.omer, { check: false });
+          assert(piped.code === 1 && piped.stderr.includes('interactive terminal'), `a spawned rdv ${args[0]} is refused (${piped.stderr})`);
+        }
+        // The owner's terminal (the commands' Tty seam): he sets his passphrase, reads the warning, types it.
         const shown: string[] = [];
-        const tty: Tty = { interactive: true, say: (t) => void shown.push(t), ask: async (q) => (shown.push(q), fingerprint(john)) };
-        await contactAutoApprove({ home: new Home(dirs.omer), out: Object.assign(new Output(true), { emit() {} }), values: { until: '1d' }, positionals: [john, 'all'], tty });
-        assert(/WARNING: auto-approve-all/.test(shown[0] ?? ''), 'the warning was shown first');
+        const tty: Tty = {
+          interactive: true,
+          say: (t) => void shown.push(t),
+          ask: async (q) => (shown.push(q), ''),
+          secret: async (q) => (shown.push(q), OWNER_PASSPHRASE),
+        };
+        const ctx = (positionals: string[], values: Record<string, string> = {}) => ({ home: new Home(dirs.omer), out: Object.assign(new Output(true), { emit() {} }), values, positionals, tty });
+        await ownerSecretSet(ctx([]));
+        await contactAutoApprove(ctx([john, 'all'], { until: '1d' }));
+        assert(shown.some((s) => /WARNING: auto-approve-all/.test(s)), 'the warning was shown');
+        assert(!shown.join('\n').includes(OWNER_PASSPHRASE) && !shown.at(-1)!.includes(fingerprint(john)), 'no prompt holds the answer');
         const c = (await rdv(['contact', 'list'], dirs.omer)).lines.find((l) => l.peer === john);
         assert(c?.auto_approve?.mode === 'all', `auto-approve is on (${JSON.stringify(c)})`);
       });
