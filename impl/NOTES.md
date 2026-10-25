@@ -144,10 +144,10 @@ the marker (CLI behavior, live-run logs, calendar settings) stay here only.
     contacts and agents we asked by card, at most 16 peers × 64 envelopes,
     and persisted with the agent state. The spec's resend text (§7) should
     say receivers may bound and drop. (folded into SPEC rev 3 §7)
-21. **Channel state for strangers** (open). `Channels.acceptInbound`
-    advances `seq` for any validly signed envelope, before the contact book
-    decides whether to admit it. A stranger can't spoof another sender, so
-    this only costs memory per stranger ID; worth bounding in v0.2. (folded into SPEC rev 3 §11.10)
+21. **Channel state for strangers** (fixed, issue #3; see item 64). `Channels.acceptInbound`
+    advanced `seq` for any validly signed envelope, before the contact book
+    decided whether to admit it. A stranger can't spoof another sender, so
+    this only cost memory per stranger ID. (folded into SPEC rev 3 §11.10)
 
 22. **Document IDs are UUIDs** (**spec change**, §5). Request, grant and
     revoke `id` (and a grant's `request_ref`) must be RFC 4122 UUID strings;
@@ -824,6 +824,48 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       real relays do. The L2 test re-posted a probe from the same carrier
       key, which on such a relay replaces the original (same content, same
       `d`); it now re-posts from another key, as an attacker would.
+
+## Channel state, continued
+
+64. **Channel state only for admitted senders** (fixed, issue #3, **spec
+    change**, §6.4, §11.10; was item 21). An agent keeps a `seq`/`prev`
+    channel only for senders it has a reason to know: contacts (expired
+    grants too), allowlisted agents, pending requesters, probe candidates,
+    agents we asked by card, and any peer we have sent an envelope to. Any
+    other sender's channel is created for the one envelope, used to classify
+    it, and dropped once it is handled (`Agent.pruneChannels`, also on load,
+    and `toJSON` never writes one). Pending requests are capped (64, item 46)
+    and candidates are capped per probe (16, item 18, and the probes are our
+    own); everything else on the list is our human's doing. So 10k fresh
+    keys leave at most 64 channels behind, in memory and in the saved state.
+    **Why not a capped LRU for strangers:** it bounds memory but not the
+    real problem. A flood still evicts the one stranger that matters (a
+    requester we declined, or one evicted from the pending list, who asks
+    again later), and that sender's next envelope is then a `gap` from a
+    non-contact, which is dropped: it could never reach us by envelope
+    again. Deferring needs no cap to tune and keeps nothing for a sender
+    we would refuse anyway. **The chain for a sender we hold nothing for**
+    starts at its first envelope we see, whatever its `seq` and `prev`
+    (`acceptInbound(e, { adopt: true })`): it may have written to us
+    before (refused for want of a grant), or been declined, so its chain is
+    already under way. Nothing is lost by this: until it is admitted, the
+    only thing it can make us do is consider a contact request, and those
+    are deduplicated by id (`seenIds`, `declined`). Once kept, its channel
+    works as before: a requester's chain goes on from the request
+    envelope's `seq`, so after the grant its next envelope is in order and
+    a gap is buffered and resent (it is a contact by then); a relay replay
+    of the request is a duplicate. Contacts' channels never pass through
+    this path, so replay, gap/resend, fork and rollback detection and
+    re-sync (items 17, 56) are unchanged, and a flood can't evict them:
+    there is no shared table to evict from. **What changed for strangers:**
+    one that forks its own chain is no longer told apart (each envelope
+    starts a fresh chain and is refused as `no grant for sender`); a
+    pending requester still can, and stays quiet (`envelope chain fork from
+    a non-contact`). An evicted or declined requester's old request
+    envelope, replayed by a relay after its channel is gone, is judged by
+    the book again: a declined one stays declined; an evicted one may come
+    back as pending (it left `seenIds`, item 46), bounded by the same cap.
+    Wire format unchanged; vectors not regenerated.
 
 ## Not implemented yet
 

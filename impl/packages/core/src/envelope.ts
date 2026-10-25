@@ -243,8 +243,22 @@ export class Channels {
     return { kind, seq: e.seq, accepted: c.inSeq };
   }
 
-  /** Classify an inbound envelope; advances state only when in order. */
-  acceptInbound(e: Envelope): InboundOrder {
+  /** Drop all state for `peer` (a sender we no longer keep a channel for, NOTES 64). */
+  forget(peer: string): void {
+    delete this.state[peer];
+  }
+
+  /**
+   * Classify an inbound envelope; advances state only when in order. With
+   * `adopt`, a sender we hold no state for starts its chain at `e`, whatever
+   * its seq: the receiver keeps no state for senders it hasn't admitted, so
+   * such a sender's chain may already be under way (NOTES 64).
+   */
+  acceptInbound(e: Envelope, opts: { adopt?: boolean } = {}): InboundOrder {
+    if (opts.adopt && !Object.hasOwn(this.state, e.from)) {
+      this.advance(this.get(e.from), e, envelopeHash(e), parseTimestamp(e.created) ?? Number.NEGATIVE_INFINITY);
+      return { kind: 'in-order' };
+    }
     const c = this.get(e.from);
     const hash = envelopeHash(e);
     const created = parseTimestamp(e.created) ?? Number.NEGATIVE_INFINITY;

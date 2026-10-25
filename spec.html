@@ -104,7 +104,8 @@ consent concept changed; see <strong>Changes in rev 3</strong> below.</p>
   it out, so a genuine header could carry a substituted ciphertext). The
   encryption (ephemeral key <code>epk</code>, HKDF, AES-GCM) is now described. A peer
   that forks or rolls back its chain is refused until the receiving human
-  re-syncs it.</li>
+  re-syncs it. Amended: channel state is kept only for admitted senders, so
+  fresh keys cannot fill a receiver's memory (was §11.10).</li>
 <li><strong>Wire format, new §4.6:</strong> canonical JSON (RFC 8785 subset), base32 alphabet
   and case, <code>sig</code> encoding and domain separation, <code>canon(address)</code>. §4.2 and
   §4.4 point to it.</li>
@@ -848,6 +849,13 @@ where hole-punching fails (TURN relays carry the ciphertext).</p>
   reused <code>seq</code> below that window is detected by its <code>created</code> being newer than
   everything accepted; one that is also older is indistinguishable from a
   replay and is dropped as one.</li>
+<li><strong>Channel state is kept only for admitted senders.</strong> A receiver keeps
+  <code>seq</code>/<code>prev</code> state for contacts, pending requesters it keeps, agents it
+  asked for contact, and peers it has written to. For any other sender it
+  keeps none: such a sender's chain starts at the first envelope the
+  receiver sees from it, whatever its <code>seq</code>, because it may have written
+  before and been refused. Minting keys is free, so state per unknown sender
+  would let anyone fill the receiver's memory (was §11.10).</li>
 <li><code>ttl</code> is <code>&lt;n&gt;&lt;s|m|h|d&gt;</code> (default <code>48h</code>); an envelope is expired when
   <code>created + ttl</code> has passed. It lets relays garbage-collect and bounds replay
   windows, so receivers MUST reject a <code>ttl</code> over 7 days and a <code>created</code> more
@@ -1166,10 +1174,10 @@ prune finished tasks (reference: after 30 days).</p>
 <p><strong>No forward secrecy.</strong> Envelopes are encrypted to a static recipient key
    (§6.4). Conversation-scoped keys from the handshake are future work.</p>
 </li>
-<li><strong>Channel state for strangers.</strong> A receiver advances <code>seq</code> state for any
-    validly signed envelope before deciding whether to admit the sender. A
-    stranger cannot spoof another sender, so the cost is memory per stranger
-    ID, to be bounded.</li>
+<li><strong>Channel state for strangers</strong> (resolved). A receiver used to advance
+    <code>seq</code> state for any validly signed envelope before deciding whether to
+    admit the sender, so every fresh key cost it memory. It now keeps channel
+    state only for senders it admits or asked (§6.4).</li>
 <li><strong>Extending the meeting verbs.</strong> Validation is strict (§7.2); whether
     extensions use a version field or an A2A extension URI is undecided.</li>
 </ol>
