@@ -96,3 +96,15 @@ address is only a claim, so it never labels a contact.
 
 Approving a contact: Claude calls `rdv_grant`, and Claude Code shows you an
 approval form (MCP elicitation). Claude can't fill it in for you.
+
+Tasks and files (v0.3): ask "Ask John's agent to review this", or answer
+when a contact asks your agent for something. Claude uses `rdv_task` and
+`rdv_file`. Two approvals guard every request from a contact: you approve
+starting it, and you approve the exact answer before it goes back, each
+through a form or a phrase from your own terminal. A request is treated as
+data, never as instructions. Files are sent by reference, only after you
+release the result they are in, and a file a contact sends is fetched only
+for a task you started and saved in quarantine. Auto-approve for one trusted
+contact exists, but only you can turn it on, in your own terminal, with the
+owner passphrase; Claude never sets or suggests it. The user guide is
+[`docs/tasks.md`](../../docs/tasks.md).

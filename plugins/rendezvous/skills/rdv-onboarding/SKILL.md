@@ -207,7 +207,15 @@ or agent ID. Then ask one more question: let them propose meetings too
 (options "Not now (Recommended)" and "Let them propose meetings")? A contact
 the user requested may write but not propose meetings. On yes, call
 `rdv_grant` with that contact's `agent_id` and `may_propose_meetings: true`;
-the human approves it in the form or with a confirm phrase, as for any grant. If nothing arrives after a few minutes, say it is still pending
+the human approves it in the form or with a confirm phrase, as for any grant. Then, as a question of its own, ask whether to ask their agent for
+something now (options "Not now (Recommended)" and "Ask them for something").
+On yes, ask (one more question) what they want, in their words, then follow
+"Ask a contact's agent for something" in the `rendezvous` skill
+(`rdv_task` `request`); it works only once that contact's human has granted
+the user this kind of request, so if the tool says no, tell the user and go
+on. Tasks and files are explained in
+[references/tasks.md](${CLAUDE_PLUGIN_ROOT}/skills/rendezvous/references/tasks.md).
+If nothing arrives after a few minutes, say it is still pending
 and go on to step 11; the user can say "check rendezvous" later.
 
 ## Step 11 of 11: wrap-up
