@@ -35,10 +35,18 @@ their own terminal, never you (the plugin's consent guard blocks them, with
 or without `--json`): `rdv contact grant`, `rdv contact confirm`,
 `rdv contact resync`, `rdv contact label`, `rdv contact pending`, `rdv dinner confirm`,
 `rdv dinner cancel`, `rdv dinner list`, `rdv task approve`, `rdv task release`,
-`rdv task list`, `rdv init --force`,
+`rdv task list`, `rdv contact auto-approve` (on or off), `rdv init --force`,
 `rdv listen --auto-grant` and `rdv listen --auto-confirm`. Use
 `rdv_pending_requests`, `rdv_negotiate` (action `status`) and `rdv_task`
 (action `list`) instead.
+
+`rdv contact auto-approve <contact> all` lets one trusted contact's tasks
+start and their results leave without asking (SPEC §5.5.1). Only the human
+turns it on, in their own terminal: it shows a warning and asks them to
+retype the contact's fingerprint, and it refuses to run without a terminal.
+You never run it, never suggest it, and never offer it as a way past a gate.
+`rdv_status` and `rdv_task` show who is on it and until when; `rdv audit`
+lists what it approved.
 
 Approving through the MCP tools: `rdv_grant` asks the client to show the human
 an approval form. A client without forms makes the tool fail with a message
