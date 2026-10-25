@@ -871,8 +871,10 @@ boundary, so keep them narrow.
 
 The reference implementation sets it with `rdv contact auto-approve
 <agent-id|label> all [--until <time|duration>]`, which needs an interactive
-terminal, shows the warning and has the owner retype the contact's
-fingerprint; `... off` turns it off from anywhere. The setting lives in
+terminal, shows the warning and asks for the owner's passphrase (set
+beforehand with `rdv owner-secret set`, stored as a scrypt hash, read from
+the terminal itself and never shown, so the prompt never holds its own
+answer); `... off` turns it off from anywhere. The setting lives in
 `autoapprove.json` in the home (mode 600), each entry MACed with the agent's
 secret key and bound to the contact's grant ID, `since` and a digest of its
 inbound scope; it is checked under the home lock at each gate. The audit log

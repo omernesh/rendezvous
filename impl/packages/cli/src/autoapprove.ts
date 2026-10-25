@@ -4,7 +4,7 @@
 // pass for its tasks without asking. It is the human's alone:
 //
 // - set only by `rdv contact auto-approve <contact> all` in an interactive
-//   terminal, after a warning and the fingerprint retyped (commands.ts); no
+//   terminal, after a warning and the owner passphrase (ownersecret.ts); no
 //   MCP tool, confirm phrase or peer can set, extend or change it;
 // - local state (autoapprove.json, mode 600), never on the wire; each entry is
 //   MACed with the agent's secret key, so a file written by anything that
@@ -22,6 +22,7 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import { type Agent, type AgentState, b64decode, type Contact, ContactBook, effectiveInvoke, fingerprint, type GrantScope, MEETING_CAPABILITIES, parseTimestamp } from '@rendezvous/core';
 import { type AuditEntry, type AutoApproveEntry, type AutoApproveOff, CliError, type Home } from './home.js';
 import { sha, stable } from './hash.js';
+import { hasOwnerSecret } from './ownersecret.js';
 
 /** What the check reads of an agent: its key (the MAC), its contacts, and its channels. */
 export interface AutoApproveSubject {
@@ -110,11 +111,26 @@ const offLine = (now: Date, peer: string, reason: AutoApproveOff): AuditEntry =>
 });
 
 /**
+ * Auto-approve holds only while an owner passphrase is set and readable
+ * (issue #47): an entry from before it existed, or one left after the file was
+ * deleted, approves nothing until the owner sets one in their own terminal.
+ * Entries are kept, not removed, so setting it brings them back.
+ */
+function ownerSecretHolds(home: Home): boolean {
+  try {
+    return hasOwnerSecret(home);
+  } catch {
+    return false;
+  }
+}
+
+/**
  * The contact's auto-approve, if it holds now. Call inside the home lock: an
  * entry that no longer holds is removed and its end audited. An unreadable
  * file approves nothing (sweepAutoApprove reports it).
  */
 export function autoApproved(home: Home, subject: AutoApproveSubject, peer: string, now = new Date()): { entry: AutoApproveEntry; capabilities: string[] } | null {
+  if (!ownerSecretHolds(home)) return null;
   let all: Record<string, AutoApproveEntry>;
   try {
     all = home.readAutoApprove();
@@ -162,6 +178,7 @@ export function sweepAutoApprove(home: Home, subject: AutoApproveSubject, now = 
 /** Contacts on auto-approve now, for display only (writes nothing). */
 export function autoApproveStatus(home: Home, subject: AutoApproveSubject, now = new Date()): Map<string, { until: string | null; set: string; capabilities: string[] }> {
   const out = new Map<string, { until: string | null; set: string; capabilities: string[] }>();
+  if (!ownerSecretHolds(home)) return out;
   let all: Record<string, AutoApproveEntry>;
   try {
     all = home.readAutoApprove();
@@ -203,14 +220,6 @@ export function parseUntil(v: string, now = new Date()): string {
   if (at - t > AUTO_APPROVE_MAX_MS) throw new CliError('--until is more than a year away; leave it out to keep auto-approve until you turn it off', 2);
   return new Date(at).toISOString();
 }
-
-/** The fingerprint as the owner retypes it: its 8 characters, any case, with or without `rdv1:` and the ellipsis. */
-export const fingerprintChars = (text: string): string =>
-  text
-    .trim()
-    .toLowerCase()
-    .replace(/^rdv1:/, '')
-    .replace(/[^a-z0-9]/g, '');
 
 /** A contact the owner may put on auto-approve, with what it would cover. Refused (CliError) otherwise. */
 export function autoApproveTarget(subject: AutoApproveSubject, peer: string, now = new Date()): { contact: Contact; capabilities: string[] } {

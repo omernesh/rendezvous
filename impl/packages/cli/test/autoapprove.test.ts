@@ -2,7 +2,7 @@
 // one trusted contact, only while the owner's setting holds; every doubt
 // fails closed; every action is audited without peer text; only the owner's
 // own terminal turns it on.
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { type Capability, REQUEST_URI, TASKS_URI, type TaskPayload } from '@rendezvous/a2a';
@@ -11,8 +11,9 @@ import { startTestRelay, type TestRelay } from '@rendezvous/core/testing';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { Listener, rdv } from '../scenarios/harness.js';
 import { checkAutoApprove, scopeDigest, setAutoApprove, subjectOf, sweepAutoApprove, turnOffAutoApprove } from '../src/autoapprove.js';
-import { audit, contactAutoApprove, type Tty } from '../src/commands.js';
+import { audit, contactAutoApprove, init, ownerSecretReset, ownerSecretSet, type Tty } from '../src/commands.js';
 import { AUDIT_KEPT, type AutoApproveEntry, Home } from '../src/home.js';
+import { hasOwnerSecret, storeOwnerSecret } from '../src/ownersecret.js';
 import { Output } from '../src/output.js';
 import { approveRelease, hostRegistry, releaseDigest, submitDraft, tasksInbound } from '../src/tasks.js';
 
@@ -77,11 +78,14 @@ const kinds = (sent: unknown[]) => sent.map((p) => (p as { type: string }).type)
 let dir: string;
 let home: Home;
 let f: Fake;
-beforeEach(() => {
+beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), 'rdv-auto-'));
   home = new Home(dir);
   home.ensureDir();
   f = fake();
+  // Auto-approve holds only while an owner passphrase is set (issue #47); its own audit line is not what these test.
+  await storeOwnerSecret(home, 'OWNER-PASS for the gates');
+  rmSync(home.auditPath, { force: true });
 });
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
@@ -93,6 +97,19 @@ async function arrive(from = PEER, text = PEER_TEXT, capability = REQUEST_URI) {
 }
 
 describe('auto-approve in the gates', () => {
+  it('holds only while an owner passphrase is set: without one the gate waits, and the entry is kept for when it is set (issue #47)', async () => {
+    setAutoApprove(home, subjectOf(f.agent), PEER, null);
+    rmSync(home.ownerSecretPath);
+    const { task } = await arrive();
+    expect(task().state).not.toBe('working');
+    expect(Object.keys(home.readAutoApprove())).toEqual([PEER]);
+    writeFileSync(home.ownerSecretPath, '{ torn');
+    expect((await arrive()).task().state).not.toBe('working');
+    rmSync(home.ownerSecretPath);
+    await storeOwnerSecret(home, 'OWNER-PASS set again');
+    expect((await arrive()).task().state).toBe('working');
+  });
+
   it('a trusted contact: the start and the release pass without asking, every class; both are audited with no peer text', async () => {
     setAutoApprove(home, subjectOf(f.agent), PEER, null);
     for (const capability of [REQUEST_URI, CAP.uri]) {
@@ -254,10 +271,22 @@ describe('auto-approve in the gates', () => {
 // --- the owner's command, between two real `rdv` processes ------------------------------
 
 /** A terminal that answers `answer` and records what it was shown. */
-function tty(answer: string, interactive = true): Tty & { shown: string[] } {
+function tty(answer: string | string[], interactive = true): Tty & { shown: string[]; secrets: number } {
   const shown: string[] = [];
-  return { interactive, shown, say: (t) => void shown.push(t), ask: async (q) => (shown.push(q), answer) };
+  const answers = Array.isArray(answer) ? [...answer] : [answer];
+  const next = () => (answers.length > 1 ? answers.shift()! : answers[0]);
+  const t = {
+    interactive,
+    shown,
+    secrets: 0,
+    say: (x: string) => void shown.push(x),
+    ask: async (q: string) => (shown.push(q), next()),
+    secret: async (q: string) => (t.secrets++, shown.push(q), next()),
+  };
+  return t;
 }
+
+const PASS = 'OWNER-PASS correct horse';
 
 describe('rdv contact auto-approve and rdv audit', () => {
   let relay: TestRelay;
@@ -271,7 +300,31 @@ describe('rdv contact auto-approve and rdv audit', () => {
     rmSync(root, { recursive: true, force: true });
   });
 
-  it('needs the owner’s terminal and fingerprint; then John’s agent works and answers Omer’s task without asking, and off restores the gates', async () => {
+  it('rdv init offers the owner passphrase in a real terminal only; Enter skips; a weak one is not set and init still succeeds', async () => {
+    const run = async (name: string, t: ReturnType<typeof tty>) => {
+      const h = new Home(join(root, name));
+      await init({ home: h, out: new Output(true), values: { email: [`${name}@example.com`], relay: [relay.url] }, positionals: [], tty: t });
+      return h;
+    };
+    const piped = tty(PASS, false);
+    expect(hasOwnerSecret(await run('init-piped', piped))).toBe(false);
+    expect(piped.secrets).toBe(0);
+    const skipped = tty('');
+    expect(hasOwnerSecret(await run('init-skip', skipped))).toBe(false);
+    expect(skipped.secrets).toBe(1);
+    expect(hasOwnerSecret(await run('init-weak', tty('short')))).toBe(false);
+    const set = tty(PASS);
+    const h = await run('init-set', set);
+    expect(hasOwnerSecret(h)).toBe(true);
+    expect(set.shown.join('\n')).not.toContain(PASS);
+    expect(h.readAudit().map((a) => [a.gate, a.action])).toEqual([['owner-secret', 'set']]);
+    // Spawned (no terminal): init works and never asks.
+    const spawned = await rdv(['init', '--profile', 'x', '--email', 'x@example.com', '--relay', relay.url], join(root, 'init-spawned'));
+    expect(spawned.code).toBe(0);
+    expect(existsSync(new Home(join(root, 'init-spawned')).ownerSecretPath)).toBe(false);
+  });
+
+  it('needs the owner’s terminal and passphrase; then John’s agent works and answers Omer’s task without asking, and off restores the gates', async () => {
     const omerHome = join(root, 'omer');
     const johnHome = join(root, 'john');
     await rdv(['init', '--profile', 'omer', '--email', 'omer@example.com', '--relay', relay.url], omerHome);
@@ -294,19 +347,43 @@ describe('rdv contact auto-approve and rdv audit', () => {
       // Not a terminal (an assistant's shell, a script, a pipe): refused, nothing set.
       const piped = await rdv(['contact', 'auto-approve', omerId, 'all'], johnHome, { check: false });
       expect([piped.code, piped.stderr]).toEqual([1, expect.stringContaining('interactive terminal')]);
-      await expect(contactAutoApprove(ctx([omerId, 'all'], tty(fingerprint(omerId), false)))).rejects.toThrow(/interactive terminal/);
-      // The warning comes first; a wrong fingerprint sets nothing.
-      const wrong = tty('rdv1:zzzz…zzzz');
-      await expect(contactAutoApprove(ctx([omerId, 'all'], wrong))).rejects.toThrow(/not the fingerprint/);
+      await expect(contactAutoApprove(ctx([omerId, 'all'], tty(PASS, false)))).rejects.toThrow(/interactive terminal/);
+      // No owner passphrase yet: refused before anything is asked (issue #47).
+      const unset = tty(fingerprint(omerId));
+      await expect(contactAutoApprove(ctx([omerId, 'all'], unset))).rejects.toThrow(/rdv owner-secret set/);
+      expect(unset.secrets).toBe(0);
+      // Setting it: an interactive terminal only (spawned rdv has none), typed twice, not too short.
+      const pipedSet = await rdv(['owner-secret', 'set'], johnHome, { check: false });
+      expect([pipedSet.code, pipedSet.stderr]).toEqual([1, expect.stringContaining('interactive terminal')]);
+      await expect(ownerSecretSet(ctx([], tty(PASS, false)))).rejects.toThrow(/interactive terminal/);
+      await expect(ownerSecretSet(ctx([], tty('short')))).rejects.toThrow(/at least 8/);
+      await expect(ownerSecretSet(ctx([], tty([PASS, `${PASS}!`])))).rejects.toThrow(/did not match/);
+      expect(existsSync(john.ownerSecretPath)).toBe(false);
+      const setTty = tty(PASS);
+      await ownerSecretSet(ctx([], setTty));
+      expect(setTty.shown.join('\n')).not.toContain(PASS);
+      if (process.platform !== 'win32') expect(statSync(john.ownerSecretPath).mode & 0o777).toBe(0o600);
+      expect(readFileSync(john.ownerSecretPath, 'utf8')).not.toContain(PASS);
+      // Changing it needs the current one.
+      await expect(ownerSecretSet(ctx([], tty(['not the current one', 'NEW-PASS 12345', 'NEW-PASS 12345'])))).rejects.toThrow(/wrong owner passphrase/);
+      // The warning comes first; the prompt holds no answer; the old answer (the fingerprint it used to print) and a wrong passphrase set nothing.
+      const wrong = tty(fingerprint(omerId));
+      await expect(contactAutoApprove(ctx([omerId, 'all'], wrong))).rejects.toThrow(/wrong owner passphrase/);
       expect(wrong.shown[0]).toMatch(/WARNING: auto-approve-all/);
       expect(wrong.shown[0]).toMatch(/prompt injection/);
       expect(wrong.shown[0]).toContain(REQUEST_URI);
       expect(wrong.shown[0]).toContain(`rdv contact auto-approve ${omerId} off`);
+      expect(wrong.shown.join('\n')).not.toContain(PASS);
+      expect(wrong.shown.at(-1)).not.toContain(fingerprint(omerId));
+      expect(wrong.secrets).toBe(1);
       expect(john.readAutoApprove()).toEqual({});
+      await expect(contactAutoApprove(ctx([omerId, 'all'], tty('')))).rejects.toThrow(/canceled/);
       await expect(contactAutoApprove(ctx([omerId, 'sometimes'], tty('x')))).rejects.toThrow(/"all"/);
-      await expect(contactAutoApprove(ctx([omerId, 'all'], tty(fingerprint(omerId)), { until: 'yesterday' }))).rejects.toThrow(/--until/);
+      await expect(contactAutoApprove(ctx([omerId, 'all'], tty(PASS), { until: 'yesterday' }))).rejects.toThrow(/--until/);
 
-      await contactAutoApprove(ctx([omerId, 'all'], tty(fingerprint(omerId).toUpperCase()), { until: '7d' }));
+      const right = tty(PASS);
+      await contactAutoApprove(ctx([omerId, 'all'], right, { until: '7d' }));
+      expect(right.shown.join('\n')).not.toContain(PASS);
       const listed = (await rdv(['contact', 'list'], johnHome)).lines[0];
       expect(listed.auto_approve).toMatchObject({ mode: 'all', until: expect.any(String) });
 
@@ -339,8 +416,49 @@ describe('rdv contact auto-approve and rdv audit', () => {
       await johnL.waitFor((l) => l.event === 'task' && l.task === t2 && l.kind === 'start-needed', 'gated again (john)', 10_000);
       expect((await rdv(['audit'], johnHome)).lines.at(-1)).toMatchObject({ gate: 'auto-approve', action: 'off', reason: 'owner' });
 
+      // The first passphrase is trust on first use: audited, and whoami shows when it was set and how to reset it.
+      expect(john.readAudit().filter((a) => a.gate === 'owner-secret').map((a) => [a.action, a.by, a.peer])).toEqual([['set', 'human', 'owner']]);
+      const who = (await rdv(['whoami'], johnHome)).lines[0];
+      expect(who.owner_passphrase).toMatchObject({ set: expect.any(String), note: expect.stringContaining('rdv owner-secret reset') });
+      expect(JSON.stringify(who)).not.toContain(PASS);
+      // Reset: your own terminal only; turns every contact's auto-approve off first, forgets it, offers a new one.
+      const pipedReset = await rdv(['owner-secret', 'reset'], johnHome, { check: false });
+      expect([pipedReset.code, pipedReset.stderr]).toEqual([1, expect.stringContaining('interactive terminal')]);
+      await contactAutoApprove(ctx([omerId, 'all'], tty(PASS)));
+      await expect(ownerSecretReset(ctx([], tty('no')))).rejects.toThrow(/canceled/);
+      expect(Object.keys(john.readAutoApprove())).toEqual([omerId]);
+      // Reset only clears: it never asks for a new one (a reset is no way around the current passphrase).
+      const resetTty = tty(['RESET', PASS, PASS]);
+      await ownerSecretReset(ctx([], resetTty));
+      expect(resetTty.secrets).toBe(0);
+      expect(john.readAutoApprove()).toEqual({});
+      expect(hasOwnerSecret(john)).toBe(false);
+      expect(john.readAudit().slice(-2).map((a) => [a.gate, a.action])).toEqual([
+        ['auto-approve', 'off'],
+        ['owner-secret', 'reset'],
+      ]);
+      // A banner in whoami (first line) and its JSON, until a new one is set.
+      expect((await rdv(['whoami'], johnHome)).lines[0].owner_passphrase).toMatchObject({ set: null, reset: expect.any(String), note: expect.stringMatching(/OWNER PASSPHRASE RESET .*someone with access/) });
+      await expect(contactAutoApprove(ctx([omerId, 'all'], tty(PASS)))).rejects.toThrow(/rdv owner-secret set/);
+      await expect(ownerSecretReset(ctx([], tty('RESET')))).rejects.toThrow(/nothing to reset/);
+      // A new passphrase only after the cooldown, in a separate run of set.
+      await expect(ownerSecretSet(ctx([], tty(PASS)))).rejects.toThrow(/reset: a new one can be set after/);
+      expect(hasOwnerSecret(john)).toBe(false);
+      writeFileSync(john.ownerSecretPath, JSON.stringify({ v: 1, reset: new Date(Date.now() - 11 * 60_000).toISOString() }));
+      await ownerSecretSet(ctx([], tty(PASS)));
+      expect(john.readAudit().slice(-2).map((a) => [a.gate, a.action])).toEqual([
+        ['owner-secret', 'reset'],
+        ['owner-secret', 'set'],
+      ]);
+      // Reset is refused while the passphrase is locked after wrong answers.
+      for (let i = 0; i < 3; i++) await expect(contactAutoApprove(ctx([omerId, 'all'], tty('wrong wrong')))).rejects.toThrow(/wrong owner passphrase/);
+      await expect(ownerSecretReset(ctx([], tty('RESET')))).rejects.toThrow(/too many wrong/);
+      expect(hasOwnerSecret(john)).toBe(true);
+      const unlocked = JSON.parse(readFileSync(john.ownerSecretPath, 'utf8'));
+      writeFileSync(john.ownerSecretPath, JSON.stringify({ ...unlocked, failures: 0, locked_until: undefined }));
+
       // Revoking the contact also ends it, audited when the command saves.
-      await contactAutoApprove(ctx([omerId, 'all'], tty(fingerprint(omerId))));
+      await contactAutoApprove(ctx([omerId, 'all'], tty(PASS)));
       await rdv(['contact', 'revoke', omerId], johnHome);
       expect(john.readAutoApprove()).toEqual({});
       expect(john.readAudit().at(-1)).toMatchObject({ action: 'off', reason: 'revoked' });

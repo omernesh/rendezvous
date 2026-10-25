@@ -36,7 +36,6 @@ import {
   autoApproveTarget,
   autoApproveWarning,
   autoApprovedCounts,
-  fingerprintChars,
   parseUntil,
   scopeDigest,
   setAutoApprove,
@@ -44,6 +43,19 @@ import {
   sweepAutoApprove,
   turnOffAutoApprove,
 } from './autoapprove.js';
+import {
+  checkOwnerSecret,
+  clearOwnerSecret,
+  hasOwnerSecret,
+  OWNER_SECRET_MIN,
+  ownerSecretInfo,
+  ownerSecretLock,
+  readTerminalSecret,
+  RESET_COOLDOWN_MS,
+  storeOwnerSecret,
+  terminalAvailable,
+  weakOwnerSecret,
+} from './ownersecret.js';
 import { candidateDigest, describeApproval, dropPhrase, inboundSubject, reissueForDisplay, requestSubject, type ShownPhrase } from './consent.js';
 import { type AuditEntry, CliError, type Config, type ConfigAddress, type ConsentAction, consentKey, Home, type InboxEntry, parseJsonLines, type PendingRelease } from './home.js';
 import {
@@ -117,13 +129,17 @@ export interface Tty {
   interactive: boolean;
   say(text: string): void;
   ask(question: string): Promise<string>;
+  /** A secret (the owner passphrase): from the controlling terminal itself, not stdin, never echoed (issue #47). */
+  secret(question: string): Promise<string>;
 }
 
-/** This process's terminal: interactive only when both stdin and stderr are a TTY. */
+/** This process's terminal: interactive only when both stdin and stderr are a TTY and the terminal device opens. */
 export function processTty(): Tty {
   return {
-    interactive: process.stdin.isTTY === true && process.stderr.isTTY === true,
+    // And a terminal device to read the owner passphrase from (/dev/tty, CONIN$): without one nothing human-only runs.
+    interactive: process.stdin.isTTY === true && process.stderr.isTTY === true && terminalAvailable(),
     say: (text) => void process.stderr.write(`${clean(text, true)}\n`),
+    secret: (question) => readTerminalSecret(question, (t) => void process.stderr.write(t)),
     ask: async (question) => {
       const rl = createInterface({ input: process.stdin, output: process.stderr });
       try {
@@ -241,7 +257,7 @@ export async function initHome(home: Home, opts: InitOptions): Promise<{ id: str
   return { id: agent.id, fingerprint: fingerprint(agent.id), config };
 }
 
-export async function init({ home, out, values }: Ctx): Promise<void> {
+export async function init({ home, out, values, tty }: Ctx): Promise<void> {
   const profile = str(values.profile) ?? process.env.RDV_PROFILE ?? 'default';
   const r = await initHome(home, {
     profile,
@@ -255,6 +271,21 @@ export async function init({ home, out, values }: Ctx): Promise<void> {
     { event: 'init', id: r.id, fingerprint: r.fingerprint, profile, home: home.dir },
     `initialized profile "${profile}" at ${home.dir}\nid:          ${r.id}\nfingerprint: ${r.fingerprint}`,
   );
+  // Setup is where the owner is surely at their own terminal: offer the owner passphrase now (issue #47), so it
+  // is theirs before any assistant could set the first one. Only in a real interactive terminal; Enter skips.
+  const term = tty ?? processTty();
+  if (term.interactive && !hasOwnerSecret(home)) {
+    term.say(OWNER_SECRET_INTRO);
+    const first = await term.secret('Owner passphrase (not shown), or press Enter to skip and set it later with "rdv owner-secret set": ');
+    if (first === '') return;
+    try {
+      await newOwnerSecret(term, home, first, 'set');
+      out.emit({ event: 'owner-secret', action: 'set' }, 'owner passphrase set');
+    } catch (err) {
+      if (!(err instanceof CliError)) throw err;
+      term.say(`${err.message}; set it later with "rdv owner-secret set"`);
+    }
+  }
 }
 
 /**
@@ -286,6 +317,7 @@ export async function whoami({ home, out }: Ctx): Promise<void> {
   const { agent, config } = await withAgent(home, async (agent, config) => ({ agent, config }), { save: false });
   const fp = fingerprint(agent.id);
   const health = relayHealth(home, config);
+  const owner = ownerSecretInfo(home);
   out.emit(
     {
       id: agent.id,
@@ -294,9 +326,12 @@ export async function whoami({ home, out }: Ctx): Promise<void> {
       home: home.dir,
       addresses: addressViews(config),
       relay_health: health,
+      owner_passphrase: owner,
       card: agent.card,
     },
     [
+      // First, where the owner sees it: the first passphrase is trust on first use (issue #47).
+      `OWNER PASSPHRASE: ${owner.note}${owner.locked_until ? ` (locked until ${owner.locked_until} after wrong answers)` : ''}`,
       `id:          ${agent.id}`,
       `fingerprint: ${fp}`,
       `profile:     ${config.profile} (${home.dir})`,
@@ -713,7 +748,8 @@ function contactFor(agent: Agent, target: string): string {
 /**
  * `rdv contact auto-approve <contact> all [--until <time|duration>]` and
  * `... off` (SPEC §5.5.1, issue #25). Turning it on is the owner's alone: an
- * interactive terminal, the warning, and the contact's fingerprint retyped.
+ * interactive terminal, the warning, and the owner passphrase (issue #47),
+ * read from the terminal itself and never shown, so the prompt holds no answer.
  * Off needs nothing (reduce-only).
  */
 export async function contactAutoApprove({ home, out, values, positionals, tty }: Ctx): Promise<void> {
@@ -731,6 +767,12 @@ export async function contactAutoApprove({ home, out, values, positionals, tty }
     throw new CliError('turning auto-approve on needs an interactive terminal: only you may do it, in your own terminal (an assistant, a script or a pipe cannot)');
   }
   const until = str(values.until) !== undefined ? parseUntil(str(values.until)!) : null;
+  home.requireInit();
+  if (!hasOwnerSecret(home)) {
+    throw new CliError('set your owner passphrase first, in your own terminal: rdv owner-secret set (turning auto-approve on asks for it, so an assistant cannot)');
+  }
+  const lock = ownerSecretLock(home);
+  if (lock) throw new CliError(`too many wrong owner passphrases: try again after ${lock.toISOString()}`);
   // Look, warn and ask outside the lock: the listener keeps running while the owner reads.
   const seen = await withAgent(
     home,
@@ -742,8 +784,10 @@ export async function contactAutoApprove({ home, out, values, positionals, tty }
     { save: false },
   );
   term.say(autoApproveWarning(seen.contact, seen.capabilities, until));
-  const typed = await term.ask(`To turn it on, type this contact's fingerprint (${fingerprint(seen.peer)}), or press Enter to cancel: `);
-  if (fingerprintChars(typed) !== fingerprintChars(fingerprint(seen.peer))) throw new CliError('that is not the fingerprint: auto-approve was not turned on');
+  // The answer is never in this command's output (issue #47): the owner's own passphrase, read from the terminal, not echoed.
+  const typed = await term.secret('To turn it on, type your owner passphrase (not shown), or press Enter to cancel: ');
+  if (typed === '') throw new CliError('canceled: auto-approve was not turned on');
+  await ownerPassphrase(home, typed, 'auto-approve was not turned on');
   const r = await withAgent(
     home,
     async (agent) => {
@@ -761,7 +805,108 @@ export async function contactAutoApprove({ home, out, values, positionals, tty }
   );
 }
 
-const SINCE_UNITS: Record<string, number> = { m: 60_000, h: 3_600_000, d: 86_400_000, w: 7 * 86_400_000 };
+/** Refuse unless `typed` is the owner passphrase (a miss counts toward the lockout). */
+async function ownerPassphrase(home: Home, typed: string, what: string): Promise<void> {
+  const r = await checkOwnerSecret(home, typed);
+  if (r.ok) return;
+  if (r.reason === 'none') throw new CliError(`no owner passphrase is set: ${what}`);
+  if (r.reason === 'locked') throw new CliError(`wrong owner passphrase, too many times: ${what}; try again after ${r.lockedUntil}`);
+  throw new CliError(`wrong owner passphrase: ${what} (${r.triesLeft} more ${r.triesLeft === 1 ? 'try' : 'tries'} before a lockout)`);
+}
+
+/**
+ * `rdv owner-secret set`: the owner passphrase that turns auto-approve on
+ * (issue #47). Only in an interactive terminal; read from the terminal itself,
+ * never echoed, never an argument. Changing it asks for the current one.
+ */
+export async function ownerSecretSet({ home, out, tty }: Ctx): Promise<void> {
+  home.requireInit();
+  const term = tty ?? processTty();
+  if (!term.interactive) {
+    throw new CliError('setting the owner passphrase needs an interactive terminal: only you may do it, in your own terminal (an assistant, a script or a pipe cannot)');
+  }
+  const had = hasOwnerSecret(home);
+  if (had) {
+    const lock = ownerSecretLock(home);
+    if (lock) throw new CliError(`too many wrong owner passphrases: try again after ${lock.toISOString()}`);
+    const current = await term.secret('Current owner passphrase (not shown; Enter cancels): ');
+    if (current === '') throw new CliError('canceled: the owner passphrase was not changed');
+    await ownerPassphrase(home, current, 'the owner passphrase was not changed');
+  }
+  term.say(OWNER_SECRET_INTRO);
+  const first = await term.secret('New owner passphrase (not shown): ');
+  const action = had ? 'changed' : 'set';
+  await newOwnerSecret(term, home, first, action);
+  out.emit({ event: 'owner-secret', action }, `owner passphrase ${action} (audited; rdv whoami shows when)`);
+}
+
+const OWNER_SECRET_INTRO = [
+  '',
+  'The owner passphrase is what you type to turn auto-approve on for a contact.',
+  'Never give it to an assistant, and never put it in a command, a file or a chat.',
+  `At least ${OWNER_SECRET_MIN} characters. Forgot it, or did not set it yourself: rdv owner-secret reset.`,
+  '',
+].join('\n');
+
+/** Check `first`, ask for it again, store it (audited). */
+async function newOwnerSecret(term: Tty, home: Home, first: string, action: 'set' | 'changed' | 'reset'): Promise<void> {
+  const weak = weakOwnerSecret(first);
+  if (weak) throw new CliError(`the passphrase needs ${weak}: nothing was changed`, 2);
+  const again = await term.secret('Type it again: ');
+  if (again !== first) throw new CliError('the two did not match: nothing was changed', 2);
+  await storeOwnerSecret(home, first, action);
+}
+
+/**
+ * `rdv owner-secret reset`: for a passphrase the owner forgot, or did not set
+ * (the first one is trust on first use, so `rdv whoami` shows when it was
+ * set). It needs no current passphrase, so it is refused while the passphrase
+ * is locked after wrong answers, it turns auto-approve off for every contact
+ * (audited), and it only clears: a new passphrase is a separate
+ * `rdv owner-secret set` after RESET_COOLDOWN_MS, with a banner in `rdv whoami`
+ * and `rdv_status` until then.
+ */
+export async function ownerSecretReset({ home, out, tty }: Ctx): Promise<void> {
+  home.requireInit();
+  const term = tty ?? processTty();
+  if (!term.interactive) {
+    throw new CliError('resetting the owner passphrase needs an interactive terminal: only you may do it, in your own terminal (an assistant, a script or a pipe cannot)');
+  }
+  if (!hasOwnerSecret(home)) throw new CliError('no owner passphrase is set: nothing to reset');
+  const lock = ownerSecretLock(home);
+  if (lock) throw new CliError(`too many wrong owner passphrases: reset is refused until ${lock.toISOString()}`);
+  term.say(
+    [
+      '',
+      'Reset the owner passphrase: every contact on auto-approve is turned off, and the',
+      `passphrase is forgotten. A new one can be set ${RESET_COOLDOWN_MS / 60_000} minutes later, with rdv owner-secret set.`,
+      '',
+    ].join('\n'),
+  );
+  const ok = await term.ask('Type RESET to go on, or press Enter to cancel: ');
+  if (ok.trim().toUpperCase() !== 'RESET') throw new CliError('canceled: nothing was changed');
+  const ended = await home.locked(async () => {
+    const peers = Object.keys(safeAutoApprove(home));
+    for (const p of peers) turnOffAutoApprove(home, p);
+    return peers;
+  });
+  await clearOwnerSecret(home);
+  out.emit(
+    { event: 'owner-secret', action: 'reset', auto_approve_off: ended },
+    `owner passphrase reset (audited)${ended.length ? `; auto-approve turned off for ${ended.join(', ')}` : ''}; set a new one in ${RESET_COOLDOWN_MS / 60_000} minutes: rdv owner-secret set`,
+  );
+}
+
+/** Contacts in autoapprove.json, or none if it can't be read. */
+function safeAutoApprove(home: Home): Record<string, unknown> {
+  try {
+    return home.readAutoApprove();
+  } catch {
+    return {};
+  }
+}
+
+const SINCE_UNITS: Record<string, number> ={ m: 60_000, h: 3_600_000, d: 86_400_000, w: 7 * 86_400_000 };
 
 function auditText(a: AuditEntry): string {
   const parts = [safeTs(a.ts), a.gate + (a.action ? ` ${a.action}` : ''), `by ${a.by}`, a.peer];

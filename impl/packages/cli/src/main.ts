@@ -130,10 +130,22 @@ const COMMANDS: Record<string, Command> = {
   'contact auto-approve': {
     usage: 'rdv contact auto-approve <agent-id|label> all [--until <time|duration>]   |   rdv contact auto-approve <agent-id|label> off',
     summary:
-      "Let a trusted contact's tasks start and their results leave without asking you (\"dangerous mode\": shows a warning, needs your own terminal and the fingerprint; audited). off turns it off at once",
+      "Let a trusted contact's tasks start and their results leave without asking you (\"dangerous mode\": shows a warning, needs your own terminal and your owner passphrase; audited). off turns it off at once",
     args: 2,
     options: { until: { type: 'string' } },
     run: cmd.contactAutoApprove,
+  },
+  'owner-secret set': {
+    usage: 'rdv owner-secret set',
+    summary: 'Set or change your owner passphrase, which turning auto-approve on asks for (your own terminal only; never shown, never an argument)',
+    args: 0,
+    run: cmd.ownerSecretSet,
+  },
+  'owner-secret reset': {
+    usage: 'rdv owner-secret reset',
+    summary: "Forgot your owner passphrase, or rdv whoami shows one you didn't set: turns auto-approve off for every contact, forgets it, offers a new one (your own terminal only; audited)",
+    args: 0,
+    run: cmd.ownerSecretReset,
   },
   'contact resync': {
     usage: 'rdv contact resync <agent-id>',

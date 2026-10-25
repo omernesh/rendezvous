@@ -142,6 +142,7 @@ import {
   meetingDigest,
   meetingScope,
   type NegotiateOptions,
+  ownerSecretInfo,
   relayHealth,
   relayTransport,
   requestContactTo,
@@ -1557,6 +1558,9 @@ export class RdvMcpServer {
         auto_approved_actions: [...autoCounts.values()].reduce((a, b) => a + b, 0),
         note: AUTO_NOTE,
       },
+      // The first owner passphrase is trust on first use (issue #47): show when it was set so your user recognizes it.
+      // Never the hash. Tell your user this note as written; never ask them for the passphrase.
+      owner_passphrase: ownerSecretInfo(this.home),
       pending_requests: Object.keys(state.book.pending ?? {}).length,
       pending_dropped_when_full: state.book.pendingEvicted ?? 0,
       probe_answers: Object.keys(state.book.candidates ?? {}).length,

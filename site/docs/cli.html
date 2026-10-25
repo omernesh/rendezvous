@@ -485,7 +485,15 @@ npm run rdv -- --help                     # or: node packages/cli/dist/src/bin.j
 </tr>
 <tr>
 <td><code>rdv contact auto-approve &lt;agent-id\|label&gt; all [--until 7d]</code> / <code>… off</code></td>
-<td>Let one trusted contact's tasks start and their results leave without asking you (SPEC §5.5.1, "dangerous mode"): needs your own terminal, shows a warning, asks you to retype the fingerprint. Ends on expiry, <code>off</code>, a revoke, block or new grant, or a fork (NOTES 77). Yours to run</td>
+<td>Let one trusted contact's tasks start and their results leave without asking you (SPEC §5.5.1, "dangerous mode"): needs your own terminal, shows a warning, asks for your owner passphrase. Ends on expiry, <code>off</code>, a revoke, block or new grant, or a fork (NOTES 77). Yours to run</td>
+</tr>
+<tr>
+<td><code>rdv owner-secret set</code></td>
+<td>Set or change the owner passphrase that turning auto-approve on asks for: typed twice, never shown, stored as a scrypt hash; three misses lock it for a minute, doubling; audited, and <code>rdv whoami</code> shows when it was set (NOTES 77). <code>rdv init</code> in a terminal offers it too. Yours to run, in your own terminal</td>
+</tr>
+<tr>
+<td><code>rdv owner-secret reset</code></td>
+<td>Forgot it, or <code>rdv whoami</code> shows a time you didn't set it: turns auto-approve off for every contact and forgets the passphrase (audited; refused while locked). Set a new one with <code>rdv owner-secret set</code> 10 minutes later; until then <code>rdv whoami</code> shows a reset banner. Yours to run, in your own terminal</td>
 </tr>
 <tr>
 <td><code>rdv audit [--contact &lt;agent-id\|label&gt;] [--since 7d]</code></td>
