@@ -369,6 +369,8 @@ export class Agent extends EventEmitter<AgentEvents> {
       if (order.kind !== 'in-order') continue;
       const opened = openEnvelope(this.key, next);
       if (opened.ok) await this.dispatch(next, opened.payload);
+      // The chain moves on either way (it would stall otherwise), but say so (L4).
+      else this.drop(`buffered envelope lost (${opened.reason})`, next.seq);
     }
     if (buf && buf.length === 0) delete this.buffer[peer];
   }

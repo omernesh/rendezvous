@@ -145,6 +145,17 @@ describe('envelope', () => {
     expect(book.contact(a.id, now)).toBeUndefined();
   });
 
+  it('reports a reused seq as a fork, not a duplicate (security review L4)', () => {
+    const a = generateKey();
+    const b = generateKey();
+    const ch = new Channels();
+    const first = sealEnvelope(a, b.id, { type: 'x', n: 1 }, { seq: 1, prev: null });
+    expect(ch.acceptInbound(first).kind).toBe('in-order');
+    expect(ch.acceptInbound(first).kind).toBe('duplicate'); // the same envelope again
+    const reused = sealEnvelope(a, b.id, { type: 'x', n: 2 }, { seq: 1, prev: null }); // peer restored old state
+    expect(ch.acceptInbound(reused).kind).toBe('fork');
+  });
+
   it('orders per direction and detects gaps, duplicates and forks', () => {
     const out = new Channels();
     const inn = new Channels();

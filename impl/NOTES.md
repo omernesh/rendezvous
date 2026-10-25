@@ -372,6 +372,15 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
     threshold) instead of failing the item after one 60 s wait; only then
     does the error reach `listen` / the MCP server log. Topic docs were
     otherwise lost until the next reconnect replay.
+56. **Lost or reused envelopes are reported** (L4, partly). A buffered
+    envelope that no longer opens when its turn comes (its ttl lapsed while
+    waiting for the gap) still advances the chain, which would stall
+    otherwise, but now emits `dropped: buffered envelope lost (…)`. A
+    different envelope carrying the seq we last accepted (a peer that
+    restored old state) is a `fork`, not a duplicate. Open: a peer that
+    rolled back further than one envelope reuses seqs below ours, which
+    still read as duplicates; telling them apart needs a hash per seq or a
+    chain reset message (v0.2).
 
 ## Not implemented yet
 

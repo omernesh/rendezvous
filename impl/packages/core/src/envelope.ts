@@ -170,6 +170,10 @@ export class Channels {
   /** Classify an inbound envelope; advances state only when in order. */
   acceptInbound(e: Envelope): InboundOrder {
     const c = this.get(e.from);
+    // A different envelope with the seq we last accepted: the peer reused a
+    // seq (e.g. restored old state). Report it instead of calling it a
+    // duplicate (security review L4). Older seqs can't be told apart cheaply.
+    if (e.seq === c.inSeq && c.inPrev !== null && envelopeHash(e) !== c.inPrev) return { kind: 'fork' };
     if (e.seq <= c.inSeq) return { kind: 'duplicate' };
     if (e.seq > c.inSeq + 1) return { kind: 'gap', missingFrom: c.inSeq + 1, missingTo: e.seq - 1 };
     if (e.prev !== c.inPrev) return { kind: 'fork' };
