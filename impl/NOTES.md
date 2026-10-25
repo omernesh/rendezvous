@@ -1111,6 +1111,18 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
     content is not parsed; MCP refuses over the cap and the next send is
     `seq` 1.
 
+## Approved, not implemented yet
+
+71. **General tasks and groups** (design approved 2026-10-25, **spec
+    change** as each slice lands). `docs/design/general-tasks-and-groups.md`:
+    a `tasks/v1` lifecycle with capability URIs, `scope.invoke` replacing
+    `may_propose_meetings`, start and release gates (item 59 generalized),
+    a human-only `auto_approve: all` per contact with an audit log, bounds
+    (item 46 generalized), per-capability rate limits, file references by
+    URL plus content hash (Blossom optional, P2P transfer negotiable), and
+    groups by pairwise fan-out (v0.4). The envelope size cap it needs is
+    item 70.
+
 ## Not implemented yet
 
 
