@@ -192,6 +192,22 @@ export interface GrantCandidate {
   received: string;
 }
 
+export interface OutstandingRequest {
+  to_hint: string;
+  sent: string;
+  binding?: Binding;
+  to?: string;
+  /** Topic probes: answers refused because the probe already had CANDIDATES_PER_PROBE of them (a flood). */
+  dropped?: number;
+}
+
+/** A probe got more answers than we keep: someone may be flooding it. */
+export interface ProbeOverflow {
+  request_ref: string;
+  to_hint: string;
+  dropped: number;
+}
+
 export type RequestOutcome =
   | { status: 'pending'; pending: PendingRequest }
   | { status: 'auto-grant'; tier: Tier; scope: GrantScope }
@@ -206,7 +222,7 @@ export interface ContactBookState {
    * the peer, and (for requests sent to a known card) the only agent whose
    * grant we will accept.
    */
-  outstanding: Record<string, { to_hint: string; sent: string; binding?: Binding; to?: string }>;
+  outstanding: Record<string, OutstandingRequest>;
   /** Grants answering our topic probes, by grant id, awaiting our human (confirmCandidate). */
   candidates: Record<string, GrantCandidate>;
   blocked: string[];
@@ -226,9 +242,14 @@ const CLAIMED_TIER_CAP: Tier = 'stranger';
 export const PENDING_LIMIT = 64;
 export const PENDING_PER_SENDER = 4;
 const DECLINED_LIMIT = 1000;
-/** Probe answers kept: per probe, and in total (oldest evicted). */
-export const CANDIDATES_PER_PROBE = 8;
-export const CANDIDATES_LIMIT = 64;
+/**
+ * Probe answers kept per probe, one per distinct grantor. There is no global
+ * cap that could let one probe's flood evict another probe's answers: the
+ * total is bounded by this times the probes our owner has open. Grantor keys
+ * are free, so a flood can still fill one probe; the overflow is counted and
+ * shown to the human, who should redo that contact by card or in person.
+ */
+export const CANDIDATES_PER_PROBE = 16;
 
 export class ContactBook {
   state: ContactBookState;
@@ -346,7 +367,11 @@ export class ContactBook {
    * human to confirm (`confirmCandidate`): only grantors whose card claims the
    * probed address qualify, and the probe stays open until one is confirmed.
    */
-  receiveGrant(input: unknown, me: string, now = new Date()): { contact: Contact } | { candidate: GrantCandidate } | null {
+  receiveGrant(
+    input: unknown,
+    me: string,
+    now = new Date(),
+  ): { contact: Contact } | { candidate: GrantCandidate } | { overflow: ProbeOverflow } | null {
     if (!verifyGrant(input, now)) return null;
     const g = input;
     const outstanding = this.state.outstanding[g.request_ref];
@@ -363,13 +388,22 @@ export class ContactBook {
     if (!probed || !(g.card.discovery?.addresses ?? []).some((a) => topicForHint(a.value) === probed)) return null;
     if (this.isBlocked(g.from)) return null;
     const rivals = Object.values(this.state.candidates).filter((c) => c.request_ref === g.request_ref);
-    if (rivals.some((c) => c.grant.from === g.from) || rivals.length >= CANDIDATES_PER_PROBE) return null;
+    if (rivals.some((c) => c.grant.from === g.from)) return null;
     if (!this.markSeen(g.id)) return null;
-    const ids = Object.keys(this.state.candidates);
-    if (ids.length >= CANDIDATES_LIMIT) delete this.state.candidates[ids[0]]; // oldest (insertion order)
+    if (rivals.length >= CANDIDATES_PER_PROBE) {
+      outstanding.dropped = (outstanding.dropped ?? 0) + 1;
+      return { overflow: { request_ref: g.request_ref, to_hint: outstanding.to_hint, dropped: outstanding.dropped } };
+    }
     const candidate: GrantCandidate = { grant: g, request_ref: g.request_ref, to_hint: outstanding.to_hint, received: now.toISOString() };
     this.state.candidates[g.id] = candidate;
     return { candidate };
+  }
+
+  /** Open probes that had answers dropped because they overflowed (shown to the human). */
+  probeOverflows(): ProbeOverflow[] {
+    return Object.entries(this.state.outstanding)
+      .filter(([, o]) => o.to === undefined && (o.dropped ?? 0) > 0)
+      .map(([id, o]) => ({ request_ref: id, to_hint: o.to_hint, dropped: o.dropped! }));
   }
 
   /** Our human picked this probe answer: it becomes the contact, and the probe's other answers are dropped. */

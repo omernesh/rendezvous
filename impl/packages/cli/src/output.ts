@@ -1,6 +1,14 @@
 // Human text by default, one JSON object per line with --json. The secret
 // key never goes through here: views below pick fields explicitly.
-import { type AddressCard, type Contact, fingerprint, type GrantCandidate, type PendingRequest, topicForHint } from '@rendezvous/core';
+import {
+  type AddressCard,
+  type Contact,
+  fingerprint,
+  type GrantCandidate,
+  type PendingRequest,
+  type ProbeOverflow,
+  topicForHint,
+} from '@rendezvous/core';
 import type { InboxEntry } from './home.js';
 
 export class Output {
@@ -78,6 +86,17 @@ export function contactText(c: Contact): string {
   const theirs = v.granted_tier ? `  their tier for us ${safe(v.granted_tier)}` : '';
   const inbound = v.inbound === 'default' ? '  inbound: default (no meetings; "rdv contact grant <agent-id>" to allow more)' : '';
   return `${safe(v.peer)}  tier ${safe(v.tier)}  binding ${safe(v.binding)}  fingerprint ${safe(v.fingerprint)}  since ${safe(v.since)}${expires}${theirs}${inbound}`;
+}
+
+export function overflowView(o: ProbeOverflow) {
+  return { event: 'probe-overflow', request_ref: o.request_ref, to_hint: o.to_hint, dropped: o.dropped };
+}
+
+export function overflowText(o: ProbeOverflow): string {
+  return (
+    `your probe ${safe(o.request_ref)} for ${safe(o.to_hint)} got too many answers: ${safe(o.dropped)} dropped. ` +
+    'Someone may be flooding it, so the real one may be among the dropped: get their card in person (QR) or by a channel you trust, and use "rdv contact request <card-file> --in-person"'
+  );
 }
 
 export function candidateView(c: GrantCandidate) {

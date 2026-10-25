@@ -185,6 +185,25 @@ describe('inbound items that change nothing (security review M1)', () => {
   });
 });
 
+describe('flooded probes are shown to the human', () => {
+  it('rdv contact pending reports dropped probe answers', async () => {
+    const dir = tmp();
+    try {
+      const home = join(dir, 'h');
+      await rdv(['init', '--email', 'bob@x.com', '--relay', 'ws://127.0.0.1:9'], home);
+      const path = join(home, 'agent.json');
+      const state = JSON.parse(readFileSync(path, 'utf8'));
+      const ref = '00000000-0000-4000-8000-0000000000aa';
+      state.book.outstanding[ref] = { to_hint: 'alice@x.com', sent: new Date().toISOString(), binding: 'claimed', dropped: 7 };
+      writeFileSync(path, JSON.stringify(state));
+      const r = await rdv(['contact', 'pending'], home);
+      expect(r.lines).toContainEqual({ event: 'probe-overflow', request_ref: ref, to_hint: 'alice@x.com', dropped: 7 });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('negotiation scope by direction (security review H2)', () => {
   const NOW = new Date('2026-10-25T10:00:00Z');
   const window = parseWindow('next week evenings', { now: NOW, offsetMinutes: 120 });

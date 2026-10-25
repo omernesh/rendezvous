@@ -124,9 +124,14 @@ the marker (CLI behavior, live-run logs, calendar settings) stay here only.
     its card even claims the probed address) to the human before trusting
     the new contact. (folded into SPEC rev 3 §5.3) **Now enforced** (security
     review H1): a probe answer whose card doesn't claim the probed address is
-    dropped; the rest become *candidates* (`book.candidates`, at most 8 per
-    probe and 64 in all) and the probe stays open, so a first answer from an
-    eavesdropper can't displace the real target. The human picks one with
+    dropped; the rest become *candidates* (`book.candidates`, at most 16 per
+    probe, one per grantor, and no global cap, so one probe's flood can't
+    evict another's) and the probe stays open, so a first answer from an
+    eavesdropper can't displace the real target. Grantor keys are free, so a
+    flood can still fill a probe; further answers are counted on the probe
+    (`outstanding[id].dropped`) and shown to the human (`probe-overflow` in
+    `listen` and `rdv contact pending`, `probe_flooded` / `flooded_probes` in
+    the MCP server) with the advice to redo that contact by card. The human picks one with
     `rdv contact confirm <grant-id>` (or `reject`), or through the MCP
     server's human gate (`rdv_grant` with `grant_id`); the others are dropped.
     `verifyGrant` also rejects tiers outside the enum.

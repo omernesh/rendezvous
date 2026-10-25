@@ -17,5 +17,5 @@ export {
   taskView,
   validateNegotiateOptions,
 } from './negotiate.js';
-export { candidateView, clean, contactView, requestView } from './output.js';
+export { candidateView, clean, contactView, overflowView, requestView } from './output.js';
 export { relayTransport } from './transport.js';

@@ -41,6 +41,8 @@ import {
   contactView,
   inboxText,
   type Output,
+  overflowText,
+  overflowView,
   requestText,
   requestView,
 } from './output.js';
@@ -284,9 +286,14 @@ export async function contactPending({ home, out }: Ctx): Promise<void> {
   };
   for (const p of pending) out.emit(requestView(p), requestText(p) + phraseLine(p.request.id));
   // Answers to our own topic probes: anyone who saw the probe could have sent one.
-  const candidates = await withAgent(home, async (agent) => agent.grantCandidates(), { save: false });
+  const { candidates, overflows } = await withAgent(
+    home,
+    async (agent) => ({ candidates: agent.grantCandidates(), overflows: agent.book.probeOverflows() }),
+    { save: false },
+  );
   candidates.sort((a, b) => a.received.localeCompare(b.received));
   for (const c of candidates) out.emit(candidateView(c), candidateText(c) + phraseLine(c.grant.id));
+  for (const o of overflows) out.emit(overflowView(o), overflowText(o));
 }
 
 /** `rdv contact confirm <grant-id>`: the owner picks which answer to a topic probe is the real peer. */

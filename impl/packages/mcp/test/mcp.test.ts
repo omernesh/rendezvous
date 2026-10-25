@@ -219,6 +219,9 @@ describe('event log (security review M1)', () => {
       expect(toModelEvent({ event: 'dropped', reason }, false)).toBeNull();
     }
     expect(toModelEvent({ event: 'dropped', reason: 'envelope chain fork' }, false)).not.toBeNull();
+    const flooded = toModelEvent({ event: 'probe-overflow', request_ref: '00000000-0000-4000-8000-0000000000aa', to_hint: 'alice@x.com', dropped: 3 }, false)!;
+    expect(flooded).toMatchObject({ type: 'probe_flooded', probe_for: 'alice@x.com', dropped: 3 });
+    expect(String(flooded.next_step)).toContain('by card');
   });
 });
 

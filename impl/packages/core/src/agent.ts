@@ -11,6 +11,7 @@ import {
   type ContactRequest,
   type GrantCandidate,
   type GrantScope,
+  type ProbeOverflow,
   type PendingRequest,
   type Tier,
   createContactRequest,
@@ -46,6 +47,8 @@ export interface AgentEvents {
   request: [PendingRequest];
   /** A grant answering one of our topic probes, waiting for our human (confirmCandidate / rejectCandidate). */
   candidate: [GrantCandidate];
+  /** Answers to one of our probes were dropped (too many). Emitted on the first drop per probe; see probeOverflows(). */
+  'probe-overflow': [ProbeOverflow];
   contact: [Contact];
   message: [peer: string, payload: Payload, envelope: Envelope];
   revoked: [peer: string];
@@ -372,6 +375,10 @@ export class Agent extends EventEmitter<AgentEvents> {
         if (!got) return this.drop('unexpected or invalid grant');
         if ('candidate' in got) {
           this.emit('candidate', got.candidate);
+          return;
+        }
+        if ('overflow' in got) {
+          if (got.overflow.dropped === 1) this.emit('probe-overflow', got.overflow);
           return;
         }
         this.emit('contact', got.contact);

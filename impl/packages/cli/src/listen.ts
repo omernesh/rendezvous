@@ -29,6 +29,8 @@ import {
   contactView,
   inboxText,
   type Output,
+  overflowText,
+  overflowView,
   requestText,
   requestView,
 } from './output.js';
@@ -134,6 +136,7 @@ export async function handleInbound(
         if (opts.autoGrant) grants.push(agent.grant(p.request.id, { tier: opts.autoGrant }));
       });
       agent.on('candidate', (c) => events.push({ obj: candidateView(c), human: `candidate ${candidateText(c)}` }));
+      agent.on('probe-overflow', (o) => events.push({ obj: overflowView(o), human: overflowText(o) }));
       agent.on('contact', (c) => events.push({ obj: { event: 'contact', ...contactView(c) }, human: `contact ${contactText(c)}` }));
       agent.on('message', (from, payload, env) => {
         const entry: InboxEntry = { ts: new Date().toISOString(), from, seq: env.seq, payload };

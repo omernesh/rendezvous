@@ -602,8 +602,13 @@ capped.</p>
   until its owner confirms it, after being shown the grantor's fingerprint
   (§5.5). Until then the answer is a <em>candidate</em>: several grantors may answer
   one probe, and each is kept as a separate candidate (the reference keeps up
-  to 8 per probe), so an eavesdropper who answers first cannot displace the
-  real target. A confirmed probe answer is recorded as <code>claimed</code>.
+  to 16 per probe, one per grantor), so an eavesdropper who answers first
+  cannot displace the real target. Keys are free, so a flood can still fill
+  one probe: answers beyond the cap MUST NOT evict another probe's
+  candidates, and the requester SHOULD count them and tell its owner that
+  the real answer may be among the dropped ones and the contact is best
+  redone by card (in person, or another trusted channel). A confirmed probe
+  answer is recorded as <code>claimed</code>.
 - <strong>Direction.</strong> A grant authorizes the requester to contact the grantor
   within <code>scope</code>; that is all it does. A received grant MUST NOT set what the
   grantor may do towards the requester: the grantor chose that scope, and the

@@ -507,15 +507,24 @@ export class RdvMcpServer {
       {},
       async () => {
         await this.refreshPhrases();
-        const { pending, candidates } = await this.withAgent(async (agent) => ({
+        const { pending, candidates, overflows } = await this.withAgent(async (agent) => ({
           pending: agent.pendingRequests(),
           candidates: agent.grantCandidates(),
+          overflows: agent.book.probeOverflows(),
         }));
         pending.sort((a, b) => a.received.localeCompare(b.received));
         candidates.sort((a, b) => a.received.localeCompare(b.received));
         return {
           pending: pending.map(pendingView),
           probe_answers: candidates.map(candidateSummary),
+          flooded_probes: overflows.length
+            ? overflows.map((o) => ({
+                request_id: safe(o.request_ref),
+                probe_for: asAddress(o.to_hint),
+                dropped_answers: o.dropped,
+                advice: 'Too many answers: the real one may have been dropped. Redo this contact by card (in person or a trusted channel).',
+              }))
+            : undefined,
           how_to_approve: this.supportsElicitation()
             ? 'Call rdv_grant with the request_id; your user gets an approval form.'
             : `Ask your user to read the confirm phrase for this request in their own terminal ("rdv contact pending --home \\"${home.dir}\\"", also printed in this server's log) and type it to you; then call rdv_grant with confirm_phrase. Or they can approve directly with "rdv contact grant <request_id> --home \\"${home.dir}\\"".`,

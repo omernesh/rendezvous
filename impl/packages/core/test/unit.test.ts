@@ -7,6 +7,7 @@ import {
   createContactRequest,
   createGrant,
   createRevoke,
+  CANDIDATES_PER_PROBE,
   DEFAULT_INBOUND_SCOPE,
   PENDING_LIMIT,
   PENDING_PER_SENDER,
@@ -277,6 +278,28 @@ describe('received grants never widen inbound rights (security review H1/H2)', (
     const up = book2.allowInbound(mallory.id, { tier: 'friend', scope: { may_initiate: true, may_propose_meetings: true } });
     expect(up).toMatchObject({ tier: 'friend', inboundGranted: true });
     expect(up.inboundScope?.may_propose_meetings).toBe(true);
+  });
+
+  it('a flood of answers fills only its own probe, is counted, and never evicts another probe', () => {
+    const book = new ContactBook();
+    const flooded = createContactRequest(bob, bobCard, { toHint: 'alice@x.com', greeting: 'hi' });
+    const other = createContactRequest(bob, bobCard, { toHint: 'carol@x.com', greeting: 'hi' });
+    book.trackOutstanding(other);
+    book.trackOutstanding(flooded);
+    const carol = key();
+    const real = book.receiveGrant(createGrant(carol, cardFor(carol, 'carol@x.com'), other, { tier: 'friend', scope: {} }), bob.id);
+    expect(real && 'candidate' in real).toBe(true);
+
+    const results = Array.from({ length: CANDIDATES_PER_PROBE + 5 }, () => {
+      const k = key();
+      return book.receiveGrant(createGrant(k, cardFor(k, 'alice@x.com'), flooded, { tier: 'friend', scope: {} }), bob.id);
+    });
+    expect(results.filter((r) => r && 'candidate' in r)).toHaveLength(CANDIDATES_PER_PROBE);
+    const last = results.at(-1);
+    expect(last && 'overflow' in last && last.overflow).toEqual({ request_ref: flooded.id, to_hint: 'alice@x.com', dropped: 5 });
+    // Carol's answer to the other probe survived the flood.
+    expect(Object.values(book.state.candidates).filter((c) => c.request_ref === other.id).map((c) => c.grant.from)).toEqual([carol.id]);
+    expect(book.probeOverflows()).toEqual([{ request_ref: flooded.id, to_hint: 'alice@x.com', dropped: 5 }]);
   });
 
   it('rejects a grant whose tier is not in the enum', () => {

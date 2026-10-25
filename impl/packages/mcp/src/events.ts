@@ -103,6 +103,16 @@ export function toModelEvent(e: Raw, negotiating: boolean): Omit<McpEvent, 'n' |
         next_step:
           'Someone answered your discovery probe. Show your user the fingerprint and ask whether this is the person they meant; it becomes a contact only when they confirm (rdv_grant with grant_id).',
       };
+    case 'probe-overflow':
+      return {
+        type: 'probe_flooded',
+        request_id: uuid(e.request_ref),
+        probe_for: address(e.to_hint),
+        dropped: typeof e.dropped === 'number' && Number.isSafeInteger(e.dropped) ? e.dropped : null,
+        next_step:
+          'Your discovery probe got more answers than are kept, so someone may be flooding it and the real person may be among the dropped ones. ' +
+          'Tell your user; the safe route is to get their card through a channel they trust (in person, a QR code) and request contact by card.',
+      };
     case 'contact':
       return { type: 'contact', peer: agentId(e.peer), fingerprint: fp(e.peer), tier: oneOf(TIERS)(e.tier), binding: oneOf(BINDINGS)(e.binding) };
     case 'message': {
