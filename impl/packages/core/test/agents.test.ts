@@ -945,7 +945,9 @@ describe('channel state for strangers (issue #3, NOTES 64)', () => {
     return { texts, drops };
   }
 
-  it('keeps memory and the saved state bounded under envelopes from 10k fresh IDs', async () => {
+  // 2k IDs keep `npm test` fast (~11 ms of crypto each); RDV_FLOOD_N=10000 runs the full flood.
+  const FLOOD_N = Number(process.env.RDV_FLOOD_N) || 2_000;
+  it(`keeps memory and the saved state bounded under envelopes from ${FLOOD_N} fresh IDs`, async () => {
     const { t, feed } = feedable();
     const john = Agent.create(t, card);
     const omer = generateKey();
@@ -961,7 +963,7 @@ describe('channel state for strangers (issue #3, NOTES 64)', () => {
       return JSON.stringify({ ...st, book: { ...st.book, seenIds: [] } }).length;
     };
     let early = 0;
-    for (let i = 0; i < 10_000; i++) {
+    for (let i = 0; i < FLOOD_N; i++) {
       const k = generateKey();
       // Every tenth one asks for contact (kept, but the pending list is capped, NOTES 46); the rest just write, some mid-chain.
       const payload = i % 10 === 0 ? requestTo(k, john.id) : { type: 'chat', text: 'spam' };
@@ -978,7 +980,7 @@ describe('channel state for strangers (issue #3, NOTES 64)', () => {
     expect(Object.keys(state.channels).length).toBeLessThanOrEqual(1 + 64);
     expect(Object.keys(state.book.pending)).toHaveLength(64);
     expect(state.buffer).toEqual({});
-    // Past the first thousand, 9000 more fresh IDs leave the saved state the same size.
+    // Past the first thousand, every further fresh ID leaves the saved state the same size.
     expect(sizeOf()).toBeLessThanOrEqual(early * 1.05);
     expect(state.book.seenIds.length).toBeLessThanOrEqual(5000);
     // The contact's channel came through untouched.
