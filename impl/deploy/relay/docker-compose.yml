@@ -11,6 +11,7 @@ services:
     ports:
       - "127.0.0.1:7777:7777"
       - "<relay-host>:7777:7777"
+      - "<lan-ip>:7777:7777"   # LAN: the "home" tunnel connector reaches relay-host here
     volumes:
       - ./strfry.conf:/etc/strfry.conf:ro
       - ./data:/app/strfry-db   # local disk only: LMDB must not live on the CIFS NAS

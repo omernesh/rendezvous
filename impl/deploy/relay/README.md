@@ -8,7 +8,7 @@ No per-IP rate limit: strfry has none built in (needs a writePolicy plugin; Clou
     scp docker-compose.yml strfry.conf backup.sh README.md user@<relay-host>:~/docker/rendezvous-relay/
     ssh user@<relay-host> 'cd ~/docker/rendezvous-relay && chmod +x backup.sh && mkdir -p data && docker compose up -d'
 
-Ports: `127.0.0.1:7777` and the Tailscale IP `<relay-host>:7777` (never 0.0.0.0).
+Ports: `127.0.0.1:7777`, the Tailscale IP `<relay-host>:7777`, and the LAN IP `<lan-ip>:7777` for the tunnel connector (never 0.0.0.0).
 Data: `~/docker/rendezvous-relay/data` (local disk; never put LMDB on <nas>, which is CIFS).
 The compose file hardcodes the Tailscale IP; change it if relay-host's tailnet address changes.
 
@@ -25,6 +25,6 @@ Restore: `zcat file | docker exec -i rendezvous-relay /app/strfry import`
 
 ## Public exposure (owner step, Cloudflare dashboard)
 Zero Trust > Networks > Tunnels > (existing tunnel) > Public Hostname > Add:
-hostname `relay.nesher.co`, service type HTTP, URL `localhost:7777`. WebSockets pass through
+hostname `relay.nesher.co`, service type HTTP, URL `<lan-ip>:7777` (the "home" tunnel connector is not on relay-host, so localhost does not reach it; done 2026-10-25 via the API). WebSockets pass through
 by default. Then: `curl -H 'Accept: application/nostr+json' https://relay.nesher.co` and use `wss://relay.nesher.co`.
 (`realIpHeader` is set to `cf-connecting-ip` so logs show real client IPs.)
