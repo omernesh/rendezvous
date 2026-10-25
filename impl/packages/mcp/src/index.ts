@@ -1,4 +1,4 @@
-export { INBOX_URI, PHRASE_TIERS, RdvMcpServer, type RdvMcpOptions } from './server.js';
+export { type ApprovalAsk, INBOX_URI, type InvokeResult, PHRASE_TIERS, RdvMcpServer, type RdvMcpOptions, REMOTE_INSTRUCTIONS, type RemoteApprovals, type ToolDef } from './server.js';
 export {
   candidateLabel,
   candidateTarget,
