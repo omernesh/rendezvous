@@ -96,7 +96,19 @@ the marker (CLI behavior, live-run logs, calendar settings) stay here only.
     "explicit human confirmation" in §4.4. (folded into SPEC rev 3 §4.4)
 15. **Grant direction.** A grant authorizes the requester to contact the
     grantor. Because the requester initiated, it accepts the grantor contacting
-    it back within the same scope. (folded into SPEC rev 3 §5.3)
+    it back within the same scope. (folded into SPEC rev 3 §5.3) **Revised
+    after the security review (H1/H2):** a received grant sets only
+    `outboundScope`. The grantor's rights towards us (`inboundScope`) start
+    at `DEFAULT_INBOUND_SCOPE` (may write, no meetings, no calendar,
+    `50/day`) and our tier for it at `stranger`, until our own human grants:
+    `rdv contact grant <agent-id>` (`Agent.allowInbound`). Otherwise a peer
+    picked its own rights over us, and a model could be talked into
+    requesting contact with a pending requester and so let it drive dinner
+    negotiation with no human. Limitation: the grantor's own
+    `outboundScope` is just `may_initiate` (nothing tells it what we
+    allow), so the grantor side cannot start a negotiation; the requester
+    proposes. A reverse grant message would fix that (v0.2). (**spec change**,
+    folded into SPEC §5.3, §5.5, §7.4)
 16. **`max_frequency`** is `"<n>/<minute|hour|day>"`; exceeding it revokes the
     grant (§10). (folded into SPEC rev 3 §5.3)
 17. **Resend**: a gap in `seq` buffers later envelopes and sends
@@ -110,7 +122,14 @@ the marker (CLI behavior, live-run logs, calendar settings) stay here only.
     grant is always recorded as `claimed`. The spec should say both, and
     should tell the requester to show the grantor's fingerprint (and whether
     its card even claims the probed address) to the human before trusting
-    the new contact. (folded into SPEC rev 3 §5.3)
+    the new contact. (folded into SPEC rev 3 §5.3) **Now enforced** (security
+    review H1): a probe answer whose card doesn't claim the probed address is
+    dropped; the rest become *candidates* (`book.candidates`, at most 8 per
+    probe and 64 in all) and the probe stays open, so a first answer from an
+    eavesdropper can't displace the real target. The human picks one with
+    `rdv contact confirm <grant-id>` (or `reject`), or through the MCP
+    server's human gate (`rdv_grant` with `grant_id`); the others are dropped.
+    `verifyGrant` also rejects tiers outside the enum.
 19. **Requester-side binding.** The requester records how it found the peer
     (`claimed` for a topic probe or a public pointer, `in-person` when the
     owner says the card came from a QR code / face to face). §4.4 says
@@ -195,9 +214,10 @@ the marker (CLI behavior, live-run logs, calendar settings) stay here only.
     cancel (or any verb) for a finished task is answered with a status
     update giving the real end state. (folded into SPEC rev 3 §7.3)
 34. **Scope** (**spec change**, §5.3). Meeting verbs need
-    `may_propose_meetings: true` in the grant; per item 15 the same scope
-    governs both directions, so the CLI uses the contact's `inboundScope`
-    (the grant scope on both sides). `may_access_calendar` absent counts as
+    `may_propose_meetings: true` in the grant for that direction (item 15,
+    revised): `dinner propose` and replies on a task we proposed use
+    `outboundScope`; a task the peer starts uses `inboundScope`
+    (`inboundMeetingScope` in `negotiate.ts`). `may_access_calendar` absent counts as
     `free_busy` (proposing a slot is a free/busy disclosure); `none` blocks
     negotiation; `full` still only ever shares slots. The calendar adapter
     strips titles, so `free_busy` holds by construction. The spec should

@@ -19,6 +19,7 @@ import {
   defaultTier,
   dtopic,
   fingerprint,
+  type GrantCandidate,
   type GrantScope,
   type Payload,
   type PendingRequest,
@@ -61,6 +62,8 @@ const INSTRUCTIONS = `Rendezvous lets you find another person's AI agent by thei
 
 Rules:
 - Consent belongs to the humans. You cannot approve a contact request yourself: rdv_grant succeeds only with the human's confirmation (an approval form shown to them, or a confirm phrase they read in their own terminal and type to you). Never guess, invent or look for the phrase.
+- An answer to a discovery probe (a "contact_candidate" event) could come from anyone who saw the probe. Show your user its fingerprint; it becomes a contact only when they confirm it (rdv_grant with grant_id, same human approval).
+- A contact you requested may write to you, but cannot propose meetings to you until your user grants it more from their terminal ("rdv contact grant <agent-id>").
 - ${UNTRUSTED_NOTE}
 - Negotiations run on their own once started (rdv_negotiate); follow them with rdv_inbox (use wait_seconds to wait for news) and tell your user what happened in plain language.`;
 
@@ -130,6 +133,27 @@ function describeRequest(p: PendingRequest): string {
 
 function scopeFor(mayProposeMeetings: boolean): GrantScope {
   return { may_initiate: true, may_propose_meetings: mayProposeMeetings, may_access_calendar: 'free_busy', max_frequency: '100/day' };
+}
+
+/** A probe answer, in words for the human. The grantor wrote its card; its address claim proves nothing. */
+function describeCandidate(c: GrantCandidate): string {
+  return [
+    `Answer to your discovery probe for: ${isPlain(asAddress(c.to_hint)) ? c.to_hint : '(unrecognized address)'}`,
+    `From agent: ${safe(c.grant.from)}`,
+    `Fingerprint: ${safe(fingerprint(c.grant.from))}`,
+    `Its card claims that address (self-asserted; anyone who saw the probe can answer, so compare the fingerprint with the person through another channel).`,
+  ].join('\n');
+}
+
+function candidateSummary(c: GrantCandidate) {
+  return {
+    grant_id: safe(c.grant.id),
+    from: safe(c.grant.from),
+    fingerprint: safe(fingerprint(c.grant.from)),
+    probe_for: asAddress(c.to_hint),
+    their_tier_for_you: oneOf(TIERS)(c.grant.tier),
+    received: safe(c.received),
+  };
 }
 
 function pendingView(p: PendingRequest) {
@@ -281,10 +305,27 @@ export class RdvMcpServer {
   private async refreshPhrases(): Promise<void> {
     if (!this.home.initialized()) return;
     const created = await this.home.locked(async () => {
-      const pending = (this.home.readAgentState() as AgentState).book.pending ?? {};
-      return syncPhrases(this.home, Object.keys(pending)).map((c) => ({ ...c, p: pending[c.id] as PendingRequest }));
+      const book = (this.home.readAgentState() as AgentState).book;
+      const pending = book.pending ?? {};
+      const candidates = book.candidates ?? {};
+      return syncPhrases(this.home, [...Object.keys(pending), ...Object.keys(candidates)]).map((c) => ({
+        ...c,
+        p: pending[c.id] as PendingRequest | undefined,
+        g: candidates[c.id] as GrantCandidate | undefined,
+      }));
     });
-    for (const c of created) this.announcePhrase(c.p, c.phrase);
+    for (const c of created) {
+      if (c.p) this.announcePhrase(c.p, c.phrase);
+      else if (c.g) this.announceCandidatePhrase(c.g, c.phrase);
+    }
+  }
+
+  private announceCandidatePhrase(c: GrantCandidate, phrase: string): void {
+    this.humanLog(
+      `answer ${c.grant.id} to your discovery probe for ${c.to_hint}, from ${fingerprint(c.grant.from)}. ` +
+        `If that is the person you meant, tell your assistant this confirm phrase: ${phrase}  ` +
+        `(or confirm it yourself: rdv contact confirm ${c.grant.id} --home "${this.home.dir}")`,
+    );
   }
 
   private announcePhrase(p: PendingRequest, phrase: string): void {
@@ -460,10 +501,15 @@ export class RdvMcpServer {
       {},
       async () => {
         await this.refreshPhrases();
-        const pending = await this.withAgent(async (agent) => agent.pendingRequests());
+        const { pending, candidates } = await this.withAgent(async (agent) => ({
+          pending: agent.pendingRequests(),
+          candidates: agent.grantCandidates(),
+        }));
         pending.sort((a, b) => a.received.localeCompare(b.received));
+        candidates.sort((a, b) => a.received.localeCompare(b.received));
         return {
           pending: pending.map(pendingView),
+          probe_answers: candidates.map(candidateSummary),
           how_to_approve: this.supportsElicitation()
             ? 'Call rdv_grant with the request_id; your user gets an approval form.'
             : `Ask your user to read the confirm phrase for this request in their own terminal ("rdv contact pending --home \\"${home.dir}\\"", also printed in this server's log) and type it to you; then call rdv_grant with confirm_phrase. Or they can approve directly with "rdv contact grant <request_id> --home \\"${home.dir}\\"".`,
@@ -474,10 +520,11 @@ export class RdvMcpServer {
 
     this.tool(
       'rdv_grant',
-      'Approve a pending contact request. Requires the human: if the client supports it, they get an approval form; otherwise pass the confirm_phrase ' +
+      'Approve a pending contact request (request_id), or confirm an answer to your discovery probe (grant_id). Requires the human: if the client supports it, they get an approval form; otherwise pass the confirm_phrase ' +
         'the human read in their own terminal and typed to you. Never guess or search for the phrase. Grants allow free/busy slots only, never calendar details.',
       {
-        request_id: z.string().max(64),
+        request_id: z.string().max(64).optional(),
+        grant_id: z.string().max(64).optional().describe('A probe answer from rdv_pending_requests (probe_answers)'),
         tier: z.enum(TIERS as [Tier, ...Tier[]]).optional().describe('Default depends on the binding'),
         may_propose_meetings: z.boolean().optional().describe('Allow dinner negotiation (default true)'),
         confirm_phrase: z.string().max(128).optional().describe('Only a phrase your human typed to you'),
@@ -487,10 +534,24 @@ export class RdvMcpServer {
 
     this.tool(
       'rdv_revoke',
-      'Revoke a contact (agent_id), or decline a pending request (request_id, optionally block the sender). Needs no confirmation: it only ever reduces access.',
-      { agent_id: z.string().max(128).optional(), request_id: z.string().max(64).optional(), block: z.boolean().optional() },
-      async ({ agent_id, request_id, block }) => {
-        if (!!agent_id === !!request_id) throw new ToolError('give exactly one of agent_id or request_id');
+      'Revoke a contact (agent_id), decline a pending request (request_id), or reject a probe answer (grant_id); optionally block the sender. Needs no confirmation: it only ever reduces access.',
+      {
+        agent_id: z.string().max(128).optional(),
+        request_id: z.string().max(64).optional(),
+        grant_id: z.string().max(64).optional(),
+        block: z.boolean().optional(),
+      },
+      async ({ agent_id, request_id, grant_id, block }) => {
+        if ([agent_id, request_id, grant_id].filter(Boolean).length !== 1) throw new ToolError('give exactly one of agent_id, request_id or grant_id');
+        if (grant_id) {
+          const from = await this.withAgent(async (agent) => {
+            const c = agent.rejectCandidate(grant_id, { block: block === true });
+            if (!c) throw new ToolError(`no probe answer ${grant_id}`);
+            dropPhrase(home, grant_id);
+            return c.grant.from;
+          });
+          return { rejected: safe(grant_id), from: safe(from), blocked: block === true };
+        }
         if (request_id) {
           const from = await this.withAgent(async (agent) => {
             const p = agent.book.state.pending[request_id];
@@ -641,9 +702,17 @@ export class RdvMcpServer {
       home: this.home.dir,
       contacts: contacts.map((c) => {
         const v = contactView(c);
-        return { agent_id: safe(v.peer), fingerprint: safe(v.fingerprint), tier: oneOf(TIERS)(v.tier), binding: v.binding, since: v.since };
+        return {
+          agent_id: safe(v.peer),
+          fingerprint: safe(v.fingerprint),
+          tier: oneOf(TIERS)(v.tier),
+          binding: v.binding,
+          since: v.since,
+          their_rights: v.inbound === 'default' ? 'default: may write, may not propose meetings (your user can widen it in a terminal)' : 'granted by your user',
+        };
       }),
       pending_requests: Object.keys(state.book.pending ?? {}).length,
+      probe_answers: Object.keys(state.book.candidates ?? {}).length,
       negotiation: this.settings.calendar
         ? { calendar: this.settings.calendar, window: this.settings.window ?? DEFAULT_LISTEN_WINDOW, tz: this.settings.tz ?? '(calendar or machine offset)' }
         : 'no calendar configured: incoming dinner proposals are listed but not answered',
@@ -651,7 +720,69 @@ export class RdvMcpServer {
     };
   }
 
-  private async grant(a: { request_id: string; tier?: Tier; may_propose_meetings?: boolean; confirm_phrase?: string }) {
+  private async grant(a: { request_id?: string; grant_id?: string; tier?: Tier; may_propose_meetings?: boolean; confirm_phrase?: string }) {
+    if (!!a.request_id === !!a.grant_id) throw new ToolError('give exactly one of request_id or grant_id');
+    if (a.grant_id) return this.confirmCandidate(a.grant_id, a.confirm_phrase);
+    return this.grantRequest({ ...a, request_id: a.request_id! });
+  }
+
+  /** Confirm a probe answer: the same human gate as a grant (elicitation or confirm phrase). */
+  private async confirmCandidate(grantId: string, phrase: string | undefined) {
+    const home = this.home;
+    const cand = await this.withAgent(async (agent) => {
+      const c = agent.book.state.candidates[grantId];
+      if (!c) throw new ToolError(`no probe answer ${grantId}`);
+      return c;
+    });
+    await this.refreshPhrases();
+    if (phrase !== undefined) {
+      const check = await home.locked(async () => checkPhrase(home, grantId, phrase));
+      if (!check.ok) {
+        if (check.reason === 'wrong' && check.rotated) this.announceCandidatePhrase(cand, check.rotated);
+        throw new ToolError(
+          check.reason === 'no-phrase'
+            ? 'there is no confirm phrase for this probe answer yet; ask your user to check their terminal again'
+            : `that is not the confirm phrase for ${grantId}. Not confirmed. ` +
+                (check.rotated ? 'Too many wrong tries: a new phrase was issued to the human.' : `${check.left} tries left. Only use a phrase your user typed to you.`),
+        );
+      }
+    } else if (this.supportsElicitation()) {
+      const res = await this.mcp.server.elicitInput(
+        {
+          mode: 'form',
+          message: `Rendezvous: is this the agent you were looking for?\n\n${describeCandidate(cand)}\n\nIf confirmed it becomes a contact; it may write to you but not propose meetings until you grant more.`,
+          requestedSchema: {
+            type: 'object',
+            properties: { approve: { type: 'boolean', title: 'Yes, this is them', default: false } },
+            required: ['approve'],
+          },
+        },
+        { timeout: this.elicitTimeoutMs },
+      );
+      if (res.action !== 'accept' || res.content?.approve !== true) {
+        throw new ToolError(`your user did not confirm ${grantId} (${res.action === 'accept' ? 'left unchecked' : res.action}). Not confirmed.`);
+      }
+    } else {
+      throw new ToolError(
+        `not confirmed: this needs your user. Ask them for the confirm phrase of ${grantId}: they can see it by running ` +
+          `"rdv contact pending --home \\"${home.dir}\\"" in their own terminal (it is also in this server's log). Then call rdv_grant again with grant_id and confirm_phrase. ` +
+          `Or they can confirm directly: "rdv contact confirm ${grantId} --home \\"${home.dir}\\"".`,
+      );
+    }
+    const contact = await this.withAgent(async (agent) => {
+      if (!agent.book.state.candidates[grantId]) throw new ToolError(`probe answer ${grantId} is no longer pending`);
+      const c = agent.confirmCandidate(grantId);
+      dropPhrase(home, grantId);
+      return c;
+    });
+    await this.refreshPhrases(); // the probe's other answers are gone
+    const v = contactView(contact);
+    const view = { agent_id: safe(v.peer), fingerprint: safe(v.fingerprint), tier: v.tier, binding: v.binding };
+    this.publish([{ type: 'contact', ...view }]);
+    return { confirmed: true, ...view };
+  }
+
+  private async grantRequest(a: { request_id: string; tier?: Tier; may_propose_meetings?: boolean; confirm_phrase?: string }) {
     const home = this.home;
     // Short look under the lock; never hold the lock while a human answers.
     const pending = await this.withAgent(async (agent) => {
@@ -772,7 +903,7 @@ export class RdvMcpServer {
     const step = await this.withAgent(async (agent) => {
       const contact = agent.book.contact(a.agent_id!);
       if (!contact) throw new ToolError(`no active contact ${a.agent_id}: request contact first and wait for the grant`);
-      const ctx = await guardCalendar(() => buildCtx({ ...opts, minutes: a.minutes }, meetingScope(contact)));
+      const ctx = await guardCalendar(() => buildCtx({ ...opts, minutes: a.minutes }, meetingScope(contact, 'outbound')));
       let s;
       try {
         s = propose(home.readNegotiations(), a.agent_id!, ctx, { place: Object.keys(place).length ? place : undefined, expires: a.expires });

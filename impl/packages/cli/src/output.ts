@@ -1,6 +1,6 @@
 // Human text by default, one JSON object per line with --json. The secret
 // key never goes through here: views below pick fields explicitly.
-import { type AddressCard, type Contact, fingerprint, type PendingRequest } from '@rendezvous/core';
+import { type AddressCard, type Contact, fingerprint, type GrantCandidate, type PendingRequest, topicForHint } from '@rendezvous/core';
 import type { InboxEntry } from './home.js';
 
 export class Output {
@@ -65,13 +65,45 @@ export function contactView(c: Contact) {
     binding: c.binding,
     since: c.since,
     expires: c.expires,
+    /** The tier the peer's grant gave us (when we requested). */
+    granted_tier: c.grantedTier,
+    /** granted: our human set the peer's rights; default: the local default (no meetings, rate-limited). */
+    inbound: c.inboundGranted === false ? 'default' : 'granted',
   };
 }
 
 export function contactText(c: Contact): string {
   const v = contactView(c);
   const expires = v.expires ? `  expires ${safe(v.expires)}` : '';
-  return `${safe(v.peer)}  tier ${safe(v.tier)}  binding ${safe(v.binding)}  fingerprint ${safe(v.fingerprint)}  since ${safe(v.since)}${expires}`;
+  const theirs = v.granted_tier ? `  their tier for us ${safe(v.granted_tier)}` : '';
+  const inbound = v.inbound === 'default' ? '  inbound: default (no meetings; "rdv contact grant <agent-id>" to allow more)' : '';
+  return `${safe(v.peer)}  tier ${safe(v.tier)}  binding ${safe(v.binding)}  fingerprint ${safe(v.fingerprint)}  since ${safe(v.since)}${expires}${theirs}${inbound}`;
+}
+
+export function candidateView(c: GrantCandidate) {
+  const g = c.grant;
+  const probed = topicForHint(c.to_hint);
+  return {
+    event: 'candidate',
+    grant_id: g.id,
+    from: g.from,
+    fingerprint: fingerprint(g.from),
+    request_ref: c.request_ref,
+    to_hint: c.to_hint,
+    /** Always true (other grants are refused); it is the grantor's own claim, not proof. */
+    claims_address: (g.card.discovery?.addresses ?? []).some((a) => topicForHint(a.value) === probed),
+    granted_tier: g.tier,
+    received: c.received,
+  };
+}
+
+export function candidateText(c: GrantCandidate): string {
+  const v = candidateView(c);
+  return (
+    `${safe(v.grant_id)}  answer to your probe for ${safe(v.to_hint)}  from ${safe(v.from)}\n` +
+    `  fingerprint ${safe(v.fingerprint)}  card claims the address: ${v.claims_address ? 'yes (self-asserted)' : 'no'}  their tier for you ${safe(v.granted_tier)}\n` +
+    `  anyone who saw the probe can answer: compare the fingerprint with the person, then "rdv contact confirm ${safe(v.grant_id)}" (or "rdv contact reject")`
+  );
 }
 
 export function inboxText(e: InboxEntry): string {

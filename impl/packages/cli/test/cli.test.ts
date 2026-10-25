@@ -6,7 +6,9 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Listener, rdv, until } from '../scenarios/harness.js';
 import { acquireLock, LockTimeoutError, writeAtomic } from '../src/fsutil.js';
 import { clean, contactText, inboxText, requestText } from '../src/output.js';
-import type { Contact, PendingRequest } from '@rendezvous/core';
+import { DEFAULT_INBOUND_SCOPE, type Contact, type PendingRequest } from '@rendezvous/core';
+import { type Ctx, emptyState, type MeetingScope, parseWindow, propose, receive } from '@rendezvous/a2a';
+import { inboundMeetingScope, meetingScope } from '../src/negotiate.js';
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'rdv-test-'));
 
@@ -103,7 +105,8 @@ describe('rdv commands', () => {
         'omer contact list',
         10_000,
       );
-      expect(contacts[0]).toMatchObject({ peer: card.id, tier: 'colleague', binding: 'in-person' });
+      // John's grant sets what Omer may do; John's rights towards Omer stay the local default.
+      expect(contacts[0]).toMatchObject({ peer: card.id, granted_tier: 'colleague', tier: 'stranger', inbound: 'default', binding: 'in-person' });
 
       const rv = await rdv(['contact', 'revoke', card.id], omerHome);
       expect(rv.lines[0]).toMatchObject({ event: 'revoked', peer: card.id });
@@ -143,3 +146,42 @@ describe('terminal safety (security regression)', () => {
   });
 });
 
+
+describe('negotiation scope by direction (security review H2)', () => {
+  const NOW = new Date('2026-10-25T10:00:00Z');
+  const window = parseWindow('next week evenings', { now: NOW, offsetMinutes: 120 });
+  const ctx = (scope: MeetingScope): Ctx => ({
+    now: NOW,
+    busy: [],
+    busyRange: { start: '2026-10-01T00:00:00Z', end: '2027-01-01T00:00:00Z' },
+    window,
+    offsetMinutes: 120,
+    scope,
+  });
+  const loud = { may_initiate: true, may_propose_meetings: true, may_access_calendar: 'full' } as const;
+  // We requested Mallory; her grant gave us `loud`, our human gave her nothing yet.
+  const contact = {
+    peer: 'rdv1:mallory',
+    inboundScope: { ...DEFAULT_INBOUND_SCOPE },
+    inboundGranted: false,
+    outboundScope: loud,
+  } as unknown as Contact;
+
+  it('a peer whose grant we hold cannot start a negotiation with us', () => {
+    const theirs = propose(emptyState(), 'rdv1:us', ctx(loud));
+    const payload = theirs.outgoing[0].payload;
+    const state = emptyState();
+    const step = receive(state, 'rdv1:mallory', payload, ctx(inboundMeetingScope(contact, state, payload)));
+    expect(step.events[0]).toMatchObject({ kind: 'invalid' });
+    expect(step.outgoing).toEqual([]);
+    expect(step.effects).toEqual([]);
+  });
+
+  it('replies on a negotiation we proposed ride our outbound grant', () => {
+    const ours = propose(emptyState(), 'rdv1:mallory', ctx(meetingScope(contact, 'outbound')));
+    const hers = receive(emptyState(), 'rdv1:us', ours.outgoing[0].payload, ctx(loud));
+    const reply = hers.outgoing.find((o) => o.payload.type === 'a2a/message')!.payload;
+    const step = receive(ours.state, 'rdv1:mallory', reply, ctx(inboundMeetingScope(contact, ours.state, reply)));
+    expect(step.events.map((e) => e.kind)).toContain('completed');
+  });
+});

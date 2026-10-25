@@ -53,8 +53,10 @@ echo `$! > $johnHome/listen.pid; exit 0"
   Write-Host '- omer requests contact by email'
   Rdv contact request $johnEmail --greeting "Omer's agent would like to plan dinner." | Out-Null
 
-  Write-Host '- omer waits for the grant (contact event)'
-  WaitFor 'contact event' { Select-String -Path $omerLog -Pattern '"event":\s*"contact"' -Quiet } | Out-Null
+  Write-Host '- omer waits for the grant (candidate event) and confirms it'
+  WaitFor 'candidate event' { Select-String -Path $omerLog -Pattern '"event":\s*"candidate"' -Quiet } | Out-Null
+  $cand = Get-Content $omerLog | ForEach-Object { $_ | ConvertFrom-Json } | Where-Object { $_.event -eq 'candidate' } | Select-Object -First 1
+  Rdv contact confirm $cand.grant_id | Out-Null
 
   $text = "Thursday 20:00? ($tag)"
   Write-Host '- omer sends a message'

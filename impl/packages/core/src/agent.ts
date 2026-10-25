@@ -9,6 +9,7 @@ import {
   ContactBook,
   type ContactBookState,
   type ContactRequest,
+  type GrantCandidate,
   type GrantScope,
   type PendingRequest,
   type Tier,
@@ -27,6 +28,8 @@ import type { Transport } from './transport/transport.js';
 const OUTBOX_LIMIT = 64;
 /** Gap buffer bounds: per peer (OUTBOX_LIMIT envelopes) and across peers. */
 const BUFFER_PEER_LIMIT = 16;
+/** The scope the owner grants when it doesn't pick one. */
+export const DEFAULT_GRANT_SCOPE: Readonly<GrantScope> = Object.freeze({ may_initiate: true, may_propose_meetings: true, max_frequency: '100/day' });
 const CONTROL_TYPES = new Set(['rdv/contact-request', 'rdv/contact-grant', 'rdv/revoke', 'rdv/resend']);
 
 export interface AgentState {
@@ -41,6 +44,8 @@ export interface AgentState {
 
 export interface AgentEvents {
   request: [PendingRequest];
+  /** A grant answering one of our topic probes, waiting for our human (confirmCandidate / rejectCandidate). */
+  candidate: [GrantCandidate];
   contact: [Contact];
   message: [peer: string, payload: Payload, envelope: Envelope];
   revoked: [peer: string];
@@ -192,6 +197,29 @@ export class Agent extends EventEmitter<AgentEvents> {
     this.book.decline(requestId, opts.block);
   }
 
+  /** Probe answers waiting for the owner to pick the right grantor. */
+  grantCandidates(): GrantCandidate[] {
+    return Object.values(this.book.state.candidates);
+  }
+
+  /** Owner confirms a probe answer: that grantor becomes the contact (outbound per its grant, inbound the local default). */
+  confirmCandidate(grantId: string): Contact {
+    const contact = this.book.confirmCandidate(grantId);
+    this.emit('contact', contact);
+    return contact;
+  }
+
+  rejectCandidate(grantId: string, opts: { block?: boolean } = {}): GrantCandidate | undefined {
+    return this.book.rejectCandidate(grantId, opts.block);
+  }
+
+  /** Owner grants an existing contact rights towards us (local; see ContactBook.allowInbound). */
+  allowInbound(peer: string, opts: { tier?: Tier; scope?: GrantScope } = {}): Contact {
+    const c = this.book.contact(peer);
+    if (!c) throw new Error(`no active contact ${peer}`);
+    return this.book.allowInbound(peer, { tier: opts.tier ?? defaultTier(c.binding), scope: opts.scope ?? { ...DEFAULT_GRANT_SCOPE } });
+  }
+
   async revoke(peer: string): Promise<void> {
     const c = this.book.contact(peer);
     this.book.revoke(peer);
@@ -238,7 +266,7 @@ export class Agent extends EventEmitter<AgentEvents> {
   ): Promise<Contact> {
     const grant = createGrant(this.key, this.card, request, {
       tier: opts.tier ?? defaultTier(binding),
-      scope: opts.scope ?? { may_initiate: true, may_propose_meetings: true, max_frequency: '100/day' },
+      scope: opts.scope ?? { ...DEFAULT_GRANT_SCOPE },
       expires: opts.expires,
     });
     const contact = this.book.recordIssuedGrant(grant, request, binding);
@@ -340,9 +368,13 @@ export class Agent extends EventEmitter<AgentEvents> {
       }
       case 'rdv/contact-grant': {
         if ((payload as { from?: unknown }).from !== from) return this.drop('grant signer differs from envelope sender');
-        const contact = this.book.receiveGrant(payload, this.id);
-        if (!contact || contact.peer !== from) return this.drop('unexpected or invalid grant');
-        this.emit('contact', contact);
+        const got = this.book.receiveGrant(payload, this.id);
+        if (!got) return this.drop('unexpected or invalid grant');
+        if ('candidate' in got) {
+          this.emit('candidate', got.candidate);
+          return;
+        }
+        this.emit('contact', got.contact);
         return;
       }
       case 'rdv/revoke':

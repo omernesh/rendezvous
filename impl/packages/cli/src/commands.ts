@@ -13,6 +13,7 @@ import {
   isAgentId,
   type Payload,
   type Tier,
+  TIERS as CORE_TIERS,
   topicForHint,
   verifyCard,
 } from '@rendezvous/core';
@@ -31,9 +32,20 @@ import {
   taskView,
   validateNegotiateOptions,
 } from './negotiate.js';
-import { cardText, clean, contactText, contactView, inboxText, type Output, requestText, requestView } from './output.js';
+import {
+  candidateText,
+  candidateView,
+  cardText,
+  clean,
+  contactText,
+  contactView,
+  inboxText,
+  type Output,
+  requestText,
+  requestView,
+} from './output.js';
 
-export const TIERS: Tier[] = ['spouse', 'family', 'friend', 'colleague', 'business', 'stranger'];
+export const TIERS: Tier[] = [...CORE_TIERS];
 
 export interface Ctx {
   home: Home;
@@ -266,10 +278,39 @@ export async function contactPending({ home, out }: Ctx): Promise<void> {
   if (pending.length === 0 && !out.json) out.emit({}, 'no pending requests');
   // The MCP server's confirm phrases (see packages/mcp README) are shown in text mode only: they are for the human at a terminal.
   const consent = home.readConsent();
-  for (const p of pending) {
-    const phrase = consent[p.request.id]?.phrase;
-    out.emit(requestView(p), requestText(p) + (phrase ? `\n  confirm phrase (tell it to your MCP client to approve): ${clean(phrase)}` : ''));
-  }
+  const phraseLine = (id: string) => {
+    const phrase = consent[id]?.phrase;
+    return phrase ? `\n  confirm phrase (tell it to your MCP client to approve): ${clean(phrase)}` : '';
+  };
+  for (const p of pending) out.emit(requestView(p), requestText(p) + phraseLine(p.request.id));
+  // Answers to our own topic probes: anyone who saw the probe could have sent one.
+  const candidates = await withAgent(home, async (agent) => agent.grantCandidates(), { save: false });
+  candidates.sort((a, b) => a.received.localeCompare(b.received));
+  for (const c of candidates) out.emit(candidateView(c), candidateText(c) + phraseLine(c.grant.id));
+}
+
+/** `rdv contact confirm <grant-id>`: the owner picks which answer to a topic probe is the real peer. */
+export async function contactConfirm({ home, out, positionals }: Ctx): Promise<void> {
+  const contact = await withAgent(home, async (agent) => {
+    if (!agent.book.state.candidates[positionals[0]]) throw new CliError(`no grant candidate ${positionals[0]} (see "rdv contact pending")`);
+    try {
+      return agent.confirmCandidate(positionals[0]);
+    } catch (err) {
+      throw new CliError((err as Error).message);
+    }
+  });
+  out.emit({ event: 'confirmed', ...contactView(contact) }, `confirmed: ${contactText(contact)}`);
+}
+
+/** `rdv contact reject <grant-id> [--block]`: not the peer we probed for. The probe stays open for others. */
+export async function contactReject({ home, out, values, positionals }: Ctx): Promise<void> {
+  const block = values.block === true;
+  const from = await withAgent(home, async (agent) => {
+    const c = agent.rejectCandidate(positionals[0], { block });
+    if (!c) throw new CliError(`no grant candidate ${positionals[0]}`);
+    return c.grant.from;
+  });
+  out.emit({ event: 'rejected', id: positionals[0], from, blocked: block }, `rejected ${positionals[0]}${block ? ` and blocked ${from}` : ''}`);
 }
 
 export async function contactGrant({ home, out, values, positionals }: Ctx): Promise<void> {
@@ -281,9 +322,15 @@ export async function contactGrant({ home, out, values, positionals }: Ctx): Pro
     if (!s || typeof s !== 'object' || Array.isArray(s)) throw new CliError('scope file must hold a JSON object', 2);
     scope = s as GrantScope;
   }
+  const target = positionals[0];
   const contact = await withAgent(home, async (agent) => {
-    if (!agent.book.state.pending[positionals[0]]) throw new CliError(`no pending request ${positionals[0]}`);
-    return agent.grant(positionals[0], { tier, scope });
+    // An agent ID: the owner grants an existing contact (one we requested) rights towards us.
+    if (isAgentId(target)) {
+      if (!agent.book.contact(target)) throw new CliError(`no active contact ${target}`);
+      return agent.allowInbound(target, { tier, scope });
+    }
+    if (!agent.book.state.pending[target]) throw new CliError(`no pending request ${target}`);
+    return agent.grant(target, { tier, scope });
   });
   out.emit({ event: 'granted', ...contactView(contact) }, `granted: ${contactText(contact)}`);
 }
@@ -401,7 +448,7 @@ export async function dinnerPropose({ home, out, values, positionals }: Ctx): Pr
   const step = await withAgent(home, async (agent) => {
     const contact = agent.book.contact(peer);
     if (!contact) throw new CliError(`no active contact ${peer}`);
-    const ctx = await buildCtx(opts, meetingScope(contact));
+    const ctx = await buildCtx(opts, meetingScope(contact, 'outbound'));
     let s;
     try {
       s = propose(home.readNegotiations(), peer, ctx, { place: Object.keys(place).length ? place : undefined, expires });

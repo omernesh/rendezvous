@@ -42,7 +42,8 @@ it('a crash right after a send never reuses seq (listen grant path and rdv send)
     await johnCrash.waitFor((l) => l.event === 'ready', 'john ready', 10_000);
     await rdv(['contact', 'request', 'john@doe.com', '--greeting', 'dinner?'], omerHome);
     expect(await johnCrash.exited(15_000)).toBe(99);
-    await omerL.waitFor((l) => l.event === 'contact' && l.peer === johnId, 'omer gets the grant', 10_000);
+    const cand = await omerL.waitFor((l) => l.event === 'candidate' && l.from === johnId, 'omer gets the grant', 10_000);
+    await rdv(['contact', 'confirm', cand.grant_id], omerHome);
     expect(outSeq()).toBe(1);
 
     // Restart: the relay replays the request, which must not be granted again with seq 1.

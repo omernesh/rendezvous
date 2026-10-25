@@ -78,6 +78,18 @@ export function toModelEvent(e: Raw, negotiating: boolean): Omit<McpEvent, 'n' |
         greeting: untrusted(e.greeting),
         next_step: 'Tell your user who is asking (fingerprint, binding) and ask whether to approve. rdv_grant only succeeds with their confirmation.',
       };
+    case 'candidate':
+      // An answer to our discovery probe: anyone who saw the probe could have sent it.
+      return {
+        type: 'contact_candidate',
+        grant_id: uuid(e.grant_id),
+        from: agentId(e.from),
+        fingerprint: fp(e.from),
+        probe_for: address(e.to_hint),
+        their_tier_for_you: oneOf(TIERS)(e.granted_tier),
+        next_step:
+          'Someone answered your discovery probe. Show your user the fingerprint and ask whether this is the person they meant; it becomes a contact only when they confirm (rdv_grant with grant_id).',
+      };
     case 'contact':
       return { type: 'contact', peer: agentId(e.peer), fingerprint: fp(e.peer), tier: oneOf(TIERS)(e.tier), binding: oneOf(BINDINGS)(e.binding) };
     case 'message': {

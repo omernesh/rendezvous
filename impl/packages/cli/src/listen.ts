@@ -11,8 +11,18 @@ import { spawn } from 'node:child_process';
 import { expire, isA2APayload, isTerminal, receive, type Step } from '@rendezvous/a2a';
 import { Agent, dtopic, type Envelope, type Tier, type Transport } from '@rendezvous/core';
 import type { Home, InboxEntry } from './home.js';
-import { buildCtx, carryOut, dinnerText, dinnerView, meetingScope, type NegotiateOptions } from './negotiate.js';
-import { clean, contactText, contactView, inboxText, type Output, requestText, requestView } from './output.js';
+import { buildCtx, carryOut, dinnerText, dinnerView, inboundMeetingScope, type NegotiateOptions } from './negotiate.js';
+import {
+  candidateText,
+  candidateView,
+  clean,
+  contactText,
+  contactView,
+  inboxText,
+  type Output,
+  requestText,
+  requestView,
+} from './output.js';
 import { relayTransport } from './transport.js';
 
 /** How often `listen --negotiate` checks pending negotiations for expiry. */
@@ -101,6 +111,7 @@ export async function handleInbound(
         // Demo only: a human should normally decide (`rdv contact grant`).
         if (opts.autoGrant) grants.push(agent.grant(p.request.id, { tier: opts.autoGrant }));
       });
+      agent.on('candidate', (c) => events.push({ obj: candidateView(c), human: `candidate ${candidateText(c)}` }));
       agent.on('contact', (c) => events.push({ obj: { event: 'contact', ...contactView(c) }, human: `contact ${contactText(c)}` }));
       agent.on('message', (from, payload, env) => {
         const entry: InboxEntry = { ts: new Date().toISOString(), from, seq: env.seq, payload };
@@ -151,7 +162,7 @@ async function negotiateInbound(
   const before = JSON.stringify(state);
   const steps: Step[] = [];
   for (const e of a2a) {
-    const ctx = await buildCtx(n, meetingScope(agent.book.contact(e.from)));
+    const ctx = await buildCtx(n, inboundMeetingScope(agent.book.contact(e.from), state, e.payload));
     const step = receive(state, e.from, e.payload, ctx);
     steps.push(step);
     state = step.state;

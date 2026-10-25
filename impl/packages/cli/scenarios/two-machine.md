@@ -49,7 +49,8 @@ node $rdv init --profile omer --email omer@example.com --relay ws://<relay-host>
 Start-Process node -ArgumentList $rdv,'listen','--home',$h -WindowStyle Hidden `
   -RedirectStandardOutput "$h\listen.log"          # or just run `listen` in a second terminal
 node $rdv contact request john@doe.com --greeting "Omer's agent would like to plan dinner." --home $h
-# wait for "contact" in $h\listen.log (John's auto-grant), then:
+# wait for "candidate" in $h\listen.log (John's auto-grant), check the fingerprint, then:
+node $rdv contact confirm <grant-id> --home $h
 node $rdv send <john-agent-id> --payload '{"type":"a2a/message","text":"Thursday 20:00?"}' --home $h
 ```
 

@@ -2,12 +2,15 @@
 // enforces consent, policy, replay protection and grant-scoped rate limits.
 import type { AddressCard, InboundPolicy } from './card.js';
 import { verifyCard } from './card.js';
-import { BINDING_STRENGTH, type Binding } from './discovery.js';
+import { BINDING_STRENGTH, type Binding, topicForHint } from './discovery.js';
 import type { AgentKey } from './identity.js';
 import { isAgentId } from './identity.js';
 import { type Signed, signDoc, verifyDoc } from './sign.js';
 
 export type Tier = 'spouse' | 'family' | 'friend' | 'colleague' | 'business' | 'stranger';
+/** The tier enum, closest first. A grant with any other tier is rejected. */
+export const TIERS: readonly Tier[] = ['spouse', 'family', 'friend', 'colleague', 'business', 'stranger'];
+export const isTier = (t: unknown): t is Tier => typeof t === 'string' && (TIERS as readonly string[]).includes(t);
 
 export interface GrantScope {
   may_initiate?: boolean;
@@ -127,6 +130,7 @@ export function verifyContactRequest(input: unknown, now = new Date()): input is
 export function verifyGrant(input: unknown, now = new Date()): input is ContactGrant {
   const g = input as ContactGrant;
   if (!g || g.v !== 1 || g.type !== 'rdv/contact-grant' || !isDocId(g.id) || !isDocId(g.request_ref)) return false;
+  if (!isTier(g.tier) || !g.scope || typeof g.scope !== 'object' || Array.isArray(g.scope)) return false;
   if (!isAgentId(g.from) || !isAgentId(g.to) || !verifyDoc(g, g.from)) return false;
   const card = verifyCard(g.card, now);
   return card.ok && card.card.id === g.from;
@@ -139,14 +143,31 @@ export function verifyRevoke(input: unknown): input is Revoke {
 
 // ---------------------------------------------------------------------------
 
+/**
+ * What a peer may do towards us before our own human has granted anything
+ * (§5.3): it may write to us, slowly, but not drive meetings or see the
+ * calendar. A grant we *receive* never widens this; only our human does.
+ */
+export const DEFAULT_INBOUND_SCOPE: Readonly<GrantScope> = Object.freeze({
+  may_initiate: true,
+  may_propose_meetings: false,
+  may_access_calendar: 'none',
+  max_frequency: '50/day',
+});
+
 export interface Contact {
   peer: string;
   card: AddressCard;
+  /** Our tier for the peer. `stranger` until our human grants (a received grant does not set it). */
   tier: Tier;
-  /** What the peer may do towards us (grants we issued). */
+  /** What the peer may do towards us: our own grant, or DEFAULT_INBOUND_SCOPE until our human grants. */
   inboundScope: GrantScope | null;
-  /** What we may do towards the peer (grants we received). */
+  /** True once our human granted the peer (issued grant or allowInbound); false while inbound is the local default. */
+  inboundGranted?: boolean;
+  /** What we may do towards the peer (the grant we received). */
   outboundScope: GrantScope | null;
+  /** The tier the peer's grant put us in (display only). */
+  grantedTier?: Tier;
   binding: Binding;
   grantId: string;
   expires: string | null;
@@ -156,6 +177,18 @@ export interface Contact {
 export interface PendingRequest {
   request: ContactRequest;
   binding: Binding;
+  received: string;
+}
+
+/**
+ * A grant that answered one of our topic probes. Anyone who saw the probe can
+ * answer it, so it is parked here until our human picks the right grantor
+ * (§5.3). Its card claims the probed address; that claim alone proves nothing.
+ */
+export interface GrantCandidate {
+  grant: ContactGrant;
+  request_ref: string;
+  to_hint: string;
   received: string;
 }
 
@@ -174,6 +207,8 @@ export interface ContactBookState {
    * grant we will accept.
    */
   outstanding: Record<string, { to_hint: string; sent: string; binding?: Binding; to?: string }>;
+  /** Grants answering our topic probes, by grant id, awaiting our human (confirmCandidate). */
+  candidates: Record<string, GrantCandidate>;
   blocked: string[];
   allowlist: Record<string, { tier: Tier; scope: GrantScope }>;
   seenIds: string[];
@@ -182,6 +217,9 @@ export interface ContactBookState {
 
 const SEEN_LIMIT = 5000;
 const CLAIMED_TIER_CAP: Tier = 'stranger';
+/** Probe answers kept: per probe, and in total (oldest evicted). */
+export const CANDIDATES_PER_PROBE = 8;
+export const CANDIDATES_LIMIT = 64;
 
 export class ContactBook {
   state: ContactBookState;
@@ -192,6 +230,7 @@ export class ContactBook {
       contacts: {},
       pending: {},
       outstanding: {},
+      candidates: {},
       blocked: [],
       allowlist: {},
       seenIds: [],
@@ -258,12 +297,15 @@ export class ContactBook {
 
   /** The human approved (or the allowlist did): record the relationship we granted. */
   recordIssuedGrant(grant: ContactGrantBody, request: ContactRequestBody, binding: Binding): Contact {
+    const prev = this.state.contacts[request.from];
     const contact: Contact = {
       peer: request.from,
       card: request.card,
       tier: grant.tier,
       inboundScope: grant.scope,
-      outboundScope: this.state.contacts[request.from]?.outboundScope ?? { may_initiate: true },
+      inboundGranted: true,
+      outboundScope: prev?.outboundScope ?? { may_initiate: true },
+      ...(prev?.grantedTier ? { grantedTier: prev.grantedTier } : {}),
       binding,
       grantId: grant.id,
       expires: grant.expires,
@@ -274,24 +316,91 @@ export class ContactBook {
     return contact;
   }
 
-  /** A grant arrived for one of our outstanding requests. */
-  receiveGrant(input: unknown, me: string, now = new Date()): Contact | null {
+  /**
+   * A grant arrived for one of our outstanding requests.
+   *
+   * The grant sets only what *we* may do towards the grantor (outbound). What
+   * the grantor may do towards us stays DEFAULT_INBOUND_SCOPE until our human
+   * grants (`allowInbound`): a peer's own grant can't hand it meetings or an
+   * unlimited rate (security review H1/H2).
+   *
+   * A request sent to a card becomes a contact at once. A topic probe can be
+   * answered by anyone who saw it, so its answers become candidates for our
+   * human to confirm (`confirmCandidate`): only grantors whose card claims the
+   * probed address qualify, and the probe stays open until one is confirmed.
+   */
+  receiveGrant(input: unknown, me: string, now = new Date()): { contact: Contact } | { candidate: GrantCandidate } | null {
     if (!verifyGrant(input, now)) return null;
     const g = input;
     const outstanding = this.state.outstanding[g.request_ref];
     if (g.to !== me || !outstanding) return null;
-    // A request sent to a specific agent can only be granted by that agent.
-    if (outstanding.to !== undefined && g.from !== outstanding.to) return null;
-    if (this.isBlocked(g.from) || !this.markSeen(g.id)) return null;
-    delete this.state.outstanding[g.request_ref];
-    // We initiated, so we accept the grantor contacting us within the same scope.
+    if (outstanding.to !== undefined) {
+      // A request sent to a specific agent can only be granted by that agent.
+      if (g.from !== outstanding.to) return null;
+      if (this.isBlocked(g.from) || !this.markSeen(g.id)) return null;
+      delete this.state.outstanding[g.request_ref];
+      return { contact: this.addReceivedGrant(g, outstanding.binding ?? 'claimed', now) };
+    }
+    // Topic probe: the grantor's card must at least claim the address we probed (NOTES 18).
+    const probed = topicForHint(outstanding.to_hint);
+    if (!probed || !(g.card.discovery?.addresses ?? []).some((a) => topicForHint(a.value) === probed)) return null;
+    if (this.isBlocked(g.from)) return null;
+    const rivals = Object.values(this.state.candidates).filter((c) => c.request_ref === g.request_ref);
+    if (rivals.some((c) => c.grant.from === g.from) || rivals.length >= CANDIDATES_PER_PROBE) return null;
+    if (!this.markSeen(g.id)) return null;
+    const ids = Object.keys(this.state.candidates);
+    if (ids.length >= CANDIDATES_LIMIT) delete this.state.candidates[ids[0]]; // oldest (insertion order)
+    const candidate: GrantCandidate = { grant: g, request_ref: g.request_ref, to_hint: outstanding.to_hint, received: now.toISOString() };
+    this.state.candidates[g.id] = candidate;
+    return { candidate };
+  }
+
+  /** Our human picked this probe answer: it becomes the contact, and the probe's other answers are dropped. */
+  confirmCandidate(grantId: string, now = new Date()): Contact {
+    const c = this.state.candidates[grantId];
+    if (!c) throw new Error(`no grant candidate ${grantId}`);
+    if (c.grant.expires && Date.parse(c.grant.expires) <= now.getTime()) throw new Error(`grant ${grantId} has expired`);
+    if (this.isBlocked(c.grant.from)) throw new Error(`${c.grant.from} is blocked`);
+    for (const [id, x] of Object.entries(this.state.candidates)) if (x.request_ref === c.request_ref) delete this.state.candidates[id];
+    delete this.state.outstanding[c.request_ref];
+    return this.addReceivedGrant(c.grant, 'claimed', now);
+  }
+
+  /** Our human turned this probe answer down (optionally blocking the grantor). The probe stays open. */
+  rejectCandidate(grantId: string, block = false): GrantCandidate | undefined {
+    const c = this.state.candidates[grantId];
+    delete this.state.candidates[grantId];
+    if (c && block) this.block(c.grant.from);
+    return c;
+  }
+
+  /**
+   * Our human's own grant to an existing contact (e.g. one we requested):
+   * sets what the peer may do towards us. Local only; nothing is sent.
+   */
+  allowInbound(peer: string, opts: { tier: Tier; scope: GrantScope }): Contact {
+    const c = this.state.contacts[peer];
+    if (!c) throw new Error(`no contact ${peer}`);
+    if (!isTier(opts.tier)) throw new Error(`unknown tier ${String(opts.tier)}`);
+    c.tier = opts.tier;
+    c.inboundScope = { ...opts.scope };
+    c.inboundGranted = true;
+    delete this.state.rate[peer];
+    return c;
+  }
+
+  private addReceivedGrant(g: ContactGrant, binding: Binding, now: Date): Contact {
+    const prev = this.state.contacts[g.from];
+    const granted = prev?.inboundGranted === true;
     const contact: Contact = {
       peer: g.from,
       card: g.card,
-      tier: g.tier,
-      inboundScope: { ...g.scope, may_initiate: true },
-      outboundScope: g.scope,
-      binding: outstanding.to !== undefined ? (outstanding.binding ?? 'claimed') : 'claimed',
+      tier: granted ? prev.tier : CLAIMED_TIER_CAP,
+      inboundScope: granted ? prev.inboundScope : { ...DEFAULT_INBOUND_SCOPE },
+      inboundGranted: granted,
+      outboundScope: { ...g.scope },
+      grantedTier: g.tier,
+      binding,
       grantId: g.id,
       expires: g.expires,
       since: now.toISOString(),
@@ -309,6 +418,7 @@ export class ContactBook {
   block(peer: string): void {
     if (!this.state.blocked.includes(peer)) this.state.blocked.push(peer);
     delete this.state.contacts[peer];
+    for (const [id, c] of Object.entries(this.state.candidates)) if (c.grant.from === peer) delete this.state.candidates[id];
   }
 
   revoke(peer: string): void {

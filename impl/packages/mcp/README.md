@@ -34,8 +34,8 @@ Client config examples: [`impl/demo/SCRIPT.md`](../../demo/SCRIPT.md).
 | `rdv_discover` | address | cards found (agent ID, fingerprint, claimed addresses, relays) |
 | `rdv_request_contact` | target (email, +phone, or agent ID), greeting | request ID |
 | `rdv_pending_requests` | — | requests with fingerprint, binding, how they arrived, untrusted greeting |
-| `rdv_grant` | request_id, tier, may_propose_meetings, confirm_phrase | contact (needs the human, below) |
-| `rdv_revoke` | agent_id, or request_id (+ block) to decline | revoked / declined |
+| `rdv_grant` | request_id, tier, may_propose_meetings, confirm_phrase; or grant_id (+ confirm_phrase) to confirm a probe answer | contact (needs the human, below) |
+| `rdv_revoke` | agent_id, or request_id / grant_id (+ block) to decline | revoked / declined / rejected |
 | `rdv_send` | agent_id, payload `{type, …}` (not `a2a/*`, `rdv/*`) | envelope seq |
 | `rdv_inbox` | since cursor, limit, wait_seconds (≤ 60) | events + next_cursor |
 | `rdv_negotiate` | action propose / cancel / status; agent_id, intent `dinner`, window, calendar, tz, minutes, place, area, expires, task_id, reason | task ID and state; progress via `rdv_inbox` |
@@ -44,7 +44,8 @@ Resource `rdv://inbox` holds the latest 50 events; the server supports
 `resources/subscribe` and sends `notifications/resources/updated` when events
 arrive, so a client that subscribes needn't poll.
 
-Events: `contact_request`, `contact`, `message`, `revoked`, `dropped`, `error`,
+Events: `contact_request`, `contact_candidate` (an answer to our discovery
+probe, confirmed through the same human gate as a grant), `contact`, `message`, `revoked`, `dropped`, `error`,
 and `dinner` (kind proposed / offer-received / countered / accepted / completed
 / rejected / canceled / expired / status, with a plain-language `summary` we
 write from validated fields).

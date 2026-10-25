@@ -57,16 +57,29 @@ const COMMANDS: Record<string, Command> = {
   },
   'contact pending': {
     usage: 'rdv contact pending',
-    summary: 'List pending inbound requests with binding, fingerprint, greeting',
+    summary: 'List pending inbound requests, and answers to your topic probes awaiting confirmation',
     args: 0,
     run: cmd.contactPending,
   },
   'contact grant': {
-    usage: 'rdv contact grant <request-id> [--tier friend] [--scope-file s.json]',
-    summary: 'Approve a pending request',
+    usage: 'rdv contact grant <request-id|agent-id> [--tier friend] [--scope-file s.json]',
+    summary: 'Approve a pending request, or give a contact you requested rights towards you (meetings etc.)',
     args: 1,
     options: { tier: { type: 'string' }, 'scope-file': { type: 'string' } },
     run: cmd.contactGrant,
+  },
+  'contact confirm': {
+    usage: 'rdv contact confirm <grant-id>',
+    summary: 'Accept an answer to your topic probe as the contact (check the fingerprint first)',
+    args: 1,
+    run: cmd.contactConfirm,
+  },
+  'contact reject': {
+    usage: 'rdv contact reject <grant-id> [--block]',
+    summary: 'Turn down an answer to your topic probe',
+    args: 1,
+    options: { block: { type: 'boolean' } },
+    run: cmd.contactReject,
   },
   'contact decline': {
     usage: 'rdv contact decline <request-id> [--block]',

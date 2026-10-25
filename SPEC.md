@@ -516,16 +516,29 @@ Rules:
   reach the grantor (the SYN-ACK of §5.2.1 carries it too). The requester
   verifies the card (signature, not expired, `card.id` equals `from`) before
   using it.
+- **`tier`** MUST be one of the tiers above; a grant with any other value is
+  rejected. `scope` MUST be a JSON object.
 - **Who may answer a request.** A request sent to a specific card is
   satisfied only by a grant signed by that card's agent; any other grantor is
   rejected before state changes. A topic probe has no addressee, so anyone
-  who saw it on the `dtopic` can answer; its grant is therefore always
-  recorded as `claimed`. Before trusting the new contact the requester SHOULD
-  show its owner the grantor's fingerprint, and whether the grantor's card
-  lists the probed address in `discovery.addresses`.
-- **Direction.** A grant authorizes the requester to contact the grantor.
-  Because the requester initiated, it also accepts the grantor contacting it
-  back within the same scope.
+  who saw it on the `dtopic` can answer. The requester MUST ignore a probe
+  answer whose card does not list the probed address in
+  `discovery.addresses`, and MUST NOT turn any probe answer into a contact
+  until its owner confirms it, after being shown the grantor's fingerprint
+  (§5.5). Until then the answer is a *candidate*: several grantors may answer
+  one probe, and each is kept as a separate candidate (the reference keeps up
+  to 8 per probe), so an eavesdropper who answers first cannot displace the
+  real target. A confirmed probe answer is recorded as `claimed`.
+- **Direction.** A grant authorizes the requester to contact the grantor
+  within `scope`; that is all it does. A received grant MUST NOT set what the
+  grantor may do towards the requester: the grantor chose that scope, and the
+  requester's human has approved nothing. Until the requester's owner grants
+  the peer explicitly (a local approval, §5.5), the requester applies its
+  own local default to the grantor: it may write (`may_initiate`), may not
+  propose meetings, gets no calendar access, and is rate-limited locally
+  (reference: `50/day`). The grantor's `tier` is likewise only how the grantor
+  classifies the requester; the requester's own tier for the grantor starts at
+  `stranger`.
 - **`max_frequency`** is `"<n>/<minute|hour|day>"`; exceeding it revokes the
   grant (§10).
 - Scope defaults for meetings are in §7.4.
@@ -555,6 +568,13 @@ of model output alone. Acceptable approvals are:
   `family` (`friend` and below);
 - the owner's own command in a terminal;
 - a standing pre-approval the owner set as policy (`allow`, §5.4).
+
+The same holds on the requester's side. A grant the agent *receives* is the
+peer's decision, not its owner's: it sets only what the agent may do towards
+the peer (§5.3), and choosing which answer to a topic probe is the real peer
+needs one of the approvals above. Widening what a peer may do towards the
+agent (meetings, calendar, a higher rate) is always the agent's own owner's
+grant.
 
 ### 5.6 Peer text is untrusted data
 
@@ -754,8 +774,10 @@ update giving its real end state.
 
 ### 7.4 Scope and defaults
 
-Meeting verbs require `may_propose_meetings: true` in the grant. By §5.3 the
-same scope governs both directions. If `may_access_calendar` is absent it
+Meeting verbs require `may_propose_meetings: true` in the grant that covers
+the direction (§5.3): proposing to a peer, and answering on a negotiation we
+proposed, need the peer's grant to us; a peer proposing to us needs the grant
+our owner gave the peer. If `may_access_calendar` is absent it
 counts as `free_busy`, because proposing a slot is a free/busy disclosure;
 `none` blocks negotiation. At every level, including `full`, meeting messages
 carry slots only, never event titles.

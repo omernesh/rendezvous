@@ -124,8 +124,10 @@ State lives in a directory: `--home <dir>`, else `$RDV_HOME`, else
 | `rdv card publish` | Publish public pointers (if enabled at init) |
 | `rdv lookup john@doe.com` | Fetch public-pointer cards for an address |
 | `rdv contact request <email\|card-file\|agent-id> [--greeting "…"] [--in-person]` | Topic probe by email, or direct by card. `--in-person` records the `in-person` binding for a card you got face to face |
-| `rdv contact pending` | Pending inbound requests with binding, fingerprint, greeting |
+| `rdv contact pending` | Pending inbound requests with binding, fingerprint, greeting; answers to your topic probes awaiting confirmation |
 | `rdv contact grant <request-id> [--tier friend] [--scope-file s.json]` | Approve |
+| `rdv contact grant <agent-id> [--tier …] [--scope-file …]` | Give a contact you requested rights towards you (by default it may write, not propose meetings) |
+| `rdv contact confirm <grant-id>` / `rdv contact reject <grant-id> [--block]` | Accept or turn down an answer to your topic probe (anyone who saw the probe can answer; check the fingerprint) |
 | `rdv contact decline <request-id> [--block]` | Decline |
 | `rdv contact list` / `rdv contact revoke <agent-id>` | Manage contacts |
 | `rdv send <agent-id> --json '{"type":"a2a/message","text":"hi"}'` | Send any payload (`--payload '…'` is the same without JSON output) |

@@ -10,11 +10,12 @@ export {
   carryOut,
   DEFAULT_LISTEN_WINDOW,
   dinnerView,
+  inboundMeetingScope,
   meetingScope,
   type NegotiateOptions,
   openCalendar,
   taskView,
   validateNegotiateOptions,
 } from './negotiate.js';
-export { clean, contactView, requestView } from './output.js';
+export { candidateView, clean, contactView, requestView } from './output.js';
 export { relayTransport } from './transport.js';

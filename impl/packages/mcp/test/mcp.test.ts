@@ -165,6 +165,13 @@ describe('rdv-mcp: two Claude sessions book dinner (in-memory relay)', () => {
     const req = await waitEvent(john, (e) => e.type === 'contact_request', 'request', 10_000);
     await john.call('rdv_grant', { request_id: req.request_id }); // refused: no phrase
     await ok(john, 'rdv_grant', { request_id: req.request_id, confirm_phrase: phraseFromHumanLog(john, req.request_id) });
+    // A probe answer is only a candidate until Omer's human confirms it (security review H1).
+    const cand = await waitEvent(omer, (e) => e.type === 'contact_candidate', 'probe answer', 10_000);
+    expect(cand).toMatchObject({ from: j.agent_id, their_tier_for_you: 'stranger' });
+    expect((await ok(omer, 'rdv_status')).contacts).toEqual([]);
+    expect((await omer.call('rdv_grant', { grant_id: cand.grant_id })).isError).toBe(true); // the model alone can't
+    const confirmed = await ok(omer, 'rdv_grant', { grant_id: cand.grant_id, confirm_phrase: phraseFromHumanLog(omer, cand.grant_id) });
+    expect(confirmed).toMatchObject({ confirmed: true, agent_id: j.agent_id, binding: 'claimed' });
     await waitEvent(omer, (e) => e.type === 'contact', 'contact', 10_000);
     await ok(omer, 'rdv_send', { agent_id: j.agent_id, payload: { type: 'note', text: INJECTION } });
     const msg = await waitEvent(john, (e) => e.type === 'message', 'message', 10_000);

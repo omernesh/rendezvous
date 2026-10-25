@@ -3,7 +3,8 @@
 //   1. John runs `rdv listen --json` on his home dir (Omer listens too, to see the grant).
 //   2. Omer: `rdv contact request john@doe.com --greeting "…"` (topic probe).
 //   3. John's bot sees `request` and runs `rdv contact grant <id> --tier friend`.
-//   4. Omer sees `contact`, sends a message; John's inbox shows it.
+//   4. Omer sees the grant as a `candidate` (anyone could answer a probe), confirms
+//      it with `rdv contact confirm`, sends a message; John's inbox shows it.
 //   5. Every step is asserted with a timeout; any failure throws (exit 1 from the CLI).
 //
 // Run directly against real relays:
@@ -99,8 +100,13 @@ export async function runContactScenario(opts: ContactScenarioOptions): Promise<
     });
 
     await step('4. omer sees the contact, sends a message, john receives it', async () => {
-      const c = await omerL.waitFor((l) => l.event === 'contact' && l.peer === john, 'contact event', timeout);
-      assert(c.tier === 'friend', 'omer sees tier friend');
+      // A probe can be answered by anyone who saw it: Omer (the human) checks the fingerprint and confirms.
+      const cand = await omerL.waitFor((l) => l.event === 'candidate' && l.from === john, 'grant candidate', timeout);
+      assert(cand.claims_address === true && cand.granted_tier === 'friend', 'candidate claims the address, tier friend');
+      const conf = await rdv(['contact', 'confirm', cand.grant_id], dirs.omer, { timeoutMs: timeout });
+      const c = conf.lines.find((l) => l.event === 'confirmed');
+      assert(c?.peer === john && c.granted_tier === 'friend', 'omer confirms john (granted tier friend)');
+      assert(c.inbound === 'default', "john's rights towards omer stay the local default");
       const list = await rdv(['contact', 'list'], dirs.omer);
       assert(list.lines.some((l) => l.peer === john), 'john is in omer\'s contact list');
       const s = await rdv(['send', john, '--json', JSON.stringify({ type: 'a2a/message', text })], dirs.omer, {

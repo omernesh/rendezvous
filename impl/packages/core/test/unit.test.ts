@@ -7,6 +7,7 @@ import {
   createContactRequest,
   createGrant,
   createRevoke,
+  DEFAULT_INBOUND_SCOPE,
   defaultTier,
   dtopic,
   fingerprint,
@@ -15,6 +16,7 @@ import {
   openEnvelope,
   sealEnvelope,
   signDoc,
+  TIERS,
   verifyCard,
   verifyContactRequest,
   verifyGrant,
@@ -131,7 +133,7 @@ describe('contact book', () => {
     const aliceBook = new ContactBook();
     const bobBook = new ContactBook();
     const req = createContactRequest(alice, aliceCard, { toHint: bob.id, greeting: 'hi' });
-    aliceBook.trackOutstanding(req);
+    aliceBook.trackOutstanding(req, 'claimed', bob.id);
 
     const outcome = bobBook.receiveRequest(req, 'claimed');
     expect(outcome.status).toBe('pending');
@@ -143,7 +145,7 @@ describe('contact book', () => {
     expect(bobBook.state.pending).toEqual({});
 
     const c = aliceBook.receiveGrant(grant, alice.id);
-    expect(c?.peer).toBe(bob.id);
+    expect(c && 'contact' in c && c.contact.peer).toBe(bob.id);
     expect(aliceBook.receiveGrant(grant, alice.id)).toBeNull(); // replay
 
     expect(bobBook.admitInbound(alice.id)).toBe(true);
@@ -175,9 +177,9 @@ describe('contact book', () => {
   it('applies revocations from the peer only', () => {
     const book = new ContactBook();
     const req = createContactRequest(alice, aliceCard, { toHint: bob.id, greeting: 'hi' });
-    book.trackOutstanding(req);
+    book.trackOutstanding(req, 'claimed', bob.id);
     const grant = createGrant(bob, bobCard, req, { tier: 'friend', scope: {} });
-    book.receiveGrant(grant, alice.id);
+    expect(book.receiveGrant(grant, alice.id)).not.toBeNull();
     expect(book.receiveRevoke(createRevoke(bob, generateKey().id, grant.id), alice.id)).toBe(false);
     expect(book.receiveRevoke(createRevoke(bob, alice.id, grant.id), alice.id)).toBe(true);
     expect(book.contact(bob.id)).toBeUndefined();
@@ -208,17 +210,81 @@ describe('grant acceptance (security regression)', () => {
     expect(book.state.contacts).toEqual({});
 
     const real = book.receiveGrant(grantFrom(john), omer.id);
-    expect(real?.peer).toBe(john.id);
-    expect(real?.binding).toBe('in-person');
+    expect(real && 'contact' in real && real.contact.peer).toBe(john.id);
+    expect(real && 'contact' in real && real.contact.binding).toBe('in-person');
+  });
+});
+
+describe('received grants never widen inbound rights (security review H1/H2)', () => {
+  const key = () => generateKey();
+  const cardFor = (k: ReturnType<typeof generateKey>, email?: string) =>
+    createCard(k, { rendezvous: hints, discovery: email ? { addresses: [{ type: 'email', value: email }], public_pointer: false } : undefined });
+  const bob = key();
+  const alice = key();
+  const mallory = key();
+  const bobCard = cardFor(bob, 'bob@x.com');
+  const loud = { may_initiate: true, may_propose_meetings: true, may_access_calendar: 'full' as const };
+
+  it('a topic probe answer is a candidate for the human, needs a card claiming the address, and does not drop the real one', () => {
+    const book = new ContactBook();
+    const probe = createContactRequest(bob, bobCard, { toHint: 'alice@x.com', greeting: 'hi' });
+    book.trackOutstanding(probe);
+    // Mallory's card does not claim alice@x.com: refused outright.
+    expect(book.receiveGrant(createGrant(mallory, cardFor(mallory), probe, { tier: 'spouse', scope: loud }), bob.id)).toBeNull();
+    // Mallory claims the address too: she becomes a candidate, not a contact, and the probe stays open.
+    const mg = createGrant(mallory, cardFor(mallory, 'Alice@X.com'), probe, { tier: 'spouse', scope: loud });
+    const m = book.receiveGrant(mg, bob.id);
+    expect(m && 'candidate' in m).toBe(true);
+    expect(book.contact(mallory.id)).toBeUndefined();
+    expect(book.state.outstanding[probe.id]).toBeDefined();
+    // A second claimant from the same grantor is ignored; Alice's genuine grant still lands as a candidate.
+    expect(book.receiveGrant(createGrant(mallory, cardFor(mallory, 'alice@x.com'), probe, { tier: 'friend', scope: {} }), bob.id)).toBeNull();
+    const ag = createGrant(alice, cardFor(alice, 'alice@x.com'), probe, { tier: 'friend', scope: { may_initiate: true } });
+    const a = book.receiveGrant(ag, bob.id);
+    expect(a && 'candidate' in a).toBe(true);
+    expect(Object.keys(book.state.candidates).sort()).toEqual([ag.id, mg.id].sort());
+
+    // The human picks Alice: contact, claimed, inbound the local default; Mallory's candidate and the probe are gone.
+    const c = book.confirmCandidate(ag.id);
+    expect(c).toMatchObject({ peer: alice.id, binding: 'claimed', tier: 'stranger', grantedTier: 'friend', inboundGranted: false });
+    expect(c.inboundScope).toEqual(DEFAULT_INBOUND_SCOPE);
+    expect(book.state.candidates).toEqual({});
+    expect(book.state.outstanding[probe.id]).toBeUndefined();
+    expect(() => book.confirmCandidate(mg.id)).toThrow(/no grant candidate/);
   });
 
-  it('accepts any grantor for a topic probe, but only as claimed', () => {
-    const { omer, mallory, req, grantFrom } = setup();
+  it('the grantor picks only our outbound scope: inbound stays the local default until our human grants', () => {
     const book = new ContactBook();
-    book.trackOutstanding(req, 'in-person'); // no target: a topic probe
-    const c = book.receiveGrant(grantFrom(mallory), omer.id);
-    expect(c?.peer).toBe(mallory.id);
-    expect(c?.binding).toBe('claimed');
+    const back = createContactRequest(bob, bobCard, { toHint: mallory.id, greeting: 'hi' });
+    book.trackOutstanding(back, 'claimed', mallory.id);
+    const got = book.receiveGrant(createGrant(mallory, cardFor(mallory), back, { tier: 'family', scope: loud }), bob.id);
+    const c = got && 'contact' in got ? got.contact : undefined;
+    expect(c?.outboundScope).toEqual(loud);
+    expect(c?.tier).toBe('stranger');
+    expect(c?.inboundScope).toEqual(DEFAULT_INBOUND_SCOPE);
+    expect(c?.inboundScope?.may_propose_meetings).toBe(false);
+    // The local default rate limit applies, not "unlimited because the grant omitted max_frequency".
+    let admitted = 0;
+    for (let i = 0; i < 200; i++) if (book.admitInbound(mallory.id)) admitted++;
+    expect(admitted).toBe(50);
+
+    // Only the human widens it.
+    const book2 = new ContactBook();
+    book2.trackOutstanding(back, 'claimed', mallory.id);
+    book2.receiveGrant(createGrant(mallory, cardFor(mallory), back, { tier: 'friend', scope: {} }), bob.id);
+    const up = book2.allowInbound(mallory.id, { tier: 'friend', scope: { may_initiate: true, may_propose_meetings: true } });
+    expect(up).toMatchObject({ tier: 'friend', inboundGranted: true });
+    expect(up.inboundScope?.may_propose_meetings).toBe(true);
+  });
+
+  it('rejects a grant whose tier is not in the enum', () => {
+    const book = new ContactBook();
+    const back = createContactRequest(bob, bobCard, { toHint: mallory.id, greeting: 'hi' });
+    book.trackOutstanding(back, 'claimed', mallory.id);
+    const weird = createGrant(mallory, cardFor(mallory), back, { tier: 'x\u001b[31m' as never, scope: {} });
+    expect(verifyGrant(weird)).toBe(false);
+    expect(book.receiveGrant(weird, bob.id)).toBeNull();
+    expect(TIERS).toContain('stranger');
   });
 });
 

@@ -12,7 +12,7 @@ import {
 } from '../src/index.js';
 import { startTestRelay, type TestRelay } from '../src/testing/relay.js';
 
-function waitFor<T>(agent: Agent, event: 'request' | 'contact' | 'message' | 'revoked', ms = 5000): Promise<T> {
+function waitFor<T>(agent: Agent, event: 'request' | 'candidate' | 'contact' | 'message' | 'revoked', ms = 5000): Promise<T> {
   return new Promise((resolve, reject) => {
     const t = setTimeout(() => reject(new Error(`timeout waiting for ${event}`)), ms);
     agent.once(event, (...args: unknown[]) => {
@@ -20,6 +20,12 @@ function waitFor<T>(agent: Agent, event: 'request' | 'contact' | 'message' | 're
       resolve((args.length === 1 ? args[0] : args) as T);
     });
   });
+}
+
+/** A topic probe's grant is only a candidate: the owner confirms it (security review H1). */
+async function confirmNext(agent: Agent): Promise<unknown> {
+  const c = await waitFor<{ grant: { id: string } }>(agent, 'candidate');
+  return agent.confirmCandidate(c.grant.id);
 }
 
 describe('two agents over a Nostr relay', () => {
@@ -60,7 +66,7 @@ describe('two agents over a Nostr relay', () => {
     expect(req.request.greeting).toContain('dinner');
     expect(john.contacts()).toHaveLength(0);
 
-    const omerSeesGrant = waitFor(omer, 'contact');
+    const omerSeesGrant = confirmNext(omer);
     const grantedContact = await john.grant(req.request.id, { tier: 'friend' });
     expect(grantedContact.peer).toBe(omer.id);
     await omerSeesGrant;
@@ -119,7 +125,7 @@ describe('two agents over a Nostr relay', () => {
     await new Promise((r) => setTimeout(r, 200));
     const pending = waitFor<{ request: { id: string } }>(john, 'request');
     await omer.requestContact('john@doe.com', 'hi');
-    const contact = waitFor(omer, 'contact');
+    const contact = confirmNext(omer);
     await john.grant((await pending).request.id);
     await contact;
 
@@ -142,7 +148,7 @@ describe('two agents over a Nostr relay', () => {
     await new Promise((r) => setTimeout(r, 200));
     const pending = waitFor<{ request: { id: string } }>(john, 'request');
     await omer.requestContact('john@doe.com', 'hi');
-    const contact = waitFor(omer, 'contact');
+    const contact = confirmNext(omer);
     await john.grant((await pending).request.id);
     await contact;
     const beforeCrash = JSON.parse(JSON.stringify(omer.toJSON())); // what a save-after-send caller had on disk

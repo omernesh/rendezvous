@@ -1,7 +1,7 @@
 // PLAN.md §5.3: two `rdv` bots negotiate dinner on their own.
 //
 //   setup  Omer and John init, both listen; Omer requests contact by email,
-//          John's listener auto-grants (demo only).
+//          John's listener auto-grants (demo only); Omer confirms the answer.
 //   then, by variant:
 //     overlap     John is busy Monday evening. Omer offers Mon/Tue/Wed, John
 //                 accepts Tuesday 19:00; both end `completed` holding that slot.
@@ -112,9 +112,11 @@ export async function runDinnerScenario(opts: DinnerScenarioOptions): Promise<Di
     });
     let omerL = listeners[1];
 
-    await step('omer requests contact, john auto-grants', async () => {
+    await step('omer requests contact, john auto-grants, omer confirms', async () => {
       await rdv(['contact', 'request', `john+${tag}@doe.com`, '--greeting', 'Dinner?'], dirs.omer, { timeoutMs: timeout });
-      await omerL.waitFor((l) => l.event === 'contact' && l.peer === john, 'omer sees the contact', timeout);
+      // Omer's human confirms the probe answer (anyone who saw the probe could have answered it).
+      const cand = await omerL.waitFor((l) => l.event === 'candidate' && l.from === john, 'omer sees the grant candidate', timeout);
+      await rdv(['contact', 'confirm', cand.grant_id], dirs.omer, { timeoutMs: timeout });
     });
 
     if (v === 'cancel') {

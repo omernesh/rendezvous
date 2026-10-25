@@ -7,6 +7,7 @@ import {
   JsonFileCalendar,
   type MeetingScope,
   type NegotiationEvent,
+  type NegotiationState,
   type NegotiationTask,
   parseOffset,
   parseWindow,
@@ -33,13 +34,26 @@ export function openCalendar(path: string): JsonFileCalendar {
 }
 
 /**
- * Meeting scope for a contact. `inboundScope` is the grant's scope on both
- * sides: the grantor recorded the grant it issued, and the requester recorded
- * the received grant (plus may_initiate). Per NOTES.md item 15 the same scope
- * covers both directions, so it governs what we send as well as what we accept.
+ * Meeting scope for a contact, by direction (NOTES item 15, revised after the
+ * security review): `outbound` is what the peer's grant lets us do (proposing
+ * to it), `inbound` is what our own human let the peer do (the peer proposing
+ * to us). A grant we received never widens `inbound`.
  */
-export function meetingScope(contact: Contact | null | undefined): MeetingScope {
-  return (contact?.inboundScope ?? {}) as MeetingScope;
+export function meetingScope(contact: Contact | null | undefined, direction: 'outbound' | 'inbound'): MeetingScope {
+  return ((direction === 'outbound' ? contact?.outboundScope : contact?.inboundScope) ?? {}) as MeetingScope;
+}
+
+/**
+ * Scope for an inbound a2a payload: replies on a task we proposed to this
+ * peer ride our outbound grant; anything else (a new proposal, or moves on a
+ * task the peer started) needs the inbound rights our human gave the peer.
+ */
+export function inboundMeetingScope(contact: Contact | null | undefined, state: NegotiationState, payload: unknown): MeetingScope {
+  const p = payload as { message?: { taskId?: unknown }; update?: { taskId?: unknown } } | null;
+  const taskId = p?.message?.taskId ?? p?.update?.taskId;
+  const task = typeof taskId === 'string' && Object.hasOwn(state.tasks, taskId) ? state.tasks[taskId] : undefined;
+  const ours = task !== undefined && task.role === 'proposer' && task.peer === contact?.peer;
+  return meetingScope(contact, ours ? 'outbound' : 'inbound');
 }
 
 function offsetFor(cal: JsonFileCalendar, tz: string | undefined, now: Date): number {
