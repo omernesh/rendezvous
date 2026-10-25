@@ -1280,3 +1280,73 @@ describe('per-capability task limits and the gross-abuse threshold (issue #28)',
     expect(JSON.parse(saved[0]).taskRate?.[john.id]).toBeUndefined();
   });
 });
+
+describe('card refresh: capabilities the code now supports (issue #43)', () => {
+  const TASKS = 'https://rendezvous.nesher.co/ext/tasks/v1';
+  const REQUEST = 'https://rendezvous.nesher.co/ext/request/v1';
+  const NOW_CAPS = ['rdv/v1', 'a2a/0.3', MEETINGS_CAPABILITY, MEETING_CANCEL_CAPABILITY, TASKS, REQUEST];
+  const published: Array<{ topic: string; doc: unknown; createdAt?: number }> = [];
+  const recording = (): Transport => ({
+    async sendEnvelope() {},
+    onEnvelopes: () => () => {},
+    async publishTopic(topic, doc, _extra, opts) {
+      published.push({ topic, doc, createdAt: opts?.createdAt });
+    },
+    onTopics: () => () => {},
+    fetchTopic: async () => [],
+    close() {},
+  });
+
+  it('a card saved by main before tasks/v1 is re-signed with them: same identity, contacts and hints, a later created', () => {
+    const fixture = JSON.parse(readFileSync(new URL('./fixtures/agent-main-rev3.json', import.meta.url), 'utf8')) as { omer: AgentState };
+    const before = structuredClone(fixture.omer);
+    const omer = Agent.fromJSON(structuredClone(fixture.omer), recording);
+    expect(before.card.capabilities).toEqual(['rdv/v1', 'a2a/0.3']); // what main wrote
+    const now = new Date(Date.parse(before.card.created) - 60_000); // a clock behind the card: created still moves forward
+    expect(omer.refreshCapabilities(NOW_CAPS, { now })).toBe(true);
+    const card = omer.card;
+    expect(verifyCard(card).ok).toBe(true);
+    expect(card.capabilities).toEqual(NOW_CAPS);
+    expect(Date.parse(card.created) - Date.parse(before.card.created)).toBeGreaterThanOrEqual(1000);
+    expect(newerCard(before.card, card)).toBe(card);
+    expect({ ...card, capabilities: before.card.capabilities, created: before.card.created, sig: before.card.sig }).toEqual(before.card);
+    const after = omer.toJSON();
+    expect(after.secretKey).toBe(before.secretKey);
+    expect(JSON.stringify(after.book)).toBe(JSON.stringify(before.book));
+    expect(JSON.stringify(after.channels)).toBe(JSON.stringify(before.channels));
+    // Idempotent: the same code again changes nothing.
+    const sig = card.sig;
+    expect(omer.refreshCapabilities(NOW_CAPS)).toBe(false);
+    expect(omer.refreshCapabilities([...NOW_CAPS].reverse())).toBe(false); // order alone is no change
+    expect(omer.card.sig).toBe(sig);
+  });
+
+  it('adds only what is missing, keeps what the card listed besides, and stays within the card limit', () => {
+    const k = generateKey();
+    const extra = 'https://example.com/ext/review/v1';
+    const card = createCard(k, { rendezvous: hints, capabilities: ['rdv/v1', 'a2a/0.3', extra], now: new Date('2026-10-25T10:00:00Z') });
+    const a = new Agent(k, card, recording());
+    expect(a.refreshCapabilities(NOW_CAPS)).toBe(true);
+    expect(a.card.capabilities).toEqual([...NOW_CAPS, extra]);
+    // A host with a smaller registry on the same home re-signs nothing (no flapping between hosts).
+    expect(a.refreshCapabilities(['rdv/v1', 'a2a/0.3', TASKS])).toBe(false);
+    const full = createCard(k, { rendezvous: hints, capabilities: Array.from({ length: MAX_CARD_CAPABILITIES }, (_, i) => `https://example.com/ext/x${i}/v1`) });
+    const b = new Agent(k, full, recording());
+    expect(b.refreshCapabilities(NOW_CAPS)).toBe(true);
+    expect(b.card.capabilities).toHaveLength(MAX_CARD_CAPABILITIES);
+    expect(b.card.capabilities.slice(0, NOW_CAPS.length)).toEqual(NOW_CAPS); // what the code routes comes first
+  });
+
+  it('the refreshed card replaces the old one on each public address topic, dated a second later', async () => {
+    published.length = 0;
+    const k = generateKey();
+    const discovery = { addresses: [{ type: 'email' as const, value: 'omer@example.com' }, { type: 'phone' as const, value: '+15550100' }], public_pointer: true };
+    const old = createCard(k, { rendezvous: hints, capabilities: ['rdv/v1', 'a2a/0.3'], discovery, policy: { public: true }, now: new Date('2026-10-25T10:00:00Z') });
+    const a = new Agent(k, old, recording());
+    expect(a.refreshCapabilities(NOW_CAPS)).toBe(true);
+    expect(a.card.discovery).toEqual(discovery);
+    expect(await a.publishPointers()).toEqual(discovery.addresses.map((x) => dtopic(x)));
+    expect(published.map((p) => (p.doc as { capabilities: string[] }).capabilities)).toEqual([NOW_CAPS, NOW_CAPS]);
+    for (const p of published) expect(p.createdAt).toBeGreaterThan(Math.floor(Date.parse(old.created) / 1000));
+  });
+});
