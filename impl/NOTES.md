@@ -444,6 +444,31 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
     its real state, so the offerer sees it as `peerState` (and a `status`
     event) but keeps its hold, because a cancel after completion is not
     honored (§7.3). Cancelling an agreed meeting is a v0.2 verb.
+59. **Meeting consent is bound to the meeting, not the task ID**
+    (**spec change**, §5.5; security fix on top of item 42). The human's
+    approval used to land on whatever the peer-chosen task ID pointed at
+    when the confirm ran: the server read the task, asked the human
+    (elicitation, or a phrase issued earlier), then called `confirmMeeting`
+    on the task as it was by then. A peer can change it in between: cancel,
+    push the canceled task out of the per-peer cap (`MAX_TASKS_PER_PEER`)
+    with finished filler tasks, and propose again under the same task ID
+    with another slot (engine test "consent is bound to the reviewed
+    meeting"); after pruning, another peer could reuse the ID too. A phrase
+    stayed valid for the new hold. Now the host snapshots what the human
+    reviews (`MeetingSnapshot`: task ID, peer, contextId, our `created`,
+    hold stage, slot start/end, place) and `confirmMeeting(..., expected)`
+    throws `MeetingChangedError` unless the task still matches it, checked
+    under the home lock. `rdv-mcp` refuses with "changed since your user
+    reviewed it" and re-issues; nothing is saved or sent. Each meeting
+    phrase stores `digest` = sha256 of the snapshot (`meetingDigest`) and
+    `checkPhrase` requires it to match; any dinner event re-syncs phrases,
+    so a task that ends loses its phrase and a changed hold gets a new one
+    (the old one is kept as `previous` only to report it as stale; legacy
+    phrases without a digest approve nothing). The elicitation "decline"
+    cancel is bound the same way. `rdv dinner confirm` now needs
+    `--hold <code>`, the first 12 hex digits of the digest, shown by
+    `rdv dinner list` (text and `hold_code` in JSON) and in the server's
+    phrase notice; a code that no longer matches is refused.
 
 ## Not implemented yet
 

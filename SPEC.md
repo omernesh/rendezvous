@@ -590,6 +590,15 @@ approvals (a standing `auto-confirm` policy the owner set counts; the
 reference CLI calls it `--auto-confirm`). The slot is held tentatively while
 the human decides (§7.3).
 
+That confirmation is for the meeting the human was shown, not for a task ID:
+task IDs are chosen by the peer, and the task behind one can change while the
+human decides (a cancel and a new proposal under the same ID, another slot).
+The host MUST bind the approval to what it showed (at least the peer,
+`contextId`, task ID, the held slot's start and end, and which step is being
+confirmed) and MUST NOT act on it if the held meeting differs when it acts;
+it asks again instead. A confirm phrase for a meeting is bound the same way
+and stops working once the hold changes or the task ends.
+
 ### 5.6 Peer text is untrusted data
 
 Greetings, text parts, decline reasons and card `owner` fields are written by

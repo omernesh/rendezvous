@@ -191,7 +191,7 @@ Recording and the deck are the owner's part.
 | No contact request on John's side | Is John's session running (the server listens only while Claude Code runs)? `rdv_status` shows `listening: true` |
 | Claude says it can't approve | Expected without elicitation: use the confirm phrase from `rdv contact pending` |
 | Negotiation never starts on John's side | John's server needs `--calendar`; `rdv_status` shows the negotiation settings |
-| Negotiation stops at "held for your user" | Expected: that side's human confirms (`rdv_negotiate` action `confirm`, or `rdv dinner confirm <task-id>` in a terminal) |
+| Negotiation stops at "held for your user" | Expected: that side's human confirms (`rdv_negotiate` action `confirm`, or `rdv dinner confirm <task-id> --hold <code>` from `rdv dinner list`, in a terminal) |
 
 | "no free slot in the window" | Re-run `node demo/make-calendars.mjs` (old holds) |
 | Contacts from an earlier take | Re-init both homes with `--force` |

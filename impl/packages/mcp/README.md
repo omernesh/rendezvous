@@ -89,10 +89,14 @@ same gate. With elicitation the human gets a form (peer fingerprint, time,
 place marked untrusted); `decline` there cancels the negotiation and
 releases the hold, dismissing it leaves the dinner held. Otherwise the server
 issues a confirm phrase per held dinner (same rules, shown on stderr and in
-`rdv dinner list` text mode), or the human runs `rdv dinner confirm <task-id>`
+`rdv dinner list` text mode), or the human runs `rdv dinner confirm <task-id> --hold <code>`
 (or `rdv dinner cancel`) in a terminal. That happens once per side: the
 accepter's human before the accept goes out, the offerer's before the
 `meeting/confirm`. Holds are released on cancel, decline or expiry.
+Approval is bound to the meeting the human saw, not the peer-chosen task ID:
+if the held meeting changes before the confirm runs (another slot, peer or
+stage, or a new negotiation under the same ID), nothing is confirmed, the tool
+says it changed, and a new phrase is issued (NOTES 59).
 
 No tool result ever contains a phrase (tests scan every result and the inbox
 resource). Limits (NOTES 57): `consent.json` keeps phrases in clear text so
