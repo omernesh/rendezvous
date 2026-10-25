@@ -74,9 +74,9 @@ code, tests or docs.
 
 ## Security
 
-Please report vulnerabilities privately through a
-[GitHub security advisory](https://github.com/omernesh/rendezvous/security/advisories/new),
-not a public issue. Consent bypasses, injection through peer text and anything
+Please report vulnerabilities privately, not in a public issue. See
+[`SECURITY.md`](https://github.com/omernesh/rendezvous/blob/main/SECURITY.md) for how (GitHub private vulnerability reporting),
+what to include and what is in scope. Consent bypasses, injection through peer text and anything
 that lets a relay read or alter content are in scope.
 
 ## License
