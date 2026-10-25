@@ -1064,6 +1064,115 @@ knows.
 
 ---
 
+### 7.7 Files
+
+> **Spec change (v0.3, issue #26).** New section, from the approved design
+> (`docs/design/general-tasks-and-groups.md` A.8). The reference implements
+> the reference format, its encryption, the fetch rules and the
+> `rdv/transfer` messages (`@rendezvous/core`, NOTES 72). Carrying file parts
+> inside tasks, and fetching only after a task's start gate, land with the
+> tasks and gates sections.
+
+Files are A2A `FilePart`s. Up to 16 KiB a file MAY travel inline
+(`file.bytes`, base64), inside the encrypted envelope. Anything larger is a
+**file reference** under the **files extension**,
+`https://rendezvous.nesher.co/ext/files/v1`, a profile extension in A2A's
+sense: it adds required structure to `FilePart`.
+
+```json
+{ "kind": "file",
+  "file": { "uri": "https://files.example.com/q4/3f9a…", "mimeType": "application/pdf", "name": "q4-plan.pdf" },
+  "metadata": { "https://rendezvous.nesher.co/ext/files/v1": {
+    "sha256": "<hex SHA-256 of the bytes the receiver fetches and verifies>",
+    "size": 412817,
+    "enc": { "alg": "aes256gcm", "key": "<base64, 32 bytes>", "nonce": "<base64, 12 bytes>",
+             "plain_sha256": "<hex SHA-256 of the plaintext>" },
+    "mirrors": ["https://mirror.example.org/3f9a…"],
+    "p2p": ["webrtc-datachannel/1"],
+    "expires": "2026-11-01T00:00:00Z" } } }
+```
+
+- **Where the bytes are is the sender's choice.** `uri` is any `https` URL
+  where the file is stored: a web server, a cloud share link, an object
+  store, a Blossom server (BUD-01, `GET /<sha256>`), or none at all when the
+  file is offered only by direct transfer (`uri` omitted, `p2p` present).
+  `mirrors` lists up to 8 other URLs for the same bytes. The protocol
+  requires no store, and the project runs none.
+- **Shape.** `sha256` and `plain_sha256` are 64 lowercase hex characters;
+  `size` a non-negative integer; `enc.alg` is `aes256gcm` with a 32-byte key
+  and a 12-byte nonce; `p2p` names are `<name>/<version>` (at most 8);
+  `expires` is RFC 3339. A URL is at most 2,048 characters, `https`, with a
+  host and no userinfo. `mimeType` is a bare `type/subtype`; `name` and
+  `mimeType` are display hints, sanitized (§5.6). Unknown keys in this
+  metadata, in `enc` or in `file` are refused.
+- **Integrity whatever the transport.** `sha256` is the hash of exactly the
+  bytes the receiver will get (the ciphertext when `enc` is present) and
+  `size` their length. The receiver verifies `sha256` before using the
+  bytes, from any URL, mirror or direct transfer; any mismatch fails the
+  file. With `enc`, it then decrypts (AES-256-GCM, associated data
+  `"rdv1/blob"`, so the ciphertext is the GCM output with its 16-byte tag
+  appended) and checks `plain_sha256`.
+- **Encryption.** A sender SHOULD encrypt any file it puts on a store it does
+  not control, with a fresh random key and nonce per file, never reused. The
+  key travels only inside the envelope, so the store sees ciphertext. A
+  sender MAY send a plaintext reference (no `enc`), for instance to a file
+  that is already public; `sha256` is still required.
+- **A URL is untrusted peer data.** Fetching is the receiving agent's choice,
+  never automatic: nothing is fetched because a file part arrived, only by an
+  agent acting on a task that passed its start gate. Rules: only `https` (or
+  a direct transfer); never to private, loopback, link-local or otherwise
+  special-purpose addresses (IPv4-mapped, NAT64 and 6to4 forms included),
+  checked after resolving and after each redirect, with the connection made
+  to the address that was checked, so a DNS answer that changes between check
+  and connect cannot move it; at most 3 redirects; at most `size` bytes and
+  the receiver's own cap, enforced while reading; no content encodings.
+  **Never with credentials:** no cookies, `Authorization` headers, client
+  certificates, signed-in browser sessions or other ambient authority of the
+  owner, so a peer cannot make the agent read something only the owner can
+  open. The content is untrusted (§5.6), whatever its hash.
+- **Direct transfer.** `p2p` lists transfer protocols the sender offers, in
+  its order of preference. The receiver MAY ask for one instead of the URL
+  with `rdv/transfer` messages over the pairwise channel (payloads of the
+  envelope, §6.4):
+
+  ```json
+  { "type": "rdv/transfer", "file": "<sha256>", "task": "<taskId>",
+    "transfer": "<uuid>", "step": "propose",
+    "protocols": ["webrtc-datachannel/1"], "data": { }, "expires": "…" }
+  ```
+
+  `step` is `propose` (the receiver names the protocols it accepts, 1 to 8),
+  `accept` (the sender picks one, `protocol`), `signal` (protocol-specific
+  setup in `data`, for WebRTC the SDP offer, answer and ICE candidates),
+  `done` or `abort` (optional `reason`, at most 200 characters, display
+  only). `task` is present when the file belongs to a task. Each step allows
+  only its own fields (`data` on propose, accept and signal, required on
+  signal); anything else is refused. A propose with no protocol the other
+  side supports, an accept of a protocol that was not proposed, a step out of
+  order, and the 17th message abort the transfer; a message for an unknown
+  or finished transfer is ignored. The protocol carries only these messages
+  and mandates no transport; how the bytes move is the named protocol's
+  business, and they are verified against `sha256` as from a URL. Either side
+  may refuse or abort at any step. A direct connection shows each agent's
+  network address to the other (and to any TURN server used), so a host
+  offers or accepts it only for contacts and under its owner's setting, off
+  by default for group members who are not contacts. Bounds: 16 messages per
+  transfer, 16 KiB of `data` each (canonical JSON), nested at most 16 deep.
+- **Lifetime.** A sender that uploaded a copy SHOULD remove it when the task
+  ends or `expires` passes; receivers MUST NOT rely on it later.
+- A `FilePart` with neither inline `bytes` nor this metadata (at least
+  `sha256` and `size`) is refused: an agent never fetches a URL without a
+  hash to check. Under §7.5 this metadata is the one case that is not
+  ignorable, because the files extension makes it part of the part's
+  meaning; a receiver that does not support the extension answers
+  unsupported. Other keys in the part's `metadata` stay ignorable.
+
+**Privacy cost.** A fetch shows the store the receiver's IP address and the
+time; a direct transfer shows it to the peer. Agents that care fetch through
+a proxy or decline the transfer. The relay sees nothing new.
+
+---
+
 ## 8. Threat model
 
 | Threat | Mitigation |
@@ -1078,6 +1187,8 @@ knows.
 | MITM on human channel | E2E envelope; Diffie-Hellman keys pinned at handshake; TOFU + change alert |
 | Malicious relay reads content | Ciphertext-only at relay (§6.4); relay trust = zero |
 | Relay swaps the ciphertext under a genuine header | The signature covers `content` (§6.4), and the header is AES-GCM associated data |
+| A peer's file URL aims the agent at its owner's network (SSRF), or at a page only the owner can open | Fetching is the agent's choice, never on arrival; `https` only; private, loopback and link-local addresses refused after resolving and after each redirect, the connection pinned to the checked address; at most 3 redirects; never with credentials (§7.7) |
+| A store or mirror swaps or truncates a file | `sha256` and `size` in the encrypted reference; the bytes are verified before use, then decrypted and checked against `plain_sha256` (§7.7) |
 | Assistant approves a contact on its own, or is talked into it | Consent stays with the human, outside the model's reach (§5.5) |
 | Prompt injection through greetings or message text | Peer text is display-only data; only validated machine fields drive actions (§5.6) |
 | Stranger answers a topic probe | Grant recorded as `claimed`; grantor fingerprint shown before trust (§5.3) |
@@ -1105,6 +1216,10 @@ knows.
 - Probes and invites are owner-initiated and rate-limited; received probes
   are archived with the consent record as an audit trail.
 - All content is E2E encrypted; relays see envelope metadata only.
+- A file reference (§7.7) is fetched from a store the sender chose: the
+  store sees the receiver's IP address and the time, and a direct transfer
+  shows it to the peer. Files on a store the sender does not control are
+  encrypted with a per-file key that travels only in the envelope.
 - Human-channel delivery renders a **human-readable summary** plus the
   machine envelope; the human can always read what their agent receives on
   their behalf.

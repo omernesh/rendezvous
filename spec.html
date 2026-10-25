@@ -1167,6 +1167,108 @@ extension answers unsupported, and the sender learns it in-band. Both close
 the gap left open in §11.8 as far as a protocol can: the canceling side now
 knows.</p>
 <hr />
+<h3 id="77-files">7.7 Files</h3>
+<blockquote>
+<p><strong>Spec change (v0.3, issue #26).</strong> New section, from the approved design
+(<code>docs/design/general-tasks-and-groups.md</code> A.8). The reference implements
+the reference format, its encryption, the fetch rules and the
+<code>rdv/transfer</code> messages (<code>@rendezvous/core</code>, NOTES 72). Carrying file parts
+inside tasks, and fetching only after a task's start gate, land with the
+tasks and gates sections.</p>
+</blockquote>
+<p>Files are A2A <code>FilePart</code>s. Up to 16 KiB a file MAY travel inline
+(<code>file.bytes</code>, base64), inside the encrypted envelope. Anything larger is a
+<strong>file reference</strong> under the <strong>files extension</strong>,
+<code>https://rendezvous.nesher.co/ext/files/v1</code>, a profile extension in A2A's
+sense: it adds required structure to <code>FilePart</code>.</p>
+<pre><code class="language-json">{ &quot;kind&quot;: &quot;file&quot;,
+  &quot;file&quot;: { &quot;uri&quot;: &quot;https://files.example.com/q4/3f9a…&quot;, &quot;mimeType&quot;: &quot;application/pdf&quot;, &quot;name&quot;: &quot;q4-plan.pdf&quot; },
+  &quot;metadata&quot;: { &quot;https://rendezvous.nesher.co/ext/files/v1&quot;: {
+    &quot;sha256&quot;: &quot;&lt;hex SHA-256 of the bytes the receiver fetches and verifies&gt;&quot;,
+    &quot;size&quot;: 412817,
+    &quot;enc&quot;: { &quot;alg&quot;: &quot;aes256gcm&quot;, &quot;key&quot;: &quot;&lt;base64, 32 bytes&gt;&quot;, &quot;nonce&quot;: &quot;&lt;base64, 12 bytes&gt;&quot;,
+             &quot;plain_sha256&quot;: &quot;&lt;hex SHA-256 of the plaintext&gt;&quot; },
+    &quot;mirrors&quot;: [&quot;https://mirror.example.org/3f9a…&quot;],
+    &quot;p2p&quot;: [&quot;webrtc-datachannel/1&quot;],
+    &quot;expires&quot;: &quot;2026-11-01T00:00:00Z&quot; } } }
+</code></pre>
+<ul>
+<li><strong>Where the bytes are is the sender's choice.</strong> <code>uri</code> is any <code>https</code> URL
+  where the file is stored: a web server, a cloud share link, an object
+  store, a Blossom server (BUD-01, <code>GET /&lt;sha256&gt;</code>), or none at all when the
+  file is offered only by direct transfer (<code>uri</code> omitted, <code>p2p</code> present).
+  <code>mirrors</code> lists up to 8 other URLs for the same bytes. The protocol
+  requires no store, and the project runs none.</li>
+<li><strong>Shape.</strong> <code>sha256</code> and <code>plain_sha256</code> are 64 lowercase hex characters;
+  <code>size</code> a non-negative integer; <code>enc.alg</code> is <code>aes256gcm</code> with a 32-byte key
+  and a 12-byte nonce; <code>p2p</code> names are <code>&lt;name&gt;/&lt;version&gt;</code> (at most 8);
+  <code>expires</code> is RFC 3339. A URL is at most 2,048 characters, <code>https</code>, with a
+  host and no userinfo. <code>mimeType</code> is a bare <code>type/subtype</code>; <code>name</code> and
+  <code>mimeType</code> are display hints, sanitized (§5.6). Unknown keys in this
+  metadata, in <code>enc</code> or in <code>file</code> are refused.</li>
+<li><strong>Integrity whatever the transport.</strong> <code>sha256</code> is the hash of exactly the
+  bytes the receiver will get (the ciphertext when <code>enc</code> is present) and
+  <code>size</code> their length. The receiver verifies <code>sha256</code> before using the
+  bytes, from any URL, mirror or direct transfer; any mismatch fails the
+  file. With <code>enc</code>, it then decrypts (AES-256-GCM, associated data
+  <code>"rdv1/blob"</code>, so the ciphertext is the GCM output with its 16-byte tag
+  appended) and checks <code>plain_sha256</code>.</li>
+<li><strong>Encryption.</strong> A sender SHOULD encrypt any file it puts on a store it does
+  not control, with a fresh random key and nonce per file, never reused. The
+  key travels only inside the envelope, so the store sees ciphertext. A
+  sender MAY send a plaintext reference (no <code>enc</code>), for instance to a file
+  that is already public; <code>sha256</code> is still required.</li>
+<li><strong>A URL is untrusted peer data.</strong> Fetching is the receiving agent's choice,
+  never automatic: nothing is fetched because a file part arrived, only by an
+  agent acting on a task that passed its start gate. Rules: only <code>https</code> (or
+  a direct transfer); never to private, loopback, link-local or otherwise
+  special-purpose addresses (IPv4-mapped, NAT64 and 6to4 forms included),
+  checked after resolving and after each redirect, with the connection made
+  to the address that was checked, so a DNS answer that changes between check
+  and connect cannot move it; at most 3 redirects; at most <code>size</code> bytes and
+  the receiver's own cap, enforced while reading; no content encodings.
+  <strong>Never with credentials:</strong> no cookies, <code>Authorization</code> headers, client
+  certificates, signed-in browser sessions or other ambient authority of the
+  owner, so a peer cannot make the agent read something only the owner can
+  open. The content is untrusted (§5.6), whatever its hash.</li>
+<li><strong>Direct transfer.</strong> <code>p2p</code> lists transfer protocols the sender offers, in
+  its order of preference. The receiver MAY ask for one instead of the URL
+  with <code>rdv/transfer</code> messages over the pairwise channel (payloads of the
+  envelope, §6.4):</li>
+</ul>
+<p><code>json
+  { "type": "rdv/transfer", "file": "&lt;sha256&gt;", "task": "&lt;taskId&gt;",
+    "transfer": "&lt;uuid&gt;", "step": "propose",
+    "protocols": ["webrtc-datachannel/1"], "data": { }, "expires": "…" }</code></p>
+<p><code>step</code> is <code>propose</code> (the receiver names the protocols it accepts, 1 to 8),
+  <code>accept</code> (the sender picks one, <code>protocol</code>), <code>signal</code> (protocol-specific
+  setup in <code>data</code>, for WebRTC the SDP offer, answer and ICE candidates),
+  <code>done</code> or <code>abort</code> (optional <code>reason</code>, at most 200 characters, display
+  only). <code>task</code> is present when the file belongs to a task. Each step allows
+  only its own fields (<code>data</code> on propose, accept and signal, required on
+  signal); anything else is refused. A propose with no protocol the other
+  side supports, an accept of a protocol that was not proposed, a step out of
+  order, and the 17th message abort the transfer; a message for an unknown
+  or finished transfer is ignored. The protocol carries only these messages
+  and mandates no transport; how the bytes move is the named protocol's
+  business, and they are verified against <code>sha256</code> as from a URL. Either side
+  may refuse or abort at any step. A direct connection shows each agent's
+  network address to the other (and to any TURN server used), so a host
+  offers or accepts it only for contacts and under its owner's setting, off
+  by default for group members who are not contacts. Bounds: 16 messages per
+  transfer, 16 KiB of <code>data</code> each (canonical JSON), nested at most 16 deep.
+- <strong>Lifetime.</strong> A sender that uploaded a copy SHOULD remove it when the task
+  ends or <code>expires</code> passes; receivers MUST NOT rely on it later.
+- A <code>FilePart</code> with neither inline <code>bytes</code> nor this metadata (at least
+  <code>sha256</code> and <code>size</code>) is refused: an agent never fetches a URL without a
+  hash to check. Under §7.5 this metadata is the one case that is not
+  ignorable, because the files extension makes it part of the part's
+  meaning; a receiver that does not support the extension answers
+  unsupported. Other keys in the part's <code>metadata</code> stay ignorable.</p>
+<p><strong>Privacy cost.</strong> A fetch shows the store the receiver's IP address and the
+time; a direct transfer shows it to the peer. Agents that care fetch through
+a proxy or decline the transfer. The relay sees nothing new.</p>
+<hr />
 <h2 id="8-threat-model">8. Threat model</h2>
 <div class="tablewrap"><table>
 <thead>
@@ -1215,6 +1317,14 @@ knows.</p>
 <tr>
 <td>Relay swaps the ciphertext under a genuine header</td>
 <td>The signature covers <code>content</code> (§6.4), and the header is AES-GCM associated data</td>
+</tr>
+<tr>
+<td>A peer's file URL aims the agent at its owner's network (SSRF), or at a page only the owner can open</td>
+<td>Fetching is the agent's choice, never on arrival; <code>https</code> only; private, loopback and link-local addresses refused after resolving and after each redirect, the connection pinned to the checked address; at most 3 redirects; never with credentials (§7.7)</td>
+</tr>
+<tr>
+<td>A store or mirror swaps or truncates a file</td>
+<td><code>sha256</code> and <code>size</code> in the encrypted reference; the bytes are verified before use, then decrypted and checked against <code>plain_sha256</code> (§7.7)</td>
 </tr>
 <tr>
 <td>Assistant approves a contact on its own, or is talked into it</td>
@@ -1270,6 +1380,10 @@ knows.</p>
 <li>Probes and invites are owner-initiated and rate-limited; received probes
   are archived with the consent record as an audit trail.</li>
 <li>All content is E2E encrypted; relays see envelope metadata only.</li>
+<li>A file reference (§7.7) is fetched from a store the sender chose: the
+  store sees the receiver's IP address and the time, and a direct transfer
+  shows it to the peer. Files on a store the sender does not control are
+  encrypted with a per-file key that travels only in the envelope.</li>
 <li>Human-channel delivery renders a <strong>human-readable summary</strong> plus the
   machine envelope; the human can always read what their agent receives on
   their behalf.</li>

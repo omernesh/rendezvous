@@ -138,6 +138,21 @@ inbound loop), so <code>rdv</code> and <code>rdv-mcp</code> share profiles.</p>
 <td>Encrypted, signed envelopes; <code>seq</code>/<code>prev</code> ordering with gap detection</td>
 </tr>
 <tr>
+<td><code>files</code></td>
+<td>§7.7</td>
+<td>File references (<code>FilePart</code> + files extension): strict validation, <code>encryptFile</code>, <code>verifyAndDecrypt</code>, inline parts</td>
+</tr>
+<tr>
+<td><code>filefetch</code></td>
+<td>§7.7</td>
+<td><code>fetchFileRef</code>: https only, SSRF-blocked and DNS-pinned, no credentials, capped, hash-verified</td>
+</tr>
+<tr>
+<td><code>transfer</code></td>
+<td>§7.7</td>
+<td><code>rdv/transfer</code> messages and their pure state machine (negotiation only, no transport)</td>
+</tr>
+<tr>
 <td><code>transport/nostr</code></td>
 <td>§6.2</td>
 <td>Nostr relay transport (kind 30417): re-subscribes when a relay drops; publishes with retries, per-relay pacing and cooldowns, and per-relay status (<code>relayStatus()</code>); <code>DEFAULT_RELAYS</code></td>
