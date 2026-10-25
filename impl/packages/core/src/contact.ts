@@ -529,6 +529,23 @@ export class ContactBook {
   }
 
   /**
+   * Rate limit for control messages a contact can make us act on (e.g.
+   * `rdv/resend`, which makes us republish envelopes). Exceeding it drops the
+   * message but, unlike admitInbound, does not revoke (security review L3).
+   */
+  admitControl(kind: string, peer: string, limit: { count: number; windowMs: number }, now = new Date()): boolean {
+    const key = `${kind}:${peer}`;
+    const window = (this.state.rate[key] ?? []).filter((t) => t > now.getTime() - limit.windowMs);
+    if (window.length >= limit.count) {
+      this.state.rate[key] = window;
+      return false;
+    }
+    window.push(now.getTime());
+    this.state.rate[key] = window;
+    return true;
+  }
+
+  /**
    * May `peer` deliver a (non-contact-request) message to us now? Enforces
    * `max_frequency`; exceeding it revokes the grant (§10).
    */

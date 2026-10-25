@@ -31,6 +31,8 @@ const OUTBOX_LIMIT = 64;
 const BUFFER_PEER_LIMIT = 16;
 /** The scope the owner grants when it doesn't pick one. */
 export const DEFAULT_GRANT_SCOPE: Readonly<GrantScope> = Object.freeze({ may_initiate: true, may_propose_meetings: true, max_frequency: '100/day' });
+/** `rdv/resend` requests we honor per contact (each can make us republish up to OUTBOX_LIMIT envelopes). */
+export const RESEND_LIMIT = { count: 10, windowMs: 3_600_000 };
 const CONTROL_TYPES = new Set(['rdv/contact-request', 'rdv/contact-grant', 'rdv/revoke', 'rdv/resend']);
 
 export interface AgentState {
@@ -400,6 +402,7 @@ export class Agent extends EventEmitter<AgentEvents> {
       case 'rdv/resend': {
         const c = this.book.contact(from);
         if (!c) return;
+        if (!this.book.admitControl('resend', from, RESEND_LIMIT)) return this.drop('resend rate-limited', from);
         const lo = Number(payload.from_seq);
         const hi = Number(payload.to_seq);
         for (const e of this.outbox[from] ?? []) {

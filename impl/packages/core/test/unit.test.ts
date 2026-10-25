@@ -11,6 +11,7 @@ import {
   DEFAULT_INBOUND_SCOPE,
   PENDING_LIMIT,
   PENDING_PER_SENDER,
+  RESEND_LIMIT,
   defaultTier,
   dtopic,
   fingerprint,
@@ -368,6 +369,16 @@ describe('bounded peer-driven state (security review M1)', () => {
     }
     expect(book.state.pending[real.id]).toMatchObject({ direct: true });
     expect(Object.values(book.state.pending).filter((p) => p.direct)).toHaveLength(1);
+  });
+
+  it('control messages are rate-limited without revoking (security review L3)', () => {
+    const book = new ContactBook();
+    const now = new Date('2026-10-25T10:00:00Z');
+    const limit = { count: 10, windowMs: 3_600_000 };
+    const ok = Array.from({ length: 25 }, () => book.admitControl('resend', 'rdv1:peer', limit, now)).filter(Boolean);
+    expect(ok).toHaveLength(10);
+    expect(book.admitControl('resend', 'rdv1:peer', limit, new Date(now.getTime() + 3_600_001))).toBe(true);
+    expect(RESEND_LIMIT.count).toBeLessThanOrEqual(10);
   });
 
   it('a declined request stays declined after a flood evicts the replay ids', () => {

@@ -65,6 +65,8 @@ export interface NegotiationTask {
   peerState?: TaskState;
   /** messageIds received for this task, for deduplication (§7 idempotency). */
   seen: string[];
+  /** Status updates sent in answer to messages after the task finished (capped). */
+  finishedReplies?: number;
   created: string;
   updated: string;
 }
@@ -148,6 +150,9 @@ export const MAX_ROUNDS = 3;
 /** Terminal tasks kept for replay detection before the oldest are pruned. */
 const KEEP_TERMINAL = 500;
 const KEEP_TERMINAL_MS = 30 * 86_400_000;
+/** messageIds kept per task, and status replies sent per finished task. */
+export const SEEN_PER_TASK = 64;
+export const FINISHED_REPLIES = 8;
 /** Tasks (pending and finished, tombstones included) kept per peer. */
 export const MAX_TASKS_PER_PEER = 32;
 /** `expires` for tasks a peer creates: default when absent, and the latest we accept. */
@@ -213,6 +218,19 @@ class Run {
       ],
     };
     this.outgoing.push({ to: task.peer, payload: { type: 'a2a/message', message } });
+  }
+
+  /**
+   * A message for a finished task: remember its id (bounded) and tell the
+   * peer how the task ended, at most FINISHED_REPLIES times per task, so
+   * replays can't grow `seen` or make us send forever (security review L3).
+   */
+  replyFinished(task: NegotiationTask, messageId: string): void {
+    task.seen.push(messageId);
+    if (task.seen.length > SEEN_PER_TASK) task.seen.splice(0, task.seen.length - SEEN_PER_TASK);
+    if ((task.finishedReplies ?? 0) >= FINISHED_REPLIES) return;
+    task.finishedReplies = (task.finishedReplies ?? 0) + 1;
+    this.statusUpdate(task);
   }
 
   statusUpdate(task: NegotiationTask): void {
@@ -472,13 +490,13 @@ function handle(run: Run, from: string, payload: unknown, ctx: Ctx): void {
       run.event({ kind: 'canceled', taskId: task.id, peer: from, state: task.state, reason: task.reason, peerText: text });
       return;
     }
-    existing.seen.push(m.messageId);
     if (isTerminal(existing.state)) {
       // Not pending any more: not honored. Tell the peer how it actually ended.
-      run.statusUpdate(existing);
+      run.replyFinished(existing, m.messageId);
       run.event({ kind: 'ignored', taskId: existing.id, peer: from, state: existing.state, reason: `cancel after ${existing.state}` });
       return;
     }
+    existing.seen.push(m.messageId);
     run.setState(existing, 'canceled', data.reason ?? 'canceled by peer');
     run.statusUpdate(existing);
     run.event({ kind: 'canceled', taskId: existing.id, peer: from, state: existing.state, reason: existing.reason, peerText: text });
@@ -488,8 +506,7 @@ function handle(run: Run, from: string, payload: unknown, ctx: Ctx): void {
   if (data.rdv === 'meeting/propose') {
     if (existing) {
       if (isTerminal(existing.state)) {
-        existing.seen.push(m.messageId);
-        run.statusUpdate(existing);
+        run.replyFinished(existing, m.messageId);
         run.event({ kind: 'ignored', taskId: existing.id, peer: from, state: existing.state, reason: `proposal for a ${existing.state} task` });
         return;
       }
@@ -523,8 +540,7 @@ function handle(run: Run, from: string, payload: unknown, ctx: Ctx): void {
   // counter / accept / decline need a pending task where the peer has the turn.
   if (!existing) return invalid(`${data.rdv} for an unknown task`);
   if (isTerminal(existing.state)) {
-    existing.seen.push(m.messageId);
-    run.statusUpdate(existing);
+    run.replyFinished(existing, m.messageId);
     run.event({ kind: 'ignored', taskId: existing.id, peer: from, state: existing.state, reason: `${data.rdv} after ${existing.state}` });
     return;
   }

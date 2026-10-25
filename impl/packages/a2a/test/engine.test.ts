@@ -5,6 +5,8 @@ import {
   type Ctx,
   emptyState,
   expire,
+  FINISHED_REPLIES,
+  SEEN_PER_TASK,
   type MeetingScope,
   MAX_TASKS_PER_PEER,
   MemoryCalendar,
@@ -454,6 +456,23 @@ describe('negotiation', () => {
       expect(r.events[0]).toMatchObject({ kind: 'invalid', reason: expect.stringMatching(/too many/) });
       // Another peer is unaffected.
       expect(Object.keys(receive(js, MALLORY, cancelFor(1), ctxOf(john)).state.tasks)).toHaveLength(MAX_TASKS_PER_PEER + 1);
+    });
+
+    it('replays against a finished task are bounded: seen is capped and replies stop (security review L3)', () => {
+      const omer = side(OMER, 1);
+      const john = side(JOHN, 2);
+      const { taskId, wire } = start(omer, john);
+      expect(task(john, taskId).state).toBe('completed');
+      const proposal = wire[0].payload as { type: string; message: { messageId: string } };
+      let replies = 0;
+      for (let i = 0; i < 200; i++) {
+        const replay = { ...proposal, message: { ...proposal.message, messageId: `00000000-0000-4000-9000-${String(i).padStart(12, '0')}` } };
+        const step = receive(john.state, OMER, replay, ctxOf(john));
+        john.state = step.state;
+        replies += step.outgoing.length;
+      }
+      expect(task(john, taskId).seen.length).toBeLessThanOrEqual(SEEN_PER_TASK);
+      expect(replies).toBe(FINISHED_REPLIES);
     });
 
     it('prunes finished tasks older than 30 days on any receive', () => {

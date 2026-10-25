@@ -341,6 +341,11 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
     it arrived on one of our own `dtopic`s and its `to_hint` maps to that
     same topic, so a probe for John re-posted on Carol's topic is dropped
     (Carol never grants a request that was not meant for her).
+51. **Replay work is bounded** (L3). `rdv/resend` from a contact is honored
+    at most 10 times an hour (`RESEND_LIMIT`, over the limit it is dropped,
+    not revoked). For a finished task the engine keeps at most 64
+    `messageId`s and answers with a status update at most 8 times
+    (`FINISHED_REPLIES`); later replays are ignored silently.
 
 ## Not implemented yet
 
