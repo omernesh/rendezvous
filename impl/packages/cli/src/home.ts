@@ -70,6 +70,8 @@ export interface ConsentEntry extends ConsentHash {
   subject?: string;
   /** request: the tier and scope this phrase approves. */
   terms?: ConsentTerms;
+  /** request, candidate: the local label it approves for the contact (none if absent; part of `digest`). */
+  label?: string;
   /** The phrase this one replaced, so a stale phrase is reported as such. */
   previous?: ConsentHash;
   created: string;

@@ -91,8 +91,8 @@ the human reads in their own terminal (`rdv contact pending`), below.
 | `rdv_init` | profile, email, phone, relays, public_pointer, calendar, window, tz | agent ID, fingerprint; keeps an existing agent (re-key only with `rdv init --force`) |
 | `rdv_status` | — | ID, relays, contacts (`local_label`: what your user called them; `unverified_claims`: the addresses their cards claim; `label_conflict` when two share a label), pending count, negotiation settings, approval mode |
 | `rdv_publish_card` | — | topics published |
-| `rdv_discover` | address | cards found (agent ID, fingerprint, claimed addresses, relays) |
-| `rdv_request_contact` | target (email, +phone, or agent ID), greeting, label | request ID, local_label (default: the address probed, or looked up with `rdv_discover`) |
+| `rdv_discover` | address | cards found (agent ID, fingerprint, claimed addresses, relays); never a label (anyone can publish a card for any address) |
+| `rdv_request_contact` | target (email, +phone, or agent ID), greeting, label (probes only) | request ID, local_label (a probe: the address probed, applied only when the human confirms the answer; by agent ID: none, and a `label` is refused) |
 | `rdv_pending_requests` | — | requests with fingerprint, binding, how they arrived, untrusted greeting |
 | `rdv_grant` | request_id, tier, may_propose_meetings, confirm_phrase, label; or grant_id (+ confirm_phrase, label) to confirm a probe answer | contact (needs the human, below) |
 | `rdv_revoke` | agent_id, or request_id / grant_id (+ block) to decline | revoked / declined / rejected |
@@ -124,9 +124,11 @@ one of these:
 1. **Elicitation.** If the client advertises the `elicitation` capability, the
    server asks the client to show the human a form: requester agent ID,
    fingerprint, binding (with a warning that `claimed` proves nothing), how the
-   request arrived, the greeting marked untrusted, and a tier picker. Only
-   `accept` with `approve: true` grants; the human's tier wins over the model's.
-   The model never sees or answers this form.
+   request arrived, the greeting marked untrusted, a tier picker, and the
+   local label (the model's suggestion, editable; empty for none). Only
+   `accept` with `approve: true` grants; the human's tier and label win over
+   the model's. The model never sees or answers this form. A probe answer
+   gets the same form, with the probed address as the label.
 2. **Confirm phrase.** Otherwise each pending request gets a random phrase
    (three words and three digits, about 28 bits), shown only on human
    channels: this server's stderr and `rdv contact pending` in text mode (not
@@ -134,9 +136,11 @@ one of these:
    the terminal issues a new phrase each time it shows one (the latest shown
    wins). The human reads it and types it to the model, which passes it as
    `confirm_phrase`. A phrase approves the request on the terms shown with it
-   (tier and scope, default first): if the model asks for another tier or
-   `may_propose_meetings`, it is refused and the human is shown a new phrase
-   for exactly those terms (issue #12). Phrases are per request and single
+   (tier, scope and local label, default first: no label): if the model asks
+   for another tier, `may_propose_meetings` or `label`, it is refused and the
+   human is shown a new phrase for exactly those terms (issue #12, NOTES 62).
+   A probe answer's phrase is bound the same way to its label (the probed
+   address unless the model asks for another). Phrases are per request and single
    use; 5 wrong tries replace the phrase. A phrase can approve tiers `friend`
    and below; `family`/`spouse` need the form or `rdv contact grant --tier …`
    in a terminal.
@@ -177,15 +181,15 @@ model to ask its human.
 stops instructions injected through peer text from making it grant. It does
 **not** stop a model that can run arbitrary shell commands or read arbitrary
 files as the same OS user: such a model can catch a phrase while it is shown,
-run `rdv contact grant` itself, or read `agent.json`, which holds the secret
+run `rdv contact grant` or `rdv contact label` itself, or read `agent.json`, which holds the secret
 key, a worse problem. In Claude Code,
 keep the default permission mode (shell commands and reads outside the project
 need approval) and add deny rules for the home dir and `rdv contact pending`
 (example in `demo/SCRIPT.md`). The Claude Code plugin adds a PreToolUse hook
 (`plugins/rendezvous/hooks/consent-guard.mjs`) on every tool that refuses the
 consent and phrase-showing `rdv` commands (`contact grant`/`confirm`/`resync`/
-`pending`, `dinner confirm`/`cancel`/`list`, `listen --auto-grant`/
-`--auto-confirm`, `init --force`), any command naming `agent.json`,
+`label`/`pending`, `contact request <agent-id> --label`, `dinner confirm`/
+`cancel`/`list`, `listen --auto-grant`/`--auto-confirm`, `init --force`), any command naming `agent.json`,
 `agent.json.bak` or `consent.json`, and any read, edit, search or glob of a
 Rendezvous home. It parses commands like a shell before matching. It is
 defence in depth, **not a security boundary**: a model with a shell can still

@@ -19,8 +19,8 @@ import {
   verifyCard,
 } from '@rendezvous/core';
 import { cancel, cancelMeeting, confirmMeeting, describeSlot, meetingSnapshot, NegotiationError, type NegotiationTask, parseInstant, propose, type Step } from '@rendezvous/a2a';
-import { candidateTarget, describeTerms, reissueForDisplay, requestSubject } from './consent.js';
-import { CliError, type Config, type ConsentAction, type ConsentTerms, consentKey, Home, type InboxEntry, parseJsonLines } from './home.js';
+import { candidateDigest, describeApproval, reissueForDisplay, requestSubject, type ShownPhrase } from './consent.js';
+import { CliError, type Config, type ConsentAction, consentKey, Home, type InboxEntry, parseJsonLines } from './home.js';
 
 import { listen } from './listen.js';
 import { relayTransport } from './transport.js';
@@ -304,17 +304,18 @@ export async function contactPending({ home, out }: Ctx): Promise<void> {
   // Only their hashes are stored (issue #12), so showing one issues a new phrase for the same request and terms, which replaces it.
   const shown =
     out.json || (pending.length === 0 && candidates.length === 0)
-      ? new Map<string, { phrase: string; terms?: ConsentTerms }>()
+      ? new Map<string, ShownPhrase>()
       : await home.locked(async () =>
           reissueForDisplay(home, [
             ...pending.map((p) => ({ action: 'request' as const, id: p.request.id, subject: requestSubject(p) })),
-            ...candidates.map(candidateTarget),
+            ...candidates.map((c) => ({ action: 'candidate' as const, id: c.grant.id, subject: candidateDigest(c) })),
           ]),
         );
   const phraseLine = (action: ConsentAction, id: string) => {
     const s = shown.get(consentKey(action, id));
     if (!s) return '';
-    const terms = s.terms ? `\n  it approves: ${clean(describeTerms(s.terms))}` : '';
+    // What it approves, including the local label the contact will get (NOTES 62): the model may have asked for one.
+    const terms = `\n  it approves: ${clean(describeApproval(s))}`;
     return `\n  confirm phrase (tell it to your MCP client to approve): ${clean(s.phrase)}  (replaces any phrase shown before)${terms}`;
   };
   for (const p of pending) out.emit(requestView(p), requestText(p) + phraseLine('request', p.request.id));

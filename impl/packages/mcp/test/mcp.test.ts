@@ -10,6 +10,7 @@ import { startTestRelay, type TestRelay } from '@rendezvous/core/testing';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { Listener, RDV_BIN, rdv } from '../../cli/scenarios/harness.js';
 import {
+  candidateTarget,
   checkPhrase,
   dropPhrase,
   EventLog,
@@ -23,12 +24,16 @@ import {
   toModelEvent,
   UNTRUSTED_NOTE,
 } from '../src/index.js';
-import type { AgentState, PendingRequest } from '@rendezvous/core';
+import type { AgentState, GrantCandidate, PendingRequest } from '@rendezvous/core';
 import { confirmWithPhrase, dinnerFlow, type ElicitHandler, INJECTION, makeSide, moveHold, ok, onboardingFlow, phraseFromHumanLog, phraseFromTerminal, type Side, waitEvent } from './flow.js';
 import { appendEvents, Home } from '@rendezvous/cli/lib';
 import { generateKey } from '@rendezvous/core';
 
 const ESC = String.fromCharCode(27);
+
+/** A probe answer as the book stores it, for the phrase functions (only the fields they hash). */
+const fakeCandidate = (id: string, from = 'rdv1:john', toHint = 'john@doe.com') =>
+  ({ grant: { id, from }, request_ref: 'probe-1', to_hint: toHint, received: '2026-10-25T10:00:00Z' }) as unknown as GrantCandidate;
 
 let relay: TestRelay;
 let root: string;
@@ -465,17 +470,15 @@ describe('confirm phrases', () => {
     home.ensureDir();
     // A peer made its dinner task ID equal to its own contact request ID (both are its choice).
     const id = '00000000-0000-4000-8000-00000000c0de';
-    const [req, meet, cand] = syncPhrases(home, [
-      { action: 'request', id },
-      { action: 'meeting', id },
-      { action: 'candidate', id },
-    ]);
+    const candT = candidateTarget(fakeCandidate(id), 'john@doe.com');
+    const [req, meet, cand] = syncPhrases(home, [{ action: 'request', id }, { action: 'meeting', id }, candT]);
     expect(new Set([req.phrase, meet.phrase, cand.phrase]).size).toBe(3);
     expect(Object.keys(home.readConsent()).sort()).toEqual([`candidate:${id}`, `meeting:${id}`, `request:${id}`]);
     // The phrase the human was shown to approve the contact does not confirm the dinner, and the reverse.
     expect(checkPhrase(home, { action: 'meeting', id }, req.phrase).ok).toBe(false);
     expect(checkPhrase(home, { action: 'request', id }, meet.phrase).ok).toBe(false);
-    expect(checkPhrase(home, { action: 'candidate', id }, meet.phrase).ok).toBe(false);
+    expect(checkPhrase(home, candT, meet.phrase).ok).toBe(false);
+    expect(checkPhrase(home, { ...candT, action: 'meeting' }, cand.phrase).ok).toBe(false);
     expect(checkPhrase(home, { action: 'meeting', id }, meet.phrase).ok).toBe(true);
     // An entry whose stored action disagrees with its key (tampered, or a legacy file) approves nothing.
     const consent = home.readConsent();
@@ -930,14 +933,26 @@ describe('chat onboarding (the plugin skill, plugins/rendezvous)', () => {
     await ok(john, 'rdv_publish_card');
     await new Promise((r) => setTimeout(r, 300));
 
-    // Omer looks John up and asks him by card: the contact is labeled with the address Omer looked up.
+    // Omer looks John up and asks him by card. Discovery is only a claim (anyone can publish a card on John's topic) and
+    // nobody on Omer's side approves a request by card, so the contact gets no label from it, or from the model (NOTES 62).
     const found = await ok(omer, 'rdv_discover', { address: johnAt });
     expect(found.cards.map((c: { agent_id: string }) => c.agent_id)).toEqual([j.agent_id]);
+    expect(found.note).toContain('gets no local_label');
+    const labeled = await omer.call('rdv_request_contact', { target: j.agent_id, label: johnAt });
+    expect(labeled.isError).toBe(true);
+    expect(labeled.text).toContain('label is only for a request by email or phone');
     const asked = await ok(omer, 'rdv_request_contact', { target: j.agent_id });
-    expect(asked.local_label).toBe(johnAt);
+    expect(asked.local_label).toBeNull();
     const toJohn = await waitEvent(john, (x) => x.type === 'contact_request' && x.from === o.agent_id, 'Omer asking John', 10_000);
     await ok(john, 'rdv_grant', { request_id: toJohn.request_id });
     await waitEvent(omer, (x) => x.type === 'contact' && x.peer === j.agent_id, 'John as a contact', 10_000);
+    expect((await ok(omer, 'rdv_status')).contacts.find((c: { agent_id: string }) => c.agent_id === j.agent_id)).toMatchObject({ local_label: null });
+    const unnamed = await omer.call('rdv_send', { to: johnAt, payload: { type: 'note', text: 'too early' } });
+    expect(unnamed.isError).toBe(true);
+    expect(unnamed.text).toContain(`no contact is labeled`);
+    // Omer's human names John in their own terminal, after checking the fingerprint.
+    const named = await rdv(['contact', 'label', j.agent_id, johnAt], omer.home.dir);
+    expect(named.lines[0]).toMatchObject({ event: 'labeled', label: johnAt });
 
     // Mallory asks Omer, and Omer's human approves her without naming her.
     await ok(mallory, 'rdv_discover', { address: omerAt });
@@ -981,6 +996,42 @@ describe('chat onboarding (the plugin skill, plugins/rendezvous)', () => {
     expect(await notes(mallory2)).toHaveLength(0);
   });
 
+  it('a discovered card never labels a contact, and with several cards none is picked', async () => {
+    root = mkdtempSync(join(tmpdir(), 'rdv-discover-'));
+    const yes: ElicitHandler = () => ({ action: 'accept', content: { approve: true } });
+    const [omer, john, mallory] = await Promise.all(['omer', 'john', 'mallory'].map((n) => makeSide(n, join(root, n), { elicit: yes })));
+    sides.push(omer, john, mallory);
+    const tag = randomBytes(3).toString('hex');
+    const johnAt = `john+${tag}@doe.com`;
+    const relays = [relay.url];
+    const o = await ok(omer, 'rdv_init', { profile: 'omer', email: `omer+${tag}@example.com`, relays });
+    // John and an impostor both publish a card on John's discovery topic.
+    const ids = [(await ok(john, 'rdv_init', { profile: 'john', email: johnAt, relays, public_pointer: true })).agent_id];
+    ids.push((await ok(mallory, 'rdv_init', { profile: 'mallory', email: johnAt, relays, public_pointer: true })).agent_id);
+    await ok(john, 'rdv_publish_card');
+    await ok(mallory, 'rdv_publish_card');
+    await new Promise((r) => setTimeout(r, 300));
+
+    const found = await ok(omer, 'rdv_discover', { address: johnAt });
+    expect(found.cards.map((c: { agent_id: string }) => c.agent_id).sort()).toEqual([...ids].sort());
+    expect(found.note).toContain('more than one card');
+    expect(found.note).not.toContain('will be labeled');
+    // Asking both by card (the model can't tell which is John): neither request, nor the contacts they become, carries a label.
+    for (const [i, side] of [john, mallory].entries()) {
+      expect((await ok(omer, 'rdv_request_contact', { target: ids[i] })).local_label).toBeNull();
+      const req = await waitEvent(side, (x) => x.type === 'contact_request' && x.from === o.agent_id, `request to ${side.name}`, 10_000);
+      await ok(side, 'rdv_grant', { request_id: req.request_id });
+      await waitEvent(omer, (x) => x.type === 'contact' && x.peer === ids[i], `${side.name} as a contact`, 10_000);
+    }
+    const contacts = (await ok(omer, 'rdv_status')).contacts;
+    expect(contacts).toHaveLength(2);
+    for (const c of contacts) expect(c).toMatchObject({ local_label: null, unverified_claims: [johnAt] });
+    expect((omer.home.readAgentState() as AgentState).book.outstanding).toEqual({});
+    const sent = await omer.call('rdv_send', { to: johnAt, payload: { type: 'note', text: 'which one?' } });
+    expect(sent.isError).toBe(true);
+    expect(sent.text).toContain('no contact is labeled');
+  });
+
   it('without forms, the model alone is refused and the phrase the human typed works', async () => {
     const { omer, john } = await pair();
     await onboardingFlow(omer, john, {
@@ -998,5 +1049,129 @@ describe('chat onboarding (the plugin skill, plugins/rendezvous)', () => {
         await ok(o, 'rdv_grant', { grant_id: grantId, confirm_phrase: phraseFromHumanLog(o, grantId) });
       },
     });
+  });
+});
+
+describe('local labels are part of what the human approves (NOTES 62)', () => {
+  const BANK = 'omer-bank@example.com';
+
+  /** Omer probes John's address; returns once John's agent has the request. */
+  async function probe(elicit: { omer?: ElicitHandler; john?: ElicitHandler } = {}) {
+    root = mkdtempSync(join(tmpdir(), 'rdv-labels-'));
+    const omer = await makeSide('omer', join(root, 'omer'), elicit.omer ? { elicit: elicit.omer } : {});
+    const john = await makeSide('john', join(root, 'john'), elicit.john ? { elicit: elicit.john } : {});
+    sides.push(omer, john);
+    const tag = randomBytes(3).toString('hex');
+    const omerAt = `omer+${tag}@example.com`;
+    const johnAt = `john+${tag}@doe.com`;
+    const o = await ok(omer, 'rdv_init', { profile: 'omer', email: omerAt, relays: [relay.url] });
+    const j = await ok(john, 'rdv_init', { profile: 'john', email: johnAt, relays: [relay.url] });
+    await new Promise((r) => setTimeout(r, 300));
+    expect((await ok(omer, 'rdv_request_contact', { target: johnAt })).local_label).toBe(johnAt);
+    const req = await waitEvent(john, (x) => x.type === 'contact_request' && x.from === o.agent_id, 'the request', 10_000);
+    return { omer, john, o, j, omerAt, johnAt, requestId: req.request_id as string };
+  }
+
+  const labelOf = async (side: Side, id: string) =>
+    (await ok(side, 'rdv_status')).contacts.find((c: { agent_id: string }) => c.agent_id === id)?.local_label;
+
+  it('the phrase functions bind the label: another label is other terms, and the human is told which', () => {
+    root = mkdtempSync(join(tmpdir(), 'rdv-phrase-'));
+    const home = new Home(root);
+    home.ensureDir();
+    const p = { request: { id: 'req-l', from: 'rdv1:omer' }, binding: 'claimed', received: '2026-10-25T10:00:00Z' } as unknown as PendingRequest;
+    const scope = { may_initiate: true, may_propose_meetings: true, may_access_calendar: 'free_busy', max_frequency: '100/day' } as const;
+    const c = fakeCandidate('grant-l');
+    const [req, cand] = syncPhrases(home, [requestTarget(p, 'stranger', scope, 'omer@example.com'), candidateTarget(c, 'john@doe.com')]);
+    for (const label of [BANK, undefined]) {
+      expect(checkPhrase(home, requestTarget(p, 'stranger', scope, label), req.phrase)).toMatchObject({ ok: false, reason: 'terms', label: 'omer@example.com' });
+      expect(checkPhrase(home, candidateTarget(c, label), cand.phrase)).toMatchObject({ ok: false, reason: 'terms', label: 'john@doe.com' });
+    }
+    expect(checkPhrase(home, requestTarget(p, 'stranger', scope, 'omer@example.com'), req.phrase).ok).toBe(true);
+    expect(checkPhrase(home, candidateTarget(c, 'john@doe.com'), cand.phrase).ok).toBe(true);
+    // A label swapped in consent.json no longer hashes to the digest: the entry approves nothing.
+    const consent = home.readConsent();
+    consent['request:req-l'] = { ...consent['request:req-l'], label: BANK };
+    consent['candidate:grant-l'] = { ...consent['candidate:grant-l'], label: BANK };
+    home.writeConsent(consent);
+    expect(checkPhrase(home, requestTarget(p, 'stranger', scope, BANK), req.phrase)).toMatchObject({ ok: false, reason: 'no-phrase' });
+    expect(checkPhrase(home, candidateTarget(c, BANK), cand.phrase)).toMatchObject({ ok: false, reason: 'no-phrase' });
+    // Nor does a probe-answer phrase from before labels were bound (no subject).
+    home.writeConsent({ 'candidate:grant-l': { action: 'candidate', digest: 'a'.repeat(64), salt: 'c2FsdA', hash: 'aGFzaA', created: '', attempts: 0 } });
+    expect(checkPhrase(home, candidateTarget(c, 'john@doe.com'), 'x')).toMatchObject({ ok: false, reason: 'no-phrase' });
+  });
+
+  it('a request phrase approves only the label the human was shown with it', async () => {
+    const { john, o, omerAt, requestId } = await probe();
+    const shown = phraseFromHumanLog(john, requestId); // issued with the default terms, no label
+    // The model presents the human's phrase with a label the human never saw: refused, and the human is shown that label.
+    const swapped = await john.call('rdv_grant', { request_id: requestId, confirm_phrase: shown, label: BANK });
+    expect(swapped.isError).toBe(true);
+    expect(swapped.text).toContain('does not approve these terms');
+    expect(swapped.text).toContain(`local label "${BANK}"`);
+    expect(john.humanLog.at(-1)).toContain(`Your assistant asks to approve it as: tier stranger, may propose meetings, calendar free_busy, up to 100/day, local label "${BANK}"`);
+    const forBank = phraseFromHumanLog(john, requestId);
+    expect(forBank).not.toBe(shown);
+    // That phrase approves the bank label only; asking for another replaces it again, in front of the human.
+    expect((await john.call('rdv_grant', { request_id: requestId, confirm_phrase: forBank, label: omerAt })).isError).toBe(true);
+    expect(john.humanLog.at(-1)).toContain(`local label "${omerAt}"`);
+    expect((await john.call('rdv_grant', { request_id: requestId, confirm_phrase: forBank, label: BANK })).isError).toBe(true); // replaced
+    expect((await ok(john, 'rdv_status')).contacts).toEqual([]);
+    // The terminal shows the human what the current phrase approves, label included.
+    const text = execFileSync(process.execPath, [RDV_BIN, 'contact', 'pending', '--home', john.home.dir], { encoding: 'utf8' });
+    expect(text).toContain(`it approves: tier stranger, may propose meetings, calendar free_busy, up to 100/day, local label "${BANK}"`);
+    const granted = await ok(john, 'rdv_grant', { request_id: requestId, confirm_phrase: phraseFromTerminal(text, requestId), label: BANK });
+    expect(granted).toMatchObject({ granted: true, local_label: BANK });
+    expect(await labelOf(john, o.agent_id)).toBe(BANK); // stored: what the human approved, and nothing else
+  });
+
+  it('a probe answer phrase approves only the label it was announced with', async () => {
+    const { omer, john, j, johnAt, requestId } = await probe();
+    await ok(john, 'rdv_grant', { request_id: requestId, confirm_phrase: phraseFromHumanLog(john, requestId) });
+    const cand = await waitEvent(omer, (x) => x.type === 'contact_candidate', 'the probe answer', 10_000);
+    expect(omer.humanLog.at(-1)).toContain(`Confirming it gives it local label "${johnAt}"`);
+    const byDefault = phraseFromHumanLog(omer, cand.grant_id);
+    const work = 'john-work@doe.com';
+    const swapped = await omer.call('rdv_grant', { grant_id: cand.grant_id, confirm_phrase: byDefault, label: work });
+    expect(swapped.isError).toBe(true);
+    expect(swapped.text).toContain(`it was for local label "${johnAt}"`);
+    expect(omer.humanLog.at(-1)).toContain(`Your assistant asks to confirm it with local label "${work}"`);
+    expect((await ok(omer, 'rdv_status')).contacts).toEqual([]);
+    // A phrase-less call for the same label does not issue yet another phrase: the human already has one for it.
+    const before = omer.humanLog.length;
+    expect((await omer.call('rdv_grant', { grant_id: cand.grant_id, label: work })).isError).toBe(true);
+    expect(omer.humanLog.length).toBe(before);
+    const text = execFileSync(process.execPath, [RDV_BIN, 'contact', 'pending', '--home', omer.home.dir], { encoding: 'utf8' });
+    expect(text).toContain(`it approves: local label "${work}"`);
+    const confirmed = await ok(omer, 'rdv_grant', { grant_id: cand.grant_id, confirm_phrase: phraseFromTerminal(text, cand.grant_id), label: work });
+    expect(confirmed).toMatchObject({ confirmed: true, local_label: work });
+    expect(await labelOf(omer, j.agent_id)).toBe(work);
+  });
+
+  it('the approval form shows the label with the fingerprint, and the label the human leaves in it is the one stored', async () => {
+    const forms: Array<{ message: string; label?: unknown }> = [];
+    const answer: { label?: string } = {};
+    const human: ElicitHandler = (params) => {
+      const props = (params as { requestedSchema?: { properties?: Record<string, { default?: unknown }> } }).requestedSchema?.properties ?? {};
+      forms.push({ message: params.message, label: props.label?.default });
+      return { action: 'accept', content: { approve: true, ...answer } };
+    };
+    const { omer, john, o, j, omerAt, johnAt, requestId } = await probe({ omer: human, john: human });
+    // John's model suggests a label; John's human sees it next to Omer's fingerprint and corrects it.
+    answer.label = omerAt;
+    expect(await ok(john, 'rdv_grant', { request_id: requestId, label: BANK })).toMatchObject({ granted: true, local_label: omerAt });
+    expect(forms[0].label).toBe(BANK);
+    expect(forms[0].message).toContain(`local label "${BANK}"`);
+    expect(forms[0].message).toContain('as your assistant suggests');
+    expect(forms[0].message).toContain(`Fingerprint: ${o.fingerprint}`);
+    expect(await labelOf(john, o.agent_id)).toBe(omerAt);
+    // Omer's model suggests another label for the probe answer; Omer's human clears it: no label at all, not the default.
+    const cand = await waitEvent(omer, (x) => x.type === 'contact_candidate', 'the probe answer', 10_000);
+    answer.label = '';
+    expect(await ok(omer, 'rdv_grant', { grant_id: cand.grant_id, label: 'john-work@doe.com' })).toMatchObject({ confirmed: true, local_label: null });
+    expect(forms[1].label).toBe('john-work@doe.com');
+    expect(forms[1].message).toContain(`Fingerprint: ${j.fingerprint}`);
+    expect(await labelOf(omer, j.agent_id)).toBeNull();
+    expect((await omer.call('rdv_send', { to: johnAt, payload: { type: 'note', text: 'x' } })).isError).toBe(true);
   });
 });
