@@ -1,6 +1,6 @@
 # Rendezvous: implementation plan (two-agent dinner demo)
 
-**Owner:** Omer Nesher · **Written:** 2026-10-24 · **Status:** step 1 done; step 2 (2.1–2.5) done on `impl/step-2-cli`; relay.nesher.co Cloudflare step and steps 3–4 open
+**Owner:** Omer Nesher · **Written:** 2026-10-24 · **Status:** steps 1–2 done; step 3 done on `impl/step-3-a2a` (relay-host relay run 2026-10-25); relay.nesher.co Cloudflare step and step 4 open
 
 This is the working plan for turning the Rendezvous spec ([SPEC.md](SPEC.md))
 into running code. It is meant to be picked up in a local Claude Code session:
@@ -350,6 +350,8 @@ Update the reading page with `python3 render_html.py` after editing SPEC.md.
   - [x] in-memory relay, part of `npm test`
   - [x] relay-host relay, two machines (`scenarios/two-machine.ps1`, passed twice 2026-10-25)
   - [x] two public relays via `test:live` (nos.lol, relay.primal.net, nostr.mom pass; NOTES.md item 11a)
-- [ ] Step 3: `@rendezvous/a2a` engine, calendar adapter, CLI integration
+- [x] Step 3: `@rendezvous/a2a` engine, calendar adapter, CLI integration (`impl/step-3-a2a`)
+  - [x] in-memory relay, part of `npm test`: overlap, no overlap (rejected in round 3), mid-flight cancel, duplicate delivery
+  - [x] relay-host relay (`ws://<relay-host>:7777`) via `test:live` (overlap), and all four variants by hand, 2026-10-25
 - [ ] Step 4: `@rendezvous/mcp`, demo script, recording, deck slide
 - [ ] Spec rev 3 with the follow-ups in §7

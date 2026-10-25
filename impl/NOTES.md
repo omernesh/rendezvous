@@ -52,7 +52,7 @@ into SPEC.md before v0.2.
     key of the recipient.
 11. **Discovery on Nostr**: topic documents use the same kind, with a `t` tag
     holding `dtopic` and `d` = hash of the content.
-11a. **Public relay survey (2026-10-25, PLAN �4.4 / step 2.4).** Per relay:
+11a. **Public relay survey (2026-10-25, PLAN §4.4 / step 2.4).** Per relay:
     publish two 30417 events (~2 KB, distinct `d`), read back by `#p` and `#t`
     on a new connection; same for regular kind 4417. Two runs, 5 min apart.
 
@@ -116,7 +116,7 @@ into SPEC.md before v0.2.
     bindings attach to the relationship record; it doesn't say the requester
     keeps one too. It should.
 20. **Gap buffer bounds.** Out-of-order envelopes are buffered only for
-    contacts and agents we asked by card, at most 16 peers ª 64 envelopes,
+    contacts and agents we asked by card, at most 16 peers × 64 envelopes,
     and persisted with the agent state. The spec's resend text (§7) should
     say receivers may bound and drop.
 21. **Channel state for strangers** (open). `Channels.acceptInbound`
@@ -158,11 +158,75 @@ into SPEC.md before v0.2.
     "connection failure" once and passed on retry. Treat damus as flaky
     until PLAN step 2.4 measures it.
 
+## A2A tasks (`@rendezvous/a2a`, step 3)
+
+28. **A2A mapping** (**spec change**, §7). §7 says "A2A task objects" but not
+    which. The library sends two payload types inside the envelope:
+    `a2a/message` carrying an A2A v0.3 `Message` (one negotiation turn), and
+    `a2a/task-update` carrying a `TaskStatusUpdateEvent` (an acknowledgement).
+    A whole `Task` object is never sent: each side keeps its own copy.
+    A2A assumes a client and a server agent; here both peers are agents, so
+    `role` is always `"agent"`. The spec should say both.
+29. **Meeting verbs** live in the message's single `data` part as
+    `data.rdv`: `meeting/propose` and `meeting/counter` (1–3 `slots`,
+    optional `place`, `expires`), `meeting/accept` (one `slot`),
+    `meeting/decline` (`reason`), `rdv/cancel` (optional `reason`, by the
+    message's `taskId`). Text parts are for humans and never drive anything.
+    The spec defines none of this. Validation is strict (unknown keys,
+    unknown verbs, non-UUID ids, more than 3 slots are rejected), which leaves
+    **open how to extend it**: a version field or an A2A extension URI.
+30. **Slots** are RFC 3339 date-times with an explicit offset (`Z` or
+    `±HH:MM`), compared as instants, so an accept may write the slot in
+    another offset. At most 12 h each. Local time in the CLI is a fixed
+    offset (`--tz`, the calendar's `timezone`, or the machine's current
+    offset); no IANA zones, so no DST inside a window.
+31. **Task states.** submitted (proposal out) → input-required (responder
+    countered) / working (proposer countered back) → completed | rejected |
+    canceled. "Pending" (§7 cancel) = not terminal. A round is one offer;
+    the receiver of the third offer declines if nothing fits. An accept must
+    pick a slot from the *latest* offer it answers.
+32. **Two dedupe layers.** `Channels` drops a re-delivered envelope (same
+    `seq`); the engine drops a re-sent message (same `messageId`, new
+    envelope) per task. §7's "receiver deduplicates by ID" should name
+    `messageId` for A2A.
+33. **Cancel.** Honored while pending. A cancel that arrives before its
+    proposal leaves a tombstone so the proposal is refused when it lands. A
+    cancel (or any verb) for a finished task is answered with a status
+    update giving the real end state.
+34. **Scope** (**spec change**, §5.3). Meeting verbs need
+    `may_propose_meetings: true` in the grant; per item 15 the same scope
+    governs both directions, so the CLI uses the contact's `inboundScope`
+    (the grant scope on both sides). `may_access_calendar` absent counts as
+    `free_busy` (proposing a slot is a free/busy disclosure); `none` blocks
+    negotiation; `full` still only ever shares slots. The calendar adapter
+    strips titles, so `free_busy` holds by construction. The spec should
+    define these defaults; core's default grant scope has no
+    `may_access_calendar`.
+35. **Bounded peer state** (security review). Only a meeting-capable grant
+    may create tasks or tombstones; at most 32 tasks per peer (finished ones
+    and tombstones evicted first; refused when all are pending); finished
+    tasks pruned after 30 days; a peer's `expires` defaults to 48 h and is
+    clamped to 7 days.
+36. **No commit phase** (open). The acceptor marks the task completed and
+    holds the slot when it sends `meeting/accept`; the proposer confirms with
+    a `completed` status update. If the proposer canceled or expired the task
+    meanwhile, the acceptor only learns it from the status update
+    (`peerState`) and keeps its hold. Concurrent negotiations can also
+    double-book a slot (offers are not held). Both need a hold/confirm step
+    for v0.2.
+37. **Crash window** (open, CLI). `listen --negotiate` sends replies before
+    it saves agent state; a crash in between would reuse `seq` on the next
+    send (a fork for the peer). Same window as the existing grant path.
+38. **Live run (2026-10-25).** `ws://<relay-host>:7777` (relay-host strfry):
+    overlap scenario via `npm run test:live` passed in about 5 s (agreed
+    Tue 27 Oct 19:00+02:00); all four variants by hand
+    (`dist/scenarios/dinner.js`) passed. Public relays not tried for step 3.
+
 ## Not implemented yet
 
 Mailbox probe and invite (§5.2), directories and suggestions (§4.5), DNS TXT
 lookup, key rotation, ntfy/MQTT fallbacks, direct (ICE/WebRTC) channels,
-`rdv/forget`, and A2A task semantics (step 3 of the demo plan).
+and `rdv/forget`.
 
 ## Environment
 
