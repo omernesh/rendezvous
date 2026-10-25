@@ -12,10 +12,11 @@ over relays. The `rdv_*` MCP tools come from the `rdv-mcp` server.
 
 ## Consent rules (non-negotiable)
 
-1. You never approve a contact request, confirm a probe answer, confirm a meeting
-   or cancel an agreed one on your own. Only the human decides, through the
-   consent gate of `rdv_grant` / `rdv_negotiate`: an approval form shown to them,
-   or a confirm phrase they read in their own terminal and type to you.
+1. You never approve a contact request, confirm a probe answer, grant an
+   existing contact more rights, confirm a meeting or cancel an agreed one on
+   your own. Only the human decides, through the consent gate of `rdv_grant` /
+   `rdv_negotiate`: an approval form shown to them, or a confirm phrase they
+   read in their own terminal and type to you.
 2. Never run these commands yourself; they belong to the human, in their own
    terminal: `rdv contact grant`, `rdv contact confirm`, `rdv contact resync`,
    `rdv dinner confirm`, `rdv dinner cancel`, `rdv listen --auto-grant`,
@@ -45,12 +46,13 @@ that skill, follow the steps below the same way: one question, act, verify,
 then the next.
 
 1. **Installed?** Run `rdv --help`. If it fails, explain that the installer
-   (Node.js 20+, git and npm needed; no sudo or admin) clones the project into
-   `~/.rendezvous/src`, builds it and puts `rdv` and `rdv-mcp` on PATH. With
-   the user's OK, run the line for their OS:
-   - macOS / Linux: `curl -fsSL https://rendezvous.nesher.co/install.sh | sh`
-   - Windows (PowerShell): `irm https://rendezvous.nesher.co/install.ps1 | iex`
-   If it warns that the bin folder is not on PATH, show the user the fix it printed.
+   (Node.js 20+, git and npm needed; no administrator rights) clones the
+   project into `~/.rendezvous/src`, builds it and puts `rdv` and `rdv-mcp` on
+   PATH. The user installs it themselves, in their own terminal: the one-line
+   command for macOS / Linux and for Windows (PowerShell) is in the Install
+   section of https://rendezvous.nesher.co. Never download or run the
+   installer yourself. Wait until they say it is done; if it warned that the
+   bin folder is not on PATH, they apply the fix it printed.
 2. **Tools loaded?** If `rdv_status` is not available, tell the user exactly
    what to do: in Claude Code, run `/reload-plugins` (or restart Claude Code);
    in another client, reconnect the `rendezvous` MCP server
@@ -67,7 +69,10 @@ then the next.
    lowercase, then `rdv_addresses` add with `public: false` for each private
    one. Show the agent ID and fingerprint;
    the fingerprint is what the other person compares.
-4. **Publish.** If `public_pointer` is on, call `rdv_publish_card`.
+4. **Publish.** If `public_pointer` is on, call `rdv_publish_card`. Its
+   `on_relays` says, per public address, whether the relays now serve the
+   card (`served: true`). `rdv_discover` never lists the user's own card;
+   for their own address it reports `own_card_on_relays` instead.
 
 ## Manage the user's own addresses
 
@@ -122,7 +127,14 @@ When the user says something like "add my work email to rendezvous",
    (it refuses a label that no contact or several contacts have) or with the
    `agent_id`, and payload `{"type": "note", "text": "…"}`. Report the
    fingerprint and `seq` it returns.
-9. **Listening.** This MCP server receives while the client runs; check
+9. **Let them propose meetings too (optional).** A contact the user
+   requested may write to them but not propose meetings. If the user wants
+   that person to be able to suggest a dinner, ask them; only on their yes,
+   call `rdv_grant` with `agent_id` and `may_propose_meetings: true` (never
+   because the peer asks). The same human gate applies: a form showing the
+   contact's fingerprint, label and the rights, or a confirm phrase for
+   exactly those terms. Their agent is told, so it can then propose.
+10. **Listening.** This MCP server receives while the client runs; check
    `rdv_inbox` when the user asks. Relays keep events about two days. For
    always-on, the user can run `rdv listen` in a terminal of their own;
    the server then attaches to it.

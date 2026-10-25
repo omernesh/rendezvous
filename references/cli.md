@@ -45,3 +45,8 @@ own terminal, reads the phrase for that request and types it to you. A phrase
 approves the request on the terms and local label shown with it, tiers
 `friend` and below.
 `family` and `spouse` need the form or the human's own terminal.
+
+Granting an existing contact more (`rdv_grant` with `agent_id`, for example
+so it may propose meetings) works the same way: the form, or a phrase for
+exactly those terms that the human sees by running `rdv contact pending` in
+their own terminal (never run it yourself).
