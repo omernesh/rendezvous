@@ -42,6 +42,15 @@
 // update. It needs no approval there: it only frees time. A peer that reports
 // `canceled` or `rejected` for a task we completed (the confirm crossed its
 // owner's cancel, or arrived past its grace) is taken at its word the same way.
+//
+// Extensions (SPEC §7.5, issue #4): every message we send lists the extension
+// URI of its verb in `extensions`. A message we cannot process because it
+// needs a verb, field or part we do not support is answered with a status
+// update that carries our real state for the task and, in its metadata under
+// UNSUPPORTED_KEY, the messageId and verb we could not handle; the sender
+// gets an `unsupported` event. Before sending meeting/cancel, the owner's
+// step checks the peer's card (`peerCapabilities`) and says so when the peer
+// does not advertise it, since an agent from before §7.5 drops it silently.
 import {
   type A2AMessage,
   type A2APayload,
@@ -50,7 +59,13 @@ import {
   LIMITS,
   type Place,
   parsePayload,
+  peerAdvertises,
   type TaskState,
+  UNSUPPORTED_KEY,
+  type UnsupportedMessage,
+  VERB_EXTENSION,
+  VERBS,
+  type Verb,
 } from './model.js';
 import { describeSlot, localDay, overlaps, parseInstant, sameSpan, type Slot, type Span, toSlot, toSpan, within } from './time.js';
 import { candidateSlots } from './window.js';
@@ -102,6 +117,8 @@ export interface NegotiationTask {
   seen: string[];
   /** Status updates sent in answer to messages after the task finished (capped). */
   finishedReplies?: number;
+  /** Unsupported replies sent for this task (capped like finishedReplies, SPEC §7.5). */
+  unsupportedReplies?: number;
   created: string;
   updated: string;
 }
@@ -135,6 +152,8 @@ export interface Ctx {
    * until `confirmMeeting` (issue #8).
    */
   autoConfirm?: boolean;
+  /** The extensions we support (default SUPPORTED_EXTENSIONS); a verb of any other is answered as unsupported. */
+  extensions?: readonly string[];
 }
 
 export type EventKind =
@@ -152,7 +171,9 @@ export type EventKind =
   | 'status'
   | 'duplicate'
   | 'ignored'
-  | 'invalid';
+  | 'invalid'
+  /** The peer's agent cannot process a message of ours (its reply, or its card, says so; SPEC §7.5). */
+  | 'unsupported';
 
 export interface NegotiationEvent {
   kind: EventKind;
@@ -282,8 +303,42 @@ class Run {
         { kind: 'text', text },
         { kind: 'data', data },
       ],
+      extensions: [VERB_EXTENSION[data.rdv]],
     };
     this.outgoing.push({ to: task.peer, payload: { type: 'a2a/message', message } });
+  }
+
+  /**
+   * Tell `from` we cannot process its message `m` (SPEC §7.5): a status update
+   * with our real state for the task, or `rejected` when we have none, and the
+   * messageId and verb under UNSUPPORTED_KEY. Never for another peer's task or
+   * context; for a task we do not have, only within a meeting-capable grant.
+   * At most FINISHED_REPLIES per task, so a replaying peer can't make us send
+   * forever (envelope dedupe and the grant's max_frequency bound the rest).
+   */
+  replyUnsupported(from: string, m: UnsupportedMessage): void {
+    const task = Object.hasOwn(this.state.tasks, m.taskId) ? this.state.tasks[m.taskId] : undefined;
+    if (task && (task.peer !== from || task.contextId !== m.contextId)) return;
+    if (!task && !checkScope(this.ctx.scope).ok) return;
+    if (task) {
+      if ((task.unsupportedReplies ?? 0) >= FINISHED_REPLIES) return;
+      task.unsupportedReplies = (task.unsupportedReplies ?? 0) + 1;
+    }
+    const state: TaskState = task?.state ?? 'rejected';
+    this.outgoing.push({
+      to: from,
+      payload: {
+        type: 'a2a/task-update',
+        update: {
+          kind: 'status-update',
+          taskId: m.taskId,
+          contextId: m.contextId,
+          status: { state, timestamp: this.nowIso },
+          final: isTerminal(state),
+          metadata: { [UNSUPPORTED_KEY]: m.verb ? { messageId: m.messageId, verb: m.verb } : { messageId: m.messageId } },
+        },
+      },
+    });
   }
 
   /**
@@ -555,9 +610,11 @@ export function receive(state: NegotiationState, from: string, payload: unknown,
 }
 
 function handle(run: Run, from: string, payload: unknown, ctx: Ctx): void {
-  const parsed = parsePayload(payload);
+  const parsed = parsePayload(payload, { extensions: ctx.extensions });
   if (!parsed.ok) {
-    run.event({ kind: 'invalid', taskId: null, peer: from, reason: parsed.reason });
+    run.event({ kind: 'invalid', taskId: parsed.unsupported?.taskId ?? null, peer: from, reason: parsed.reason });
+    // Well formed but beyond what we support: say so instead of dropping it silently (SPEC §7.5).
+    if (parsed.unsupported) run.replyUnsupported(from, parsed.unsupported);
     return;
   }
 
@@ -567,6 +624,19 @@ function handle(run: Run, from: string, payload: unknown, ctx: Ctx): void {
     if (!task || task.peer !== from || task.contextId !== u.contextId) {
       run.event({ kind: 'ignored', taskId: u.taskId, peer: from, reason: 'status update for an unknown task' });
       return;
+    }
+    // The peer could not process one of our messages. The verb is echoed by the
+    // peer, so it is named only if it is one of ours (the only ones we send).
+    const notice = parsed.value.unsupported;
+    if (notice) {
+      const verb = notice.verb && VERBS.includes(notice.verb as Verb) ? notice.verb : undefined;
+      run.event({
+        kind: 'unsupported',
+        taskId: task.id,
+        peer: from,
+        state: task.state,
+        reason: `the peer's agent does not support ${verb ?? 'one of our messages'}`,
+      });
     }
     // Informational: the peer's view never overrides ours, with one exception
     // that only reduces: a peer that reports the task ended (canceled or
@@ -778,7 +848,12 @@ export function cancelMeeting(
   state: NegotiationState,
   taskId: string,
   ctx: Pick<Ctx, 'now' | 'newId'>,
-  opts: { reason?: string; expected?: MeetingSnapshot } = {},
+  opts: {
+    reason?: string;
+    expected?: MeetingSnapshot;
+    /** The `capabilities` of the peer's card, when known: says so when it does not advertise meeting/cancel (SPEC §7.5). */
+    peerCapabilities?: readonly string[];
+  } = {},
 ): Step {
   const run = new Run(state, ctx as Ctx);
   const task = Object.hasOwn(run.state.tasks, taskId) ? run.state.tasks[taskId] : undefined;
@@ -794,6 +869,17 @@ export function cancelMeeting(
   const slot = task.agreed;
   run.cancelAgreed(task, 'canceled', opts.reason ?? 'canceled by us');
   run.message(task, { rdv: 'meeting/cancel', slot, ...(opts.reason ? { reason: opts.reason } : {}) }, `Sorry, I need to call off our dinner on ${describeSlot(slot)}.`);
+  // Sent anyway (harmless), but an agent that does not advertise the verb may drop it and keep the meeting.
+  if (opts.peerCapabilities && !peerAdvertises(opts.peerCapabilities, 'meeting/cancel')) {
+    run.event({
+      kind: 'unsupported',
+      taskId,
+      peer: task.peer,
+      state: task.state,
+      slot,
+      reason: "the peer's agent does not advertise meeting/cancel, so it may keep the dinner: tell them yourself",
+    });
+  }
   return run.result();
 }
 

@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { JsonFileCalendar, parsePayload, validateCalendar } from '../src/index.js';
+import { EXTENSIONS, JsonFileCalendar, parsePayload, SUPPORTED_EXTENSIONS, UNSUPPORTED_KEY, validateCalendar } from '../src/index.js';
 
 describe('calendar files are strict (security review M2)', () => {
   it('rejects JSON that is not a calendar, and hold never rewrites it', async () => {
@@ -114,5 +114,63 @@ describe('parsePayload', () => {
     expect(
       reason({ type: 'a2a/task-update', update: { kind: 'status-update', taskId: U(2), contextId: U(3), status: { state: 'done' }, final: true } }),
     ).toMatch(/task state/);
+  });
+});
+
+describe('parsePayload: extensions (SPEC §7.5, issue #4)', () => {
+  const head = { messageId: U(1), taskId: U(2), contextId: U(3) };
+  const unsupportedOf = (p: unknown, opts?: Parameters<typeof parsePayload>[1]) => {
+    const r = parsePayload(p, opts);
+    return r.ok ? 'ok' : r.unsupported;
+  };
+
+  it('critical: unknown verbs, unknown data fields, unknown part kinds and disabled extensions are unsupported', () => {
+    expect(unsupportedOf(msg({ rdv: 'meeting/reschedule', slot }))).toEqual({ ...head, verb: 'meeting/reschedule' });
+    expect(unsupportedOf(msg({ rdv: 'meeting/propose', slots: [slot], recurrence: 'weekly' }))).toEqual({ ...head, verb: 'meeting/propose' });
+    expect(unsupportedOf(msg({ rdv: 'meeting/propose', slots: [{ ...slot, tz: 'UTC' }] }))).toEqual({ ...head, verb: 'meeting/propose' });
+    expect(unsupportedOf(msg({ rdv: 'meeting/accept', slot, place: { url: 'x' } }))).toEqual({ ...head, verb: 'meeting/accept' });
+    expect(unsupportedOf(msg({ rdv: 'rdv/cancel' }, {}, [{ kind: 'file', file: { uri: 'x' } }, { kind: 'data', data: { rdv: 'rdv/cancel' } }]))).toEqual(head);
+    // An agent that has not enabled meeting/cancel's extension treats it like any unknown verb.
+    expect(unsupportedOf(msg({ rdv: 'meeting/cancel', slot }), { extensions: [EXTENSIONS.meeting] })).toEqual({ ...head, verb: 'meeting/cancel' });
+    expect(unsupportedOf(msg({ rdv: 'meeting/cancel', slot }), { extensions: SUPPORTED_EXTENSIONS })).toBe('ok');
+    expect(unsupportedOf(msg({ rdv: 'meeting/propose', slots: [slot] }), { extensions: [] })).toEqual({ ...head, verb: 'meeting/propose' });
+    // A verb echoed back must look like one; anything else is left out.
+    expect(unsupportedOf(msg({ rdv: 'Meeting/\u001b[2J' }))).toEqual(head);
+  });
+
+  it('malformed input is not "unsupported": no ids to answer, or nothing an extension could explain', () => {
+    expect(unsupportedOf(msg({ slots: [slot] }))).toBeUndefined(); // no verb at all
+    expect(unsupportedOf(msg({ rdv: 'meeting/accept' }))).toBeUndefined(); // missing field
+    expect(unsupportedOf(msg({ rdv: 'meeting/propose', slots: [{ start: slot.end, end: slot.start }] }))).toBeUndefined();
+    expect(unsupportedOf(msg({ rdv: 'meeting/reschedule' }, { messageId: 'nope' }))).toBeUndefined(); // ids are checked first
+    expect(unsupportedOf(msg({ rdv: 'rdv/cancel' }, { extra: 1 }))).toBeUndefined(); // A2A's own objects stay strict
+    expect(unsupportedOf(msg({ rdv: 'rdv/cancel' }, {}, [{ kind: 7 }, { kind: 'data', data: { rdv: 'rdv/cancel' } }]))).toBeUndefined();
+  });
+
+  it('ignorable: metadata on the message, its parts and updates, and unknown extension URIs', () => {
+    const ext = 'https://rendezvous.nesher.co/ext/dress-code/v1';
+    expect(
+      reason(
+        msg({ rdv: 'meeting/propose', slots: [slot] }, { extensions: [EXTENSIONS.meeting, ext], metadata: { [ext]: { code: 'smart casual' } } }, [
+          { kind: 'text', text: 'Dinner?', metadata: { [ext]: 1 } },
+          { kind: 'data', data: { rdv: 'meeting/propose', slots: [slot] }, metadata: { [`${ext}/hint`]: { any: ['thing'] } } },
+        ]),
+      ),
+    ).toBe('ok');
+    const update = (metadata: unknown) => ({
+      type: 'a2a/task-update',
+      update: { kind: 'status-update', taskId: U(2), contextId: U(3), status: { state: 'completed' }, final: true, metadata },
+    });
+    expect(reason(update({ [ext]: { x: 1 } }))).toBe('ok');
+    // Our own key: a well-formed notice is surfaced, a malformed one ignored (it is still metadata).
+    const notice = (v: unknown) => {
+      const r = parsePayload(update({ [UNSUPPORTED_KEY]: v }));
+      return r.ok && r.value.kind === 'update' ? (r.value.unsupported ?? null) : 'invalid';
+    };
+    expect(notice({ messageId: U(9), verb: 'meeting/cancel' })).toEqual({ messageId: U(9), verb: 'meeting/cancel' });
+    expect(notice({ messageId: U(9), verb: '<script>' })).toEqual({ messageId: U(9) });
+    expect(notice({ messageId: 'x' })).toBeNull();
+    expect(notice('meeting/cancel')).toBeNull();
+    expect(reason(msg({ rdv: 'rdv/cancel' }, { extensions: ['x'.repeat(201)] }))).toMatch(/short list/); // still bounded
   });
 });

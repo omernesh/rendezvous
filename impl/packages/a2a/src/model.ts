@@ -5,6 +5,22 @@
 //
 // Everything here arrives from a peer, so `parsePayload` validates strictly:
 // known keys only, UUID ids, bounded sizes, RFC 3339 slots with offsets.
+//
+// Extensions (SPEC §7.5, issue #4): each verb belongs to an A2A extension URI
+// (EXTENSIONS). An agent lists the URIs it supports on its card's
+// `capabilities` and in each message's `extensions`. What a receiver does with
+// what it does not know:
+//   critical   an unknown verb, an unknown key anywhere in `data`, a verb whose
+//              extension we do not support, an unknown part kind: rejected as
+//              *unsupported*. The result carries the message's ids so the
+//              engine can tell the sender (UNSUPPORTED_KEY).
+//   ignorable  `metadata` on the message, a part or a status update (A2A puts
+//              extension data there, keyed by extension URI), and URIs in
+//              `message.extensions` that we do not know: accepted, never read
+//              (except our own UNSUPPORTED_KEY).
+//   malformed  anything else (bad ids, slots or sizes, a missing field, an
+//              unknown key in the A2A objects themselves): invalid, silently
+//              dropped as before.
 import { parseInstant, type Slot } from './time.js';
 
 /** A2A v0.3 `TaskState` values this profile uses. */
@@ -84,11 +100,79 @@ export type CancelData = { rdv: 'rdv/cancel'; reason?: string };
 export type MeetingCancelData = { rdv: 'meeting/cancel'; slot: Slot; reason?: string };
 export type MeetingData = ProposeData | CounterData | AcceptData | ConfirmData | DeclineData | MeetingCancelData | CancelData;
 
+// --- extensions (SPEC §7.5) -------------------------------------------------
+
+/**
+ * A2A extension URIs for the meeting verbs. A URI names one immutable version:
+ * a breaking change gets a new URI (A2A v0.3 "Extensions"), and a new verb is
+ * a new extension, not a new version of the payload.
+ */
+export const EXTENSIONS = {
+  /** propose, counter, accept, confirm, decline, rdv/cancel, and the unsupported reply. */
+  meeting: 'https://rendezvous.nesher.co/ext/meetings/v1',
+  /** meeting/cancel: call off an agreed meeting (issue #20). */
+  meetingCancel: 'https://rendezvous.nesher.co/ext/meeting-cancel/v1',
+} as const;
+export type ExtensionUri = (typeof EXTENSIONS)[keyof typeof EXTENSIONS];
+
+/** Every extension this implementation supports (the default everywhere). */
+export const SUPPORTED_EXTENSIONS: readonly ExtensionUri[] = [EXTENSIONS.meeting, EXTENSIONS.meetingCancel];
+
+/** The extension each verb belongs to. */
+export const VERB_EXTENSION: Readonly<Record<Verb, ExtensionUri>> = {
+  'meeting/propose': EXTENSIONS.meeting,
+  'meeting/counter': EXTENSIONS.meeting,
+  'meeting/accept': EXTENSIONS.meeting,
+  'meeting/confirm': EXTENSIONS.meeting,
+  'meeting/decline': EXTENSIONS.meeting,
+  'rdv/cancel': EXTENSIONS.meeting,
+  'meeting/cancel': EXTENSIONS.meetingCancel,
+};
+
+/** Status-update metadata key of the "unsupported" reply, whose value is `{ messageId, verb? }`. */
+export const UNSUPPORTED_KEY = `${EXTENSIONS.meeting}/unsupported`;
+
+/** The card `capabilities` for an agent that supports `extensions`: core's default plus the URIs. */
+export function cardCapabilities(extensions: readonly string[] = SUPPORTED_EXTENSIONS): string[] {
+  return ['rdv/v1', 'a2a/0.3', ...extensions];
+}
+
+/**
+ * Does a peer's card advertise the extension `verb` belongs to? Strict: a card
+ * from before §7.5 lists no URIs, so it advertises nothing (it may understand
+ * the older verbs, but we cannot know).
+ */
+export function peerAdvertises(capabilities: unknown, verb: Verb): boolean {
+  return Array.isArray(capabilities) && capabilities.includes(VERB_EXTENSION[verb]);
+}
+
 export type ParsedPayload =
   | { kind: 'message'; message: A2AMessage; data: MeetingData; text: string[] }
-  | { kind: 'update'; update: TaskStatusUpdateEvent };
+  | { kind: 'update'; update: TaskStatusUpdateEvent; unsupported?: UnsupportedNotice };
 
-export type ParseResult = { ok: true; value: ParsedPayload } | { ok: false; reason: string };
+/** The peer could not process one of our messages (SPEC §7.5). */
+export interface UnsupportedNotice {
+  /** The messageId of our message. */
+  messageId: string;
+  /** The verb it names, if that is a well-formed verb name (still peer-chosen: display only). */
+  verb?: string;
+}
+
+/** A message we cannot process but can identify: the engine answers it with an unsupported reply. */
+export interface UnsupportedMessage {
+  messageId: string;
+  taskId: string;
+  contextId: string;
+  /** The verb, if it is a well-formed verb name. */
+  verb?: string;
+}
+
+export type ParseResult = { ok: true; value: ParsedPayload } | { ok: false; reason: string; unsupported?: UnsupportedMessage };
+
+export interface ParseOptions {
+  /** Extensions we support (default SUPPORTED_EXTENSIONS); a verb of any other one is unsupported. */
+  extensions?: readonly string[];
+}
 
 /** Limits on peer input. */
 export const LIMITS = {
@@ -108,19 +192,37 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 export const isUuid = (v: unknown): v is string => typeof v === 'string' && UUID_RE.test(v);
 
 class Invalid extends Error {}
+/** Well formed, but needs something we do not support (critical, SPEC §7.5). */
+class Unsupported extends Invalid {
+  head?: Omit<UnsupportedMessage, 'verb'>;
+  constructor(
+    reason: string,
+    public verb?: string,
+  ) {
+    super(reason);
+  }
+}
 const fail = (reason: string): never => {
   throw new Invalid(reason);
 };
+const unsupported = (reason: string, verb?: string): never => {
+  throw new Unsupported(reason, verb);
+};
+/** A verb name we may echo back or show: `<word>/<word>`, short. Anything else is left out. */
+const VERB_NAME_RE = /^[a-z][a-z0-9-]{0,30}\/[a-z][a-z0-9-]{0,30}$/;
+export const verbName = (v: unknown): string | undefined => (typeof v === 'string' && VERB_NAME_RE.test(v) ? v : undefined);
 
 const isObject = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v) && Object.getPrototypeOf(v) === Object.prototype;
 
-function keys(obj: Record<string, unknown>, required: string[], optional: string[], what: string): void {
+/** Known keys only. Inside `data` (`critical`) an unknown key is unsupported rather than malformed (SPEC §7.5). */
+function keys(obj: Record<string, unknown>, required: string[], optional: string[], what: string, critical = false): void {
   for (const k of required) if (!(k in obj)) fail(`${what}: missing "${k}"`);
   for (const k of Object.keys(obj)) {
-    if (!required.includes(k) && !optional.includes(k)) fail(`${what}: unknown field "${k.slice(0, 40)}"`);
+    if (!required.includes(k) && !optional.includes(k)) (critical ? unsupported : fail)(`${what}: unknown field "${k.slice(0, 40)}"`);
   }
 }
+const dataKeys = (obj: Record<string, unknown>, required: string[], optional: string[], what: string) => keys(obj, required, optional, what, true);
 
 function shortString(v: unknown, what: string, max: number = LIMITS.shortText): string {
   if (typeof v !== 'string' || v.length === 0 || v.length > max) fail(`${what} must be a string of 1–${max} characters`);
@@ -139,7 +241,7 @@ function stringList(v: unknown, what: string, check: (s: unknown) => boolean): v
 /** A slot: exactly `{start, end}`, RFC 3339 with offsets, end after start, at most 12 h. */
 export function parseSlot(v: unknown, what = 'slot'): Slot {
   if (!isObject(v)) return fail(`${what} must be an object`);
-  keys(v, ['start', 'end'], [], what);
+  dataKeys(v, ['start', 'end'], [], what);
   const start = parseInstant(v.start);
   const end = parseInstant(v.end);
   if (start === null || end === null) fail(`${what}: start and end must be RFC 3339 date-times with an offset`);
@@ -150,20 +252,32 @@ export function parseSlot(v: unknown, what = 'slot'): Slot {
 
 function parsePlace(v: unknown): Place {
   if (!isObject(v)) return fail('place must be an object');
-  keys(v, [], ['name', 'area'], 'place');
+  dataKeys(v, [], ['name', 'area'], 'place');
   const place: Place = {};
   if (v.name !== undefined) place.name = shortString(v.name, 'place.name');
   if (v.area !== undefined) place.area = shortString(v.area, 'place.area');
   return place;
 }
 
-function parseData(v: unknown): MeetingData {
+function parseData(v: unknown, extensions: readonly string[]): MeetingData {
   if (!isObject(v)) return fail('data part must hold an object');
   const verb = v.rdv;
-  if (typeof verb !== 'string' || !VERBS.includes(verb as Verb)) {
-    return fail(`unknown verb ${JSON.stringify(typeof verb === 'string' ? verb.slice(0, 40) : verb)}`);
+  const shown = JSON.stringify(typeof verb === 'string' ? verb.slice(0, 40) : verb);
+  if (typeof verb !== 'string') return fail(`unknown verb ${shown}`);
+  if (!VERBS.includes(verb as Verb)) return unsupported(`unknown verb ${shown}`, verbName(verb));
+  if (!extensions.includes(VERB_EXTENSION[verb as Verb])) return unsupported(`unsupported verb ${shown} (its extension is not enabled)`, verb);
+  try {
+    return parseVerb(v, verb as Verb);
+  } catch (err) {
+    // An unknown field of a verb we know: the reply names the verb.
+    if (err instanceof Unsupported && err.verb === undefined) err.verb = verb;
+    throw err;
   }
-  switch (verb as Verb) {
+}
+
+function parseVerb(v: Record<string, unknown>, verb: Verb): MeetingData {
+  const keys = dataKeys;
+  switch (verb) {
     case 'meeting/propose':
     case 'meeting/counter': {
       keys(v, ['rdv', 'slots'], ['place', 'expires'], verb);
@@ -212,7 +326,7 @@ function parseData(v: unknown): MeetingData {
   }
 }
 
-function parseMessage(v: unknown): ParsedPayload {
+function parseMessage(v: unknown, extensions: readonly string[]): ParsedPayload {
   if (!isObject(v)) return fail('message must be an object');
   keys(v, ['kind', 'messageId', 'taskId', 'contextId', 'role', 'parts'], ['metadata', 'extensions', 'referenceTaskIds'], 'message');
   if (v.kind !== 'message') fail('message.kind must be "message"');
@@ -224,9 +338,19 @@ function parseMessage(v: unknown): ParsedPayload {
   if (!Array.isArray(v.parts) || v.parts.length === 0 || v.parts.length > LIMITS.parts) {
     fail(`message.parts must hold 1–${LIMITS.parts} parts`);
   }
+  try {
+    return parseParts(v, v.parts as unknown[], extensions);
+  } catch (err) {
+    // The ids are valid by now, so the sender can be told what we could not do.
+    if (err instanceof Unsupported) err.head = { messageId: v.messageId as string, taskId: v.taskId as string, contextId: v.contextId as string };
+    throw err;
+  }
+}
+
+function parseParts(v: Record<string, unknown>, parts: unknown[], extensions: readonly string[]): ParsedPayload {
   const text: string[] = [];
   let data: MeetingData | undefined;
-  for (const p of v.parts as unknown[]) {
+  for (const p of parts) {
     if (!isObject(p)) return fail('part must be an object');
     if (p.kind === 'text') {
       keys(p, ['kind', 'text'], ['metadata'], 'text part');
@@ -237,9 +361,11 @@ function parseMessage(v: unknown): ParsedPayload {
       keys(p, ['kind', 'data'], ['metadata'], 'data part');
       metadata(p.metadata, 'data part');
       if (data) fail('more than one data part');
-      data = parseData(p.data);
+      data = parseData(p.data, extensions);
+    } else if (typeof p.kind === 'string') {
+      unsupported(`unsupported part kind ${JSON.stringify(p.kind.slice(0, 20))}`);
     } else {
-      fail(`unsupported part kind ${JSON.stringify(typeof p.kind === 'string' ? p.kind.slice(0, 20) : p.kind)}`);
+      fail(`unsupported part kind ${JSON.stringify(p.kind)}`);
     }
   }
   if (!data) return fail('no data part with a verb');
@@ -258,17 +384,31 @@ function parseUpdate(v: unknown): ParsedPayload {
   keys(st, ['state'], ['timestamp'], 'update.status');
   if (typeof st.state !== 'string' || !TASK_STATES.includes(st.state as TaskState)) fail('update.status.state is not a task state');
   if (st.timestamp !== undefined && parseInstant(st.timestamp) === null) fail('update.status.timestamp must be RFC 3339');
-  return { kind: 'update', update: v as unknown as TaskStatusUpdateEvent };
+  const update = v as unknown as TaskStatusUpdateEvent;
+  const notice = unsupportedNotice(isObject(v.metadata) && Object.hasOwn(v.metadata, UNSUPPORTED_KEY) ? v.metadata[UNSUPPORTED_KEY] : undefined);
+  return notice ? { kind: 'update', update, unsupported: notice } : { kind: 'update', update };
 }
 
-/** Validate a decrypted envelope payload as an A2A message or task update. Never throws. */
-export function parsePayload(input: unknown): ParseResult {
+/** Our own key in update metadata. Metadata is ignorable, so a malformed notice is ignored, not an error. */
+function unsupportedNotice(v: unknown): UnsupportedNotice | undefined {
+  if (!isObject(v) || !isUuid(v.messageId)) return undefined;
+  const verb = verbName(v.verb);
+  return verb ? { messageId: v.messageId, verb } : { messageId: v.messageId };
+}
+
+/**
+ * Validate a decrypted envelope payload as an A2A message or task update.
+ * Never throws. A message that is well formed but needs a verb, field or part
+ * we do not support fails with `unsupported` set (SPEC §7.5).
+ */
+export function parsePayload(input: unknown, opts: ParseOptions = {}): ParseResult {
+  const extensions = opts.extensions ?? SUPPORTED_EXTENSIONS;
   try {
     if (!isObject(input)) fail('payload must be an object');
     const p = input as Record<string, unknown>;
     if (p.type === 'a2a/message') {
       keys(p, ['type', 'message'], [], 'a2a/message');
-      return { ok: true, value: parseMessage(p.message) };
+      return { ok: true, value: parseMessage(p.message, extensions) };
     }
     if (p.type === 'a2a/task-update') {
       keys(p, ['type', 'update'], [], 'a2a/task-update');
@@ -276,6 +416,9 @@ export function parsePayload(input: unknown): ParseResult {
     }
     return fail('not an a2a payload');
   } catch (err) {
+    if (err instanceof Unsupported && err.head) {
+      return { ok: false, reason: err.message, unsupported: err.verb ? { ...err.head, verb: err.verb } : { ...err.head } };
+    }
     if (err instanceof Invalid) return { ok: false, reason: err.message };
     throw err;
   }

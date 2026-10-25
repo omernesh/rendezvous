@@ -612,8 +612,8 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
     list shows a new one that replaces it (item 57). The model may still cancel a pending negotiation alone,
     as before. **State:** `canceled`, with `agreed` kept as the record; no new
     task state or sub-state on the wire, so old peers fail only on the verb
-    (unknown verb, dropped; their side stays `completed` and nothing reports
-    it, open). **Receiving** needs no approval,
+    (unknown verb, dropped; their side stays `completed`; was open, now
+    reported to the canceling human, item 65). **Receiving** needs no approval,
     since it only frees time and a peer still can't create commitments: honored
     only for a `completed` task with that peer, `contextId` and slot (as
     instants), regardless of grant scope like `rdv/cancel`; an unknown task,
@@ -866,6 +866,67 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
     the book again: a declined one stays declined; an evicted one may come
     back as pending (it left `seenIds`, item 46), bounded by the same cap.
     Wire format unchanged; vectors not regenerated.
+
+## Extending the meeting verbs
+
+65. **Verbs are A2A extensions** (**spec change**, §4.3, §7.1–§7.3, new
+    §7.5, §11.8, §11.11; issue #4). Compared a version field in our payload
+    with A2A v0.3 extension URIs (checked against the v0.3 spec: URIs in
+    `AgentCapabilities.extensions`, `Message.extensions`, extension data in
+    `metadata` keyed by URI, a new URI per breaking change, no new fields in
+    A2A objects or enum values). Chose URIs; the comparison is in §7.5. In
+    `@rendezvous/a2a` (`model.ts`):
+    - `EXTENSIONS.meeting` = `https://rendezvous.nesher.co/ext/meetings/v1`
+      (propose, counter, accept, confirm, decline, `rdv/cancel`, the
+      unsupported reply) and `EXTENSIONS.meetingCancel` =
+      `…/ext/meeting-cancel/v1`; `VERB_EXTENSION` maps each verb,
+      `SUPPORTED_EXTENSIONS` is the default, `cardCapabilities()` the card
+      list, `peerAdvertises(capabilities, verb)` the strict check (a card
+      from before this lists no URIs and advertises nothing). The base URI
+      says `meetings`, not `meeting`, partly so the relay check in the CLI
+      dinner test (no `meeting/` in anything the relay sees) stays as strict
+      as it was: the card's `capabilities` is cleartext in a topic probe.
+    - **Discovery is the card**, not the grant scope: `capabilities` already
+      exists, is signed and travels with every request and grant; the scope
+      is consent, and a software upgrade should not need a new grant. `rdv
+      init` (and so `rdv_init`) puts `cardCapabilities()` on new cards. Not a
+      core wire change: `capabilities` was always a free list of strings and
+      core's default is unchanged, so the vectors are unchanged. Existing
+      agents keep their old card until re-initialized, and contacts hold the
+      card they received, so an upgraded peer looks old (warns needlessly;
+      §11.8).
+    - **Unknowns, decided:** critical (unknown verb, a verb whose extension
+      `ParseOptions.extensions` / `Ctx.extensions` leaves out, an unknown key
+      anywhere in `data` including slots and `place`, an unknown string part
+      kind) fail with `unsupported` = the message's ids and verb, once the
+      ids are known valid. Ignorable: `metadata` on message, parts and
+      updates, and unknown URIs in `message.extensions` (understanding is
+      decided by `data`). Everything else stays malformed and silent:
+      unknown keys in the A2A objects, unknown task states, missing fields,
+      bad slots. The `reason` strings are unchanged.
+    - **Unsupported reply** (`Run.replyUnsupported`): an `a2a/task-update`
+      with our real state for the task, or `rejected` when we have none,
+      and `metadata[UNSUPPORTED_KEY] = {messageId, verb?}` (verb only if it
+      matches `<word>/<word>`). Only to the task's own peer and `contextId`;
+      for an unknown task only when `checkScope` passes; capped at
+      `FINISHED_REPLIES` per task (`unsupportedReplies`); never for status
+      updates, so two agents cannot loop. A rev-3 parser accepts the reply
+      (metadata is free-form) and applies its state as usual, which is why it
+      carries our real state and never a made-up one. The sender emits a new
+      event kind `unsupported`, whose reason it writes itself and names the
+      verb only if it is one of `VERBS`.
+    - **Sender side:** every message lists its verb's URI in `extensions`.
+      `cancelMeeting(..., { peerCapabilities })` still sends the cancel (a
+      newer agent honors it) but adds an `unsupported` event when the card
+      does not advertise `meeting-cancel`; `rdv dinner cancel` and
+      `rdv_negotiate` "cancel" pass the contact's card `capabilities`, and
+      the MCP result and `rdv_inbox` event tell the model to have the human
+      let the other person know. This is NOTES 61's open item: an old peer
+      still drops the verb and keeps the dinner, but the canceling side is
+      no longer left believing it was told.
+    - Tests: a2a engine and model (old-style peer answers unsupported and
+      the sender learns it, card discovery, critical vs ignorable vs
+      malformed, reply bounds), CLI init card, MCP event mapping.
 
 ## Not implemented yet
 
