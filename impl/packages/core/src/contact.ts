@@ -467,6 +467,73 @@ export interface ContactBookState {
   /** Pending requests dropped because the list was full (shown to the human: someone may be flooding us). */
   pendingEvicted?: number;
   rate: Record<string, number[]>;
+  /**
+   * Per-capability task counters, by contact (§5.3, issue #28): created only
+   * for a current contact whose grant allows the capability, so a stranger's
+   * flood never adds a key. Absent in state saved before v0.3.
+   */
+  taskRate?: Record<string, TaskRateState>;
+}
+
+/** One contact's per-capability task counters (epoch ms, oldest first). */
+export interface TaskRateState {
+  /** Tasks admitted, per capability, within that capability's `max_frequency` window. */
+  admitted: Record<string, number[]>;
+  /** Tasks rejected for a per-capability limit, per capability, within 24 hours (at most TASK_RATE.rejectedKept). */
+  rejected: Record<string, number[]>;
+  /** Every such rejection since the contact's counters began (shown to the human). */
+  total: number;
+}
+
+/** Gross-abuse thresholds for per-capability limits (§5.3, owner decision C.6 4). */
+export const TASK_RATE = Object.freeze({
+  /** (b) one capability: revoke when its rejections in its window exceed this times its `max_frequency` count. */
+  abuseFactor: 3,
+  /** (b) all capabilities: revoke when rejections in `dayMs` exceed this. */
+  dailyRejections: 50,
+  dayMs: 86_400_000,
+  /** Rejection timestamps kept per capability: one past the daily threshold, which fires first beyond it. */
+  rejectedKept: 51,
+});
+
+/** Which per-capability limit refused a task. `clock`: our own clock is unreadable, so nothing is admitted or counted. */
+export type TaskLimit = 'max_open' | 'max_frequency' | 'clock';
+
+/** The gross-abuse trigger (b) that revoked a grant. */
+export interface TaskAbuse {
+  peer: string;
+  capability: string;
+  /** `capability`: more than abuseFactor × limit in that capability's window; `daily`: more than dailyRejections in 24 h. */
+  trigger: 'capability' | 'daily';
+  /** Rejections counted in the trigger's window, this one included. */
+  rejected: number;
+  /** The threshold it went over. */
+  threshold: number;
+  windowMs: number;
+}
+
+/**
+ * The answer to `admitTask`. `scope` is never counted (no contact, or the
+ * grant does not allow the capability); `rate` is a per-capability limit,
+ * counted towards gross abuse unless `limit` is `clock`.
+ */
+export type TaskAdmission =
+  | { ok: true }
+  | { ok: false; code: 'scope'; reason: string }
+  | { ok: false; code: 'rate'; limit: TaskLimit; reason: string; abuse?: TaskAbuse };
+
+/**
+ * A stored timestamp list as of `now`, oldest first, within `windowMs`. An
+ * entry that is not a finite number or lies ahead of `now` (a clock that went
+ * back, a hand-edited file) is read as `now`: it still counts, for one
+ * window, instead of vanishing (NaN compares false) or never expiring.
+ */
+function within(list: unknown, windowMs: number, now: number): number[] {
+  if (!Array.isArray(list)) return [];
+  return list
+    .map((t) => (typeof t === 'number' && Number.isFinite(t) && t <= now ? t : now))
+    .filter((t) => t > now - windowMs)
+    .sort((a, b) => a - b);
 }
 
 /** Eviction order for a full pending list: smaller goes first. */
@@ -739,6 +806,7 @@ export class ContactBook {
     c.inboundScope = scope;
     c.inboundGranted = true;
     delete this.state.rate[peer];
+    this.forgetTaskRate(peer);
     return c;
   }
 
@@ -814,17 +882,100 @@ export class ContactBook {
   block(peer: string): void {
     if (!this.state.blocked.includes(peer)) this.state.blocked.push(peer);
     delete this.state.contacts[peer];
+    this.forgetTaskRate(peer);
     for (const [id, c] of Object.entries(this.state.candidates)) if (c.grant.from === peer) delete this.state.candidates[id];
   }
 
   revoke(peer: string): void {
     delete this.state.contacts[peer];
+    this.forgetTaskRate(peer);
   }
 
   receiveRevoke(input: unknown, me: string): boolean {
     if (!verifyRevoke(input) || input.to !== me || !this.markSeen(input.id)) return false;
     delete this.state.contacts[input.from];
+    this.forgetTaskRate(input.from);
     return true;
+  }
+
+  /** The counters go with the contact (bounded by our contacts, never by peers). */
+  private forgetTaskRate(peer: string): void {
+    if (this.state.taskRate && Object.hasOwn(this.state.taskRate, peer)) delete this.state.taskRate[peer];
+  }
+
+  /** Tasks from `peer` rejected for a per-capability limit so far (for the human). */
+  taskRejections(peer: string): number {
+    const r = this.state.taskRate && Object.hasOwn(this.state.taskRate, peer) ? this.state.taskRate[peer] : undefined;
+    return r?.total ?? 0;
+  }
+
+  /**
+   * May `peer` open one more task for `capability` now (§5.3, issue #28)?
+   * Call it once per new task, after every other check (capability known,
+   * input valid), right before the task would be kept: an admitted task
+   * counts towards the capability's `max_frequency`.
+   *
+   * - No current contact, a blocked one, or a grant (our human's, inbound)
+   *   that does not allow the capability: `scope`, and nothing is counted (a
+   *   stranger's flood touches no counter, NOTES 64).
+   * - `open` (the peer's tasks for this capability not yet terminal, from
+   *   the task engine) at or over `maxOpen` (the engine's figure, which knows
+   *   the capability's default; else the grant's `max_open`, default 4), or
+   *   the capability's `max_frequency` window full: `rate`. The task is
+   *   refused and nothing else changes, but the rejection is counted, and
+   *   when it crosses a gross-abuse threshold the answer carries `abuse`:
+   *   the caller revokes the grant (`Agent.admitTask` does, with `rdv/revoke`).
+   * - An unreadable `now` refuses (`rate`, limit `clock`) without counting.
+   *
+   * Rejections for a closed gate, our human's "no" or an unsupported
+   * capability never come here, so they never count.
+   */
+  admitTask(peer: string, capability: string, opts: { open?: number; maxOpen?: number } = {}, now = new Date()): TaskAdmission {
+    const t = now.getTime();
+    if (!Number.isFinite(t)) return { ok: false, code: 'rate', limit: 'clock', reason: 'our clock is unreadable' };
+    const c = this.contact(peer, now);
+    if (!c || this.isBlocked(peer)) return { ok: false, code: 'scope', reason: 'not a contact' };
+    const limits = invokeLimits(c.inboundScope, capability);
+    if (!limits) return { ok: false, code: 'scope', reason: 'the grant does not allow this capability (invoke)' };
+    const all = (this.state.taskRate ??= {});
+    const r: TaskRateState = Object.hasOwn(all, peer) ? all[peer] : { admitted: {}, rejected: {}, total: 0 };
+    // Capabilities the grant no longer allows keep nothing.
+    for (const k of Object.keys(r.admitted)) if (!scopeAllows(c.inboundScope, k)) delete r.admitted[k];
+    for (const k of Object.keys(r.rejected)) if (!scopeAllows(c.inboundScope, k)) delete r.rejected[k];
+    const freq = parseFrequency(limits.max_frequency);
+    const maxOpen = Number.isSafeInteger(opts.maxOpen) && opts.maxOpen! >= 1 ? opts.maxOpen! : limits.max_open!;
+    const open = Number.isSafeInteger(opts.open) && opts.open! >= 0 ? opts.open! : 0;
+    const admitted = freq ? within(r.admitted[capability], freq.windowMs, t) : [];
+    let over: { limit: TaskLimit; reason: string } | null = null;
+    if (open >= maxOpen) over = { limit: 'max_open', reason: `too many open tasks for this capability (max_open ${maxOpen})` };
+    else if (freq && admitted.length >= freq.count) over = { limit: 'max_frequency', reason: `over this capability's max_frequency (${limits.max_frequency})` };
+    if (!over) {
+      if (freq) r.admitted[capability] = [...admitted, t];
+      all[peer] = r;
+      return { ok: true };
+    }
+    if (freq) r.admitted[capability] = admitted;
+    const rejected = [...within(r.rejected[capability], TASK_RATE.dayMs, t), t].slice(-TASK_RATE.rejectedKept);
+    r.rejected[capability] = rejected;
+    r.total += 1;
+    all[peer] = r;
+    const abuse = this.taskAbuse(peer, capability, r, freq, t);
+    return { ok: false, code: 'rate', ...over, ...(abuse ? { abuse } : {}) };
+  }
+
+  /** Gross abuse (b): more rejections for one capability in its window than 3× its limit, or more than 50 in 24 hours. */
+  private taskAbuse(peer: string, capability: string, r: TaskRateState, freq: { count: number; windowMs: number } | null, t: number): TaskAbuse | null {
+    if (freq) {
+      // A "0/<unit>" capability refuses every task; its threshold is read as for a limit of 1.
+      const threshold = TASK_RATE.abuseFactor * Math.max(freq.count, 1);
+      const n = within(r.rejected[capability], freq.windowMs, t).length;
+      if (n > threshold) return { peer, capability, trigger: 'capability', rejected: n, threshold, windowMs: freq.windowMs };
+    }
+    const daily = Object.values(r.rejected).reduce((sum, list) => sum + within(list, TASK_RATE.dayMs, t).length, 0);
+    if (daily > TASK_RATE.dailyRejections) {
+      return { peer, capability, trigger: 'daily', rejected: daily, threshold: TASK_RATE.dailyRejections, windowMs: TASK_RATE.dayMs };
+    }
+    return null;
   }
 
   /**
@@ -834,7 +985,8 @@ export class ContactBook {
    */
   admitControl(kind: string, peer: string, limit: { count: number; windowMs: number }, now = new Date()): boolean {
     const key = `${kind}:${peer}`;
-    const window = (this.state.rate[key] ?? []).filter((t) => t > now.getTime() - limit.windowMs);
+    if (!Number.isFinite(now.getTime())) return false; // an unreadable clock admits nothing (fail closed)
+    const window = within(this.state.rate[key], limit.windowMs, now.getTime());
     if (window.length >= limit.count) {
       this.state.rate[key] = window;
       return false;
@@ -849,11 +1001,13 @@ export class ContactBook {
    * `max_frequency`; exceeding it revokes the grant (§10).
    */
   admitInbound(peer: string, now = new Date()): boolean {
+    // An unreadable clock admits nothing and revokes nothing (fail closed; it is our fault, not the peer's).
+    if (!Number.isFinite(now.getTime())) return false;
     const c = this.contact(peer, now);
     if (!c || this.isBlocked(peer)) return false;
     const limit = parseFrequency(c.inboundScope?.max_frequency);
     if (!limit) return true;
-    const window = (this.state.rate[peer] ?? []).filter((t) => t > now.getTime() - limit.windowMs);
+    const window = within(this.state.rate[peer], limit.windowMs, now.getTime());
     window.push(now.getTime());
     this.state.rate[peer] = window;
     if (window.length > limit.count) {

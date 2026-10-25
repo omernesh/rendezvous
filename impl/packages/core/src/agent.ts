@@ -13,6 +13,8 @@ import {
   type GrantScope,
   type ProbeOverflow,
   type PendingRequest,
+  type TaskAbuse,
+  type TaskAdmission,
   type Tier,
   createContactRequest,
   createGrant,
@@ -78,6 +80,12 @@ export interface AgentEvents {
   'reverse-grant': [Contact];
   message:[peer: string, payload: Payload, envelope: Envelope];
   revoked: [peer: string];
+  /**
+   * We revoked a contact's grant for gross abuse of per-capability limits
+   * (§5.3 (b)); an `rdv/revoke` went to the peer. Distinct from `revoked`
+   * (the peer revoked us) and from the grant-wide `max_frequency` revoke.
+   */
+  'task-abuse': [TaskAbuse];
   dropped: [reason: string, detail?: unknown];
   error: [Error];
 }
@@ -331,6 +339,26 @@ export class Agent extends EventEmitter<AgentEvents> {
     const c = this.book.contact(peer);
     this.book.revoke(peer);
     if (c) await this.deliver(peer, createRevoke(this.key, peer, c.grantId), relaysOf(c.card));
+  }
+
+  /**
+   * `ContactBook.admitTask`, plus the revoke for gross abuse: when the answer
+   * carries `abuse`, the grant is revoked at once (later tasks in the same
+   * batch are refused), an `rdv/revoke` is queued to the peer (it goes
+   * through `beforeSend`, so the cleared counters are saved first; await
+   * `idle()`), and `task-abuse` is emitted for the human. Synchronous, so a
+   * task engine can call it as its limiter.
+   */
+  admitTask(peer: string, capability: string, opts: { open?: number; maxOpen?: number } = {}, now = new Date()): TaskAdmission {
+    const c = this.book.contact(peer, now);
+    const answer = this.book.admitTask(peer, capability, opts, now);
+    if (!answer.ok && answer.code === 'rate' && answer.abuse && c) {
+      const abuse = answer.abuse;
+      this.book.revoke(peer);
+      this.enqueue(() => this.deliver(peer, createRevoke(this.key, peer, c.grantId), relaysOf(c.card)).then(() => undefined));
+      this.emit('task-abuse', abuse);
+    }
+    return answer;
   }
 
   contacts(): Contact[] {

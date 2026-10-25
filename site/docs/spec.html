@@ -730,6 +730,32 @@ own grant triggers one; an agent never sends one on its own.</p>
   than 50 tasks rejected for any per-capability limit in 24 hours.
   Rejections for a closed gate, a human's "no" or an unsupported capability
   never count towards (b).</li>
+<li><strong>Counting</strong> (<strong>spec change</strong>, issue #28). A receiver counts per contact
+  and per capability, and only for a current contact whose grant allows
+  the capability: a task from anyone else is refused before any counter
+  changes. A task counts towards its capability's <code>max_frequency</code> once it
+  is admitted, after every other check (capability supported, input
+  valid, room for the peer); the window slides, so a task admitted at <em>t</em>
+  stops counting at <em>t</em> plus the window. A refusal for <code>max_open</code> or
+  <code>max_frequency</code> is a per-capability rejection, and the peer is told
+  (<code>rejected</code>, reason <code>rate</code>). It counts towards (b) twice: for its
+  capability, within that capability's <code>max_frequency</code> window (a
+  capability with only <code>max_open</code> has no such window and counts towards
+  the 24-hour figure alone), and for all capabilities, within a sliding
+  24 hours. Refusals for the per-peer task bound (§7.4), invalid input or
+  a capability the grant does not allow never count either. A
+  <code>"0/&lt;unit&gt;"</code> capability refuses every task, and for (b) its limit is
+  read as 1. The counters are kept with the contact book, so they survive
+  a restart, are saved before the <code>rdv/revoke</code> leaves, and go with the
+  contact (revoked, blocked); a new grant from the owner starts them
+  afresh. A receiver whose own clock is unreadable refuses the task and
+  counts nothing; a stored time that is unreadable or ahead of the clock
+  counts as now, for one window. The human is told of a revoke under (b)
+  apart from one under (a).</li>
+<li><strong>Senders check first.</strong> A requester SHOULD NOT send a task the peer's
+  grant would refuse: it counts its own open tasks per capability and
+  the <code>task/request</code>s it sent in the window of the peer's <code>max_frequency</code>,
+  and holds the task instead of sending it.</li>
 <li><strong>Free messages</strong> (<code>rdv_send</code> notes, any payload that is not a task) need
   only <code>may_initiate</code>, as today.</li>
 <li><strong>Meetings.</strong> <code>may_propose_meetings: true</code> is read as <code>invoke</code> holding the
@@ -1651,7 +1677,9 @@ a proxy or decline the transfer. The relay sees nothing new.</p>
     key resets reputation to zero (Sybil remains an open problem, §11).</li>
 <li><strong>Rate limits</strong> are grant-scoped (<code>max_frequency</code>); probes and invites
     carry their own caps (§5.2.1–5.2.2); violations revoke the grant
-    automatically.</li>
+    automatically. Per-capability limits (<code>scope.invoke</code>, §5.3) reject only
+    the task that goes over them, and revoke the grant only for gross abuse
+    (<strong>spec change</strong>, issue #28).</li>
 <li><strong>Optional reputation:</strong> a contact may attach verifiable vouches ("this key
     is also trusted by N of your existing contacts") — web-of-trust signals,
     never a global score.</li>

@@ -11,6 +11,7 @@ import {
   type GrantCandidate,
   type PendingRequest,
   type ProbeOverflow,
+  type TaskAbuse,
   topicForHint,
 } from '@rendezvous/core';
 import type { InboxEntry } from './home.js';
@@ -154,4 +155,10 @@ export function cardText(card: AddressCard): string {
     `${safe(card.id)}  fingerprint ${safe(fingerprint(card.id))}\n` +
     `  addresses ${addrs.map(safe).join(', ')}  relays ${relays.map(safe).join(', ')}`
   );
+}
+
+/** We revoked a contact for gross abuse of per-capability task limits (§5.3 (b), issue #28). */
+export function abuseText(a: TaskAbuse): string {
+  const where = a.trigger === 'daily' ? `in 24 hours (more than ${safe(a.threshold)})` : `for ${safe(a.capability)} in its window (more than ${safe(a.threshold)})`;
+  return `revoked ${safe(a.peer)}: ${safe(a.rejected)} tasks rejected for per-capability limits ${where}; an rdv/revoke was sent. Grant them again only if you trust them.`;
 }

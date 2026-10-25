@@ -16,6 +16,8 @@ import {
   inputTask,
   type MeetingScope,
   MAX_OPEN_DEFAULT,
+  outboundLimit,
+  parseRate,
   REASON_KEY,
   receive,
   receiveTask,
@@ -890,5 +892,112 @@ describe('capability registry', () => {
     expect(() => new CapabilityRegistry([review, review])).toThrow(/already registered/);
     expect(() => new CapabilityRegistry([{ uri: PING, approval: 'notify', maxOpen: 0 }])).toThrow(/maxOpen/);
     expect(registry().uris()).toEqual([REVIEW, FREEBUSY, PING, BOOK]);
+  });
+});
+
+describe('per-capability limits (issue #28): the limiter hook and the outbound check', () => {
+  /** A limiter that records its calls and refuses from the `refuseFrom`-th call on. */
+  function limiter(refuseFrom = Infinity, code: 'rate' | 'scope' = 'rate') {
+    const calls: Array<{ capability: string; open: number; maxOpen: number }> = [];
+    const limit: TaskCtx['limit'] = (capability, o) => {
+      calls.push({ capability, ...o });
+      return calls.length >= refuseFrom ? { ok: false, code, reason: 'over the limit' } : { ok: true };
+    };
+    return { calls, limit };
+  }
+
+  it('is asked once per new task that passed every other check, with open and max_open; a refusal keeps no state', () => {
+    const omer = new Agent(OMER, 2, { [FREEBUSY]: { max_open: 3 }, [REVIEW]: {} });
+    const { calls, limit } = limiter(3);
+    expect(kinds(omer.recv(JOHN, freebusy(U(1)), { limit }))).toEqual(['received']);
+    expect(kinds(omer.recv(JOHN, freebusy(U(2)), { limit }))).toEqual(['received']);
+    expect(calls).toEqual([
+      { capability: FREEBUSY, open: 0, maxOpen: 3 },
+      { capability: FREEBUSY, open: 1, maxOpen: 3 },
+    ]);
+    const before = structuredClone(omer.state);
+    const over = omer.recv(JOHN, freebusy(U(3)), { limit });
+    expect(over.events).toEqual([expect.objectContaining({ kind: 'refused', taskId: U(3), code: 'rate', capability: FREEBUSY, reason: 'over the limit' })]);
+    expect(statusOf(only(over))).toMatchObject({ taskId: U(3), status: { state: 'rejected' }, metadata: { [REASON_KEY]: 'rate' } });
+    expect(over.effects).toEqual([]); // nobody is prompted
+    expect(omer.state.tasks).toEqual(before.tasks);
+    expect(omer.state.dropped).toEqual({ ...before.dropped, rate: 1 });
+  });
+
+  it('is never asked for an unsupported capability, a grant that does not allow it, bad input, a full peer or a duplicate', () => {
+    const omer = new Agent(OMER, 2, { [FREEBUSY]: { max_open: 1000 } });
+    const { calls, limit } = limiter();
+    omer.recv(JOHN, rawRequest(U(1), { rdv: 'task/request', capability: UNKNOWN }), { limit });
+    omer.recv(JOHN, reviewReq(U(2)), { limit }); // not in this grant's invoke
+    omer.recv(JOHN, rawRequest(U(3), { rdv: 'task/request', capability: FREEBUSY, input: { day: 'soon' } }), { limit });
+    expect(calls).toEqual([]);
+    for (let i = 0; i < TASK_BOUNDS.tasksPerPeer; i++) omer.recv(JOHN, freebusy(U(100 + i)), { limit });
+    expect(calls).toHaveLength(TASK_BOUNDS.tasksPerPeer);
+    expect(omer.recv(JOHN, freebusy(U(200)), { limit }).events[0]).toMatchObject({ kind: 'refused', code: 'rate' }); // per-peer bound
+    expect(kinds(omer.recv(JOHN, freebusy(U(100)), { limit }))).toEqual(['duplicate']); // a relay replay
+    const again = rawRequest(U(100), { rdv: 'task/request', capability: FREEBUSY, input: { day: '2026-10-26T00:00:00Z' } }, { messageId: U(777) });
+    expect(kinds(omer.recv(JOHN, again, { limit }))).toEqual(['invalid']); // a second request for an open task
+    expect(calls).toHaveLength(TASK_BOUNDS.tasksPerPeer);
+  });
+
+  it('owns max_open when present (the engine passes its figure), and a scope answer refuses with scope', () => {
+    const omer = new Agent(OMER, 2, { [FREEBUSY]: {} });
+    const lenient: TaskCtx['limit'] = () => ({ ok: true });
+    for (let i = 0; i < MAX_OPEN_DEFAULT + 2; i++) expect(kinds(omer.recv(JOHN, freebusy(U(i)), { limit: lenient }))).toEqual(['received']);
+    const { limit } = limiter(1, 'scope');
+    expect(omer.recv(JOHN, freebusy(U(50)), { limit }).events[0]).toMatchObject({ kind: 'refused', code: 'scope' });
+  });
+
+  it('meetings never reach the task limiter', () => {
+    const omer = new Agent(OMER, 2);
+    const { calls, limit } = limiter();
+    const meeting = { type: 'a2a/message', message: { kind: 'message', messageId: U(7), taskId: U(8), contextId: U(9), role: 'agent', parts: [{ kind: 'data', data: { rdv: 'meeting/propose' } }], extensions: [EXTENSIONS.meetings] } };
+    omer.recv(JOHN, meeting, { limit });
+    expect(calls).toEqual([]);
+  });
+
+  it("outboundLimit / requestTask: max_frequency in the peer's grant, at the limit, one past it, at the window boundary", () => {
+    const john = new Agent(JOHN, 1, { [PING]: { max_frequency: '2/day' } });
+    expect(outboundLimit(john.state, OMER, PING, john.ctx())).toBeNull();
+    john.apply(requestTask(john.state, OMER, PING, john.ctx()));
+    john.now = later(HOUR);
+    john.apply(requestTask(john.state, OMER, PING, john.ctx()));
+    expect(outboundLimit(john.state, OMER, PING, john.ctx())).toMatch(/2\/day/);
+    expect(() => requestTask(john.state, OMER, PING, john.ctx())).toThrow(TaskError);
+    // Another peer's grant is its own.
+    expect(outboundLimit(john.state, DANA, PING, john.ctx())).toBeNull();
+    // It survives a restart (the engine state is what the host saves).
+    john.state = JSON.parse(JSON.stringify(john.state));
+    john.now = later(DAY - 1);
+    expect(outboundLimit(john.state, OMER, PING, john.ctx())).not.toBeNull();
+    john.now = later(DAY);
+    expect(outboundLimit(john.state, OMER, PING, john.ctx())).toBeNull();
+    john.apply(requestTask(john.state, OMER, PING, john.ctx()));
+    expect(john.state.sent![OMER][PING]).toHaveLength(2); // bounded by the count
+  });
+
+  it("outboundLimit: max_open in the peer's grant, and no grant means no", () => {
+    const john = new Agent(JOHN, 1, { [FREEBUSY]: { max_open: 1 } });
+    expect(outboundLimit(john.state, OMER, REVIEW, john.ctx())).toMatch(/does not let us invoke/);
+    const step = john.apply(requestTask(john.state, OMER, FREEBUSY, john.ctx(), { input: { day: '2026-10-26T00:00:00Z' } }));
+    expect(outboundLimit(john.state, OMER, FREEBUSY, john.ctx())).toMatch(/max_open 1/);
+    john.apply(cancelTask(john.state, step.taskId, john.ctx()));
+    expect(outboundLimit(john.state, OMER, FREEBUSY, john.ctx())).toBeNull();
+    expect(john.state.sent).toBeUndefined(); // nothing to remember without a max_frequency
+  });
+
+  it('outboundLimit: an unreadable clock refuses; future or mangled send times count, for one window', () => {
+    const john = new Agent(JOHN, 1, { [PING]: { max_frequency: '1/day' } });
+    expect(outboundLimit(john.state, OMER, PING, john.ctx({ now: new Date(NaN) }))).toMatch(/clock/);
+    john.state = { ...john.state, sent: { [OMER]: { [PING]: [NOW.getTime() + 365 * DAY] } } };
+    expect(outboundLimit(john.state, OMER, PING, john.ctx())).not.toBeNull();
+    john.state = { ...john.state, sent: { [OMER]: { [PING]: [null as unknown as number] } } };
+    expect(outboundLimit(john.state, OMER, PING, john.ctx())).not.toBeNull();
+  });
+
+  it('parseRate reads max_frequency like core', () => {
+    expect(parseRate('5/day')).toEqual({ count: 5, windowMs: DAY });
+    expect(parseRate('2/minute')).toEqual({ count: 2, windowMs: 60_000 });
+    for (const bad of ['5/week', '5 / day', '-1/day', 5, undefined, '']) expect(parseRate(bad)).toBeNull();
   });
 });
