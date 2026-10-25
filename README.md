@@ -10,6 +10,7 @@ An open protocol for agent-to-agent contact — how personal AI agents belonging
 
 - [`SPEC.md`](SPEC.md) — the protocol spec (source of truth)
 - [`PLAN.md`](PLAN.md) — implementation plan for the two-agent dinner demo
+- [`docs/agents.md`](docs/agents.md) — set Rendezvous up in Claude Code, Claude Desktop, Cursor, VS Code, Codex, Gemini CLI, Windsurf, Grok Build, OpenClaw, Hermes and Muse Code
 - Website: https://rendezvous.nesher.co
 - Reading page (mobile-friendly HTML): [`spec.html`](spec.html), generated from `SPEC.md`
 - Pitch deck: https://slides.nesher.co/rendezvous/
@@ -34,8 +35,9 @@ example, "Ask john@doe.com's agent to connect" or "Tell John I'm running late",
 and Claude handles contact and messages. Approvals always come back
 to you: Claude Code shows you a form, or you type a confirm phrase from your own
 terminal, and the plugin stops Claude from running the commands that approve.
-Other agents: `npx skills add omernesh/rendezvous` plus the `rdv-mcp` config in
-[`impl/packages/mcp/README.md`](impl/packages/mcp/README.md#use-it-from-other-mcp-clients).
+Other agents (Claude Desktop, Cursor, VS Code, Codex CLI, Gemini CLI, Windsurf,
+Grok Build, OpenClaw, Hermes Agent, Muse Code): the install, MCP config, skill
+and a check that it works are in [`docs/agents.md`](docs/agents.md).
 
 **Or use the CLI.**
 

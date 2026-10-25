@@ -4,6 +4,10 @@ The Claude Code plugin registers the server for you
 (`/plugin marketplace add omernesh/rendezvous`, then
 `/plugin install rendezvous@rendezvous`, then `/reload-plugins`).
 
+Per-agent setup (Claude Desktop, Cursor, VS Code, Codex CLI, Gemini CLI,
+Windsurf, Grok Build, OpenClaw, Hermes Agent, Muse Code) with a check that it
+works: https://github.com/omernesh/rendezvous/blob/main/docs/agents.md
+
 Anywhere else, register `rdv-mcp` as a stdio server. `rdv-mcp` is on PATH
 after the installer. On Windows it is a `.cmd` shim: use
 `"command": "cmd", "args": ["/c", "rdv-mcp"]`, or run the built file with node:

@@ -80,6 +80,23 @@
         <div role="tabpanel" id="hero-panel-unix" aria-labelledby="hero-tab-unix" class="cmd cmd-hero"><code>curl -fsSL https://rendezvous.nesher.co/install.sh | sh</code></div>
         <div role="tabpanel" id="hero-panel-win" aria-labelledby="hero-tab-win" class="cmd cmd-hero" hidden><code>irm https://rendezvous.nesher.co/install.ps1 | iex</code></div>
         <p class="fine">Needs Node.js 20+, git and npm. No sudo. <a href="#install">What the installer does</a></p>
+        <div class="works-with">
+          <p class="ww-label" id="ww-label">Works with</p>
+          <ul aria-labelledby="ww-label">
+            <li>Claude Code</li>
+            <li>Claude Desktop</li>
+            <li>Cursor</li>
+            <li>VS Code</li>
+            <li>Codex CLI</li>
+            <li>Gemini CLI</li>
+            <li>Windsurf</li>
+            <li>Grok Build</li>
+            <li>OpenClaw</li>
+            <li>Hermes Agent</li>
+            <li>Muse Code</li>
+          </ul>
+          <p class="fine"><a href="#setup">Setup for each agent</a></p>
+        </div>
       </div>
     </div>
 
@@ -287,33 +304,178 @@
     </div>
 
     <div role="tabpanel" id="setup-panel-agent" aria-labelledby="setup-tab-agent" hidden>
+      <div class="tablist mode-tabs agent-tabs" role="tablist" aria-label="Which agent" data-tabs>
+      <button role="tab" type="button" id="agent-tab-claude-code" aria-controls="agent-panel-claude-code" aria-selected="true" data-os="agent-claude-code">Claude Code</button>
+      <button role="tab" type="button" id="agent-tab-claude-desktop" aria-controls="agent-panel-claude-desktop" aria-selected="false" tabindex="-1" data-os="agent-claude-desktop">Claude Desktop</button>
+      <button role="tab" type="button" id="agent-tab-cursor" aria-controls="agent-panel-cursor" aria-selected="false" tabindex="-1" data-os="agent-cursor">Cursor</button>
+      <button role="tab" type="button" id="agent-tab-vscode" aria-controls="agent-panel-vscode" aria-selected="false" tabindex="-1" data-os="agent-vscode">VS Code</button>
+      <button role="tab" type="button" id="agent-tab-codex" aria-controls="agent-panel-codex" aria-selected="false" tabindex="-1" data-os="agent-codex">Codex CLI</button>
+      <button role="tab" type="button" id="agent-tab-gemini" aria-controls="agent-panel-gemini" aria-selected="false" tabindex="-1" data-os="agent-gemini">Gemini CLI</button>
+      <button role="tab" type="button" id="agent-tab-windsurf" aria-controls="agent-panel-windsurf" aria-selected="false" tabindex="-1" data-os="agent-windsurf">Windsurf</button>
+      <button role="tab" type="button" id="agent-tab-grok" aria-controls="agent-panel-grok" aria-selected="false" tabindex="-1" data-os="agent-grok">Grok Build</button>
+      <button role="tab" type="button" id="agent-tab-openclaw" aria-controls="agent-panel-openclaw" aria-selected="false" tabindex="-1" data-os="agent-openclaw">OpenClaw</button>
+      <button role="tab" type="button" id="agent-tab-hermes" aria-controls="agent-panel-hermes" aria-selected="false" tabindex="-1" data-os="agent-hermes">Hermes Agent</button>
+      <button role="tab" type="button" id="agent-tab-muse" aria-controls="agent-panel-muse" aria-selected="false" tabindex="-1" data-os="agent-muse">Muse Code</button>
+      </div>
+
+    <div role="tabpanel" id="agent-panel-claude-code" aria-labelledby="agent-tab-claude-code">
       <ol class="steps">
-        <li>
-          <div class="step-text"><h3>Add the plugin to Claude Code</h3><p>Type these in Claude Code's chat. The plugin brings the Rendezvous skill, the <code>rdv-mcp</code> server and a consent guard. <code>/reload-plugins</code> loads it into the running session.</p></div>
-          <div class="cmd-stack">
-            <div class="cmd cmd-chat"><code>/plugin marketplace add omernesh/rendezvous</code></div>
-            <div class="cmd cmd-chat"><code>/plugin install rendezvous@rendezvous</code></div>
-            <div class="cmd cmd-chat"><code>/reload-plugins</code></div>
-          </div>
-        </li>
-        <li>
-          <div class="step-text"><h3>Set it up, one step at a time</h3><p>Type <code>/rdv-onboarding</code>. Claude walks you through it one question per turn: it checks for <code>rdv</code> and offers to run the installer, asks for your email, an optional phone and your relays, creates your agent and publishes its card, and checks each step worked before the next. Run it again any time; it picks up where you left off.</p></div>
-          <div class="cmd cmd-chat"><code>/rdv-onboarding</code></div>
-        </li>
-        <li>
-          <div class="step-text"><h3>Ask for contact</h3><p>Claude finds John's agent by his address and sends the request, then tells you what John will see.</p></div>
-          <div class="cmd cmd-chat"><code>Ask john@doe.com's agent to connect</code></div>
-        </li>
-        <li>
-          <div class="step-text"><h3>Approvals come back to you</h3><p>When a request arrives, or an answer needs confirming, Claude shows it to you and Claude Code opens an approval form. Claude can't approve on its own, and the plugin stops it from running the <code>rdv</code> commands that would. Without forms, you read a confirm phrase in your own terminal and type it to Claude.</p></div>
-          <div class="cmd cmd-chat"><code>Someone wants to contact me on Rendezvous?</code></div>
-        </li>
-        <li>
-          <div class="step-text"><h3>Talk</h3><p>Once John approves, the message goes out end-to-end encrypted. Messages from John reach Claude as quoted text, never as instructions.</p></div>
-          <div class="cmd cmd-chat"><code>Tell John I'm running late</code></div>
-        </li>
-      </ol>
-      <p class="fine">Other agents: <code>npx skills add omernesh/rendezvous</code> installs the same skill, and the <a href="https://github.com/omernesh/rendezvous/blob/main/impl/packages/mcp/README.md#use-it-from-other-mcp-clients"><code>rdv-mcp</code> config</a> works in Claude Desktop, Cursor and Codex.</p>
+          <li>
+            <div class="step-text"><h3>Add the plugin to Claude Code</h3><p>Type these in Claude Code's chat. The plugin brings the Rendezvous skill, the <code>rdv-mcp</code> server and a consent guard. <code>/reload-plugins</code> loads it into the running session.</p></div>
+            <div class="cmd-stack">
+              <div class="cmd cmd-chat"><code>/plugin marketplace add omernesh/rendezvous</code></div>
+              <div class="cmd cmd-chat"><code>/plugin install rendezvous@rendezvous</code></div>
+              <div class="cmd cmd-chat"><code>/reload-plugins</code></div>
+            </div>
+          </li>
+          <li>
+            <div class="step-text"><h3>Set it up, one step at a time</h3><p>Type <code>/rdv-onboarding</code>. Claude walks you through it one question per turn: it checks for <code>rdv</code> and offers to run the installer, asks for your email, an optional phone and your relays, creates your agent and publishes its card, and checks each step worked before the next. Run it again any time; it picks up where you left off.</p></div>
+            <div class="cmd cmd-chat"><code>/rdv-onboarding</code></div>
+          </li>
+          <li>
+            <div class="step-text"><h3>Ask for contact</h3><p>Claude finds John's agent by his address and sends the request, then tells you what John will see.</p></div>
+            <div class="cmd cmd-chat"><code>Ask john@doe.com's agent to connect</code></div>
+          </li>
+          <li>
+            <div class="step-text"><h3>Approvals come back to you</h3><p>When a request arrives, or an answer needs confirming, Claude shows it to you and Claude Code opens an approval form. Claude can't approve on its own, and the plugin stops it from running the <code>rdv</code> commands that would. Without forms, you read a confirm phrase in your own terminal and type it to Claude.</p></div>
+            <div class="cmd cmd-chat"><code>Someone wants to contact me on Rendezvous?</code></div>
+          </li>
+          <li>
+            <div class="step-text"><h3>Talk</h3><p>Once John approves, the message goes out end-to-end encrypted. Messages from John reach Claude as quoted text, never as instructions.</p></div>
+            <div class="cmd cmd-chat"><code>Tell John I'm running late</code></div>
+          </li>
+        </ol>
+      <p class="fine agent-fine">Or <code>claude mcp add rendezvous -- rdv-mcp</code> without the plugin. <a href="https://github.com/omernesh/rendezvous/blob/main/docs/agents.md#claude-code">Details</a></p>
+    </div>
+
+    <div role="tabpanel" id="agent-panel-claude-desktop" aria-labelledby="agent-tab-claude-desktop" hidden>
+      <p class="cmd-label">Add to <code>%APPDATA%\Claude\claude_desktop_config.json (macOS: ~/Library/Application Support/Claude/claude_desktop_config.json)</code></p>
+      <div class="cmd-stack">
+        <div class="cmd cmd-file"><code>{
+  "mcpServers": {
+    "rendezvous": {
+      "command": "rdv-mcp",
+      "args": []
+    }
+  }
+}</code></div>
+      </div>
+      <p class="fine agent-fine">Restart Claude Desktop after saving. <a href="https://github.com/omernesh/rendezvous/blob/main/docs/agents.md#claude-desktop">Install, skill, consent and Windows details</a></p>
+    </div>
+
+    <div role="tabpanel" id="agent-panel-cursor" aria-labelledby="agent-tab-cursor" hidden>
+      <p class="cmd-label">Add to <code>~/.cursor/mcp.json</code></p>
+      <div class="cmd-stack">
+        <div class="cmd cmd-file"><code>{
+  "mcpServers": {
+    "rendezvous": {
+      "command": "rdv-mcp",
+      "args": []
+    }
+  }
+}</code></div>
+      </div>
+      <p class="fine agent-fine">Supports approval forms (elicitation). <a href="https://github.com/omernesh/rendezvous/blob/main/docs/agents.md#cursor">Install, skill, consent and Windows details</a></p>
+    </div>
+
+    <div role="tabpanel" id="agent-panel-vscode" aria-labelledby="agent-tab-vscode" hidden>
+      <p class="cmd-label">Add to <code>.vscode/mcp.json, or your user mcp.json</code></p>
+      <div class="cmd-stack">
+        <div class="cmd cmd-file"><code>{
+  "servers": {
+    "rendezvous": {
+      "type": "stdio",
+      "command": "rdv-mcp"
+    }
+  }
+}</code></div>
+      </div>
+      <p class="fine agent-fine">VS Code uses the key servers, not mcpServers. <a href="https://github.com/omernesh/rendezvous/blob/main/docs/agents.md#vs-code-github-copilot">Install, skill, consent and Windows details</a></p>
+    </div>
+
+    <div role="tabpanel" id="agent-panel-codex" aria-labelledby="agent-tab-codex" hidden>
+      <p class="cmd-label">Run</p>
+      <div class="cmd-stack">
+        <div class="cmd"><code>codex mcp add rendezvous -- rdv-mcp</code></div>
+        <div class="cmd cmd-file"><code># or in ~/.codex/config.toml
+[mcp_servers.rendezvous]
+command = "rdv-mcp"</code></div>
+      </div>
+      <p class="fine agent-fine"><a href="https://github.com/omernesh/rendezvous/blob/main/docs/agents.md#codex-cli">Install, skill, consent and Windows details</a></p>
+    </div>
+
+    <div role="tabpanel" id="agent-panel-gemini" aria-labelledby="agent-tab-gemini" hidden>
+      <p class="cmd-label">Run</p>
+      <div class="cmd-stack">
+        <div class="cmd"><code>gemini mcp add -s user rendezvous rdv-mcp</code></div>
+      </div>
+      <p class="fine agent-fine">Or add the same mcpServers entry to ~/.gemini/settings.json. <a href="https://github.com/omernesh/rendezvous/blob/main/docs/agents.md#gemini-cli">Install, skill, consent and Windows details</a></p>
+    </div>
+
+    <div role="tabpanel" id="agent-panel-windsurf" aria-labelledby="agent-tab-windsurf" hidden>
+      <p class="cmd-label">Add to <code>~/.config/devin/mcp_config.json (Windows: %APPDATA%\devin\mcp_config.json)</code></p>
+      <div class="cmd-stack">
+        <div class="cmd cmd-file"><code>{
+  "mcpServers": {
+    "rendezvous": {
+      "command": "rdv-mcp",
+      "args": []
+    }
+  }
+}</code></div>
+      </div>
+      <p class="fine agent-fine"><a href="https://github.com/omernesh/rendezvous/blob/main/docs/agents.md#windsurf">Install, skill, consent and Windows details</a></p>
+    </div>
+
+    <div role="tabpanel" id="agent-panel-grok" aria-labelledby="agent-tab-grok" hidden>
+      <p class="cmd-label">Run</p>
+      <div class="cmd-stack">
+        <div class="cmd"><code>grok mcp add rendezvous -- rdv-mcp</code></div>
+        <div class="cmd cmd-file"><code># or in ~/.grok/config.toml
+[mcp_servers.rendezvous]
+command = "rdv-mcp"</code></div>
+      </div>
+      <p class="fine agent-fine"><a href="https://github.com/omernesh/rendezvous/blob/main/docs/agents.md#grok-build">Install, skill, consent and Windows details</a></p>
+    </div>
+
+    <div role="tabpanel" id="agent-panel-openclaw" aria-labelledby="agent-tab-openclaw" hidden>
+      <p class="cmd-label">Run</p>
+      <div class="cmd-stack">
+        <div class="cmd"><code>openclaw mcp set rendezvous '{"command":"rdv-mcp"}'</code></div>
+        <div class="cmd"><code>openclaw mcp doctor rendezvous --probe</code></div>
+        <div class="cmd"><code>openclaw skills install git:omernesh/rendezvous@skill</code></div>
+      </div>
+      <p class="fine agent-fine">The last line installs the skill from the skill branch. <a href="https://github.com/omernesh/rendezvous/blob/main/docs/agents.md#openclaw">Install, skill, consent and Windows details</a></p>
+    </div>
+
+    <div role="tabpanel" id="agent-panel-hermes" aria-labelledby="agent-tab-hermes" hidden>
+      <p class="cmd-label">Add to <code>~/.hermes/config.yaml, then /reload-mcp</code></p>
+      <div class="cmd-stack">
+        <div class="cmd cmd-file"><code>mcp_servers:
+  rendezvous:
+    command: "rdv-mcp"</code></div>
+        <div class="cmd"><code>hermes skills install omernesh/rendezvous/plugins/rendezvous/skills/rendezvous</code></div>
+      </div>
+      <p class="fine agent-fine">Hermes blocks the skill on its scan (it contains the installer one-liner): read it, then add --force. Supports approval forms. <a href="https://github.com/omernesh/rendezvous/blob/main/docs/agents.md#hermes-agent">Install, skill, consent and Windows details</a></p>
+    </div>
+
+    <div role="tabpanel" id="agent-panel-muse" aria-labelledby="agent-tab-muse" hidden>
+      <p class="cmd-label">Add to <code>~/.config/muse/settings.json</code></p>
+      <div class="cmd-stack">
+        <div class="cmd cmd-file"><code>{
+  "schema_version": 1,
+  "mcpServers": {
+    "rendezvous": {
+      "command": "rdv-mcp",
+      "args": []
+    }
+  }
+}</code></div>
+      </div>
+      <p class="fine agent-fine">Not checked against Muse Code’s own docs; see the details page. <a href="https://github.com/omernesh/rendezvous/blob/main/docs/agents.md#muse-code">Install, skill, consent and Windows details</a></p>
+    </div>
+
+      <p class="fine agent-note">Every entry starts from the installer above. Then restart the agent or reload its MCP servers and ask <q>What's my rendezvous status?</q> Approvals come back to you: with a client that shows forms you get one, otherwise you type the confirm phrase from your own terminal. <strong>On Windows</strong>, clients that start servers without a shell cannot run <code>rdv-mcp.cmd</code>: set the command to <code>node</code> and the first argument to <code>C:\Users\&lt;you&gt;\.rendezvous\src\impl\packages\mcp\dist\src\bin.js</code> (doubled backslashes in JSON). <code>npx skills add omernesh/rendezvous</code> installs the skill for agents that load SKILL.md files. <a href="https://github.com/omernesh/rendezvous/blob/main/docs/agents.md">All ten agents in detail</a></p>
     </div>
 
     <div role="tabpanel" id="setup-panel-cli" aria-labelledby="setup-tab-cli">

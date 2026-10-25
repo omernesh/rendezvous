@@ -137,12 +137,15 @@ Next steps:
   rdv whoami --profile omer
   rdv listen --profile omer
 
-Or let Claude Code do the rest: in its chat, type
+Or let your agent do the rest. In Claude Code's chat, type
   /plugin marketplace add omernesh/rendezvous
   /plugin install rendezvous@rendezvous
   /reload-plugins
-then ask "Set up Rendezvous for me". (Without the plugin:
+then type /rdv-onboarding. (Without the plugin:
   claude mcp add rendezvous -- node "$($Targets['rdv-mcp'])" --profile omer)
+
+Other agents (Claude Desktop, Cursor, VS Code, Codex, Gemini CLI, Windsurf,
+Grok Build, OpenClaw, Hermes, Muse Code): https://github.com/omernesh/rendezvous/blob/main/docs/agents.md
 
 Update later by running the installer again. Docs: https://rendezvous.nesher.co
 "@
