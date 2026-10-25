@@ -321,7 +321,12 @@ async function routeInbound(
       if (m) m.obj.routed = 'files';
     }
     try {
-      const r = await transfersInbound(home, agent, transfers, home.readOwner().direct_transfer === true);
+      const owner = home.readOwner(agent.key.secretKey);
+      if (owner.forged) {
+        const message = `${home.ownerPath} is not signed by this agent (written by something else?): ignored, direct transfer stays off. Set it with rdv file direct-transfer.`;
+        events.push({ obj: { event: 'error', message }, human: `warning: ${clean(message)}` });
+      }
+      const r = await transfersInbound(home, agent, transfers, owner.direct_transfer === true);
       for (const ev of r.events) events.push({ obj: { ...ev }, human: transferEventText(ev, clean) });
       for (const message of r.errors) events.push({ obj: { event: 'error', message }, human: `error: ${clean(message)}` });
     } catch (err) {

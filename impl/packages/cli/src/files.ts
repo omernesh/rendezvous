@@ -22,7 +22,24 @@
 // protocol. A peer's request is declined at once while the owner's
 // `direct_transfer` setting is off (the default); with it on, the request is
 // shown to the owner, who can decline it. Nothing connects on its own.
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync, writeSync } from 'node:fs';
+import {
+  closeSync,
+  constants as fsConstants,
+  existsSync,
+  fstatSync,
+  mkdirSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  readSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+  writeSync,
+} from 'node:fs';
+import { homedir } from 'node:os';
 import { basename, dirname, join, resolve, sep } from 'node:path';
 import { type FilePart, isFinished, type TaskPart, type TaskRecord } from '@rendezvous/a2a';
 import {
@@ -207,7 +224,35 @@ function checkMime(m: string | undefined): string | undefined {
 }
 
 /** Files that hold a Rendezvous key or consent state: never sent, wherever they are. */
-export const SECRET_FILE_NAMES = ['agent.json', 'agent.json.bak', 'consent.json'];
+export const SECRET_FILE_NAMES = ['agent.json', 'agent.json.bak', 'consent.json', 'autoapprove.json', 'owner.json'];
+
+/** Homes we can name: this one, $RDV_HOME, and every profile under ~/.rendezvous. */
+function knownHomes(home: Home): string[] {
+  const out = [home.dir, ...(process.env.RDV_HOME ? [process.env.RDV_HOME] : [])];
+  const base = join(homedir(), '.rendezvous');
+  try {
+    for (const d of readdirSync(base)) if (d !== 'src') out.push(join(base, d));
+  } catch {
+    /* none */
+  }
+  return out;
+}
+
+/** dev:ino of every secret file in the known homes, so a hard link to one is caught whatever its path. */
+function secretIdentities(home: Home): Set<string> {
+  const ids = new Set<string>();
+  for (const h of knownHomes(home)) {
+    for (const f of SECRET_FILE_NAMES) {
+      try {
+        const st = statSync(join(h, f), { bigint: true });
+        ids.add(`${st.dev}:${st.ino}`);
+      } catch {
+        /* absent */
+      }
+    }
+  }
+  return ids;
+}
 
 const samePath = (a: string, b: string) => (process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b);
 const realOr = (p: string) => {
@@ -245,20 +290,41 @@ function inAnyHome(home: Home, p: string): boolean {
  */
 function readOwnerFile(home: Home, path: string, max: number, what: string): { abs: string; bytes: Uint8Array } {
   const abs = resolve(path);
-  let st;
+  const refused = () => new CliError(`refused: ${abs} is a Rendezvous file or inside a Rendezvous home (secret key, consent state, peers' files); nothing there is sent`);
   let real: string;
   try {
     real = realpathSync(abs);
-    st = statSync(real);
   } catch {
     throw new CliError(`no such file: ${abs}`);
   }
-  if (!st.isFile()) throw new CliError(`not a regular file: ${abs}`);
-  if (inAnyHome(home, abs) || inAnyHome(home, real)) {
-    throw new CliError(`refused: ${abs} is a Rendezvous file or inside a Rendezvous home (secret key, consent state, peers' files); nothing there is sent`);
+  if (inAnyHome(home, abs) || inAnyHome(home, real)) throw refused();
+  // Open the checked path once, never following a last-component symlink swapped in since (O_NOFOLLOW; POSIX only),
+  // then judge and read that same descriptor: what is read is what was checked.
+  let fd: number;
+  try {
+    fd = openSync(real, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
+  } catch {
+    throw new CliError(`cannot open ${abs} (it changed while it was checked, or is not readable)`);
   }
-  if (st.size > max) throw new CliError(`${abs} is ${st.size} bytes; ${what} at most ${max}`);
-  return { abs, bytes: new Uint8Array(readFileSync(abs)) };
+  try {
+    const st = fstatSync(fd, { bigint: true });
+    if (!st.isFile()) throw new CliError(`not a regular file: ${abs}`);
+    // A hard link to a secret file has another path but the same identity; refuse it, and any file with more links.
+    if (secretIdentities(home).has(`${st.dev}:${st.ino}`)) throw refused();
+    if (st.nlink > 1n) throw new CliError(`refused: ${abs} has ${st.nlink} hard links; copy it to a file of its own to send it`);
+    if (st.size > BigInt(max)) throw new CliError(`${abs} is ${st.size} bytes; ${what} at most ${max}`);
+    const bytes = new Uint8Array(Number(st.size));
+    let off = 0;
+    while (off < bytes.length) {
+      const n = readSync(fd, bytes, off, bytes.length - off, off);
+      if (n === 0) break;
+      off += n;
+    }
+    if (off !== bytes.length) throw new CliError(`${abs} changed while it was read; nothing was sent`);
+    return { abs, bytes };
+  } finally {
+    closeSync(fd);
+  }
 }
 
 /** The view of a prepared file: never the key. */

@@ -755,6 +755,9 @@ describe('auto-approve is the human’s (issue #25)', () => {
     expect(skill).toContain('rdv contact auto-approve');
     const onboarding = readFileSync(ONBOARDING, 'utf8');
     expect(onboarding).not.toMatch(/auto[-_ ]?approve|dangerous mode/i);
+  });
+});
+
 describe('the direct-transfer setting is the human’s (issue #26)', () => {
   const denied = [
     'rdv file direct-transfer on',
@@ -793,6 +796,10 @@ describe('the direct-transfer setting is the human’s (issue #26)', () => {
         expect(checkToolInput('Read', { file_path: join(h, f) }), f).toBeTruthy();
         expect(checkCommand(`cat ${join(h, f)}`), f).toBeTruthy();
         expect(checkCommand(`echo '{"direct_transfer":true}' > ${join(h, f)}`), f).toBeTruthy();
+      }
+      // owner.json by name in any command that could write it, through a variable or a relative path.
+      for (const c of ['echo \'{"direct_transfer":true}\' > "$H/owner.json"', 'cd ~/.rendezvous/default && echo x > owner.json', 'cp /tmp/x ./owner.json', 'tee owner.json < x']) {
+        expect(checkCommand(c), c).toBeTruthy();
       }
       // The same names outside a home are anyone's files.
       expect(checkToolInput('Read', { file_path: join(root, 'tasks.json') })).toBeUndefined();
