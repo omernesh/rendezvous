@@ -1954,9 +1954,11 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       options (`fetchIncoming(…, { ca, unsafeAllowAddresses })`, the MCP
       server's `fileFetch`); the ok variant also checks that production
       `rdv file fetch` refuses it (`blocked-address`). Auto-approve is set
-      through `contactAutoApprove`'s `Tty` seam with John's fingerprint
-      retyped, after a spawned `rdv contact auto-approve` is refused for
-      having no terminal.
+      through the commands' `Tty` seam: `ownerSecretSet` (the owner
+      passphrase, issue #47), then `contactAutoApprove` with the passphrase
+      typed, after spawned `rdv owner-secret set` and `rdv contact
+      auto-approve` are refused for having no terminal; no prompt shown
+      holds the passphrase.
     - **What each variant checks.** ok: the start gate holds the task and
       the listing shows the text, focus and file (name, hash, encrypted); a
       fetch before the gate is refused and the store sees nothing; after
