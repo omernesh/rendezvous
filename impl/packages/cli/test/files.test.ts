@@ -1,7 +1,7 @@
 // Files in the hosts (SPEC §7.7, issue #26): validation of peer file parts,
 // hostile names, the quarantine, the start gate on fetching, prepared files
 // and the release view, and the `rdv file` commands.
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { emptyTaskState, type FilePart, FILES_URI, type TaskRecord } from '@rendezvous/a2a';
@@ -266,6 +266,38 @@ describe('outgoing files: prepared, attached, shown at the release gate', () => 
     expect(() => prepareFile(home, tmp())).toThrow(/not a regular file/);
     expect(() => prepareFile(home, src, { mimeType: 'not a type' })).toThrow(/MIME/);
   });
+
+  it('never sends a file from inside the Rendezvous home (the secret key), by path, by `..` or through a symlink', () => {
+    const home = new Home(tmp());
+    home.ensureDir();
+    writeFileSync(home.agentPath, '{"secretKey":"not really"}');
+    const outside = tmp();
+    for (const p of [home.agentPath, join(outside, '..', basename(home.dir), 'agent.json')]) {
+      expect(() => prepareFile(home, p)).toThrow(/inside a Rendezvous home/);
+      expect(() => attachFiles(home, [], [p])).toThrow(/inside a Rendezvous home/);
+    }
+    const link = join(outside, 'innocent.pdf');
+    let linked = false;
+    try {
+      symlinkSync(home.agentPath, link);
+      linked = true;
+    } catch {
+      /* Windows without the symlink privilege */
+    }
+    if (linked) {
+      expect(() => prepareFile(home, link)).toThrow(/inside a Rendezvous home/);
+      expect(() => attachFiles(home, [], [link])).toThrow(/inside a Rendezvous home/);
+    }
+    expect(existsSync(home.filesPath)).toBe(false);
+    // The secret files by name anywhere, and any other folder that looks like a home (another profile).
+    const loose = join(tmp(), 'consent.json');
+    writeFileSync(loose, '{}');
+    expect(() => prepareFile(home, loose)).toThrow(/Rendezvous file/);
+    const other = tmp();
+    for (const f of ['config.json', 'agent.json', 'tasks.json']) writeFileSync(join(other, f), '{}');
+    expect(() => attachFiles(home, [], [join(other, 'tasks.json')])).toThrow(/inside a Rendezvous home/);
+    expect(() => prepareFile(home, join(other, 'config.json'))).toThrow(/inside a Rendezvous home/);
+  });
 });
 
 describe('rdv file (commands)', () => {
@@ -289,9 +321,9 @@ describe('rdv file (commands)', () => {
     expect(list.lines[0]).toEqual({ event: 'direct-transfer', enabled: false });
     expect(list.lines[1]).toMatchObject({ event: 'file-prepared', sha256: p.sha256 });
     expect((await rdv(['file', 'direct-transfer', 'on'], home)).lines[0]).toEqual({ event: 'direct-transfer', enabled: true });
-    expect(JSON.parse(readFileSync(join(home, 'config.json'), 'utf8')).direct_transfer).toBe(true);
+    expect(JSON.parse(readFileSync(join(home, 'owner.json'), 'utf8')).direct_transfer).toBe(true);
     await rdv(['file', 'direct-transfer', 'off'], home);
-    expect(JSON.parse(readFileSync(join(home, 'config.json'), 'utf8')).direct_transfer).toBeUndefined();
+    expect(JSON.parse(readFileSync(join(home, 'owner.json'), 'utf8')).direct_transfer).toBeUndefined();
     expect((await rdv(['file', 'direct-transfer', 'maybe'], home, { check: false })).code).toBe(2);
     expect((await rdv(['file', 'fetch', U(5)], home, { check: false })).stderr).toContain(`no task ${U(5)}`);
     expect((await rdv(['file', 'decline-transfer', U(5)], home, { check: false })).stderr).toContain('no direct-transfer request');

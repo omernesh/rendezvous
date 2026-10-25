@@ -8,6 +8,7 @@
 //   tasks.json   general tasks (tasks/v1 engine state) and results waiting for release (mode 600)
 //   audit.jsonl  gates passed without asking the human (an `auto` start, a `notify`, auto-approve), every approval,
 //                and every auto-approve set/extend/off (bounded)
+//   owner.json   owner-only settings (direct transfer), MACed with the agent key; never written by the assistant (consent guard)
 //   files.json   files the owner prepared to send (key, upload copy, source path) and direct-transfer requests (mode 600)
 //   files/       outgoing/: upload copies (ciphertext); incoming/<task>/: fetched peer files, quarantined (mode 600)
 //   autoapprove.json  contacts our human put on auto-approve (issue #25; mode 600, MACed with the agent key, local only)
@@ -41,10 +42,18 @@ export interface Config {
   addresses: ConfigAddress[];
   policy: { inbound: InboundPolicy; public: boolean };
   public_pointer: boolean;
+}
+
+/**
+ * owner.json: settings only the owner changes, kept out of config.json (which
+ * the assistant may read and, through file tools, write); the plugin's consent
+ * guard refuses any tool access to this file.
+ */
+export interface OwnerSettings {
   /**
-   * The owner's setting for direct transfers (SPEC §7.7, `rdv/transfer`): off
-   * (absent) by default. Off, a peer's request for one is declined at once;
-   * on, it is shown to the owner, who decides. Nothing ever connects on its own.
+   * Direct transfers (SPEC §7.7, `rdv/transfer`): off (absent) by default.
+   * Off, a peer's request for one is declined at once; on, it is shown to the
+   * owner, who decides. Nothing ever connects on its own.
    */
   direct_transfer?: boolean;
 }
@@ -282,6 +291,21 @@ export class Home {
   get tasksPath() {
     return join(this.dir, 'tasks.json');
   }
+  get ownerPath() {
+    return join(this.dir, 'owner.json');
+  }
+
+  readOwner(): OwnerSettings {
+    if (!existsSync(this.ownerPath)) return {};
+    const s = readJson<OwnerSettings>(this.ownerPath);
+    if (typeof s !== 'object' || s === null || Array.isArray(s)) throw new CliError(`unrecognized ${this.ownerPath}`);
+    return { ...(s.direct_transfer === true ? { direct_transfer: true } : {}) };
+  }
+
+  writeOwner(s: OwnerSettings): void {
+    writeAtomic(this.ownerPath, JSON.stringify(s, null, 2) + '\n', 0o600);
+  }
+
   get filesPath() {
     return join(this.dir, 'files.json');
   }
@@ -526,6 +550,7 @@ export class Home {
       this.cardsPath,
       this.negotiationsPath,
       this.tasksPath,
+      this.ownerPath,
       this.filesPath, // keys of files prepared under the old identity; downloads in files/ are kept
       this.auditPath,
       this.autoApprovePath,

@@ -1712,7 +1712,11 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       `untrusted_peer_text`.
     - **Outgoing files** (`files.json`, mode 600). `rdv file prepare <path>`
       / `rdv_file` "prepare" reads one of the owner's files (at most
-      25 MiB), encrypts it with `encryptFile` (fresh key and nonce; `--plain`
+      25 MiB; never `agent.json`, `agent.json.bak` or `consent.json` by
+      name anywhere, nor anything inside a Rendezvous home: this one,
+      `$RDV_HOME`, under `.rendezvous`, or any folder that looks like one;
+      checked on the given and the real path, so a symlink, a junction or
+      `..` cannot reach them; security review on commit), encrypts it with `encryptFile` (fresh key and nonce; `--plain`
       skips it) and writes the ciphertext to `files/outgoing/<sha256>.bin`
       for the owner to upload anywhere; nothing is sent and no result
       carries the key. `rdv task submit --file <sha256>=<https-url>` /
@@ -1737,10 +1741,13 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       peer text), a MIME type only in `type/subtype` form, the hash only as
       64 hex, the host in host form; the URL always as
       `untrusted_peer_text`.
-    - **Direct transfer** (`rdv/transfer`). `config.json`
-      `direct_transfer` is off (absent) by default; `rdv file
-      direct-transfer on|off` is the human's (on the consent guard's list;
-      no MCP tool changes it). `handleInbound` routes `rdv/transfer` from
+    - **Direct transfer** (`rdv/transfer`). `direct_transfer` lives in
+      `owner.json` (mode 600), not `config.json`, which the assistant may
+      read and write: the consent guard refuses any tool access to
+      `owner.json`, `files.json` and `tasks.json` in a home (file keys,
+      drafts with inline bytes, owner settings), and `rdv file
+      direct-transfer on|off` is on its human-only list; no MCP tool changes
+      it. Off (absent) by default. `handleInbound` routes `rdv/transfer` from
       contacts to `transfersInbound` (the raw message event is marked
       `routed: "files"` and hidden from the model): off, a `propose` is
       answered with an `abort` ("direct transfer is off") and shown; on, it

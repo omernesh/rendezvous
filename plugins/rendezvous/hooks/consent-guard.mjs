@@ -21,14 +21,18 @@ import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-export const SECRET_FILES = ['agent.json', 'agent.json.bak', 'consent.json', 'autoapprove.json'];
-const SECRET_MENTION = /agent\.json|consent\.json|autoapprove\.json/i;
+export const SECRET_FILES = ['agent.json', 'agent.json.bak', 'consent.json', 'autoapprove.json', 'owner.json'];
+/** Files in a home that hold file keys and drafts (files.json, tasks.json): refused by path when they are in a home. */
+export const OWNER_FILES = ['files.json', 'tasks.json'];
+const SECRET_MENTION = /agent\.json|consent\.json|autoapprove\.json|owner\.json/i;
 /** Stands for the output of a `$(...)` or backtick substitution: unknown when the hook runs. */
 const SUB = '\u0000';
 const MAX_DEPTH = 6;
 
 const SECRET_REFUSAL =
-  'That names the Rendezvous secret key, consent or auto-approve file (agent.json, agent.json.bak, consent.json, autoapprove.json). Never read, write, copy or print it; use rdv_status for the agent ID, fingerprint and auto-approve status.';
+  'That names the Rendezvous secret key, consent, auto-approve or owner-settings file (agent.json, agent.json.bak, consent.json, autoapprove.json, owner.json). Never read, write, copy or print it; use rdv_status for the agent ID, fingerprint and auto-approve status, and ask your user to change a setting in their own terminal.';
+const OWNER_REFUSAL =
+  'That names a Rendezvous file that holds file keys and drafts (files.json, tasks.json). Never read or write it; use rdv_file and rdv_task.';
 const HOME_REFUSAL =
   'That reaches into a Rendezvous home, which holds the secret key and consent state. Do not search, glob, copy or read it as a whole; use rdv_status, rdv_pending_requests and rdv_inbox.';
 const HUMAN_ONLY =
@@ -434,6 +438,7 @@ function checkWords(words, ctx, depth) {
         // A wildcard in a home, or one whose last part could name the key or consent file.
         if (where === 'home' || GLOB_CHARS.test(dirname(text)) || SECRET_FILES.some((s) => globRe(basename(text)).test(s))) throw new Refusal(HOME_REFUSAL);
       } else if (dyn && !isHomeArg && i !== prog) throw new Refusal(OPAQUE);
+      else if (where === 'inside' && OWNER_FILES.includes(basename(path).toLowerCase())) throw new Refusal(OWNER_REFUSAL);
       else if (where === 'home' && !listing && !isHomeArg && i !== prog) throw new Refusal(HOME_REFUSAL);
     }
   }
@@ -502,12 +507,13 @@ export function checkPath(path, opts = {}) {
   const { path: p } = expandPath(path, cwd);
   const where = classify(p);
   if (SECRET_FILES.includes(basename(p).toLowerCase()) && (where || classify(dirname(p)))) return SECRET_REFUSAL;
+  if (OWNER_FILES.includes(basename(p).toLowerCase()) && where === 'inside') return OWNER_REFUSAL;
   if (where === 'home') return HOME_REFUSAL;
   if (kind === 'search' && (where || containsHome(p))) return HOME_REFUSAL;
   return undefined;
 }
 
-const FILE_KEYS = ['file_path', 'notebook_path', 'path', 'paths', 'directory', 'dir', 'source', 'destination', 'target', 'cwd_path'];
+const FILE_KEYS = ['file_path', 'notebook_path', 'path', 'paths', 'directory', 'dir', 'source', 'destination', 'target', 'cwd_path', 'inline_files', 'calendar'];
 const GLOB_KEYS = ['glob', 'pattern', 'include', 'exclude'];
 
 /** Why this tool call is refused, or undefined. Every path-like field is checked, whatever the tool. */
