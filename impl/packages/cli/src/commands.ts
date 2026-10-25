@@ -21,7 +21,7 @@ import {
   verifyCard,
 } from '@rendezvous/core';
 import { cancel, cancelMeeting, cardCapabilities, confirmMeeting, describeSlot, meetingSnapshot, NegotiationError, type NegotiationTask, parseInstant, propose, type Step } from '@rendezvous/a2a';
-import { candidateDigest, describeApproval, reissueForDisplay, requestSubject, type ShownPhrase } from './consent.js';
+import { candidateDigest, describeApproval, inboundSubject, reissueForDisplay, requestSubject, type ShownPhrase } from './consent.js';
 import { CliError, type Config, type ConfigAddress, type ConsentAction, consentKey, Home, type InboxEntry, parseJsonLines } from './home.js';
 
 import { listen } from './listen.js';
@@ -413,11 +413,12 @@ export async function contactRequest({ home, out, values, positionals }: Ctx): P
 }
 
 export async function contactPending({ home, out }: Ctx): Promise<void> {
-  const { pending, candidates, overflows, evicted } = await withAgent(
+  const { pending, candidates, contacts, overflows, evicted } = await withAgent(
     home,
     async (agent) => ({
       pending: agent.pendingRequests(),
       candidates: agent.grantCandidates(),
+      contacts: agent.contacts(),
       overflows: agent.book.probeOverflows(),
       evicted: agent.book.state.pendingEvicted ?? 0,
     }),
@@ -428,13 +429,15 @@ export async function contactPending({ home, out }: Ctx): Promise<void> {
   if (pending.length === 0 && !out.json) out.emit({}, 'no pending requests');
   // The MCP server's confirm phrases (see packages/mcp README) are shown in text mode only: they are for the human at a terminal.
   // Only their hashes are stored (issue #12), so showing one issues a new phrase for the same request and terms, which replaces it.
+  // An existing contact has a phrase only while the assistant asks to grant it more (rdv_grant agent_id, issue #1).
   const shown =
-    out.json || (pending.length === 0 && candidates.length === 0)
+    out.json || (pending.length === 0 && candidates.length === 0 && contacts.length === 0)
       ? new Map<string, ShownPhrase>()
       : await home.locked(async () =>
           reissueForDisplay(home, [
             ...pending.map((p) => ({ action: 'request' as const, id: p.request.id, subject: requestSubject(p) })),
             ...candidates.map((c) => ({ action: 'candidate' as const, id: c.grant.id, subject: candidateDigest(c) })),
+            ...contacts.map((c) => ({ action: 'inbound' as const, id: c.peer, subject: inboundSubject(c) })),
           ]),
         );
   const phraseLine = (action: ConsentAction, id: string) => {
@@ -447,6 +450,13 @@ export async function contactPending({ home, out }: Ctx): Promise<void> {
   for (const p of pending) out.emit(requestView(p), requestText(p) + phraseLine('request', p.request.id));
   // Answers to our own topic probes: anyone who saw the probe could have sent one.
   for (const c of candidates) out.emit(candidateView(c), candidateText(c) + phraseLine('candidate', c.grant.id));
+  // Text mode only (shown is empty with --json): the assistant asked to let an existing contact do more, e.g. propose meetings.
+  for (const c of contacts.filter((x) => shown.has(consentKey('inbound', x.peer)))) {
+    out.emit(
+      { event: 'inbound-ask', ...contactView(c) },
+      `your assistant asks to grant contact ${contactText(c)}` + phraseLine('inbound', c.peer) + '\n  your agent also tells theirs (a reverse grant), so it can use these rights',
+    );
+  }
   for (const o of overflows) out.emit(overflowView(o), overflowText(o));
   if (evicted > 0) {
     out.emit(

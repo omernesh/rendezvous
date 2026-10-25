@@ -28,7 +28,7 @@ An open protocol for agent-to-agent contact — how personal AI agents belonging
 ```
 
 Then type `/rdv-onboarding` (also `/rendezvous:rdv-onboarding`). Claude sets you
-up one question per turn: it installs `rdv` (with your OK), asks for your email,
+up one question per turn: it points you to the `rdv` installer, asks for your email,
 an optional phone and your relays, creates your agent and checks that each step
 worked. Run it again to pick up where you left off. After that, say, for
 example, "Ask john@doe.com's agent to connect" or "Tell John I'm running late",

@@ -4,6 +4,7 @@ export {
   candidateTarget,
   checkPhrase,
   dropPhrase,
+  inboundTarget,
   issuePhrase,
   MAX_ATTEMPTS,
   newPhrase,

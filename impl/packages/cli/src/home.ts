@@ -43,8 +43,12 @@ export interface InboxEntry {
   payload: Payload;
 }
 
-/** What a confirm phrase approves: a contact request, a probe answer, a held dinner, or canceling an agreed one. */
-export type ConsentAction = 'request' | 'candidate' | 'meeting' | 'cancel';
+/**
+ * What a confirm phrase approves: a contact request, a probe answer, a held
+ * dinner, canceling an agreed one, or granting an existing contact rights
+ * towards us (`inbound`, issue #1: a reverse grant).
+ */
+export type ConsentAction = 'request' | 'candidate' | 'meeting' | 'cancel' | 'inbound';
 
 /**
  * `consent.json` key: IDs are peer-chosen and may collide across actions, so
@@ -60,7 +64,7 @@ export interface ConsentHash {
   digest?: string;
 }
 
-/** The tier and scope a request phrase approves, as shown to the human. */
+/** The tier and scope a request (or inbound) phrase approves, as shown to the human. */
 export interface ConsentTerms {
   tier: Tier;
   scope: GrantScope;
@@ -72,13 +76,13 @@ export interface ConsentEntry extends ConsentHash {
   action: ConsentAction;
   /**
    * The digest of what the human was shown: the meeting (meetingDigest), the
-   * probe answer (candidateDigest), or the request with its terms
-   * (termsDigest). The phrase approves that only.
+   * probe answer (candidateDigest), or the request or contact with its
+   * terms (termsDigest). The phrase approves that only.
    */
   digest?: string;
-  /** request: the request itself, without the terms (requestSubject). */
+  /** request: the request itself, without the terms (requestSubject); inbound: the contact (inboundSubject). */
   subject?: string;
-  /** request: the tier and scope this phrase approves. */
+  /** request, inbound: the tier and scope this phrase approves. */
   terms?: ConsentTerms;
   /** request, candidate: the local label it approves for the contact (none if absent; part of `digest`). */
   label?: string;

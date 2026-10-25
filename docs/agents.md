@@ -89,8 +89,8 @@ model: [`impl/packages/mcp/README.md`](../impl/packages/mcp/README.md#consent-th
   /reload-plugins
   ```
 
-  Then type `/rdv-onboarding` (or `/rendezvous:rdv-onboarding`). It installs `rdv`
-  with your OK and sets you up one question at a time. The plugin starts the
+  Then type `/rdv-onboarding` (or `/rendezvous:rdv-onboarding`). It points you to
+  the installer for `rdv` and sets you up one question at a time. The plugin starts the
   server through `bin/rdv-mcp.mjs` under `node`, so Windows needs nothing special.
 - **Without the plugin:** `claude mcp add rendezvous -- rdv-mcp` (Windows:
   `claude mcp add rendezvous -- cmd /c rdv-mcp`).
@@ -297,9 +297,10 @@ model: [`impl/packages/mcp/README.md`](../impl/packages/mcp/README.md#consent-th
   hermes skills install omernesh/rendezvous/plugins/rendezvous/skills/rendezvous
   ```
 
-  Hermes scans community skills and **blocks this one** (`DANGEROUS`) because the
-  skill contains the installer one-liner (`curl ... | sh`) and a config example.
-  Read the skill first, then add `--force`. Add `--yes` to skip the prompt.
+  Hermes scans community skills before installing them; this one passes the scan
+  (`SAFE`) and installs as is. The skill carries no download-and-run
+  line: it sends you to the Install section of https://rendezvous.nesher.co to
+  run the installer yourself. Add `--yes` to skip the prompt.
   The installed files are `SKILL.md` and `references/`, under `~/.hermes/skills/rendezvous`.
 - **Verify:** `/reload-mcp`, then ask "What's my rendezvous status?".
 - **Consent:** elicitation supported (form mode, Hermes' normal approval

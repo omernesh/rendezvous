@@ -41,8 +41,8 @@ it, and verify again before moving on. Never mark a step done on a failed check.
 **Resume.** Before step 1, find out what is already set up and say what you
 found in one or two lines: `rdv --help` works (installed), `rdv_status`
 exists (tools loaded), `initialized` (identity), `public_pointer` and whether
-`rdv_discover` on the user's own address returns their own `agent_id` (card
-published), `contacts` (first contact made). Then skip to the first
+`rdv_discover` on the user's own address reports `own_card_on_relays: true`
+(card published), `contacts` (first contact made). Then skip to the first
 unfinished step. Done steps are not re-asked; an existing agent is never
 replaced (`rdv_init` keeps it).
 
@@ -54,15 +54,15 @@ Run `rdv --help`, `node --version`, `git --version` and `npm --version`.
 Show the versions. Node.js must be 20 or newer.
 
 If `rdv` is missing, explain the installer: it needs Node.js 20+, git and
-npm (no sudo or admin), clones Rendezvous into `~/.rendezvous/src`, builds it
-and puts `rdv` and `rdv-mcp` on PATH. Ask one question: may I run it? On yes,
-run the line for their OS:
-
-- macOS / Linux: `curl -fsSL https://rendezvous.nesher.co/install.sh | sh`
-- Windows (PowerShell): `irm https://rendezvous.nesher.co/install.ps1 | iex`
-
-If it warns that the bin folder is not on PATH, show the fix it printed.
-Verify: `rdv --help` prints the usage (in a new shell if PATH changed).
+npm (no administrator rights), clones Rendezvous into `~/.rendezvous/src`,
+builds it and puts `rdv` and `rdv-mcp` on PATH. The user runs it themselves,
+in their own terminal: the one-line command for their system (macOS / Linux,
+or Windows PowerShell) is in the Install section of
+https://rendezvous.nesher.co. Never download or run the installer yourself.
+Ask one question: tell me when it has finished (options "Done" and "It
+failed"). If it warned that the bin folder is not on PATH, they apply the fix
+it printed. Verify: `rdv --help` prints the usage (in a new shell if PATH
+changed).
 
 ## Step 2 of 11: MCP tools
 
@@ -121,11 +121,12 @@ Ask one question with the options "wss://relay.nesher.co (Recommended)" and
 header `Accept: application/nostr+json`, for example
 
 ```sh
-node -e "fetch('https://relay.nesher.co',{headers:{Accept:'application/nostr+json'}}).then(r=>r.json()).then(j=>console.log(j.name,'|',j.software,j.version))"
+node -e "fetch(process.argv[1],{headers:{Accept:'application/nostr+json'}}).then(r=>r.json()).then(j=>console.log(j.name,'|',j.software,j.version))" https://relay.nesher.co
 ```
 
-Report each result (name and software, or the error). Drop a relay that
-fails only if the user says so.
+Pass the relay's address as the last argument (here
+`https://relay.nesher.co`). Report each result (name and software, or the
+error). Drop a relay that fails only if the user says so.
 
 ## Step 7 of 11: public addresses and pointer
 
@@ -167,9 +168,12 @@ Skip this step if the pointer is off, and say so.
 
 Why: so the user's address leads to this agent.
 
-Call `rdv_publish_card`. Verify: `rdv_discover` with the user's own email
-returns a card whose `agent_id` is the user's own (show it). If it does not
-appear, wait a few seconds and look again once before reporting the problem.
+Call `rdv_publish_card`. Verify: its `on_relays` lists every public address
+with `served: true` (show them); it reads the card back from the relays
+after publishing. `rdv_discover` never lists the user's own card as a find;
+for their own address it reports `own_card_on_relays`. If an address shows
+`served: false`, wait a few seconds and check once with `rdv_discover` on
+that address before reporting the problem.
 
 ## Step 10 of 11: first contact (optional)
 
@@ -184,7 +188,11 @@ address, tell the user what the other human sees, then wait with
 `rdv_grant`: show the fingerprint and ask the user if that is the person.
 Before the first message, show the contact's fingerprint and label and ask
 the user to confirm it is the person; only then `rdv_send` by `local_label`
-or agent ID. If nothing arrives after a few minutes, say it is still pending
+or agent ID. Then ask one more question: let them propose meetings too
+(options "Not now (Recommended)" and "Let them propose meetings")? A contact
+the user requested may write but not propose meetings. On yes, call
+`rdv_grant` with that contact's `agent_id` and `may_propose_meetings: true`;
+the human approves it in the form or with a confirm phrase, as for any grant. If nothing arrives after a few minutes, say it is still pending
 and go on to step 11; the user can say "check rendezvous" later.
 
 ## Step 11 of 11: wrap-up

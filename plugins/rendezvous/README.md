@@ -30,7 +30,7 @@ What it contains:
 - `.mcp.json`: registers the `rdv-mcp` server through `bin/rdv-mcp.mjs`, which
   starts the build the installer put in `~/.rendezvous/src` (or `$RDV_DIR`).
   Until Rendezvous is installed the server fails to start; install it (the
-  skill offers to), then run `/reload-plugins`. The server uses the profile
+  skill points you to the installer), then run `/reload-plugins`. The server uses the profile
   `rdv` uses: `$RDV_HOME`, else `~/.rendezvous/$RDV_PROFILE`, else
   `~/.rendezvous/default`.
 - `hooks/hooks.json`: a consent guard on every tool call. It stops Claude
