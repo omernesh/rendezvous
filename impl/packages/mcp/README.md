@@ -79,7 +79,10 @@ one of these:
 3. **The terminal.** The human runs `rdv contact grant <id>` themselves.
 
 No tool result ever contains a phrase (tests scan every result and the inbox
-resource). Without a phrase or elicitation, `rdv_grant` fails and tells the
+resource). Limits (NOTES 57): `consent.json` keeps phrases in clear text so
+the terminal can show them again, so a client that lets the model read files
+in the home can find them; there, prefer elicitation or the terminal. A
+phrase approves any tier from `friend` down and does not bind the scope. Without a phrase or elicitation, `rdv_grant` fails and tells the
 model to ask its human.
 
 **Threat model.** This stops a model from granting on its own initiative, and

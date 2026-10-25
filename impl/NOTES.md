@@ -381,6 +381,16 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
     rolled back further than one envelope reuses seqs below ours, which
     still read as duplicates; telling them apart needs a hash per seq or a
     chain reset message (v0.2).
+57. **Confirm-phrase limits** (L6, open, documented only). `consent.json`
+    (mode 600) holds each phrase in clear text, because `rdv contact
+    pending` must show it to the human again. A client that gives the model
+    file or shell access to the home (Claude Code, for one) can read it and
+    so approve on its own; there, use elicitation or `rdv contact grant` in
+    a terminal, or keep the home outside the files the model can reach.
+    The phrase also does not bind the tier (any tier from `friend` down) or
+    `may_propose_meetings`, which the model picks. Fix options: store only a
+    hash and show the phrase once (stderr at creation), and fold the tier
+    and scope shown to the human into the phrase (HMAC). Not done here.
 
 ## Not implemented yet
 
