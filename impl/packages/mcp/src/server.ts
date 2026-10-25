@@ -200,7 +200,8 @@ export interface RdvMcpOptions {
   calendarDirs?: string[];
 }
 
-class ToolError extends Error {}
+/** An error whose message is ours and safe to show (the model, or the owner on the gateway page). */
+export class ToolError extends Error {}
 
 /** A label from the model (its user's words), checked before anything is sent. */
 function checkLabel(label: string | undefined): string | undefined {
