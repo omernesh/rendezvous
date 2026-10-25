@@ -20,6 +20,7 @@ import {
   MEETING_CAPABILITIES,
   MEETINGS_CAPABILITY,
   MAX_ADDRESSES,
+  NoRelayAcceptedError,
   type MirrorOptions,
   type MirrorRelayResult,
   type MirrorReport,
@@ -59,8 +60,8 @@ import {
   terminalAvailable,
   weakOwnerSecret,
 } from './ownersecret.js';
-import { candidateDigest, describeApproval, dropPhrase, inboundSubject, reissueForDisplay, requestSubject, type ShownPhrase } from './consent.js';
-import { type AuditEntry, CliError, type Config, type ConfigAddress, type ConsentAction, consentKey, Home, type InboxEntry, parseJsonLines, type PendingRelease } from './home.js';
+import { candidateDigest, describeApproval, describeRelaysAsk, dropPhrase, inboundSubject, relaysAsk, reissueForDisplay, requestSubject, type ShownPhrase } from './consent.js';
+import { type AuditEntry, CliError, type Config, type ConfigAddress, type RelayFailure, RelayPublishError, type ConsentAction, consentKey, Home, type InboxEntry, parseJsonLines, type PendingRelease } from './home.js';
 import {
   answerPeer,
   approveHeldRequest,
@@ -432,7 +433,7 @@ export async function changeAddress(
       try {
         result.published = await agent.publishPointers(removed);
       } catch (err) {
-        throw new CliError(`could not publish the new card, so nothing changed (try again): ${(err as Error).message}`);
+        throw publishFailure(err);
       }
     }
     // The card, then the config, both under the lock: a listener follows the card (watchTopics).
@@ -518,7 +519,10 @@ export async function mirrorCard(home: Home, opts: Partial<MirrorOptions> = {}):
     { save: false },
   );
   if (report.accepted === 0) {
-    throw new CliError(`no relay accepted the card: ${report.relays.map((r) => `${r.url}: ${r.result}${r.message ? ` (${clean(r.message)})` : ''}`).join('; ')}`);
+    throw new RelayPublishError(
+      'no relay accepted the card',
+      report.relays.map((r) => ({ url: r.url, kind: r.kind ?? r.result, message: r.message ?? r.result })),
+    );
   }
   return report;
 }
@@ -540,6 +544,21 @@ function mirrorSummaryText(r: MirrorReport): string {
 }
 
 // --- our own relays (the owner's setup) -------------------------------------
+
+/**
+ * A card publish that failed: our own words for the message (it may reach a
+ * model through rdv-mcp), each relay's text kept apart (RelayPublishError).
+ */
+export function publishFailure(err: unknown): RelayPublishError {
+  const relays: RelayFailure[] =
+    err instanceof NoRelayAcceptedError
+      ? [
+          ...err.report.rejected.map((r) => ({ url: r.url, kind: r.kind, message: r.message })),
+          ...err.report.skipped.map((url) => ({ url, kind: 'skipped', message: 'cooling down' })),
+        ]
+      : [];
+  return new RelayPublishError('could not publish the new card on any relay, so nothing changed (try again later)', relays);
+}
 
 export type RelaySet = 'listen' | 'mirror';
 
@@ -573,9 +592,52 @@ export function parseRelayUrl(raw: string): string {
  * A mirror changes config.json only. A running `rdv listen` / rdv-mcp moves
  * to the new relays when it sees config.json change (watchRelays).
  */
-export async function changeRelays(home: Home, op: { add: string } | { remove: string }, set: RelaySet = 'listen'): Promise<RelayChange> {
-  const url = parseRelayUrl('add' in op ? op.add : op.remove);
+export async function changeRelays(
+  home: Home,
+  op: { add: string } | { remove: string },
+  set: RelaySet = 'listen',
+  opts: { expectRelays?: readonly string[] } = {},
+): Promise<RelayChange> {
   return withAgent(home, async (agent, config) => {
+    // What the human approved (rdv_relays): the change on the relays as they were then.
+    const want = opts.expectRelays;
+    if (want && (want.length !== config.relays.length || want.some((r, i) => r !== config.relays[i]))) {
+      throw new CliError('the relays changed since your user approved this change, so nothing changed; ask them again');
+    }
+    const { url, relays, mirror } = planRelayChange(config, op, set);
+    const result: RelayChange = { change: 'add' in op ? 'added' : 'removed', set, url, relays, mirror_relays: mirror, published: [] };
+    if (set === 'listen') {
+      agent.setRelays(relays, { mirrorRelays: mirror });
+      result.card_created = agent.card.created;
+      try {
+        result.published = await agent.publishPointers([], 'remove' in op ? [url] : []);
+      } catch (err) {
+        throw publishFailure(err);
+      }
+      if ('remove' in op) {
+        result.warning =
+          'contacts keep the card they hold until they get a newer one, so some may still send to the removed relay; keep it for a while if you can';
+      }
+      home.writeAgentState(agent.toJSON());
+    }
+    // The mirror list is written once the owner changed either set, so the default no longer decides it.
+    home.writeConfig({ ...config, relays, mirror_relays: mirror });
+    return result;
+  });
+}
+
+/**
+ * The relay sets after a change, or a usage error (bad URL, duplicate,
+ * unknown, the last listening relay, a full set). Pure: rdv_relays checks it
+ * before asking the human, changeRelays again under the lock.
+ */
+export function planRelayChange(
+  config: Pick<Config, 'relays' | 'mirror_relays'>,
+  op: { add: string } | { remove: string },
+  set: RelaySet,
+): { url: string; relays: string[]; mirror: string[] } {
+  const url = parseRelayUrl('add' in op ? op.add : op.remove);
+  {
     const listenNow = [...config.relays];
     const mirrorNow = mirrorRelaysOf(config);
     let relays = listenNow;
@@ -602,25 +664,8 @@ export async function changeRelays(home: Home, op: { add: string } | { remove: s
         mirror = mirrorNow.filter((r) => r !== url);
       }
     }
-    const result: RelayChange = { change: 'add' in op ? 'added' : 'removed', set, url, relays, mirror_relays: mirror, published: [] };
-    if (set === 'listen') {
-      agent.setRelays(relays, { mirrorRelays: mirror });
-      result.card_created = agent.card.created;
-      try {
-        result.published = await agent.publishPointers([], 'remove' in op ? [url] : []);
-      } catch (err) {
-        throw new CliError(`could not publish the new card, so nothing changed (try again): ${(err as Error).message}`);
-      }
-      if ('remove' in op) {
-        result.warning =
-          'contacts keep the card they hold until they get a newer one, so some may still send to the removed relay; keep it for a while if you can';
-      }
-      home.writeAgentState(agent.toJSON());
-    }
-    // The mirror list is written once the owner changed either set, so the default no longer decides it.
-    home.writeConfig({ ...config, relays, mirror_relays: mirror });
-    return result;
-  });
+    return { url, relays, mirror };
+  }
 }
 
 export async function relaysList({ home, out }: Ctx): Promise<void> {
@@ -628,6 +673,19 @@ export async function relaysList({ home, out }: Ctx): Promise<void> {
   const config = home.readConfig();
   const health = relayHealth(home, config);
   const mirror = mirrorRelaysOf(config);
+  // Text mode only (the human's terminal): a change the assistant asked for, with its confirm phrase.
+  const ask = out.json ? undefined : await home.locked(async () => {
+    const t = relaysAsk(home);
+    const shown = t ? reissueForDisplay(home, [t]).get(consentKey('relays', 'listen')) : undefined;
+    return t && shown ? { t, phrase: shown.phrase } : undefined;
+  });
+  if (ask) {
+    process.stdout.write(
+      `Your assistant asks to change your relays: ${describeRelaysAsk(ask.t)}.\n` +
+        `  To allow it, tell your assistant this confirm phrase (relays): ${ask.phrase}\n` +
+        '  Or make the change yourself with rdv relays add|remove; or ignore it.\n\n',
+    );
+  }
   out.emit(
     { event: 'relays', relays: config.relays, relay_health: health, mirror_relays: mirror, mirror_default: !Array.isArray(config.mirror_relays) },
     [

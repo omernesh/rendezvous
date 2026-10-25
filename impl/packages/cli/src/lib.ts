@@ -7,6 +7,7 @@ export {
   addressViews,
   changeAddress,
   changeRelays,
+  planRelayChange,
   initHome,
   type InitOptions,
   mirrorCard,
@@ -28,6 +29,7 @@ export {
   candidateTarget,
   checkPhrase,
   describeApproval,
+  describeRelaysAsk,
   describeLabel,
   describeTerms,
   dropPhrase,
@@ -42,6 +44,8 @@ export {
   type PhraseCheck,
   type PhraseTarget,
   reissueForDisplay,
+  relaysAsk,
+  relaysTarget,
   requestSubject,
   type ShownPhrase,
   requestTarget,
@@ -50,6 +54,8 @@ export {
 } from './consent.js';
 export {
   CliError,
+  type RelayFailure,
+  RelayPublishError,
   type Config,
   type ConsentAction,
   type ConsentEntry,

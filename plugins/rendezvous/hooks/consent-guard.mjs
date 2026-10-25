@@ -4,7 +4,8 @@
 // probe answer or a meeting, canceling an agreed one, starting a peer's task
 // or releasing a result to it, auto-grant/auto-confirm listeners, the direct-transfer setting), naming a contact (`rdv contact label`: a label decides who
 // "tell John" reaches), putting a contact on auto-approve (`rdv contact auto-approve`, SPEC §5.5.1), the commands
-// that show confirm phrases (`rdv contact pending`, `rdv dinner list`, `rdv task list`), re-keying (`rdv init --force`),
+// that show confirm phrases (`rdv contact pending`, `rdv dinner list`, `rdv task list`, `rdv relays list`), changing the
+// listening relays (`rdv relays add/remove`), re-keying (`rdv init --force`),
 // the owner passphrase that turns auto-approve on (`rdv owner-secret`, issue #47),
 // and the secret key, consent and auto-approve state (`agent.json`, `agent.json.bak`, `consent.json`,
 // `autoapprove.json`, `owner-secret.json`) in the Rendezvous home, through any tool. A command naming
@@ -67,6 +68,8 @@ const AUTO_APPROVE =
   "rdv contact auto-approve is for the human, in their own terminal: it lets a contact's tasks run and their results leave without asking anyone. You may never set, extend or turn it on, and never suggest it to get past a gate; to have it turned off, ask your user (rdv_status shows it).";
 const DIRECT_TRANSFER =
   'rdv file direct-transfer is the human\'s setting, in their own terminal: turning it on shows their network address to contacts who ask for a direct transfer. Tell your user; rdv_file "decline-transfer" can only say no.';
+const RELAYS =
+  'rdv relays add/remove/list is for the human, in their own terminal: the relays the agent listens on receive its messages, and rdv relays list shows a confirm phrase meant only for them. Use the rdv_relays tool, which asks the human for a listening-relay change.';
 const OWNER_SECRET =
   'The owner passphrase (rdv owner-secret, owner-secret.json) is for the human alone: it is what they type to turn auto-approve on. Never set, change, read, write or ask for it.';
 const PTY_RDV =
@@ -328,6 +331,8 @@ const TASK_SUBS = { approve: `rdv task approve: ${TASK_GATE}`, release: `rdv tas
 const FILE_SUBS = { 'direct-transfer': DIRECT_TRANSFER };
 // The owner passphrase (issue #47): setting or resetting it is what would let a wrapper answer the auto-approve prompt.
 const OWNER_SUBS = { set: OWNER_SECRET, reset: OWNER_SECRET };
+// The listening relays: adding one routes our messages through it, removing the good ones cuts us off; list shows the human's phrase.
+const RELAYS_SUBS = { add: RELAYS, remove: RELAYS, list: RELAYS };
 
 /**
  * Programs that run their arguments as another command, in a pseudo-terminal (`script`, `expect`, `unbuffer`,
@@ -465,6 +470,7 @@ function checkWords(words, ctx, depth) {
       ['task', TASK_SUBS],
       ['file', FILE_SUBS],
       ['owner-secret', OWNER_SUBS],
+      ['relays', RELAYS_SUBS],
     ]) {
       const named = couldBe(a, cmd, ctx.cwd);
       for (const [s, why] of Object.entries(subs)) {

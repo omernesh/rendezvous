@@ -116,6 +116,30 @@ function matches(h: ConsentHash, action: ConsentAction, id: string, given: strin
 
 const sha256 = (tag: string, value: unknown): string => createHash('sha256').update(`${tag}\0${canonicalize(value)}`).digest('hex');
 
+/**
+ * A change to our listening relays the model asked for (rdv_relays): bound to
+ * the change, the URL and the relays as they were when the human was asked,
+ * so it approves nothing once the relays changed. One open ask at a time.
+ */
+export function relaysTarget(change: 'add' | 'remove', url: string, before: readonly string[]): PhraseTarget {
+  const subject = `relays/v1\0${change}\0${url}\0${before.join('\0')}`;
+  return { action: 'relays', id: 'listen', subject, digest: sha256('rdv1/relays-change', { change, url, before: [...before] }) };
+}
+
+/** The open relay-change ask, kept by a re-sync (it is issued only when the model asks). */
+export function relaysAsk(home: Home): PhraseTarget | undefined {
+  const raw = home.readConsent() as Record<string, unknown>;
+  const e = raw[consentKey('relays', 'listen')] as ConsentEntry | undefined;
+  if (!e || e.action !== 'relays' || typeof e.digest !== 'string' || typeof e.subject !== 'string') return undefined;
+  return { action: 'relays', id: 'listen', digest: e.digest, subject: e.subject };
+}
+
+/** The relay change an ask approves, in words, from its subject (relaysTarget). */
+export function describeRelaysAsk(t: PhraseTarget): string {
+  const [, change, url, ...before] = (t.subject ?? '').split('\0');
+  return `${change === 'remove' ? 'stop listening on' : 'listen on'} ${url} (your relays now: ${before.join(', ') || 'none'})`;
+}
+
 /** What a request phrase is about, apart from the terms: this request as it arrived. */
 export function requestSubject(p: PendingRequest): string {
   return sha256('rdv1/request-consent', { id: p.request.id, from: p.request.from, binding: p.binding, direct: p.direct === true, received: p.received });
@@ -191,7 +215,7 @@ export function inboundAsks(home: Home): Map<string, ConsentTerms> {
   return asks;
 }
 
-const ACTIONS: readonly string[] = ['request', 'candidate', 'meeting', 'cancel', 'inbound', 'task-start', 'task-release'];
+const ACTIONS: readonly string[] = ['request', 'candidate', 'meeting', 'cancel', 'inbound', 'task-start', 'task-release', 'relays'];
 const isStr = (v: unknown): v is string => typeof v === 'string' && v.length > 0;
 const isHash = (h: unknown): h is ConsentHash =>
   !!h && typeof h === 'object' && isStr((h as ConsentHash).salt) && isStr((h as ConsentHash).hash) && ((h as ConsentHash).digest === undefined || isStr((h as ConsentHash).digest));

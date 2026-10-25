@@ -1,13 +1,16 @@
 // `rdv relays` and `rdv card publish --mirror` (NOTES 81), on real `rdv`
 // processes and the in-memory relay. Never touches the network: an agent on
 // ws:// relays gets no default mirrors.
+import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DEFAULT_MIRROR_RELAYS, DEFAULT_RELAYS, relaysOf, verifyCard } from '@rendezvous/core';
 import { startTestRelay, type TestRelay } from '@rendezvous/core/testing';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { Listener, rdv } from '../scenarios/harness.js';
+import { Listener, RDV_BIN, rdv } from '../scenarios/harness.js';
+import { checkPhrase, issuePhrase, relaysTarget } from '../src/consent.js';
+import { Home } from '../src/home.js';
 import { checkRelayUrl, mirrorRelaysOf } from '../src/transport.js';
 
 let root: string;
@@ -106,6 +109,47 @@ describe('rdv relays', () => {
       await l.stop();
     }
   }, 30_000);
+});
+
+describe('a relay change the assistant asked for (rdv_relays)', () => {
+  it('rdv relays list shows its confirm phrase in the human\'s terminal (text mode only), bound to the change', async () => {
+    const one = await start();
+    const home = join(root, 'asked');
+    await rdv(['init', '--email', 'asked@example.com', '--relay', one.url], home);
+    const h = new Home(home);
+    const target = relaysTarget('add', 'wss://relay.example.com', [one.url]);
+    await h.locked(async () => issuePhrase(h, target));
+    const text = execFileSync(process.execPath, [RDV_BIN, 'relays', 'list', '--home', home], { encoding: 'utf8', windowsHide: true });
+    expect(text).toContain('Your assistant asks to change your relays: listen on wss://relay.example.com');
+    const phrase = /confirm phrase \(relays\): ([a-z]+-[a-z]+-[a-z]+-\d{3})/.exec(text)?.[1];
+    expect(phrase).toBeDefined();
+    // --json (what a tool would read) never carries it.
+    const json = await rdv(['relays', 'list'], home);
+    expect(json.stdout).not.toContain(phrase!);
+    expect(json.stdout).not.toContain('confirm phrase');
+    // It approves this change, not another URL.
+    expect((await h.locked(async () => checkPhrase(h, relaysTarget('add', 'wss://other.example.com', [one.url]), phrase!))).ok).toBe(false);
+    expect((await h.locked(async () => checkPhrase(h, target, phrase!))).ok).toBe(true);
+  });
+});
+
+describe('a publish no relay took', () => {
+  it('the terminal shows each relay\'s reason; nothing changed', async () => {
+    const refusing = await start({ okFalse: 'blocked: no thanks' });
+    const other = await start({ okFalse: 'rate-limited: slow down' });
+    const home = join(root, 'refused');
+    await rdv(['init', '--email', 'refused@example.com', '--relay', refusing.url, '--public-pointer'], home);
+    const r = await rdv(['relays', 'add', other.url], home, { check: false });
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain('could not publish the new card on any relay, so nothing changed');
+    expect(r.stderr).toContain('blocked: no thanks');
+    expect(json(home, 'config.json').relays).toEqual([refusing.url]);
+    expect(relaysOf(json(home, 'agent.json').card)).toEqual([refusing.url]);
+    const m = await rdv(['card', 'publish', '--mirror'], home, { check: false, timeoutMs: 60_000 });
+    expect(m.code).toBe(1);
+    expect(m.stderr).toContain('no relay accepted the card');
+    expect(m.stderr).toContain(refusing.url);
+  }, 60_000);
 });
 
 describe('rdv card publish --mirror', () => {

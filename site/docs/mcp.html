@@ -149,8 +149,8 @@ the human reads in their own terminal (<code>rdv contact pending</code>), below.
 </tr>
 <tr>
 <td><code>rdv_relays</code></td>
-<td>action <code>list</code> / <code>add</code> / <code>remove</code>, url (add, remove), mirror (add / remove a discovery mirror instead)</td>
-<td>the listening relays (envelopes and the card) and the discovery mirrors (the card only); <code>add</code> / <code>remove</code> of a listening relay re-signs and (pointer on) republishes the card, and the server moves its subscriptions at once, like <code>rdv relays</code>. <code>wss://</code> only (<code>ws://</code> on localhost); the last listening relay cannot be removed. The owner's own setup</td>
+<td>action <code>list</code> / <code>add</code> / <code>remove</code>, url (add, remove), mirror (add / remove a discovery mirror instead), confirm_phrase</td>
+<td>the listening relays (envelopes and the card) and the discovery mirrors (the card only); <code>add</code> / <code>remove</code> of a listening relay re-signs and (pointer on) republishes the card, and the server moves its subscriptions at once, like <code>rdv relays</code>. <code>wss://</code> only (<code>ws://</code> on localhost); the last listening relay cannot be removed. A listening change needs the human, like <code>rdv_grant</code>: an approval form, or a confirm phrase bound to the change, the URL and the current relays (shown by <code>rdv relays list</code> in their terminal); a mirror change needs none. A publish that no relay took fails with our own message and each relay's reason as <code>untrusted_peer_text</code></td>
 </tr>
 <tr>
 <td><code>rdv_publish_card</code></td>
