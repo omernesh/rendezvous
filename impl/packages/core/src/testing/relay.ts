@@ -31,6 +31,8 @@ export function matches(ev: Event, f: Filter): boolean {
 export interface TestRelay {
   url: string;
   events: Event[];
+  /** Every REQ filter received, in order (tests check `since`). */
+  requests: Filter[];
   close(): Promise<void>;
 }
 
@@ -38,6 +40,7 @@ export async function startTestRelay(port = 0): Promise<TestRelay> {
   const wss = new WebSocketServer({ port, host: '127.0.0.1' });
   await new Promise<void>((resolve) => wss.once('listening', () => resolve()));
   const events: Event[] = [];
+  const requests: Filter[] = [];
   const subs = new Map<WebSocket, Map<string, Filter[]>>();
 
   wss.on('connection', (ws) => {
@@ -69,6 +72,7 @@ export async function startTestRelay(port = 0): Promise<TestRelay> {
       } else if (type === 'REQ') {
         const [id, ...filters] = rest as [string, ...Filter[]];
         subs.get(ws)?.set(id, filters);
+        requests.push(...filters);
         for (const f of filters) {
           let hits = events.filter((e) => matches(e, f));
           if (f.limit !== undefined) hits = hits.slice(-f.limit);
@@ -86,6 +90,7 @@ export async function startTestRelay(port = 0): Promise<TestRelay> {
   return {
     url: `ws://127.0.0.1:${actualPort}`,
     events,
+    requests,
     close: () =>
       new Promise<void>((resolve) => {
         for (const client of wss.clients) client.terminate();

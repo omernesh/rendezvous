@@ -35,7 +35,16 @@ export interface NostrTransportOptions {
   lookbackSeconds?: number;
   /** First re-subscribe delay after a relay drops us; doubles up to 30 s. Default 1000. */
   reconnectBaseMs?: number;
+  /**
+   * On re-joining a relay, fetch from the newest `created_at` seen on it minus
+   * this margin (seconds), to cover clock skew and events stored while we were
+   * away. Default 300.
+   */
+  rejoinMarginSeconds?: number;
 }
+
+/** Event ids remembered per subscription for de-duplication across relays. */
+const SEEN_IDS = 4096;
 
 export function nostrCarrierKey(key: AgentKey): Uint8Array {
   return hkdf(sha256, key.secretKey, undefined, utf8ToBytes('rdv1/nostr-carrier'), 32);
@@ -64,35 +73,62 @@ export class NostrTransport implements Transport {
   private timers = new Set<ReturnType<typeof setTimeout>>();
 
   /**
-   * A subscription that comes back after its relays drop it (public relays
-   * close idle sockets). Re-subscribing replays the lookback window; the agent
-   * drops the duplicates.
+   * One subscription per relay, each with its own reconnect and backoff, so a
+   * relay that drops out of a multi-relay subscription is re-joined while the
+   * others keep running (public relays close idle sockets). A re-join asks for
+   * events since the newest `created_at` that relay gave us, minus a margin;
+   * events are de-duplicated by id across relays and re-joins.
    */
-  private subscribe(filter: () => Filter, onevent: (ev: Event) => void): () => void {
+  private subscribe(filter: (since: number) => Filter, onevent: (ev: Event) => void): () => void {
     let closed = false;
-    let attempt = 0;
-    let sub: { close(): void } | undefined;
-    const open = () => {
-      sub = this.pool.subscribeMany(this.opts.relays, filter(), {
-        onevent,
-        oneose: () => {
-          attempt = 0;
-        },
-        onclose: () => {
-          if (closed || this.destroyed) return;
-          const delay = Math.min(30_000, (this.opts.reconnectBaseMs ?? 1000) * 2 ** attempt++);
-          const t = setTimeout(() => {
-            this.timers.delete(t);
-            if (!closed && !this.destroyed) open();
-          }, delay);
-          this.timers.add(t);
-        },
-      });
+    const seen = new Set<string>();
+    const fresh = (id: string): boolean => {
+      if (seen.has(id)) return false;
+      seen.add(id);
+      if (seen.size > SEEN_IDS) seen.delete(seen.values().next().value as string);
+      return true;
     };
-    open();
+    const subs = new Set<{ close(): void }>();
+    const margin = this.opts.rejoinMarginSeconds ?? 300;
+    const join = (relay: string) => {
+      let attempt = 0;
+      let newest: number | undefined; // newest created_at seen on this relay, capped at now
+      const open = () => {
+        let dropped = false;
+        const since = newest === undefined ? this.since() : Math.max(this.since(), newest - margin);
+        const sub = this.pool.subscribeMany([relay], filter(since), {
+          onevent: (ev) => {
+            newest = Math.max(newest ?? 0, Math.min(ev.created_at, Math.floor(Date.now() / 1000)));
+            if (fresh(ev.id)) onevent(ev);
+          },
+          oneose: () => {
+            // nostr-tools also fires oneose just before onclose when the
+            // connect fails; only a subscription still open resets backoff.
+            queueMicrotask(() => {
+              if (!dropped) attempt = 0;
+            });
+          },
+          onclose: () => {
+            dropped = true;
+            subs.delete(sub);
+            if (closed || this.destroyed) return;
+            const delay = Math.min(30_000, (this.opts.reconnectBaseMs ?? 1000) * 2 ** attempt++);
+            const t = setTimeout(() => {
+              this.timers.delete(t);
+              if (!closed && !this.destroyed) open();
+            }, delay);
+            this.timers.add(t);
+          },
+        });
+        if (!dropped) subs.add(sub);
+      };
+      open();
+    };
+    for (const relay of new Set(this.opts.relays)) join(relay);
     return () => {
       closed = true;
-      sub?.close();
+      for (const sub of subs) sub.close();
+      subs.clear();
     };
   }
 
@@ -127,7 +163,7 @@ export class NostrTransport implements Transport {
 
   onEnvelopes(me: string, handler: (envelope: unknown) => void): () => void {
     return this.subscribe(
-      () => ({ kinds: [ENVELOPE_KIND], '#p': [agentTag(me)], since: this.since() }),
+      (since) => ({ kinds: [ENVELOPE_KIND], '#p': [agentTag(me)], since }),
       (ev) => handler(safeParse(ev.content)),
     );
   }
@@ -152,7 +188,7 @@ export class NostrTransport implements Transport {
   onTopics(topics: string[], handler: (doc: unknown, topic: string) => void): () => void {
     if (topics.length === 0) return () => {};
     return this.subscribe(
-      () => ({ kinds: [ENVELOPE_KIND], '#t': topics, since: this.since() }),
+      (since) => ({ kinds: [ENVELOPE_KIND], '#t': topics, since }),
       (ev) => {
         const topic = ev.tags.find((t) => t[0] === 't' && topics.includes(t[1]))?.[1];
         if (topic) handler(safeParse(ev.content), topic);

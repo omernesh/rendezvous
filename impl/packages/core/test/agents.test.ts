@@ -437,6 +437,67 @@ describe('relay drops', () => {
     }
   });
 
+  it('re-joins one relay of a multi-relay subscription; every event arrives once (issue #6)', async () => {
+    let a = await startTestRelay();
+    const b = await startTestRelay();
+    const portA = Number(new URL(a.url).port);
+    const urlA = a.url;
+    const sub = new NostrTransport({ key: generateKey(), relays: [urlA, b.url], reconnectBaseMs: 100 });
+    const pub = new NostrTransport({ key: generateKey(), relays: [urlA, b.url] });
+    const pubA = new NostrTransport({ key: generateKey(), relays: [urlA] });
+    const pubB = new NostrTransport({ key: generateKey(), relays: [b.url] });
+    const got: string[] = [];
+    const settle = (ms = 300) => new Promise((r) => setTimeout(r, ms));
+    const until = async (n: number) => {
+      for (let i = 0; i < 50 && got.length < n; i++) await settle(100);
+    };
+    sub.onTopics(['t'], (doc) => got.push((doc as { n: string }).n));
+    try {
+      await settle();
+      await pub.publishTopic('t', { n: 'both' }); // on A and B: delivered once
+      await until(1);
+      await a.close(); // A drops; B keeps running
+      await pubB.publishTopic('t', { n: 'while-a-down' });
+      await until(2);
+      a = await startTestRelay(portA);
+      await settle(800); // backoff + re-join of A alone
+      await pubA.publishTopic('t', { n: 'a-only' });
+      await until(3);
+      await settle();
+      expect(got.sort()).toEqual(['a-only', 'both', 'while-a-down']);
+    } finally {
+      for (const t of [sub, pub, pubA, pubB]) t.close();
+      await a.close();
+      await b.close();
+    }
+  });
+
+  it('re-joins from the newest created_at seen minus the margin', async () => {
+    let a = await startTestRelay();
+    const port = Number(new URL(a.url).port);
+    const url = a.url;
+    const sub = new NostrTransport({ key: generateKey(), relays: [url], reconnectBaseMs: 100, rejoinMarginSeconds: 60 });
+    const pub = new NostrTransport({ key: generateKey(), relays: [url] });
+    const got: string[] = [];
+    sub.onTopics(['t'], (doc) => got.push((doc as { n: string }).n));
+    try {
+      await new Promise((r) => setTimeout(r, 300));
+      await pub.publishTopic('t', { n: 'first' });
+      await new Promise((r) => setTimeout(r, 300));
+      const createdAt = a.events[0].created_at;
+      expect(a.requests[0].since).toBeLessThan(createdAt - 86_400); // first join: full lookback
+      await a.close();
+      a = await startTestRelay(port);
+      for (let i = 0; i < 30 && a.requests.length === 0; i++) await new Promise((r) => setTimeout(r, 100));
+      expect(a.requests[0].since).toBe(createdAt - 60);
+      expect(got).toEqual(['first']);
+    } finally {
+      sub.close();
+      pub.close();
+      await a.close();
+    }
+  });
+
   it('re-subscribes after the relay goes away and comes back', async () => {
     let relay = await startTestRelay();
     const port = Number(new URL(relay.url).port);

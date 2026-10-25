@@ -162,12 +162,15 @@ the marker (CLI behavior, live-run logs, calendar settings) stay here only.
     per inbound item and reloads state from disk each time, so other
     commands can run beside it; it is the pattern the MCP server should use.
 24. **Relays replay on every subscribe.** Subscriptions ask for a 2-day
-    lookback, and the transport re-subscribes when a relay drops the socket,
-    so `listen` sees old events again after each restart or reconnect.
+    lookback, so `listen` sees old events again after each restart.
     Channels and replay IDs make that harmless; `listen` hides duplicate
-    drops in text mode. Re-subscribe fires only when *every* relay of a
-    subscription has closed; a single relay dropping out of a multi-relay
-    subscription is not yet re-joined.
+    drops in text mode. The transport subscribes to each relay separately:
+    when one relay drops, only that one is re-joined, with its own backoff
+    (1 s doubling to 30 s), while the others keep running. A re-join asks
+    for events since the newest `created_at` that relay delivered minus
+    `rejoinMarginSeconds` (default 300, for clock skew), or the full
+    lookback if it delivered nothing; the subscription de-duplicates event
+    ids across relays and re-joins (last 4096 ids) (issue #6).
 25. **Card vs config.** The card is built at `rdv init`. Editing relays in
     `config.json` changes where this agent connects, not the hints its card
     advertises; re-init (new key) to change the card. Card re-issue without
