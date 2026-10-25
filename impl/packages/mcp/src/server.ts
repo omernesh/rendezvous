@@ -81,6 +81,11 @@ import {
 import {
   addressViews,
   answerPeer,
+  autoApproveStatus,
+  autoApprovedCounts,
+  subjectOf,
+  subjectOfState,
+  sweepAutoApprove,
   approveRelease,
   approveStart,
   buildCtx,
@@ -865,6 +870,9 @@ export class RdvMcpServer {
       agent.beforeSend = (a) => this.home.writeAgentState(a.toJSON()); // issue #4
       const r = await fn(agent, config);
       this.home.writeAgentState(agent.toJSON());
+      // A revoke, block or new grant ends a contact's auto-approve (issue #25): off and audited now.
+      const auto = sweepAutoApprove(this.home, subjectOf(agent));
+      if (auto.ended.length) await this.publish(auto.ended.map((e) => ({ type: 'auto_approve_off', peer: safe(e.peer), fingerprint: safe(fingerprint(e.peer)), reason: e.reason, next_step: AUTO_OFF_NEXT })));
       return r;
     });
   }
@@ -1404,6 +1412,9 @@ export class RdvMcpServer {
     const state = this.home.readAgentState() as AgentState;
     const id = state.card.id;
     const contacts = Object.values(state.book.contacts ?? {});
+    // Our user's auto-approve (issue #25): shown, never settable here.
+    const auto = autoApproveStatus(this.home, subjectOfState(state));
+    const autoCounts = autoApprovedCounts(this.home);
     const labelCount = new Map<string, number>();
     for (const c of contacts) if (c.label) labelCount.set(labelKey(c.label), (labelCount.get(labelKey(c.label)) ?? 0) + 1);
     return {
@@ -1448,8 +1459,14 @@ export class RdvMcpServer {
             v.inbound === 'default'
               ? 'default: may write, may not propose meetings (your user can widen it: rdv_grant with agent_id, which needs their approval)'
               : 'granted by your user',
+          auto_approve: autoView(auto.get(c.peer), autoCounts.get(c.peer) ?? 0),
         };
       }),
+      auto_approve: {
+        contacts: auto.size,
+        auto_approved_actions: [...autoCounts.values()].reduce((a, b) => a + b, 0),
+        note: AUTO_NOTE,
+      },
       pending_requests: Object.keys(state.book.pending ?? {}).length,
       pending_dropped_when_full: state.book.pendingEvicted ?? 0,
       probe_answers: Object.keys(state.book.candidates ?? {}).length,
@@ -1459,6 +1476,15 @@ export class RdvMcpServer {
       approval: this.supportsElicitation() ? 'approval form (elicitation)' : 'confirm phrase from the human',
       tasks: this.taskCounts(),
     };
+  }
+
+  /** Contacts on auto-approve now (display only). */
+  private autoNow(): AutoMap {
+    try {
+      return autoApproveStatus(this.home, subjectOfState(this.home.readAgentState() as AgentState));
+    } catch {
+      return new Map();
+    }
   }
 
   private taskCounts() {
@@ -2127,18 +2153,18 @@ export class RdvMcpServer {
     };
     switch (a.action) {
       case 'list': {
-        const s = await home.locked(async () => home.readTasks());
+        const { s, auto } = await home.locked(async () => ({ s: home.readTasks(), auto: this.autoNow() }));
         const tasks = Object.values(s.engine.tasks)
           .filter((t) => !t.tombstone)
           .sort((x, y) => x.created.localeCompare(y.created));
-        return { tasks: tasks.map((t) => taskView(t, s)), dropped_without_asking: s.engine.dropped };
+        return { tasks: tasks.map((t) => taskView(t, s, auto)), dropped_without_asking: s.engine.dropped };
       }
       case 'status': {
         const id = need('show it');
-        const s = await home.locked(async () => home.readTasks());
+        const { s, auto } = await home.locked(async () => ({ s: home.readTasks(), auto: this.autoNow() }));
         const t = Object.hasOwn(s.engine.tasks, id) ? s.engine.tasks[id] : undefined;
         if (!t || t.tombstone) throw new ToolError(`no task ${safe(id)}`);
-        return taskView(t, s);
+        return taskView(t, s, auto);
       }
       case 'request': {
         if (!!a.agent_id === !!a.to) throw new ToolError('give exactly one of agent_id or to');
@@ -2195,6 +2221,14 @@ export class RdvMcpServer {
         const r = await this.withAgent((agent) => submitDraft(home, agent, this.registry, id, draft));
         await this.publishTaskRun(r.run);
         await this.refreshPhrases(); // the human gets the release phrase, with the draft
+        if (r.autoReleased) {
+          return {
+            task_id: safe(id),
+            sent: true,
+            auto_approved: true,
+            note: 'Sent without asking: your user put this contact on auto-approve (audited). Tell your user what was sent.',
+          };
+        }
         if (!r.held) return { task_id: safe(id), sent: r.run.steps.some((s) => s.outgoing.length > 0), note: 'Nothing of yours was in it, so it needed no release.' };
         return {
           task_id: safe(id),
@@ -2361,10 +2395,32 @@ function waitingForUser(t: TaskRecord, s: TaskHostState): boolean {
   return !!t.gate || Object.hasOwn(s.releases, t.id);
 }
 
+type AutoMap = ReturnType<typeof autoApproveStatus>;
+
+const AUTO_OFF_NEXT = "Auto-approve for this contact is off: its tasks need your user's approval again. Tell your user. Only they can turn it back on, in their own terminal.";
+
+/** Shown to the model wherever auto-approve appears: it can see it, never set it. */
+const AUTO_NOTE =
+  'auto-approve is set only by your user, in their own terminal, never by you: there is no tool for it, and you must never ask them to bypass a gate or suggest turning it on. ' +
+  'With it on, tasks from that contact start and their results leave without asking; tell your user what was done.';
+
+/** One contact's auto-approve for the model: on (until when, how many actions it passed), or null. */
+function autoView(a: { until: string | null; set: string; capabilities: string[] } | undefined, count: number) {
+  if (!a) return null;
+  return {
+    mode: 'all',
+    until: a.until ?? 'until your user turns it off',
+    since: a.set,
+    covers: a.capabilities.slice(0, 32).map(asCapability),
+    auto_approved_actions: count,
+  };
+}
+
 /** A task as the model sees it: peer-written parts quarantined, the draft (ours) cleaned, never a phrase or code. */
-function taskView(t: TaskRecord, s: TaskHostState) {
+function taskView(t: TaskRecord, s: TaskHostState, auto: AutoMap = new Map()) {
   const draft = Object.hasOwn(s.releases, t.id) ? s.releases[t.id] : undefined;
   const open = !TERMINAL.has(t.state);
+  const a = t.role === 'executor' ? auto.get(t.peer) : undefined;
   const waiting = !open
     ? undefined
     : t.role === 'executor'
@@ -2374,6 +2430,8 @@ function taskView(t: TaskRecord, s: TaskHostState) {
           ? 'your user to release your draft (rdv_task "approve-release")'
           : t.state === 'input-required'
             ? "the requester's answer"
+            : a
+            ? 'your agent to do the work and submit it (rdv_task "submit"); auto-approve sends it without asking'
             : 'your agent to do the work and submit it (rdv_task "submit")'
       : t.state === 'input-required'
         ? 'your answer (rdv_task "input"), only with what your user tells you'
@@ -2400,6 +2458,8 @@ function taskView(t: TaskRecord, s: TaskHostState) {
     artifacts: t.artifacts.length
       ? t.artifacts.map((x) => ({ artifact_id: uuid(x.artifactId), name: x.name === undefined ? undefined : untrusted(x.name), chunks: x.chunks, complete: x.done }))
       : undefined,
+    // Our user's auto-approve for the contact this task is from (issue #25), or absent.
+    auto_approve: a ? { mode: 'all', until: a.until ?? 'until your user turns it off', note: AUTO_NOTE } : undefined,
     created: t.created,
     updated: t.updated,
   };

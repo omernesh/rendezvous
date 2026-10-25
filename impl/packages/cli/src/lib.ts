@@ -93,3 +93,16 @@ export {
   type TaskRun,
 } from './tasks.js';
 export { relayTransport } from './transport.js';
+export {
+  type AutoApproveSubject,
+  autoApproveStatus,
+  autoApproved,
+  autoApprovedCounts,
+  checkAutoApprove,
+  setAutoApprove,
+  subjectOf,
+  subjectOfState,
+  sweepAutoApprove,
+  turnOffAutoApprove,
+} from './autoapprove.js';
+export { type AutoApproveEntry, type AutoApproveOff } from './home.js';

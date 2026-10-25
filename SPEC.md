@@ -774,7 +774,8 @@ Approvals are those listed above (a host's own UI, a confirm phrase, the
 owner's command, a standing policy). A standing policy (`auto-start`,
 `auto-release`) is set by the owner per contact and per capability, never
 implied by a grant and never set by a model; for `free-form` it may cover
-release, never start.
+release, never start. The one policy that covers everything a contact
+asks, `auto_approve: all`, is §5.5.1.
 
 Each approval is bound to a digest of what the human was shown, and the
 host MUST NOT act on it if that has changed; it asks again. For a start
@@ -794,6 +795,78 @@ approve <task-id> --code <code>` and `rdv task release <task-id> --code
 <code>`, where the code is the first 12 hex digits of the digest shown by
 `rdv task list`; its MCP server asks through elicitation or a confirm phrase
 (`rdv_task` "approve-start", "approve-release").
+
+### 5.5.1 Auto-approve-all per contact
+
+(**spec change**, issue #25.) Approving every task by hand is safe and
+tiring. For a contact the owner trusts as much as their own agent, the owner
+MAY set `auto_approve: "all"` on that contact, optionally with an expiry
+(`auto_approve_until`). Its effect, limits and risks:
+
+- **What it approves.** For tasks *from that contact*, under capabilities
+  that contact's grant already allows (`scope.invoke`), the start gate and
+  the release gate pass without asking, for every approval class,
+  `free-form` included; so does the release of results back to that
+  contact. A host MAY also let it cover the meeting confirm of a
+  negotiation that contact started (the reference does not). It widens
+  nothing else: the grant, `invoke`, per-capability limits, bounds (§7.4),
+  sizes, the untrusted-content rules (§5.6) and the file-fetch rules
+  (§7.7) all still apply, and gross abuse still revokes (§5.3).
+- **What it never covers.** Creating a contact (approving a request or a
+  discovery candidate); joining a group, or approving a group newcomer;
+  granting anyone, or widening any grant, this contact's included;
+  attaching the owner's files to a task *we* send; cancelling an agreed
+  meeting; and setting, extending or changing auto-approve itself. Each of
+  these still needs the human every time.
+- **Only the human sets it.** It is set in the owner's own terminal or
+  through a consent form the host shows the owner, never by a model, a
+  tool call, a confirm phrase relayed by a model, or a peer: it is local
+  state that never goes on the wire, so a peer cannot see, request or set
+  it. A host MUST NOT offer a model any tool that sets or extends it; a
+  tool MAY show it. Hosts list the setting command as human-only wherever
+  they list the contact grant command.
+- **Warning at set time.** Before it is set the owner is shown, in plain
+  words: that the contact's agent can now make this agent act and answer
+  without asking; which capabilities that covers today; that text and
+  files from that contact reach this agent's model with its tools, so
+  prompt injection from that contact gets the power of those tools; the
+  expiry; and how to turn it off.
+- **Bound to the grant.** The setting is bound to the grant it was set
+  on. It is off at once when the owner turns it off (narrowing needs no
+  confirmation), when it expires, and when the contact is revoked or
+  blocked, its grant is revoked for abuse, changed or widened, or its
+  channel shows a fork or rollback (§6.4). Re-enabling is a new human
+  decision. A setting whose times cannot be read, that was set in the
+  future, or whose integrity cannot be checked approves nothing.
+- **Audit log.** Every action approved this way appends one line to an
+  audit log the owner can read: time, contact, capability, `taskId`,
+  which gate, the approval digest, and what left (hashes and sizes).
+  Setting, extending, expiring and turning off are logged too. Peer text
+  is not stored. The log is bounded.
+
+**Risk.** Auto-approve-all trusts the contact's *agent*, not only its
+human. Anything that can write into that agent's messages (its own model
+following an injected document, a compromised device, a stolen seed) can
+then make this agent run tasks with its tools and send back whatever those
+tasks produce, with no human seeing either side. The quarantine rule (§5.6)
+still limits a host that runs peer content in a tool-less model, but many
+hosts today run one model that both reads peer text and holds tools: there,
+prompt injection from that contact gets this agent's tools for every
+capability in the grant. The grant's `invoke` and limits are then the only
+boundary, so keep them narrow.
+
+The reference implementation sets it with `rdv contact auto-approve
+<agent-id|label> all [--until <time|duration>]`, which needs an interactive
+terminal, shows the warning and has the owner retype the contact's
+fingerprint; `... off` turns it off from anywhere. The setting lives in
+`autoapprove.json` in the home (mode 600), each entry MACed with the agent's
+secret key and bound to the contact's grant ID, `since` and a digest of its
+inbound scope; it is checked under the home lock at each gate. The audit log
+is `audit.jsonl` (`rdv audit [--contact] [--since]`, 1000 lines kept);
+`rdv contact list`, `rdv_status` and `rdv_task` show who is on auto-approve
+and until when, and `rdv_inbox` shows tasks it started and when it ends. The
+reference MCP server has no tool that sets it, and the plugin's consent
+guard refuses the command and the file to the model.
 
 ### 5.6 Peer text is untrusted data
 
@@ -1469,6 +1542,7 @@ a proxy or decline the transfer. The relay sees nothing new.
 | A peer's file URL aims the agent at its owner's network (SSRF), or at a page only the owner can open | Fetching is the agent's choice, never on arrival; `https` only; private, loopback and link-local addresses refused after resolving and after each redirect, the connection pinned to the checked address; at most 3 redirects; never with credentials (§7.7) |
 | A store or mirror swaps or truncates a file | `sha256` and `size` in the encrypted reference; the bytes are verified before use, then decrypted and checked against `plain_sha256` (§7.7) |
 | Assistant approves a contact on its own, or is talked into it | Consent stays with the human, outside the model's reach (§5.5) |
+| A contact on auto-approve is compromised or prompt-injected | Owner-only switch with a warning, per contact; grant `invoke` and limits still bound it; off on revoke, block, abuse, a changed grant or a fork; every action audited (§5.5.1) |
 | Prompt injection through greetings or message text | Peer text is display-only data; only validated machine fields drive actions (§5.6) |
 | Stranger answers a topic probe | Grant recorded as `claimed`; grantor fingerprint shown before trust (§5.3) |
 | Relay logs metadata (who talks to whom) | Envelope minimizes metadata; fallback to human channels if metadata exposure is unacceptable |

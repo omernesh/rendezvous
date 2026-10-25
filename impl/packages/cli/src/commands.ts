@@ -2,6 +2,7 @@
 // except `listen` and `inbox --follow` loads state under the lock, runs,
 // saves, and exits.
 import { existsSync, readFileSync, statSync } from 'node:fs';
+import { createInterface } from 'node:readline/promises';
 import {
   type AddressCard,
   Agent,
@@ -25,11 +26,25 @@ import {
   type Tier,
   TIERS as CORE_TIERS,
   topicForHint,
+  parseTimestamp,
   verifyCard,
 } from '@rendezvous/core';
 import { cancel, cancelMeeting, confirmMeeting, REQUEST_URI, describeSlot, meetingSnapshot, NegotiationError, type NegotiationTask, parseInstant, propose, type Step } from '@rendezvous/a2a';
+import {
+  autoApproveStatus,
+  autoApproveTarget,
+  autoApproveWarning,
+  autoApprovedCounts,
+  fingerprintChars,
+  parseUntil,
+  scopeDigest,
+  setAutoApprove,
+  subjectOf,
+  sweepAutoApprove,
+  turnOffAutoApprove,
+} from './autoapprove.js';
 import { candidateDigest, describeApproval, dropPhrase, inboundSubject, reissueForDisplay, requestSubject, type ShownPhrase } from './consent.js';
-import { CliError, type Config, type ConfigAddress, type ConsentAction, consentKey, Home, type InboxEntry, parseJsonLines, type PendingRelease } from './home.js';
+import { type AuditEntry, CliError, type Config, type ConfigAddress, type ConsentAction, consentKey, Home, type InboxEntry, parseJsonLines, type PendingRelease } from './home.js';
 import {
   answerPeer,
   approveRelease,
@@ -91,6 +106,31 @@ export interface Ctx {
   out: Output;
   values: Record<string, string | boolean | string[] | undefined>;
   positionals: string[];
+  /** The owner's terminal, for the commands only a human may run (default: this process's, if it is one). */
+  tty?: Tty;
+}
+
+/** An interactive terminal: the warning goes to it, and the owner's answer comes from it. */
+export interface Tty {
+  interactive: boolean;
+  say(text: string): void;
+  ask(question: string): Promise<string>;
+}
+
+/** This process's terminal: interactive only when both stdin and stderr are a TTY. */
+export function processTty(): Tty {
+  return {
+    interactive: process.stdin.isTTY === true && process.stderr.isTTY === true,
+    say: (text) => void process.stderr.write(`${clean(text, true)}\n`),
+    ask: async (question) => {
+      const rl = createInterface({ input: process.stdin, output: process.stderr });
+      try {
+        return await rl.question(question);
+      } finally {
+        rl.close();
+      }
+    },
+  };
 }
 
 const str = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined);
@@ -129,7 +169,11 @@ export async function withAgent<T>(
     agent.beforeSend = (a) => home.writeAgentState(a.toJSON());
     try {
       const result = await fn(agent, config);
-      if (opts.save !== false) home.writeAgentState(agent.toJSON());
+      if (opts.save !== false) {
+        home.writeAgentState(agent.toJSON());
+        // A revoke, block or new grant ends a contact's auto-approve: say so in the audit log now (issue #25).
+        sweepAutoApprove(home, subjectOf(agent));
+      }
       return result;
     } finally {
       agent.close();
@@ -645,9 +689,113 @@ export async function contactLabel({ home, out, positionals }: Ctx): Promise<voi
 }
 
 export async function contactList({ home, out }: Ctx): Promise<void> {
-  const contacts = await withAgent(home, async (agent) => agent.contacts(), { save: false });
+  const { contacts, auto } = await withAgent(home, async (agent) => ({ contacts: agent.contacts(), auto: autoApproveStatus(home, subjectOf(agent)) }), { save: false });
   if (contacts.length === 0 && !out.json) out.emit({}, 'no contacts');
-  for (const c of contacts) out.emit(contactView(c), contactText(c));
+  for (const c of contacts) {
+    const a = auto.get(c.peer);
+    out.emit(
+      { ...contactView(c), ...(a ? { auto_approve: { mode: 'all', until: a.until, since: a.set } } : {}) },
+      contactText(c) + (a ? `  AUTO-APPROVE all until ${a.until ? clean(a.until) : 'you turn it off'}` : ''),
+    );
+  }
+}
+
+/** An agent ID, or a contact's local label (exactly one contact). */
+function contactFor(agent: Agent, target: string): string {
+  if (isAgentId(target)) return target;
+  const m = agent.book.byLabel(target);
+  if (m.length === 1) return m[0].peer;
+  throw new CliError(m.length ? `more than one contact is labeled ${clean(target)}: use the agent ID` : `no contact ${clean(target)} (an agent ID, or a label from "rdv contact list")`);
+}
+
+/**
+ * `rdv contact auto-approve <contact> all [--until <time|duration>]` and
+ * `... off` (SPEC §5.5.1, issue #25). Turning it on is the owner's alone: an
+ * interactive terminal, the warning, and the contact's fingerprint retyped.
+ * Off needs nothing (reduce-only).
+ */
+export async function contactAutoApprove({ home, out, values, positionals, tty }: Ctx): Promise<void> {
+  const [target, mode] = positionals;
+  if (mode === 'off') {
+    const peer = isAgentId(target) ? target : await withAgent(home, async (agent) => contactFor(agent, target), { save: false });
+    home.requireInit();
+    const was = await home.locked(async () => turnOffAutoApprove(home, peer));
+    out.emit({ event: 'auto-approve', peer, auto_approve: 'off', was_on: was }, was ? `auto-approve is off for ${peer}` : `auto-approve was not on for ${peer}`);
+    return;
+  }
+  if (mode !== 'all') throw new CliError('the second argument is "all" (turn it on) or "off"', 2);
+  const term = tty ?? processTty();
+  if (!term.interactive) {
+    throw new CliError('turning auto-approve on needs an interactive terminal: only you may do it, in your own terminal (an assistant, a script or a pipe cannot)');
+  }
+  const until = str(values.until) !== undefined ? parseUntil(str(values.until)!) : null;
+  // Look, warn and ask outside the lock: the listener keeps running while the owner reads.
+  const seen = await withAgent(
+    home,
+    async (agent) => {
+      const peer = contactFor(agent, target);
+      const { contact, capabilities } = autoApproveTarget(subjectOf(agent), peer);
+      return { peer, contact, capabilities, scope: scopeDigest(contact.inboundScope) };
+    },
+    { save: false },
+  );
+  term.say(autoApproveWarning(seen.contact, seen.capabilities, until));
+  const typed = await term.ask(`To turn it on, type this contact's fingerprint (${fingerprint(seen.peer)}), or press Enter to cancel: `);
+  if (fingerprintChars(typed) !== fingerprintChars(fingerprint(seen.peer))) throw new CliError('that is not the fingerprint: auto-approve was not turned on');
+  const r = await withAgent(
+    home,
+    async (agent) => {
+      const { contact } = autoApproveTarget(subjectOf(agent), seen.peer);
+      if (contact.grantId !== seen.contact.grantId || scopeDigest(contact.inboundScope) !== seen.scope) {
+        throw new CliError('the contact changed while you read the warning (another grant): nothing was turned on; run the command again');
+      }
+      return setAutoApprove(home, subjectOf(agent), seen.peer, until);
+    },
+    { save: false },
+  );
+  out.emit(
+    { event: 'auto-approve', peer: seen.peer, auto_approve: 'all', action: r.action, until: r.entry.until, capabilities: r.capabilities },
+    `auto-approve is ON for ${seen.peer} until ${r.entry.until ?? 'you turn it off'} (${r.action === 'extend' ? 'extended' : 'set'}; audited). Off: rdv contact auto-approve ${seen.peer} off`,
+  );
+}
+
+const SINCE_UNITS: Record<string, number> = { m: 60_000, h: 3_600_000, d: 86_400_000, w: 7 * 86_400_000 };
+
+function auditText(a: AuditEntry): string {
+  const parts = [safeTs(a.ts), a.gate + (a.action ? ` ${a.action}` : ''), `by ${a.by}`, a.peer];
+  if (a.capability) parts.push(a.capability);
+  if (a.task) parts.push(`task ${a.task}`);
+  if (a.approval) parts.push(`class ${a.approval}`);
+  if (a.digest) parts.push(`digest ${a.digest.slice(0, 12)}`);
+  if (a.sent?.length) parts.push(`sent ${a.sent.map((x) => `${x.sha256.slice(0, 12)} (${x.bytes} bytes)`).join(', ')}`);
+  if (a.reason) parts.push(`reason ${a.reason}`);
+  if (a.until !== undefined) parts.push(`until ${a.until ?? 'turned off'}`);
+  if (a.capabilities?.length) parts.push(`covers ${a.capabilities.join(', ')}`);
+  return parts.map((x) => clean(x)).join('  ');
+}
+
+const safeTs = (ts: unknown) => (typeof ts === 'string' ? ts : '?');
+
+/** `rdv audit [--contact <agent-id|label>] [--since <time|duration>]`: what passed a gate without asking, every approval, and every auto-approve change. */
+export async function audit({ home, out, values }: Ctx): Promise<void> {
+  home.requireInit();
+  const target = str(values.contact);
+  const peer = target === undefined ? undefined : isAgentId(target) ? target : await withAgent(home, async (agent) => contactFor(agent, target), { save: false });
+  const since = str(values.since);
+  let from: number | null = null;
+  if (since !== undefined) {
+    const m = /^\s*(\d{1,4})\s*([mhdw])\s*$/i.exec(since);
+    from = m ? Date.now() - Number(m[1]) * SINCE_UNITS[m[2].toLowerCase()] : parseTimestamp(since.trim());
+    if (from === null) throw new CliError('--since takes a duration back (30m, 12h, 7d, 2w) or an RFC 3339 time with an offset', 2);
+  }
+  const lines = await home.locked(async () => home.readAudit());
+  const shown = lines.filter((a) => (peer === undefined || a.peer === peer) && (from === null || (Date.parse(a.ts) || 0) >= from));
+  if (shown.length === 0 && !out.json) out.emit({}, 'no audit entries');
+  for (const a of shown) out.emit(a, auditText(a));
+  if (!out.json && peer === undefined) {
+    const counts = await home.locked(async () => autoApprovedCounts(home));
+    if (counts.size) out.emit({}, `passed by auto-approve (as far back as the log goes): ${[...counts].map(([p, n]) => `${clean(p)} ${n}`).join(', ')}`);
+  }
 }
 
 export async function contactRevoke({ home, out, positionals }: Ctx): Promise<void> {
@@ -971,8 +1119,9 @@ export async function taskDecline({ home, out, positionals }: Ctx): Promise<void
   emitRun(out, run);
 }
 
-function draftOut(out: Output, id: string, r: { held?: PendingRelease; digest?: string; run: TaskRun }): void {
+function draftOut(out: Output, id: string, r: { held?: PendingRelease; digest?: string; run: TaskRun; autoReleased?: boolean }): void {
   emitRun(out, r.run);
+  if (r.autoReleased) out.emit({ event: 'task-auto-released', task: id }, `sent without asking: you put this contact on auto-approve (audited; rdv audit)`);
   if (r.held && r.digest) {
     out.emit(
       { event: 'task-draft', task: id, draft: r.held.content, release_code: gateCode(r.digest) },

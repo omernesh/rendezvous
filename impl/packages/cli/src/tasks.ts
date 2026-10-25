@@ -22,7 +22,7 @@
 // Release: everything a host sends for a peer's task was written by its model
 // or its human (owner data or a model's output, SPEC §5.5), so every draft
 // passes the release gate, whatever the class (`rdv task release`).
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import {
   askInput,
   type Capability,
@@ -54,6 +54,8 @@ import { type Agent, type Contact, effectiveInvoke, fingerprint, type Payload } 
 import type { PhraseTarget } from './consent.js';
 import { type AuditEntry, CliError, type Home, type InboxEntry, type PendingRelease, type ReleaseContent, type TaskHostState } from './home.js';
 import { clean } from './output.js';
+import { sha, sha256, stable } from './hash.js';
+import { autoApproved, subjectOf } from './autoapprove.js';
 
 /** What this host implements (and so advertises): the general capability. */
 export const HOST_CAPABILITIES: readonly Capability[] = [REQUEST_CAPABILITY];
@@ -91,23 +93,6 @@ export function inboundTaskCtx(registry: CapabilityRegistry, contact: Contact | 
 }
 
 // --- digests: what the human approves --------------------------------------------
-
-/** JSON with sorted keys (canonical enough to hash; floats allowed, unlike core's canonicalize). */
-function stable(v: unknown): string {
-  if (Array.isArray(v)) return `[${v.map(stable).join(',')}]`;
-  if (v && typeof v === 'object') {
-    const o = v as Record<string, unknown>;
-    return `{${Object.keys(o)
-      .filter((k) => o[k] !== undefined)
-      .sort()
-      .map((k) => `${JSON.stringify(k)}:${stable(o[k])}`)
-      .join(',')}}`;
-  }
-  return JSON.stringify(v) ?? 'null';
-}
-
-const sha = (tag: string, v: unknown) => createHash('sha256').update(`${tag}\0${stable(v)}`).digest('hex');
-const sha256 = (text: string) => createHash('sha256').update(text).digest('hex');
 
 /**
  * The digest a start approval is bound to (SPEC §5.5): the peer and its
@@ -202,8 +187,12 @@ async function sendAll(agent: Agent, step: TaskStep): Promise<string[]> {
 export interface TaskRun {
   steps: TaskStep[];
   events: TaskEvent[];
-  /** Effects the host turns into events of its own: a notify task is shown to the human; an auto task started on the grant alone. */
-  notices: Array<{ kind: 'notify' | 'started'; taskId: string; peer: string; capability: string }>;
+  /**
+   * Effects the host turns into events of its own: a notify task is shown to
+   * the human; an auto task started on the grant alone; a task started on the
+   * human's auto-approve for the contact (issue #25).
+   */
+  notices: Array<{ kind: 'notify' | 'started' | 'auto-started'; taskId: string; peer: string; capability: string }>;
   errors: string[];
 }
 
@@ -219,6 +208,8 @@ export async function tasksInbound(home: Home, registry: CapabilityRegistry, age
   const before = JSON.stringify(s);
   const now = new Date();
   const audits: AuditEntry[] = [];
+  const autoSteps = new Set<TaskStep>();
+  const autoStarted = new Set<string>();
   for (const e of entries) {
     const ctx = inboundTaskCtx(registry, agent.book.contact(e.from), s.engine, e.payload, now);
     // Core's per-capability limiter (issue #28): max_open and max_frequency from our grant; gross abuse revokes.
@@ -226,7 +217,26 @@ export async function tasksInbound(home: Home, registry: CapabilityRegistry, age
     applyEffects(s, step, now, 'grant', audits);
     s.engine = step.state;
     run.steps.push(step);
-    // A standing approval the owner set (auto_approve: all, issue #25) would pass the start-gate effects here.
+    // auto_approve: all (SPEC §5.5.1, issue #25): our human's standing approval for this contact passes its start gates.
+    // Checked here, under the lock, for each gate: off, expired or no longer bound to the grant, and the gate stays shut.
+    for (const fx of step.effects) {
+      if (fx.kind !== 'start-gate' || fx.peer !== e.from) continue;
+      const t = Object.hasOwn(s.engine.tasks, fx.taskId) ? s.engine.tasks[fx.taskId] : undefined;
+      const digest = t ? startDigest(t) : undefined;
+      if (!digest || !autoApproved(home, subjectOf(agent), fx.peer, now)) continue;
+      let started: TaskStep;
+      try {
+        started = startTask(s.engine, fx.taskId, taskCtx(registry, agent.book.contact(fx.peer), 'inbound', now));
+      } catch (err) {
+        if (err instanceof TaskError) continue; // the gate stays for the human
+        throw err;
+      }
+      applyEffects(s, started, now, 'auto-approve', audits, digest);
+      s.engine = started.state;
+      run.steps.push(started);
+      autoSteps.add(started);
+      autoStarted.add(fx.taskId);
+    }
   }
   if (sweep) {
     const step = expireTasks(s.engine, { now });
@@ -239,9 +249,13 @@ export async function tasksInbound(home: Home, registry: CapabilityRegistry, age
   home.appendAudit(audits);
   for (const step of run.steps) {
     run.errors.push(...(await sendAll(agent, step)));
-    run.events.push(...step.events);
+    // A gate auto-approve passed is not shown as waiting for the human.
+    run.events.push(...step.events.filter((ev) => !(ev.kind === 'start-needed' && autoStarted.has(ev.taskId ?? ''))));
     for (const e of step.effects) {
-      if (e.kind === 'notify' || e.kind === 'start') run.notices.push({ kind: e.kind === 'start' ? 'started' : 'notify', taskId: e.taskId, peer: e.peer, capability: e.capability });
+      if (e.kind === 'notify' || e.kind === 'start') {
+        const kind = e.kind === 'notify' ? 'notify' : autoSteps.has(step) ? 'auto-started' : 'started';
+        run.notices.push({ kind, taskId: e.taskId, peer: e.peer, capability: e.capability });
+      }
     }
   }
   return run;
@@ -362,7 +376,7 @@ export async function submitDraft(
   registry: CapabilityRegistry,
   taskId: string,
   draft: DraftInput,
-): Promise<{ run: TaskRun; held?: PendingRelease; digest?: string }> {
+): Promise<{ run: TaskRun; held?: PendingRelease; digest?: string; autoReleased?: boolean }> {
   const s = home.readTasks();
   const t = executorTask(s, taskId);
   const now = new Date();
@@ -383,12 +397,17 @@ export async function submitDraft(
   const audits: AuditEntry[] = [];
   applyEffects(s, step, now, 'human', audits);
   s.engine = step.state;
-  // A standing approval the owner set (auto_approve: all, issue #25) would release the draft here instead of holding it.
   if (step.effects.some((e) => e.kind === 'release-gate')) {
     const held: PendingRelease = { taskId, peer: t.peer, content, created: now.toISOString() };
     s.releases[taskId] = held;
+    const digest = releaseDigest(s.engine.tasks[taskId], held);
+    // auto_approve: all (SPEC §5.5.1, issue #25): our human's standing approval for this contact releases it now,
+    // checked here under the lock; off, expired or no longer bound to the grant, and it is held as always.
+    if (digest && autoApproved(home, subjectOf(agent), t.peer, now)) {
+      return { run: await releaseHeld(home, agent, registry, s, taskId, held, digest, 'auto-approve', audits, now), autoReleased: true };
+    }
     const run = await commit(home, agent, s, [], audits);
-    return { run, held, digest: releaseDigest(s.engine.tasks[taskId], held) };
+    return { run, held, digest };
   }
   // Nothing to gate (a bare finish), or the grant no longer allows the task (the engine ended it, `scope`).
   delete s.releases[taskId];
@@ -405,7 +424,23 @@ export async function approveRelease(home: Home, agent: Agent, registry: Capabil
   const t = executorTask(s, taskId);
   const r = Object.hasOwn(s.releases, taskId) ? s.releases[taskId] : undefined;
   if (!r || releaseDigest(t, r) !== digest) throw new TaskChangedError(`the result for task ${taskId} changed since it was reviewed (or the task ended). Nothing was sent.`);
-  const now = new Date();
+  return releaseHeld(home, agent, registry, s, taskId, r, digest, 'human', [], new Date());
+}
+
+/** Send the held draft `r` (its digest checked by the caller) as it was shown, audit the release `by` whom, and commit. */
+async function releaseHeld(
+  home: Home,
+  agent: Agent,
+  registry: CapabilityRegistry,
+  s: TaskHostState,
+  taskId: string,
+  r: PendingRelease,
+  digest: string,
+  by: AuditEntry['by'],
+  audits: AuditEntry[],
+  now: Date,
+): Promise<TaskRun> {
+  const t = executorTask(s, taskId);
   const ctx = () => taskCtx(registry, agent.book.contact(t.peer), 'inbound', now);
   const steps: TaskStep[] = [];
   const c = r.content;
@@ -426,12 +461,15 @@ export async function approveRelease(home: Home, agent: Agent, registry: Capabil
   } else {
     steps.push(engine(() => finishTask(s.engine, taskId, ctx(), c.outcome, { text: c.text, data: c.data }, released)));
   }
-  const audits: AuditEntry[] = [];
-  for (const st of steps) applyEffects(s, st, now, 'human', audits);
+  for (const st of steps) applyEffects(s, st, now, by, audits);
   s.engine = steps[steps.length - 1].state;
   delete s.releases[taskId];
   const left = steps[0].events.some((e) => e.kind === 'artifact' || e.kind === 'input-required' || ((e.kind === 'completed' || e.kind === 'failed') && e.code !== 'scope'));
-  if (left) audits.push(audit(now, { peer: t.peer, capability: t.capability, id: taskId, approval: t.approval }, 'release', 'human', digest));
+  if (left) {
+    // What left: a hash and size of each payload (ours), never its text.
+    const sent = steps.flatMap((st) => st.outgoing.filter((o) => o.to === t.peer).map((o) => ({ sha256: sha256(stable(o.payload)), bytes: Buffer.byteLength(stable(o.payload)) })));
+    audits.push({ ...audit(now, { peer: t.peer, capability: t.capability, id: taskId, approval: t.approval }, 'release', by, digest), sent });
+  }
   return commit(home, agent, s, steps, audits);
 }
 

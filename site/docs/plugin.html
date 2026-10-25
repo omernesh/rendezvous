@@ -90,10 +90,10 @@ John I'm running late", "check rendezvous".</p>
     from running the <code>rdv</code> commands that grant consent or print confirm phrases
     (<code>rdv contact grant</code>, <code>rdv dinner confirm</code>, <code>rdv task approve</code>,
     <code>rdv task release</code>, <code>rdv contact pending</code>, <code>rdv dinner list</code>,
-    <code>rdv task list</code>, …) or name a contact (<code>rdv contact label</code>, or
+    <code>rdv task list</code>, …), put a contact on auto-approve (<code>rdv contact auto-approve</code>), or name a contact (<code>rdv contact label</code>, or
     <code>rdv contact request &lt;agent-id&gt; --label</code>), however the command is quoted or wrapped (<code>npx</code>,
     <code>bash -c</code>, <code>$(…)</code>), and from reading, editing, searching or globbing the
-    agent's secret key and consent file with any tool. Those stay with you, in
+    agent's secret key, consent file and auto-approve file with any tool. Those stay with you, in
     your own terminal.</p>
 <p><strong>The hook is defence in depth, not a security boundary.</strong> A model with a
 shell can always build a command it can't see (a script file, another

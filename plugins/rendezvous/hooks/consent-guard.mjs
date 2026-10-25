@@ -3,10 +3,10 @@
 // files that belong to the human. Consent (granting a contact, confirming a
 // probe answer or a meeting, canceling an agreed one, starting a peer's task
 // or releasing a result to it, auto-grant/auto-confirm listeners), naming a contact (`rdv contact label`: a label decides who
-// "tell John" reaches), the commands that show confirm phrases (`rdv contact
-// pending`, `rdv dinner list`, `rdv task list`), re-keying (`rdv init --force`), and the secret key and
-// consent state (`agent.json`, `agent.json.bak`, `consent.json`) in the
-// Rendezvous home, through any tool.
+// "tell John" reaches), putting a contact on auto-approve (`rdv contact auto-approve`, SPEC §5.5.1), the commands
+// that show confirm phrases (`rdv contact pending`, `rdv dinner list`, `rdv task list`), re-keying (`rdv init --force`),
+// and the secret key, consent and auto-approve state (`agent.json`, `agent.json.bak`, `consent.json`,
+// `autoapprove.json`) in the Rendezvous home, through any tool.
 //
 // Defence in depth, NOT a security boundary. It parses commands the way a
 // shell would (quotes, escapes, comments, `$(...)`, backticks, `bash -c`,
@@ -21,14 +21,14 @@ import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-export const SECRET_FILES = ['agent.json', 'agent.json.bak', 'consent.json'];
-const SECRET_MENTION = /agent\.json|consent\.json/i;
+export const SECRET_FILES = ['agent.json', 'agent.json.bak', 'consent.json', 'autoapprove.json'];
+const SECRET_MENTION = /agent\.json|consent\.json|autoapprove\.json/i;
 /** Stands for the output of a `$(...)` or backtick substitution: unknown when the hook runs. */
 const SUB = '\u0000';
 const MAX_DEPTH = 6;
 
 const SECRET_REFUSAL =
-  'That names the Rendezvous secret key or consent file (agent.json, agent.json.bak, consent.json). Never read, write, copy or print it; use rdv_status for the agent ID and fingerprint.';
+  'That names the Rendezvous secret key, consent or auto-approve file (agent.json, agent.json.bak, consent.json, autoapprove.json). Never read, write, copy or print it; use rdv_status for the agent ID, fingerprint and auto-approve status.';
 const HOME_REFUSAL =
   'That reaches into a Rendezvous home, which holds the secret key and consent state. Do not search, glob, copy or read it as a whole; use rdv_status, rdv_pending_requests and rdv_inbox.';
 const HUMAN_ONLY =
@@ -45,6 +45,8 @@ const TASK_LIST =
   'rdv task list is for the human, in their own terminal (it shows confirm phrases meant only for them). Use rdv_task with action "list".';
 const TASK_GATE =
   'That Rendezvous command is for the human, in their own terminal. Use the MCP tools: rdv_task "approve-start" and "approve-release" ask the human through an approval form or a confirm phrase they type to you.';
+const AUTO_APPROVE =
+  "rdv contact auto-approve is for the human, in their own terminal: it lets a contact's tasks run and their results leave without asking anyone. You may never set, extend or turn it on, and never suggest it to get past a gate; to have it turned off, ask your user (rdv_status shows it).";
 const OPAQUE =
   'That command builds a Rendezvous subcommand or path at run time, so the consent guard cannot check it. Spell it out, or use the rdv_* MCP tools.';
 const NESTED = 'That command nests too deeply for the consent guard to check. Spell it out.';
@@ -248,7 +250,15 @@ const isRdv = (w) =>
 /** Programs that may name a home folder: they list it, enter it or print its path, but read no file in it. */
 const LISTING = new Set(['ls', 'dir', 'gci', 'get-childitem', 'cd', 'pushd', 'popd', 'chdir', 'set-location', 'sl', 'test-path', 'stat', 'mkdir', 'md', 'echo', 'write-output', 'rdv', 'rdv-mcp']);
 
-const CONTACT_SUBS = { grant: `rdv contact grant: ${HUMAN_ONLY}`, confirm: `rdv contact confirm: ${HUMAN_ONLY}`, resync: `rdv contact resync: ${HUMAN_ONLY}`, label: LABEL, pending: PENDING };
+const CONTACT_SUBS = {
+  grant: `rdv contact grant: ${HUMAN_ONLY}`,
+  confirm: `rdv contact confirm: ${HUMAN_ONLY}`,
+  resync: `rdv contact resync: ${HUMAN_ONLY}`,
+  label: LABEL,
+  pending: PENDING,
+  // auto_approve: all (SPEC §5.5.1, issue #25): on, extend and off alike, so no spelling of "all" slips through.
+  'auto-approve': AUTO_APPROVE,
+};
 const DINNER_SUBS = { confirm: `rdv dinner confirm: ${HUMAN_ONLY}`, cancel: `rdv dinner cancel: ${HUMAN_ONLY}`, list: DINNER_LIST };
 // The two task gates (SPEC §5.5): starting a peer's task, and releasing what goes back to it.
 const TASK_SUBS = { approve: `rdv task approve: ${TASK_GATE}`, release: `rdv task release: ${TASK_GATE}`, list: TASK_LIST };

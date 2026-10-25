@@ -45,6 +45,7 @@ import {
   requestText,
   requestView,
 } from './output.js';
+import { subjectOf, sweepAutoApprove } from './autoapprove.js';
 import { hostRegistry, taskEventText, taskEventView, tasksExpiring, tasksInbound, tasksRoute } from './tasks.js';
 import { relayTransport } from './transport.js';
 
@@ -278,6 +279,10 @@ async function handleLocked(
       await agent.idle();
       await routeInbound(home, opts, agent, inbox, messageEvents, sweep, events);
       await agent.idle();
+      // auto-approve ends with the grant it was set on (revoked, blocked, abuse, a fork) and on expiry: off now, audited (issue #25).
+      const auto = sweepAutoApprove(home, subjectOf(agent));
+      for (const e of auto.ended) events.push({ obj: { event: 'auto-approve-off', peer: e.peer, reason: e.reason }, human: `auto-approve is off for ${clean(e.peer)} (${e.reason})` });
+      if (auto.error) events.push({ obj: { event: 'error', message: auto.error }, human: `error: ${clean(auto.error)}` });
       agent.stop();
       // Replays and refused items usually change nothing: skip the rewrite then.
       if (flushed < inbox.length || JSON.stringify(agent.toJSON()) !== loaded) save();
@@ -328,11 +333,21 @@ async function routeInbound(
   for (const ev of run.events) events.push({ obj: taskEventView(ev), human: taskEventText(ev) });
   for (const n of run.notices) {
     events.push({
-      obj: { event: 'task', kind: n.kind, task: n.taskId, peer: n.peer, capability: n.capability, state: n.kind === 'notify' ? 'completed' : 'working' },
+      obj: {
+        event: 'task',
+        kind: n.kind === 'auto-started' ? 'started' : n.kind,
+        task: n.taskId,
+        peer: n.peer,
+        capability: n.capability,
+        state: n.kind === 'notify' ? 'completed' : 'working',
+        ...(n.kind === 'auto-started' ? { auto_approved: true } : {}),
+      },
       human:
         n.kind === 'notify'
           ? `task notify ${clean(n.taskId)} from ${clean(n.peer)}: ${clean(n.capability)} (shown to you only; nothing was done)`
-          : `task started ${clean(n.taskId)} from ${clean(n.peer)}: ${clean(n.capability)} (class auto: the grant allows it without asking; audited)`,
+          : n.kind === 'auto-started'
+            ? `task started ${clean(n.taskId)} from ${clean(n.peer)}: ${clean(n.capability)} (AUTO-APPROVED: you put this contact on auto-approve; audited)`
+            : `task started ${clean(n.taskId)} from ${clean(n.peer)}: ${clean(n.capability)} (class auto: the grant allows it without asking; audited)`,
     });
   }
   for (const message of run.errors) events.push({ obj: { event: 'error', message }, human: `error: ${clean(message)}` });

@@ -184,6 +184,15 @@ mode), or the human runs `rdv task approve <task-id> --code <code>` /
 bound to a digest of what the human saw: a re-request under the same task
 ID, or a changed draft, approves nothing (NOTES 76).
 
+**Auto-approve (issue #25).** The human can put one trusted contact on
+`auto_approve: all` from their own terminal (`rdv contact auto-approve
+<contact> all [--until 7d]`); that contact's tasks then start and their
+results leave without a form or phrase, each pass written to `audit.jsonl`.
+No tool sets or extends it: `rdv_status` (per contact `auto_approve`, until
+when, how many actions it passed) and `rdv_task` only show it, and
+`rdv_inbox` reports `auto_approved` starts and an `auto_approve_off` event
+when it ends (NOTES 77).
+
 **Canceling an agreed dinner (issue #20).** `rdv_negotiate` action `cancel`
 on a completed dinner passes the same gate, bound to the agreement shown
 (NOTES 61): a form if the client can elicit (only an explicit yes cancels),

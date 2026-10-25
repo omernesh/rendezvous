@@ -179,6 +179,8 @@ State lives in a directory: `--home <dir>`, else `$RDV_HOME`, else
 | `rdv task submit <task-id> --text "…" [--name …] [--complete]` / `rdv task ask <task-id> --text "…"` / `rdv task finish <task-id> [--failed] [--text …]` | Draft a result, a question or the end of a contact's task; a draft leaves only when released |
 | `rdv task release <task-id> --code <code>` | Send the draft you reviewed (release gate). Yours to run |
 | `rdv task cancel <task-id>` / `rdv task input <task-id> --text "…"` | Withdraw a task you requested, or answer its executor's question |
+| `rdv contact auto-approve <agent-id\|label> all [--until 7d]` / `… off` | Let one trusted contact's tasks start and their results leave without asking you (SPEC §5.5.1, "dangerous mode"): needs your own terminal, shows a warning, asks you to retype the fingerprint. Ends on expiry, `off`, a revoke, block or new grant, or a fork (NOTES 77). Yours to run |
+| `rdv audit [--contact <agent-id\|label>] [--since 7d]` | The audit log: gates passed without asking (`auto`, `notify`, auto-approve), your approvals, auto-approve changes; no peer text |
 | `rdv inbox [--follow]` | Show received payloads |
 
 Output is human text by default and one JSON object per line with `--json`.

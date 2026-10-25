@@ -1442,9 +1442,9 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       even without `--negotiate`. A routed message's event is marked
       `routed: "tasks"`, so `rdv_inbox` shows the task events instead of the
       raw `a2a/*` message. `audit.jsonl` keeps 1000 lines (compacted at
-      2000). `auto_approve: all` (issue #25) plugs in where `tasksInbound`
-      gets the `start-gate` effects and where `submitDraft` gets the
-      `release-gate` effect, and logs to the same file.
+      2000). `auto_approve: all` (issue #25, item 77) plugs in where
+      `tasksInbound` gets the `start-gate` effects and where `submitDraft`
+      gets the `release-gate` effect, and logs to the same file.
     - **Per-capability limits** (item 75): `tasksInbound` passes core's
       limiter, `limit: (cap, o) => agent.admitTask(peer, cap, o, now)`, so
       `max_open` and `max_frequency` from our grant hold and gross abuse
@@ -1524,8 +1524,77 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
     - **Not here:** quarantine guidance for the model that does a
       `free-form` task, and the hostile-text test (issue #27); requester-side
       release of the owner's files, since tasks carry no files from these
-      tools yet (issue #26);
-      `auto_approve: all` (issue #25); full docs (issue #29).
+      tools yet (issue #26); full docs (issue #29).
+
+## Auto-approve-all per contact (v0.3)
+
+77. **`auto_approve: all`, the owner's standing approval for one contact**
+    (**spec change**, §5.5.1, §8; issue #25, design A.5.1). The glue is
+    `packages/cli/src/autoapprove.ts`, used by both hosts through
+    `tasks.ts`:
+    - **Where it applies.** `tasksInbound`: for each `start-gate` effect
+      of a task from the contact, `autoApproved` is checked under the home
+      lock; when it holds, `startTask` runs at once, audited
+      `by: "auto-approve"` with the start digest, and the `start-needed`
+      event is not shown (a `started` notice with `auto_approved: true`
+      is). `submitDraft`: a draft that would wait for release is sent at
+      once through the same path as a human release (`releaseHeld`), and
+      the audit line carries the SHA-256 and size of each payload that
+      left. Nothing else consults it: contacts, probe answers, grants,
+      `invoke`, limits, meetings (their confirm stays the human's; the
+      design's MAY for a negotiation the contact started is not taken),
+      and there are no groups yet. A task that waited at the gate before it
+      was set is not approved after the fact; a draft submitted after it
+      ends is held.
+    - **State.** `autoapprove.json` in the home (mode 600), one entry per
+      contact: `set`, `until` (or null), the contact's `grantId` and
+      `since` and a digest of its inbound scope, and an HMAC-SHA256 over
+      all of it keyed with the agent's secret key. Local only, never in a
+      card, grant or envelope.
+    - **Fail closed.** An entry holds only if: its MAC checks (a file
+      written by hand, or copied from another home, approves nothing);
+      `set` parses and is not in the future; `until` is null or parses,
+      is after `set` and not reached; the contact exists, is not blocked
+      and was granted by our human; `grantId`, `since` and the scope digest
+      match (revoked and re-made, revoked for abuse, widened or narrowed:
+      off); its channel is not refused after a fork or rollback. An
+      unreadable file approves nobody; an unreadable clock approves nothing
+      and removes nothing. An entry that fails is removed and audited
+      (`action: "off"`, with the reason) at the gate that found it, and by
+      `sweepAutoApprove`, which runs after every inbound item in
+      `handleInbound` and after every state-changing command in both hosts
+      (an `rdv_inbox` event `auto_approve_off` in the MCP server).
+    - **Setting it.** `rdv contact auto-approve <agent-id|label> all
+      [--until <time|duration>]` needs stdin and stderr to be a TTY, prints
+      the warning (what it allows, the capabilities it covers today,
+      prompt injection getting the agent's tools, the expiry, how to turn
+      it off), asks for the contact's fingerprint retyped, then re-checks
+      under the lock that the grant did not change while the owner read.
+      `--until` takes 30m, 12h, 7d, 2w or RFC 3339, at most a year away.
+      Meeting capabilities are not listed as covered, and a grant with no
+      task capability is refused. `... off` needs nothing (reduce-only) and
+      works from any terminal. Tests drive the command in-process with a
+      `Tty` stub; spawned `rdv` (no TTY) is refused.
+    - **Human-only, everywhere.** The MCP server has no tool or argument
+      that sets it (a test lists every tool's schema and throws extra
+      arguments at them), and no confirm phrase is issued for it. The
+      plugin's consent guard refuses `rdv contact auto-approve` (on and
+      off alike, so no spelling of `all` slips through) and names
+      `autoapprove.json` with the secret files; the skill lint therefore
+      flags any skill that tells the model to run it. The skill says the
+      model can never set it and must not suggest it or any other way
+      around a gate; the onboarding never mentions it.
+    - **Showing it.** `rdv contact list` (`auto_approve`), `rdv audit
+      [--contact] [--since]` (every line, plus the count passed by
+      auto-approve), `rdv_status` (per contact: until when, what it covers,
+      how many actions it passed; and a total) and `rdv_task` (per task
+      from such a contact). The audit log keeps IDs, URIs, digests and
+      hashes only: no peer text, not even the excerpt the design allowed.
+    - **Honest limit** (as item 76): a model with a shell can still write
+      a script that does anything the owner's account can. The MAC keeps a
+      hand-written file from approving anything without the secret key,
+      which the guard keeps from the model; that is defence in depth, not a
+      boundary.
 
 ## Not implemented yet
 

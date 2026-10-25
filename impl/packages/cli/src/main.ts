@@ -127,6 +127,14 @@ const COMMANDS: Record<string, Command> = {
     args: 1,
     run: cmd.contactRevoke,
   },
+  'contact auto-approve': {
+    usage: 'rdv contact auto-approve <agent-id|label> all [--until <time|duration>]   |   rdv contact auto-approve <agent-id|label> off',
+    summary:
+      "Let a trusted contact's tasks start and their results leave without asking you (\"dangerous mode\": shows a warning, needs your own terminal and the fingerprint; audited). off turns it off at once",
+    args: 2,
+    options: { until: { type: 'string' } },
+    run: cmd.contactAutoApprove,
+  },
   'contact resync': {
     usage: 'rdv contact resync <agent-id>',
     summary: "Accept a contact's current chain after a fork or rollback was reported (check with them first)",
@@ -258,6 +266,13 @@ const COMMANDS: Record<string, Command> = {
       tz: { type: 'string' },
     },
     run: cmd.listenCmd,
+  },
+  audit: {
+    usage: 'rdv audit [--contact <agent-id|label>] [--since <time|duration>]',
+    summary: 'Show the audit log: gates passed without asking you (auto, notify, auto-approve), your approvals, and auto-approve changes',
+    args: 0,
+    options: { contact: { type: 'string' }, since: { type: 'string' } },
+    run: cmd.audit,
   },
   inbox: {
     usage: 'rdv inbox [--follow]',
