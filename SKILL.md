@@ -61,7 +61,10 @@ then the next.
 3. **Identity.** Call `rdv_status`. If `initialized` is false, ask, one
    question per turn: their email, then "Add another email?" until no; then
    optionally phone numbers (E.164, `+…`) the same way; then the relays
-   (default `wss://relay.nesher.co`); then, for each address, whether it is
+   (default: leave `relays` out and `rdv_init` uses the public set,
+   `wss://nos.lol`, `wss://relay.primal.net`, `wss://relay.nostr.net`,
+   `wss://nostr.oxtr.dev`; or the user's own, or `wss://relay.nesher.co`);
+   then, for each address, whether it is
    public (each public address makes this agent findable by it); then
    whether others may fetch the card by address (`public_pointer`,
    recommended for a first contact). Call `rdv_init` with `emails` and
