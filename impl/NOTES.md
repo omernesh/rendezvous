@@ -332,6 +332,11 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
     the current agent.json, if it parses, to `agent.json.bak` (mode 600);
     `readAgentState` falls back to the backup when agent.json is missing,
     empty or torn, and says so on stderr. The secret key is in both.
+49. **Stale-lock breaking** (L1). Breaking a stale `lock` takes a
+    short-lived `lock.break` (O_EXCL) and re-reads the lock under it, so two
+    waiters that saw the same stale content can no longer have the second
+    one delete the first one's fresh lock. A `.break` left by a crash is
+    cleared after 5 s.
 
 ## Not implemented yet
 

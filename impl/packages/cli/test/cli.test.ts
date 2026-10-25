@@ -13,6 +13,28 @@ import { inboundMeetingScope, meetingScope } from '../src/negotiate.js';
 const tmp = () => mkdtempSync(join(tmpdir(), 'rdv-test-'));
 
 describe('lock and atomic writes', () => {
+  it('breaking a stale lock never removes a lock someone just took (security review L1)', async () => {
+    const { breakStale } = await import('../src/fsutil.js');
+    const dir = tmp();
+    const path = join(dir, 'lock');
+    const stale = JSON.stringify({ pid: 999999, host: hostname(), since: '2020-01-01T00:00:00Z' });
+    writeFileSync(path, stale);
+    // Waiter A breaks the stale lock and takes its own.
+    breakStale(path, stale);
+    const release = await acquireLock(path, { timeoutMs: 150 });
+    const fresh = readFileSync(path, 'utf8');
+    // Waiter B read the same stale content earlier and now tries to break it: A's lock survives.
+    breakStale(path, stale);
+    expect(readFileSync(path, 'utf8')).toBe(fresh);
+    // And while another waiter holds the breaker, nobody removes the lock.
+    writeFileSync(path, stale);
+    writeFileSync(`${path}.break`, '');
+    breakStale(path, stale);
+    expect(readFileSync(path, 'utf8')).toBe(stale);
+    release();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
   it('excludes a second holder until released', async () => {
     const dir = tmp();
     const path = join(dir, 'lock');

@@ -119,6 +119,38 @@ function staleContent(path: string, staleMs: number): string | null {
 }
 
 /**
+ * Remove a stale lock without racing another waiter (security review L1).
+ * Two waiters that both read the same stale content used to both unlink:
+ * the second unlink removed the first one's fresh lock. Breaking now needs a
+ * short-lived `<lock>.break` (O_EXCL), and the content is re-checked while
+ * holding it, so at most one waiter removes a given stale lock and nobody
+ * removes a fresh one. A `.break` left by a crash is cleared after 5 s.
+ */
+export function breakStale(path: string, stale: string): void {
+  const breaker = `${path}.break`;
+  let fd: number;
+  try {
+    fd = openSync(breaker, 'wx');
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+    try {
+      if (Date.now() - statSync(breaker).mtimeMs > 5_000) unlinkSync(breaker);
+    } catch {
+      // gone meanwhile
+    }
+    return; // someone else is breaking it; retry the lock
+  }
+  try {
+    if (readFileSync(path, 'utf8') === stale) unlinkSync(path);
+  } catch {
+    // gone already
+  } finally {
+    closeSync(fd);
+    rmSync(breaker, { force: true });
+  }
+}
+
+/**
  * Take an exclusive lock by creating `path` with O_EXCL. Waits up to
  * `timeoutMs`, breaking locks left behind by dead processes. Returns a
  * release function (idempotent; also runs on process exit).
@@ -157,12 +189,7 @@ export async function acquireLock(
     }
     const stale = staleContent(path, staleMs);
     if (stale !== null) {
-      // Re-check right before removing so we don't delete a lock someone else just took.
-      try {
-        if (readFileSync(path, 'utf8') === stale) unlinkSync(path);
-      } catch {
-        // gone already
-      }
+      breakStale(path, stale);
       continue;
     }
     if (Date.now() >= deadline) {
