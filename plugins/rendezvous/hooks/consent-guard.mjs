@@ -333,6 +333,15 @@ const FILE_SUBS = { 'direct-transfer': DIRECT_TRANSFER };
 const OWNER_SUBS = { set: OWNER_SECRET, reset: OWNER_SECRET };
 // The listening relays: adding one routes our messages through it, removing the good ones cuts us off; list shows the human's phrase.
 const RELAYS_SUBS = { add: RELAYS, remove: RELAYS, list: RELAYS };
+/** Every command group with human-only subcommands. The subcommand loop and the `xargs` tail check both read this, so a new group is covered in both. */
+const HUMAN_GROUPS = [
+  ['contact', CONTACT_SUBS],
+  ['dinner', DINNER_SUBS],
+  ['task', TASK_SUBS],
+  ['file', FILE_SUBS],
+  ['owner-secret', OWNER_SUBS],
+  ['relays', RELAYS_SUBS],
+];
 
 /**
  * Programs that run their arguments as another command, in a pseudo-terminal (`script`, `expect`, `unbuffer`,
@@ -464,14 +473,7 @@ function checkWords(words, ctx, depth) {
   // they are two adjacent words, after any wrapper (npx, pnpm, npm run rdv --, …).
   for (let i = 0; i + 1 < words.length; i++) {
     const [a, b] = [words[i], words[i + 1]];
-    for (const [cmd, subs] of [
-      ['contact', CONTACT_SUBS],
-      ['dinner', DINNER_SUBS],
-      ['task', TASK_SUBS],
-      ['file', FILE_SUBS],
-      ['owner-secret', OWNER_SUBS],
-      ['relays', RELAYS_SUBS],
-    ]) {
+    for (const [cmd, subs] of HUMAN_GROUPS) {
       const named = couldBe(a, cmd, ctx.cwd);
       for (const [s, why] of Object.entries(subs)) {
         if ((named || dynamic(a)) && couldBe(b, s, ctx.cwd)) throw new Refusal(why);
@@ -487,7 +489,7 @@ function checkWords(words, ctx, depth) {
   if (feeder >= 0 && words.slice(feeder + 1).some(isRdv)) {
     const at = words.findIndex((w, k) => k > feeder && isRdv(w));
     const tail = words.slice(at + 1).filter((w) => !w.startsWith('-'));
-    if (tail.length < 2 || ['contact', 'dinner', 'task', 'file'].includes(tail[tail.length - 1].toLowerCase())) throw new Refusal(OPAQUE);
+    if (tail.length < 2 || HUMAN_GROUPS.some(([cmd]) => cmd === tail[tail.length - 1].toLowerCase())) throw new Refusal(OPAQUE);
   }
   // `rdv task request … --file|--inline`: the owner's files in a request we send (issue #53). The CLI holds it for
   // the human's release; the guard keeps the model from even making one. `--file=x`, `--inline=x`, and a word built at

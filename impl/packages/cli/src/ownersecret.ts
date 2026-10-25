@@ -281,6 +281,9 @@ export async function clearOwnerSecret(home: Home, now = new Date()): Promise<vo
   });
 }
 
+/** The note for a home that never had an owner passphrase: the plain fresh-install state, nothing to warn about. */
+export const NO_OWNER_SECRET_NOTE = 'no owner passphrase is set, so auto-approve cannot be turned on: the owner sets one with "rdv owner-secret set" in their own terminal';
+
 /** What `rdv whoami` and `rdv_status` show: when it was set, or that it isn't (never the hash). */
 export function ownerSecretInfo(home: Home): { set: string | null; reset?: string; missing?: true; locked_until?: string; note: string } {
   let r: OwnerSecretRecord | OwnerSecretReset | null;
@@ -299,7 +302,7 @@ export function ownerSecretInfo(home: Home): { set: string | null; reset?: strin
       note: `OWNER PASSPHRASE ${what}: none is set, so auto-approve is off for everyone. ${end ? `A new one can be set after ${end.toISOString()}` : 'Set a new one'} with "rdv owner-secret set" in your own terminal. If you did not ${r.missing ? 'delete owner-secret.json' : 'reset it'}, someone with access to your account did`,
     };
   }
-  if (!r) return { set: null, note: 'no owner passphrase is set, so auto-approve cannot be turned on: the owner sets one with "rdv owner-secret set" in their own terminal' };
+  if (!r) return { set: null, note: NO_OWNER_SECRET_NOTE };
   return {
     set: r.set,
     ...(r.locked_until && Date.parse(r.locked_until) > Date.now() ? { locked_until: r.locked_until } : {}),
