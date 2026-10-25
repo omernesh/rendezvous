@@ -207,15 +207,16 @@ export async function lookup({ home, out, positionals }: Ctx): Promise<void> {
 
 /**
  * Send a contact request to an address (topic probe), an agent ID whose card
- * we know (contact, pending requester, or `rdv lookup` cache), or a card file.
- * Call inside `withAgent`. Shared with the MCP server.
+ * we know (contact, pending requester, or `rdv lookup` cache), or, with
+ * `allowFile` (the CLI only), a card file. Call inside `withAgent`. The MCP
+ * server leaves `allowFile` off so a model can't probe or read local files.
  */
 export async function requestContactTo(
   home: Home,
   agent: Agent,
   target: string,
   greeting: string,
-  opts: { inPerson?: boolean } = {},
+  opts: { inPerson?: boolean; allowFile?: boolean } = {},
 ): Promise<{ id: string; to: string; via: 'topic' | 'card'; binding: 'in-person' | 'claimed' }> {
   let to: AddressCard | string;
   let via: 'topic' | 'card';
@@ -233,6 +234,7 @@ export async function requestContactTo(
     to = target;
     via = 'topic';
   } else {
+    if (!opts.allowFile) throw new CliError('target must be an email address, a +phone number, or an agent ID (rdv1:…)', 2);
     if (!existsSync(target) || !statSync(target).isFile()) {
       throw new CliError(`"${target}" is not an address, an agent ID, or a card file`, 2);
     }
@@ -250,7 +252,7 @@ export async function requestContactTo(
 export async function contactRequest({ home, out, values, positionals }: Ctx): Promise<void> {
   const res = await withAgent(home, async (agent, config) => {
     const greeting = str(values.greeting) ?? `${config.profile}'s agent would like to get in touch.`;
-    return requestContactTo(home, agent, positionals[0], greeting, { inPerson: values['in-person'] === true });
+    return requestContactTo(home, agent, positionals[0], greeting, { inPerson: values['in-person'] === true, allowFile: true });
   });
   out.emit(
     { event: 'request-sent', ...res },
