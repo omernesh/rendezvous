@@ -21,22 +21,35 @@ export class Output {
 
   /** One result or event: `obj` in JSON mode, `human` otherwise (omit to print nothing). */
   emit(obj: object, human?: string): void {
-    if (this.json) process.stdout.write(JSON.stringify(obj) + '\n');
+    if (this.json) process.stdout.write(jsonLine(obj) + '\n');
     // Backstop: the views clean each peer field; this catches anything they missed.
     else if (human !== undefined) process.stdout.write(clean(human, true) + '\n');
   }
 
   error(message: string): void {
-    if (this.json) process.stderr.write(JSON.stringify({ error: message }) + '\n');
+    if (this.json) process.stderr.write(jsonLine({ error: message }) + '\n');
     else process.stderr.write(`rdv: ${clean(message, true)}\n`);
   }
 }
 
-// C0 controls (incl. ESC), DEL, C1 controls (incl. single-byte CSI), bidi overrides/isolates.
+// C0 controls (incl. ESC), DEL, C1 controls (incl. single-byte CSI), bidi
+// overrides, isolates and marks (ALM, LRM, RLM), and the Unicode line and
+// paragraph separators, which some terminals and viewers break lines on.
 // eslint-disable-next-line no-control-regex
-const UNSAFE = /[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g;
+const UNSAFE = /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069]/g;
 // eslint-disable-next-line no-control-regex
-const UNSAFE_KEEP_NL = /[\u0000-\u0009\u000b-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g;
+const UNSAFE_KEEP_NL = /[\u0000-\u0009\u000b-\u001f\u007f-\u009f\u061c\u200e\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069]/g;
+/** What JSON.stringify leaves raw but a terminal may act on (C1 controls, bidi, separators). C0 it escapes itself. */
+const UNSAFE_IN_JSON = /[\u007f-\u009f\u061c\u200e\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069]/g;
+
+/**
+ * One JSON line that is safe to print to a terminal: the same value as
+ * JSON.stringify, with the characters it leaves raw written as `\uXXXX`
+ * escapes, so `rdv \u2026 --json` piped to a terminal can't be repainted by peer text.
+ */
+export function jsonLine(obj: unknown): string {
+  return JSON.stringify(obj).replace(UNSAFE_IN_JSON, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`);
+}
 
 /**
  * Peer-supplied text is untrusted: replace control, escape and bidi-override

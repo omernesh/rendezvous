@@ -80,6 +80,44 @@ export const s = {
       for (const [k, schema] of Object.entries(optional)) if (Object.hasOwn(v, k) && v[k] !== undefined) schema(v[k], `${path}.${k}`);
       return v;
     },
+  /**
+   * Any JSON object, bounded: at most `maxDepth` levels of nesting,
+   * `maxNodes` values in all, strings of at most `maxString` characters, keys
+   * of at most 64, `maxChars` characters as JSON, finite numbers only. For
+   * free-form data that is shown, never interpreted (request/v1): the bounds
+   * are what keep it cheap, not a meaning.
+   */
+  json:
+    (b: { maxDepth: number; maxNodes: number; maxString: number; maxChars: number }): Schema<Record<string, unknown>> =>
+    (v, path) => {
+      if (!isPlainObject(v)) return bad(path, 'must be an object');
+      let nodes = 0;
+      const walk = (x: unknown, at: string, depth: number): void => {
+        if (++nodes > b.maxNodes) bad(path, `has more than ${b.maxNodes} values`);
+        if (x === null || typeof x === 'boolean') return;
+        if (typeof x === 'number') {
+          if (!Number.isFinite(x)) bad(at, 'must be a finite number');
+          return;
+        }
+        if (typeof x === 'string') {
+          if (x.length > b.maxString) bad(at, `must be at most ${b.maxString} characters`);
+          return;
+        }
+        if (depth >= b.maxDepth) bad(at, `nests deeper than ${b.maxDepth} levels`);
+        if (Array.isArray(x)) {
+          x.forEach((y, i) => walk(y, `${at}[${i}]`, depth + 1));
+          return;
+        }
+        if (!isPlainObject(x)) bad(at, 'must be JSON');
+        for (const [k, y] of Object.entries(x as Record<string, unknown>)) {
+          if (k.length === 0 || k.length > MAX_KEY_CHARS || k === '__proto__') bad(at, `has a key that is empty, too long or reserved`);
+          walk(y, `${at}.${k.slice(0, MAX_KEY_CHARS)}`, depth + 1);
+        }
+      };
+      walk(v, path, 0);
+      if (JSON.stringify(v).length > b.maxChars) bad(path, `must be at most ${b.maxChars} characters as JSON`);
+      return v;
+    },
 } as const;
 
 // --- capabilities ---------------------------------------------------------
@@ -118,6 +156,9 @@ const URI_RE = /^https:\/\/[\x21-\x7e]+$/;
 /** A capability URI: `https://…`, printable ASCII, at most 200 characters. */
 export const isCapabilityUri = (v: unknown): v is string => typeof v === 'string' && v.length <= MAX_URI_CHARS && URI_RE.test(v);
 
+/** Capabilities whose class is fixed at `free-form` (request/v1, request.ts; SPEC §7.6.3). */
+const FREE_FORM_ONLY: ReadonlySet<string> = new Set(['https://rendezvous.nesher.co/ext/request/v1']);
+
 export class CapabilityRegistry {
   readonly #byUri = new Map<string, Capability>();
 
@@ -128,6 +169,8 @@ export class CapabilityRegistry {
   register(c: Capability): this {
     if (!isCapabilityUri(c.uri)) throw new TypeError(`capability URI must be https and at most ${MAX_URI_CHARS} characters: ${c.uri}`);
     if (!APPROVAL_CLASSES.includes(c.approval)) throw new TypeError(`unknown approval class ${String(c.approval)}`);
+    // The general capability is defined by peer text: no host may register it under a class that skips the start gate.
+    if (FREE_FORM_ONLY.has(c.uri) && c.approval !== 'free-form') throw new TypeError(`${c.uri} is class free-form; it cannot be registered as ${c.approval}`);
     if (c.inputOptional !== undefined && typeof c.inputOptional !== 'boolean') throw new TypeError('inputOptional must be a boolean');
     if (c.maxOpen !== undefined && !(Number.isSafeInteger(c.maxOpen) && c.maxOpen >= 1)) throw new TypeError('maxOpen must be a positive integer');
     if (this.#byUri.has(c.uri)) throw new TypeError(`capability ${c.uri} is already registered`);

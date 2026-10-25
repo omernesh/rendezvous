@@ -3,7 +3,7 @@
 // judgment calls — the owner (human, CLI script, or MCP host) decides on
 // pending requests through `grant` / `decline`.
 import { EventEmitter } from 'node:events';
-import { type AddressCard, type CardOptions, createCard, type DiscoveryAddress, newerCard, reissueCard, verifyCard } from './card.js';
+import { type AddressCard, type CardOptions, createCard, type DiscoveryAddress, missingCapabilities, newerCard, reissueCard, reissueCardCapabilities, verifyCard } from './card.js';
 import {
   type Contact,
   ContactBook,
@@ -189,6 +189,20 @@ export class Agent extends EventEmitter<AgentEvents> {
     this.card = reissueCard(this.key, this.card, { addresses: next, public_pointer: publicPointer }, opts.now);
     if (this.topicUnsub) this.subscribeTopics();
     return { card: this.card, added, removed };
+  }
+
+  /**
+   * Make the card advertise `capabilities`, what this software now routes
+   * (§4.3; issue #43: a card signed by older code lacks tasks/v1). Re-signed
+   * with a later `created` only when the card lacks one of them; identity,
+   * contacts, addresses and hints are untouched. Returns whether it changed;
+   * call `publishPointers()` afterwards to replace the card on the relays.
+   */
+  refreshCapabilities(capabilities: readonly string[], opts: { now?: Date } = {}): boolean {
+    const next = missingCapabilities(this.card, capabilities);
+    if (!next) return false;
+    this.card = reissueCardCapabilities(this.key, this.card, next, opts.now);
+    return true;
   }
 
   close(): void {

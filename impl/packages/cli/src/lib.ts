@@ -61,12 +61,14 @@ export {
   taskView,
   validateNegotiateOptions,
 } from './negotiate.js';
-export { candidateView, clean, contactView, overflowView, requestView } from './output.js';
+export { candidateView, clean, contactView, jsonLine, overflowView, requestView } from './output.js';
 export { type AuditEntry, AUDIT_KEPT, type PendingRelease, type ReleaseContent, type TaskHostState } from './home.js';
 export {
   answerPeer,
   approveRelease,
   approveStart,
+  type CardRefresh,
+  cardRefreshText,
   cancelPeer,
   declineStart,
   describeDraft,
@@ -78,6 +80,7 @@ export {
   hostRegistry,
   inboundTaskCtx,
   pruneReleases,
+  refreshHostCard,
   releaseDigest,
   releaseView,
   requestPeer,

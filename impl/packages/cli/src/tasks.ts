@@ -50,7 +50,7 @@ import {
   type TaskRecord,
   type TaskStep,
 } from '@rendezvous/a2a';
-import { type Agent, type Contact, effectiveInvoke, fingerprint, type Payload } from '@rendezvous/core';
+import { Agent, type Contact, effectiveInvoke, fingerprint, type Payload, type Transport } from '@rendezvous/core';
 import type { PhraseTarget } from './consent.js';
 import { type AuditEntry, CliError, type Home, type InboxEntry, type PendingRelease, type ReleaseContent, type TaskHostState } from './home.js';
 import { clean } from './output.js';
@@ -68,6 +68,52 @@ export function hostRegistry(extra: readonly Capability[] = []): CapabilityRegis
 /** The card's `capabilities` for a host that routes tasks/v1 to `registry` (SPEC §4.3: advertise what we do). */
 export function hostCardCapabilities(registry: CapabilityRegistry = hostRegistry()): string[] {
   return cardCapabilities([...SUPPORTED_EXTENSIONS, TASKS_URI, ...registry.uris()]);
+}
+
+export interface CardRefresh {
+  /** The card was re-signed (it lacked a capability this host routes). */
+  refreshed: boolean;
+  /** Its capabilities now, when refreshed. */
+  capabilities?: string[];
+  /** The public address topics the new card was published on (empty without a public pointer). */
+  published: string[];
+  /** Publishing failed; the re-signed card is saved and goes out on the next `rdv publish-card`. */
+  error?: string;
+}
+
+/**
+ * Issue #43: a card signed by older code lacks capabilities this host now
+ * routes (tasks/v1, request/v1), so peers send it no tasks (SPEC §4.3). At a
+ * listener's start: re-sign the card with them (same key, contacts, addresses
+ * and hints; `created` a second past the old one) and republish it, as the
+ * replaceable event, on each public address topic. Only when the card lacks
+ * one: a restart on the same code changes nothing, on disk or on the relays.
+ * `transport` is the listener's own connection (left open).
+ */
+export async function refreshHostCard(home: Home, capabilities: readonly string[], transport: Transport, now = new Date()): Promise<CardRefresh> {
+  const agent = await home.locked(async () => {
+    const a = Agent.fromJSON(home.readAgentState(), () => transport);
+    if (!a.refreshCapabilities(capabilities, { now })) return null;
+    home.writeAgentState(a.toJSON());
+    return a;
+  });
+  if (!agent) return { refreshed: false, published: [] };
+  const capabilitiesNow = [...agent.card.capabilities];
+  try {
+    return { refreshed: true, capabilities: capabilitiesNow, published: await agent.publishPointers() };
+  } catch (err) {
+    return { refreshed: true, capabilities: capabilitiesNow, published: [], error: (err as Error).message };
+  }
+}
+
+/** A card refresh in words, for the human (null when nothing changed). */
+export function cardRefreshText(r: CardRefresh): string | null {
+  if (!r.refreshed) return null;
+  return (
+    `your card was re-signed to advertise what this version supports (${(r.capabilities ?? []).filter((c) => c.startsWith('https://')).map((c) => clean(c)).join(', ')})` +
+    (r.error ? `; publishing it failed (${clean(r.error)}): run "rdv publish-card"` : r.published.length ? `; republished on ${r.published.length} public address topic(s)` : '') +
+    '. Contacts that already hold your older card keep it for now (sending it to them is not supported yet).'
+  );
 }
 
 // --- the engine context (issue #39) -------------------------------------------
@@ -567,7 +613,7 @@ export function taskEventText(e: TaskEvent): string | undefined {
 export function describeDraft(c: ReleaseContent): string {
   if (c.kind === 'artifact') {
     const parts = c.artifact.parts.map((p) => (p.kind === 'text' ? `text: ${JSON.stringify(p.text)}` : p.kind === 'data' ? `data: ${JSON.stringify(p.data)}` : `file: ${JSON.stringify(p.file.name ?? 'unnamed')}`));
-    return `result${c.artifact.name ? ` "${c.artifact.name}"` : ''}: ${parts.join('; ')}${c.complete ? ' (then the task ends completed)' : ''}`;
+    return `result${c.artifact.name ? ` ${JSON.stringify(c.artifact.name)}` : ''}: ${parts.join('; ')}${c.complete ? ' (then the task ends completed)' : ''}`;
   }
   const body = [...(c.text !== undefined ? [`text: ${JSON.stringify(c.text)}`] : []), ...(c.data !== undefined ? [`data: ${JSON.stringify(c.data)}`] : [])].join('; ');
   return c.kind === 'question' ? `question for the requester: ${body}` : `end the task ${c.outcome}: ${body}`;

@@ -85,16 +85,45 @@ export function reissueCard(
   discovery: { addresses: DiscoveryAddress[]; public_pointer: boolean },
   now: Date = new Date(),
 ): AddressCard {
+  return resignCard(key, card, {
+    discovery: discovery.addresses.length || discovery.public_pointer ? { addresses: discovery.addresses.map((a) => ({ ...a })), public_pointer: discovery.public_pointer } : undefined,
+  }, now);
+}
+
+/**
+ * A newer card with the same key, hints and addresses but other
+ * `capabilities` (issue #43), dated like reissueCard: at least a second past
+ * the old card and now.
+ */
+export function reissueCardCapabilities(key: AgentKey, card: AddressCard, capabilities: string[], now: Date = new Date()): AddressCard {
+  const problem = capabilitiesProblem(capabilities);
+  if (problem) throw new Error(`card: ${problem}`);
+  return resignCard(key, card, { capabilities: [...capabilities] }, now);
+}
+
+function resignCard(key: AgentKey, card: AddressCard, change: Partial<Pick<CardBody, 'discovery' | 'capabilities'>>, now: Date): AddressCard {
   if (card.id !== key.id) throw new Error('card belongs to another key');
   const prev = parseTimestamp(card.created) ?? 0;
   const created = new Date(Math.max(now.getTime(), prev) + 1000);
   const { sig: _sig, ...body } = card;
-  const next: CardBody = {
-    ...body,
-    created: created.toISOString(),
-    discovery: discovery.addresses.length || discovery.public_pointer ? { addresses: discovery.addresses.map((a) => ({ ...a })), public_pointer: discovery.public_pointer } : undefined,
-  };
-  return signDoc(next, key);
+  return signDoc({ ...body, ...change, created: created.toISOString() } as CardBody, key);
+}
+
+/**
+ * The capabilities a card should list so that it advertises everything in
+ * `wanted` (what this software now routes, SPEC §4.3): `wanted` in its order,
+ * then what the card listed besides, within MAX_CARD_CAPABILITIES. Null when
+ * the card already lists all of `wanted` (in any order): nothing to re-sign,
+ * so a restart on the same code never churns the card. A capability the card
+ * lists and the code dropped stays listed (a task for it is answered as
+ * unsupported, §7.5); hosts with different registries on one home then never
+ * take turns re-signing.
+ */
+export function missingCapabilities(card: CardBody, wanted: readonly string[]): string[] | null {
+  const have = Array.isArray(card.capabilities) ? card.capabilities : [];
+  if (wanted.every((c) => have.includes(c))) return null;
+  const merged = [...new Set([...wanted, ...have])];
+  return merged.slice(0, MAX_CARD_CAPABILITIES);
 }
 
 /** The newer of two cards of one agent (by `created`). */

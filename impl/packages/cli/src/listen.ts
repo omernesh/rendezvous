@@ -46,7 +46,7 @@ import {
   requestView,
 } from './output.js';
 import { subjectOf, sweepAutoApprove } from './autoapprove.js';
-import { hostRegistry, taskEventText, taskEventView, tasksExpiring, tasksInbound, tasksRoute } from './tasks.js';
+import { cardRefreshText, hostCardCapabilities, hostRegistry, refreshHostCard, taskEventText, taskEventView, tasksExpiring, tasksInbound, tasksRoute } from './tasks.js';
 import { relayTransport } from './transport.js';
 
 /** How often `listen --negotiate` checks pending negotiations for expiry. */
@@ -418,6 +418,10 @@ export async function listen(home: Home, out: Output, opts: ListenOptions): Prom
   const config = home.readConfig();
   const boot = Agent.fromJSON(home.readAgentState(), (key) => relayTransport(key, config.relays, home));
   const real = boot.transport;
+  // Issue #43: a card signed by older code gets the capabilities this version routes.
+  const refresh = await refreshHostCard(home, hostCardCapabilities(hostRegistry()), real);
+  const refreshText = cardRefreshText(refresh);
+  if (refreshText) out.emit({ event: 'card-refreshed', capabilities: refresh.capabilities, published: refresh.published, ...(refresh.error ? { error: refresh.error } : {}) }, refreshText);
   let topics = (boot.card.discovery?.addresses ?? []).map(dtopic);
 
   const print = async (e: Emitted) => {
