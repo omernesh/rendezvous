@@ -63,10 +63,16 @@ export {
   validateNegotiateOptions,
 } from './negotiate.js';
 export { candidateView, clean, contactView, jsonLine, overflowView, requestView } from './output.js';
-export { type AuditEntry, AUDIT_KEPT, type PendingRelease, type ReleaseContent, type TaskHostState } from './home.js';
+export { type AuditEntry, AUDIT_KEPT, type HeldRequest, type PendingRelease, type ReleaseContent, type TaskHostState } from './home.js';
 export {
   answerPeer,
+  approveHeldRequest,
   approveRelease,
+  describeHeldRequest,
+  discardHeldRequest,
+  heldRequest,
+  heldRequestDigest,
+  heldRequestView,
   approveStart,
   type CardRefresh,
   cardRefreshText,

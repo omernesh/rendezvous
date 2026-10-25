@@ -685,9 +685,18 @@ describe('the task gates are the human’s (issue #24)', () => {
     'rdv task $(echo approve) 0f1e',
     'echo approve | xargs rdv task',
     'Start-Process rdv -ArgumentList task,approve,0f1e',
+    // The owner's files in a request we send (issue #53): the human's, in their own terminal.
+    'rdv task request rdv1:abc --text "Read this" --inline ~/notes.txt',
+    'rdv task request rdv1:abc --file 0123456789abcdef=https://files.example.com/x',
+    'rdv task request rdv1:abc --inline=./brief.txt',
+    'rdv "task" "request" rdv1:abc --text hi "--inline" a.txt',
+    'npx rdv task request rdv1:abc --INLINE a.txt',
+    'bash -c "rdv task request rdv1:abc --inline a.txt"',
+    'rdv task request rdv1:abc $(echo --inline) a.txt',
   ];
   const allowed = [
     'rdv task request rdv1:abc --text "Draft the copy"',
+    'rdv task request rdv1:abc --text "the file is on your side" --capability https://example.com/ext/x/v1',
     'rdv task submit 0f1e --text "the result"',
     'rdv task decline 0f1e',
     'rdv task cancel 0f1e',
@@ -785,6 +794,7 @@ describe('auto-approve is the human’s (issue #25)', () => {
     `node -e "require('node-pty').spawn('rdv', ['owner-' + 'secret', 'set'])"`,
     'cat ~/.rendezvous/default/owner-secret.json',
     'rm ./owner-secret.json',
+    'rm ~/.rendezvous/default/owner-secret.marker',
     // owner-secret as a structured subcommand, like contact, dinner and task.
     'rdv owner-secret reset',
     'rdv --profile omer owner-secret set',
@@ -844,7 +854,7 @@ describe('auto-approve is the human’s (issue #25)', () => {
   it('refuses writing either state file in any folder, not only in a home', () => {
     const dir = mkdtempSync(join(tmpdir(), 'rdv-guard-anywhere-'));
     try {
-      for (const name of ['autoapprove.json', 'owner-secret.json']) {
+      for (const name of ['autoapprove.json', 'owner-secret.json', 'owner-secret.marker']) {
         for (const tool of ['Write', 'Edit', 'Read', 'NotebookEdit']) expect(checkToolInput(tool, { file_path: join(dir, name) }), `${tool} ${name}`).toBeTruthy();
         expect(checkPath(`**/${name}`, { cwd: dir, kind: 'glob' })).toBeTruthy();
       }

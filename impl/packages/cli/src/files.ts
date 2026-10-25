@@ -408,6 +408,30 @@ export function attachFiles(home: Home, refs: readonly Attachment[], inline: rea
   return { parts, notes };
 }
 
+/**
+ * At the release of a held request (issue #53): is each of the owner's files
+ * still the one the human was shown? An inline file is read again from its
+ * source; a prepared one must still be prepared, from a source with the same
+ * content. The first that changed, was removed or can no longer be read, or
+ * undefined. Inside the lock.
+ */
+export function changedAttachment(home: Home, notes: readonly FileNote[]): FileNote | undefined {
+  const s = notes.some((n) => !n.inline) ? home.readFiles() : undefined;
+  for (const n of notes) {
+    try {
+      if (n.inline) {
+        if (sha256Hex(readOwnerFile(home, n.source, MAX_INLINE_FILE_BYTES, 'an inline file is').bytes) !== n.sha256) return n;
+      } else {
+        const f = Object.hasOwn(s!.outgoing, n.sha256) ? s!.outgoing[n.sha256] : undefined;
+        if (!f || f.source !== n.source || sha256Hex(readOwnerFile(home, n.source, DEFAULT_MAX_FILE_BYTES, 'a file sent by reference is').bytes) !== f.plain_sha256) return n;
+      }
+    } catch {
+      return n;
+    }
+  }
+  return undefined;
+}
+
 // --- incoming: what may be fetched, and fetching -------------------------------------------
 
 /** File parts a peer sent for task `t`, with the gate rule (SPEC §7.7: only after the start gate). Throws CliError. */

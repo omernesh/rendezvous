@@ -128,6 +128,28 @@ export interface TaskHostState {
    * with their task.
    */
   received?: Record<string, { peer: string; files: FilePart[] }>;
+  /**
+   * Requests of ours that carry the owner's files, by hold ID, held for the
+   * release gate (issue #53): nothing leaves until the human releases exactly
+   * what they were shown.
+   */
+  requests?: Record<string, HeldRequest>;
+}
+
+/** A task request with the owner's files, waiting for the human's release: exactly the arguments requestTask gets once released. */
+export interface HeldRequest {
+  /** The hold's own ID (not the task's: the engine picks that when it is sent). */
+  id: string;
+  peer: string;
+  capability: string;
+  text?: string[];
+  input?: unknown;
+  expires?: string;
+  /** The file parts as they will leave. */
+  files: FilePart[];
+  /** Each file as the human is shown it: name, size, hash, source, URL (covered by the digest). */
+  notes: FileNote[];
+  created: string;
 }
 
 /** A file the owner prepared to send (`rdv file prepare`): encrypted under a fresh key unless sent plain. */
@@ -462,7 +484,7 @@ export class Home {
     if (!existsSync(this.tasksPath)) return { v: 1, engine: emptyTaskState(), releases: {} };
     const s = readJson<TaskHostState>(this.tasksPath);
     const ok = (o: unknown) => typeof o === 'object' && o !== null && !Array.isArray(o);
-    if (s?.v !== 1 || !ok(s.engine) || s.engine.v !== 1 || !ok(s.engine.tasks) || !ok(s.releases) || (s.received !== undefined && !ok(s.received))) {
+    if (s?.v !== 1 || !ok(s.engine) || s.engine.v !== 1 || !ok(s.engine.tasks) || !ok(s.releases) || (s.received !== undefined && !ok(s.received)) || (s.requests !== undefined && !ok(s.requests))) {
       throw new CliError(`unrecognized ${this.tasksPath}`);
     }
     s.engine.dropped ??= {};

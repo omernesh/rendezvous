@@ -1618,10 +1618,34 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       is a separate `rdv owner-secret set` at least 10 minutes later, and
       until then `rdv whoami` and `rdv_status` show "OWNER PASSPHRASE RESET
       <time> … if you did not reset it, someone with access to your
-      account did". Auto-approve holds only while a
-      readable passphrase is set: an entry from before it existed, or after
-      `owner-secret.json` was deleted, approves nothing (it is kept, so the
-      owner setting one brings it back). Process-tree checks (is the parent
+      account did". **Each entry is bound to the passphrase record it was
+      set under** (issue #52): `owner`, a digest of the record's `set` time
+      and of its salt (never the hash or the passphrase), covered by the
+      entry MAC. An entry holds only while that matches the current record,
+      so any set, change (even to the same passphrase: a new salt) or reset
+      ends every older one for good, and an entry from before the binding
+      existed never holds. The first version kept entries while no
+      passphrase was set and let them hold again once one was, so a
+      passphrase set later (by a model, on first use) silently revived them.
+      `rdv owner-secret set` removes them, audits each (`action: "off"`,
+      `reason: "owner-secret"`) and lists them; the owner turns each back on
+      with `rdv contact auto-approve`. An unreadable `owner-secret.json`
+      approves nothing and removes nothing. **A deleted passphrase file is
+      a reset, not "never set"** (issue #52): before, a missing file read as
+      no passphrase ever, which skipped the cooldown and the banner. Now, if
+      a passphrase existed (an `owner-secret` line in `audit.jsonl`, or,
+      when the log was cut or deleted too, `owner-secret.marker`: written at
+      every set and reset, HMAC-SHA256 with the agent key, so a hand-written
+      or copied marker counts for nothing), the first read that finds the
+      file gone writes `{v, reset, missing: true}` there, timed then: the
+      cooldown runs from that moment, `rdv whoami` and `rdv_status` show
+      "OWNER PASSPHRASE FILE DELETED … counted as a reset", and auto-approve
+      stays off. Honestly: a same-user process can delete the audit log and
+      the marker too, and then a missing file again reads as never set. The
+      marker only raises the bar (the guard keeps `agent.json` and the
+      `owner-secret` files from the model, and a marker it writes without
+      the key does nothing); defence in depth, not a boundary.
+      Process-tree checks (is the parent
       an assistant?) were not added: brittle, and trivially spoofed.
       Considered and not taken: a one-time code sent out of band (an OS
       notification or the clipboard: the clipboard is readable by the
@@ -1830,9 +1854,30 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       URL, encrypted, and the local path it was read from), so the release
       gate (form, server log, `rdv task list`) shows exactly that, and the
       release digest covers it: a model that names `~/.ssh/id_ed25519`
-      `q4-plan.pdf` is caught by the path. `rdv task request --file`
-      attaches files from the owner's own terminal; the MCP `request` takes
-      none (the design's requester-side release gate is not built).
+      `q4-plan.pdf` is caught by the path.
+    - **Files in a request we send** (issue #53). `rdv task request
+      --file|--inline` used to send at once, so a model with a shell could
+      mail any owner file with one command. Now such a request is checked as
+      it would be sent (contact, card, capability, deadline, limits, the
+      files extension: a dry run of `requestTask` on a copy of the engine
+      state) and held in `tasks.json` under `requests` by a hold ID of its
+      own (`HeldRequest`: recipient, capability, text, input, deadline, the
+      file parts and a `FileNote` each). Nothing leaves until the human
+      releases it through the same gate as a draft: `rdv task release
+      <hold-id> --code`, or `rdv_task` "approve-release" with the hold ID
+      (form, or a `task-release` confirm phrase; the server log and `rdv
+      task list` show the recipient, its fingerprint, and each file's name,
+      size, hash, URL and source). The digest covers all of it, and at
+      release every file is checked again: an inline file is re-read from
+      its source, a prepared one must still be prepared from a source with
+      the same content; changed, gone or unreadable, and nothing is sent
+      (TaskChangedError). The release is audited (`gate: "release"`, the new
+      task's ID, a hash and size of what left). `rdv task cancel <hold-id>`
+      and `rdv_task` "cancel" drop it (reduce-only); a hold is pruned at its
+      deadline, after a week, or past 32. The MCP `request` still takes no
+      files, and the consent guard refuses `rdv task request` with `--file`,
+      `--inline` (any spelling, `=value` too) or a flag built at run time,
+      so a model cannot even make a held one.
     - **No key in a view.** Task events, `rdv_inbox`, `rdv_task` views,
       `rdv task list` (text and `--json`) and `rdv file list` show
       `FileSummary` (name, type, size, `sha256`, encryption, URL, host,
@@ -1872,9 +1917,10 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       certificate generated per run). `bin.ts` never sets it and no
       environment variable or config does, so the CLI command always runs
       with the default block list.
-    - **Not here:** a `BlobStore` uploader (the owner uploads), the
-      requester-side release gate for files the model attaches to a request,
-      and any direct-transfer protocol (WebRTC). Tests:
+    - **Not here:** a `BlobStore` uploader (the owner uploads), files the
+      model attaches to a request through MCP (the held request above is the
+      human's, from their terminal), and any direct-transfer protocol
+      (WebRTC). Tests:
       `cli/test/files.test.ts` (hostile names, part validation, the gate,
       quarantine, prepare and the release view, the commands),
       `mcp/test/files.test.ts` (the doc review end to end, a tampered file,

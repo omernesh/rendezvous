@@ -60,12 +60,19 @@ import { candidateDigest, describeApproval, dropPhrase, inboundSubject, reissueF
 import { type AuditEntry, CliError, type Config, type ConfigAddress, type ConsentAction, consentKey, Home, type InboxEntry, parseJsonLines, type PendingRelease } from './home.js';
 import {
   answerPeer,
+  approveHeldRequest,
   approveRelease,
   approveStart,
   cancelPeer,
   declineStart,
   describeDraft,
+  describeHeldRequest,
+  discardHeldRequest,
   gateCode,
+  heldRequest,
+  heldRequestDigest,
+  heldRequestView,
+  holdRequest,
   hostCardCapabilities,
   hostRegistry,
   releaseView,
@@ -1217,11 +1224,24 @@ function fileArgs(v: unknown): Attachment[] {
 export async function taskRequest({ home, out, values, positionals }: Ctx): Promise<void> {
   const capability = str(values.capability) ?? REQUEST_URI;
   const input = jsonArg(values.input, '--input');
-  const run = await withAgent(home, (agent) => {
-    // The human runs this command: what they attach is theirs to send.
-    const { parts } = attachFiles(home, fileArgs(values.file), list(values.inline));
-    return requestPeer(home, agent, hostRegistry(), positionals[0], capability, { text: list(values.text), input, expires: str(values.expires), ...(parts.length ? { files: parts } : {}) });
-  });
+  const refs = fileArgs(values.file);
+  const inline = list(values.inline);
+  if (refs.length || inline.length) {
+    // The owner's files leave only after the human releases them, shown with name, size, hash, source and recipient
+    // (issue #53): whoever runs this command (a model with a shell, too) only gets it held.
+    const { held, digest } = await withAgent(home, (agent) => {
+      const files = attachFiles(home, refs, inline);
+      return holdRequest(home, agent, hostRegistry(), positionals[0], capability, { text: list(values.text), input, expires: str(values.expires), files: files.parts, notes: files.notes });
+    });
+    out.emit(
+      { event: 'task-request-held', hold: held.id, peer: held.peer, fingerprint: fingerprint(held.peer), capability: held.capability, files: held.notes, release_code: gateCode(digest) },
+      `held for your release, nothing sent: ${clean(describeHeldRequest(held))}\n  to send it: rdv task release ${held.id} --code ${gateCode(digest)}  (to drop it: rdv task cancel ${held.id})`,
+    );
+    return;
+  }
+  const run = await withAgent(home, (agent) =>
+    requestPeer(home, agent, hostRegistry(), positionals[0], capability, { text: list(values.text), input, expires: str(values.expires) }),
+  );
   emitRun(out, run);
 }
 
@@ -1239,7 +1259,18 @@ export async function taskList({ home, out }: Ctx): Promise<void> {
     return { s, shown: targets.length ? reissueForDisplay(home, targets) : new Map<string, ShownPhrase>() };
   });
   const tasks = Object.values(s.engine.tasks).sort((a, b) => a.created.localeCompare(b.created));
-  if (tasks.length === 0 && !out.json) out.emit({}, 'no tasks');
+  const held = Object.values(s.requests ?? {}).sort((a, b) => a.created.localeCompare(b.created));
+  if (tasks.length === 0 && held.length === 0 && !out.json) out.emit({}, 'no tasks');
+  // Our requests with the owner's files, waiting for release (issue #53).
+  for (const h of held) {
+    const code = gateCode(heldRequestDigest(h));
+    const rel = shown.get(consentKey('task-release', h.id));
+    out.emit(
+      { event: 'task-request-held', hold: h.id, peer: h.peer, fingerprint: fingerprint(h.peer), capability: h.capability, files: h.notes, created: h.created, release_code: code },
+      `${clean(h.id)}  request held for YOUR release (nothing sent): ${clean(describeHeldRequest(h))}\n  to send it: rdv task release ${clean(h.id)} --code ${code}  (to drop it: rdv task cancel ${clean(h.id)})` +
+        (rel ? `\n  confirm phrase (tell it to your MCP client to send this request): ${clean(rel.phrase)}  (replaces any phrase shown before)` : ''),
+    );
+  }
   for (const t of tasks) {
     const start = shown.get(consentKey('task-start', t.id));
     const rel = shown.get(consentKey('task-release', t.id));
@@ -1338,6 +1369,16 @@ export async function taskRelease({ home, out, values, positionals }: Ctx): Prom
   const id = positionals[0];
   const code = codeArg(values.code, 'release');
   const run = await withAgent(home, async (agent) => {
+    if (heldRequest(home.readTasks(), id)) {
+      // A request of ours with the owner's files (issue #53).
+      const { digest } = heldRequestView(home, id);
+      if (gateCode(digest) !== code) {
+        throw new CliError(`request ${clean(id)} is not the one you reviewed (it changed, or the code is wrong). Nothing was sent: run "rdv task list" and check it again.`);
+      }
+      const r = await approveHeldRequest(home, agent, hostRegistry(), id, digest);
+      dropPhrase(home, { action: 'task-release', id });
+      return r;
+    }
     const { digest } = releaseView(home, id);
     if (gateCode(digest) !== code) {
       throw new CliError(`the result for task ${clean(id)} is not the one you reviewed (it changed, or the code is wrong). Nothing was sent: run "rdv task list" and check it again.`);
@@ -1351,7 +1392,21 @@ export async function taskRelease({ home, out, values, positionals }: Ctx): Prom
 
 /** `rdv task cancel <task-id>`: withdraw a task we requested. */
 export async function taskCancel({ home, out, values, positionals }: Ctx): Promise<void> {
-  emitRun(out, await withAgent(home, (agent) => cancelPeer(home, agent, hostRegistry(), positionals[0], str(values.reason))));
+  const id = positionals[0];
+  const dropped = await withAgent(
+    home,
+    async () => {
+      if (!discardHeldRequest(home, id)) return false;
+      dropPhrase(home, { action: 'task-release', id });
+      return true;
+    },
+    { save: false },
+  );
+  if (dropped) {
+    out.emit({ event: 'task-request-dropped', hold: id }, `request ${clean(id)} dropped: nothing was sent`);
+    return;
+  }
+  emitRun(out, await withAgent(home, (agent) => cancelPeer(home, agent, hostRegistry(), id, str(values.reason))));
 }
 
 /** `rdv task input <task-id> --text …`: answer the executor's input-required on a task we requested. */

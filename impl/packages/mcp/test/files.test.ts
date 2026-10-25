@@ -205,7 +205,7 @@ describe('a doc review with a file: release gate, then fetch, verify, decrypt (S
 
 describe('fetching waits for the start gate', () => {
   it("a file in a peer's task request is not fetched before John's human approves the start, and its form shows the file", async () => {
-    const { omer, john, johnId, johnForms } = await connected();
+    const { omer, john, johnId, johnForms, omerForms } = await connected();
     // Omer's human attaches a prepared file to a request from his own terminal.
     const src = join(root, 'brief.txt');
     writeFileSync(src, 'Brief: one page, three sections.');
@@ -213,7 +213,19 @@ describe('fetching waits for the start gate', () => {
     const url = store.put(`/brief/${prepared.sha256}`, new Uint8Array(readFileSync(prepared.upload)));
     // Async: the test relay runs in this process, so a blocking exec would starve it.
     const { stdout: out } = await execFileAsync(process.execPath, [RDV_BIN, 'task', 'request', johnId, '--text', 'Please read the brief.', '--file', `${prepared.sha256}=${url}`, '--json', '--home', omer.home.dir], { encoding: 'utf8' });
-    const id = JSON.parse(out.trim().split('\n')[0]).task;
+    // Held for Omer's release (issue #53): nothing has left.
+    const heldLine = JSON.parse(out.trim().split('\n')[0]);
+    expect(heldLine).toMatchObject({ event: 'task-request-held', peer: johnId, release_code: expect.stringMatching(/^[0-9a-f]{12}$/) });
+    expect(heldLine.files[0]).toMatchObject({ name: 'brief.txt', sha256: prepared.sha256, source: src, uri: url });
+    await new Promise((r) => setTimeout(r, 500));
+    expect((await ok(john, 'rdv_task', { action: 'list' })).tasks).toEqual([]);
+    expect((await ok(omer, 'rdv_task', { action: 'list' })).held_requests).toEqual([expect.objectContaining({ request_id: heldLine.hold, held_for_release: true })]);
+    // Omer's human releases it through the approval form, which shows the recipient and the file.
+    const released = await ok(omer, 'rdv_task', { action: 'approve-release', task_id: heldLine.hold });
+    const relForm = omerForms.asked.at(-1)!;
+    for (const s of [johnId, 'brief.txt', `sha256 ${prepared.sha256}`, `at ${url}`, `read from ${src}`]) expect(relForm).toContain(s);
+    const id = released.task_id as string;
+    expect(omer.home.readTasks().requests).toBeUndefined();
     const recv = await waitEvent(john, taskEvent(id, 'received'), 'the request', T);
     expect(recv.files[0]).toMatchObject({ name: 'brief.txt', sha256: prepared.sha256, encrypted: true });
 
@@ -237,6 +249,26 @@ describe('fetching waits for the start gate', () => {
     for (const s of ['brief.txt', `sha256 ${prepared.sha256}`, `at ${url}`, `${prepared.size} bytes`]) expect(form).toContain(s);
     const got = await ok(john, 'rdv_file', { action: 'fetch', task_id: id, sha256: prepared.sha256.slice(0, 12) });
     expect(readFileSync(got.saved_path, 'utf8')).toBe('Brief: one page, three sections.');
+
+    // An inline file changed after the human saw it: the release is refused, in the form path and the terminal, and nothing leaves.
+    const note = join(root, 'note.txt');
+    writeFileSync(note, 'v1');
+    const { stdout: out2 } = await execFileAsync(process.execPath, [RDV_BIN, 'task', 'request', johnId, '--text', 'And this note.', '--inline', note, '--json', '--home', omer.home.dir], { encoding: 'utf8' });
+    const held2 = JSON.parse(out2.trim().split('\n')[0]);
+    writeFileSync(note, 'v2, written after it was shown');
+    const refused = await omer.call('rdv_task', { action: 'approve-release', task_id: held2.hold });
+    expect(refused.isError).toBe(true);
+    expect(refused.text).toMatch(/changed since you reviewed it.*Nothing was sent/);
+    const viaCli = await execFileAsync(process.execPath, [RDV_BIN, 'task', 'release', held2.hold, '--code', held2.release_code, '--home', omer.home.dir], { encoding: 'utf8' }).catch((e: { stderr: string }) => e);
+    expect(String((viaCli as { stderr?: string }).stderr)).toContain('changed since you reviewed it');
+    // A wrong code never sends either; dropping it is reduce-only.
+    writeFileSync(note, 'v1');
+    const wrong = await execFileAsync(process.execPath, [RDV_BIN, 'task', 'release', held2.hold, '--code', '000000000000', '--home', omer.home.dir], { encoding: 'utf8' }).catch((e: { stderr: string }) => e);
+    expect(String((wrong as { stderr?: string }).stderr)).toContain('not the one you reviewed');
+    expect((await ok(omer, 'rdv_task', { action: 'cancel', task_id: held2.hold })).state).toBe('dropped');
+    expect(omer.home.readTasks().requests).toBeUndefined();
+    await new Promise((r) => setTimeout(r, 300));
+    expect((await ok(john, 'rdv_task', { action: 'list' })).tasks).toHaveLength(1);
   });
 });
 
