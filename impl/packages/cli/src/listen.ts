@@ -41,6 +41,7 @@ import {
   type Output,
   overflowText,
   overflowView,
+  abuseText,
   requestText,
   requestView,
 } from './output.js';
@@ -243,6 +244,8 @@ async function handleLocked(
         events.push({ obj: { event: 'message', ...entry }, human: `message ${inboxText(entry)}` });
       });
       agent.on('revoked', (peer) => events.push({ obj: { event: 'revoked', peer }, human: `revoked by ${clean(peer)}` }));
+      // We revoked a contact for gross abuse of per-capability limits (§5.3, issue #28): an rdv/revoke went out.
+      agent.on('task-abuse', (a) => events.push({ obj: { event: 'task-abuse', ...a }, human: abuseText(a) }));
       agent.on('dropped', (reason, detail) => {
         const quiet = reason.includes('duplicate'); // relay replays on every restart
         // A contact's fork or rollback: its messages are refused until the owner re-syncs (issue #13).

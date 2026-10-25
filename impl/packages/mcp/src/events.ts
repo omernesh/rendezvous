@@ -174,6 +174,22 @@ export function toModelEvent(e: Raw, negotiating: boolean): Omit<McpEvent, 'n' |
     }
     case 'revoked':
       return { type: 'revoked', peer: agentId(e.peer) };
+    case 'task-abuse': {
+      // Our own agent revoked the contact (§5.3 (b), issue #28). The fields are ours; checked anyway.
+      const n = (v: unknown) => (typeof v === 'number' && Number.isSafeInteger(v) ? v : null);
+      return {
+        type: 'revoked_for_abuse',
+        peer: agentId(e.peer),
+        fingerprint: fp(e.peer),
+        capability: capability(e.capability),
+        trigger: oneOf(['capability', 'daily'])(e.trigger),
+        rejected: n(e.rejected),
+        threshold: n(e.threshold),
+        next_step:
+          `${who(e.peer)} sent far more tasks than its grant allows, so this agent revoked the contact and told it. ` +
+          'Tell your user; only they can grant it again (rdv_grant with their confirmation).',
+      };
+    }
     case 'dropped':
       if (String(e.reason).includes('duplicate') || String(e.reason).includes('replay')) return null; // relays replay on every restart
       // Anyone can cause these by writing to us; they would only push real events out of the log (M1).

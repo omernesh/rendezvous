@@ -1352,6 +1352,78 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       field. `invokeLimits` gives the limits with `max_open` defaulted to 4.
       `may_propose_meetings` is retired in v0.5.
 
+## Per-capability rate limits (v0.3)
+
+75. **Per-capability limits and the gross-abuse threshold** (**spec
+    change**, §5.3, §10; issue #28, design A.4, owner decision C.6 4).
+    - **Core, the limiter** (`ContactBook.admitTask(peer, capability,
+      { open, maxOpen }, now)` → `TaskAdmission`): one call per new task,
+      after every other check. `scope` (not counted) for no current
+      contact, a blocked one, or a capability our human's grant does not
+      allow, so a stranger's flood adds no key (item 64). `rate` with
+      `limit: 'max_open'` when `open >= maxOpen` (the engine's figure,
+      which knows the capability's default; else the grant's, default 4),
+      `limit: 'max_frequency'` when the capability's window is full, and
+      `limit: 'clock'` (not counted) when `now` is unreadable. An admitted
+      task is stamped in `taskRate[peer].admitted[cap]` (kept: the window,
+      at most the count). A rejection is stamped in `rejected[cap]` (kept:
+      24 hours, at most 51, one past the daily threshold, which always
+      fires first beyond that) and `total` (for the human,
+      `taskRejections(peer)`). The answer carries `abuse` (`TaskAbuse`:
+      trigger `capability` or `daily`, the count, the threshold, the
+      window) when (b) is crossed: more than 3x the `max_frequency` count
+      in that capability's window, or more than 50 in 24 hours across the
+      peer's capabilities. Exactly at a threshold does not revoke. A
+      capability with only `max_open` counts towards the 24-hour figure
+      alone (it has no window of its own); `"0/<unit>"` reads as 1 for the
+      threshold, so its first refusal does not revoke.
+    - **The revoke** (`Agent.admitTask`): synchronous, so the engine can
+      call it. On `abuse` it revokes in the book at once (the rest of the
+      batch gets `scope`), queues the `rdv/revoke` through the existing
+      `deliver` path (so `beforeSend` saves the book without the contact
+      and its counters before it leaves; await `idle()`), and emits
+      `task-abuse`, distinct from `revoked` (the peer revoked us) and from
+      the grant-wide (a) revoke, which is unchanged (`admitInbound`, no
+      `rdv/revoke`, as before). `rdv listen` prints it; the MCP server
+      shows `revoked_for_abuse`, every field strict-shaped.
+    - **State.** `ContactBookState.taskRate` is optional and created on the
+      first counted task, so state saved by main round-trips byte for byte
+      (fixture test unchanged). It goes with the contact (`revoke`,
+      `block`, `receiveRevoke`), and our human's new grant
+      (`allowInbound`) starts it afresh, like the grant-wide window.
+      Capabilities the grant no longer allows are dropped on the next call.
+    - **Clock.** An unreadable `now` refuses without counting, in
+      `admitTask` and now also in `admitInbound` and `admitControl` (they
+      used to admit and wipe their window: `t > NaN` is false). A stored
+      time that is not a finite number or lies ahead of `now` is read as
+      `now` and stored so: it counts, for one window, instead of vanishing
+      or never expiring.
+    - **a2a.** `TaskCtx.limit(capability, { open, maxOpen })` is the hook
+      (core's `TaskAdmission` fits `TaskLimitVerdict`). `receiveTask` calls
+      it once per new task, after the capability, grant, input and
+      per-peer room checks (`hasRoom`, which changes nothing; the 32-task
+      bound is not a per-capability limit and is never counted) and before
+      `makeRoom`; a refusal is `run.refuse` (`rejected` with the code, no
+      state, `dropped` counted, no effect, so nobody is prompted). With a
+      limiter the engine leaves `max_open` to it; without one it checks
+      `max_open` itself, as before. Gate refusals, the human's "no",
+      unsupported capabilities, duplicates and meetings never reach it.
+    - **Outbound** (`outboundLimit(state, peer, capability, ctx)`, also
+      enforced by `requestTask`, which throws `TaskError`): the peer's
+      grant to us (`ctx.invoke`) against our open requester tasks and
+      `state.sent[peer][cap]`, the send times within the peer's window
+      (bounded by its count; dropped when the grant sets no frequency). We
+      count sends, the peer counts admissions, so we are never ahead of
+      it. `parseRate` is core's `parseFrequency` again (a2a imports no core).
+    - **For the hosts** (the task routing slice): pass
+      `limit: (cap, o) => agent.admitTask(peer, cap, o, now)` with
+      `invoke: effectiveInvoke(contact.inboundScope)`, and send no reply to
+      a peer the limiter just revoked (the cli end-to-end test does both).
+    - **Meetings and messages** are untouched: per-capability limits apply
+      to tasks/v1 only, and the grant-wide `max_frequency` still counts
+      every envelope and revokes as before (item 16). A `max_frequency`
+      on the meetings URI is not enforced yet.
+
 ## Not implemented yet
 
 

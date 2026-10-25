@@ -827,6 +827,14 @@ describe('hardening (security review)', () => {
     const revOk = toModelEvent({ event: 'reverse-grant', peer: id, granted_tier: 'friend', outbound_meetings: true }, false)!;
     expect(revOk).toMatchObject({ peer: id, their_tier_for_you: 'friend', may_propose_meetings: true });
     expect(String(revOk.summary)).toContain('propose meetings');
+    // A revoke for gross abuse of task limits (issue #28): our own event, its fields checked anyway.
+    const cap = 'https://rendezvous.nesher.co/ext/review/v1';
+    const abuse = toModelEvent({ event: 'task-abuse', peer: id, capability: cap, trigger: 'capability', rejected: 16, threshold: 15, windowMs: 86_400_000 }, false)!;
+    expect(abuse).toMatchObject({ type: 'revoked_for_abuse', peer: id, capability: cap, trigger: 'capability', rejected: 16, threshold: 15 });
+    expect(String(abuse.next_step)).toContain('revoked');
+    const abuseEvil = toModelEvent({ event: 'task-abuse', peer: evil, capability: evil, trigger: evil, rejected: '16', threshold: NaN }, false)!;
+    expect(abuseEvil).toMatchObject({ peer: { untrusted_peer_text: evil }, capability: { untrusted_peer_text: evil }, trigger: { untrusted_peer_text: evil }, rejected: null, threshold: null });
+    expect(String(abuseEvil.next_step)).not.toContain('IGNORE');
   });
 
   it('the model cannot make the server read local files (card files, calendar errors)', async () => {

@@ -17,6 +17,8 @@ import {
   MEETING_CAPABILITIES,
   MEETINGS_CAPABILITY,
   scopeAllows,
+  TASK_RATE,
+  type TaskAbuse,
   type Transport,
   Channels,
   ContactBook,
@@ -1048,5 +1050,233 @@ describe('scope.invoke: capability-scoped grants and the migration rule (issue #
     // The allowlist entry (no meetings) grants exactly that when it is used.
     const [allowed] = Object.values(omer.book.state.allowlist);
     expect(grantScope(allowed.scope)).toMatchObject({ may_propose_meetings: false, invoke: {} });
+  });
+});
+
+describe('per-capability task limits and the gross-abuse threshold (issue #28)', () => {
+  const REVIEW = 'https://rendezvous.nesher.co/ext/review/v1';
+  const LOOKUP = 'https://rendezvous.nesher.co/ext/test-lookup/v1';
+  const PING = 'https://rendezvous.nesher.co/ext/test-ping/v1';
+  const T0 = new Date('2026-10-25T10:00:00Z');
+  const at = (ms: number) => new Date(T0.getTime() + ms);
+  const MIN = 60_000;
+  const DAY = 86_400_000;
+  const omer = generateKey();
+  const john = generateKey();
+  const omerCard = createCard(omer, { rendezvous: hints });
+  const johnCard = createCard(john, { rendezvous: hints });
+  const MEETING_INVOKE = Object.fromEntries(MEETING_CAPABILITIES.map((u) => [u, {}]));
+  const INVOKE = {
+    [REVIEW]: { max_frequency: '5/day', max_open: 2 },
+    [LOOKUP]: { max_open: 1 }, // no max_frequency: only the 24-hour threshold applies
+    [PING]: { max_open: 1 },
+  };
+  const noTransport = (sent: unknown[] = []): Transport => ({
+    async sendEnvelope(e) {
+      sent.push(e);
+    },
+    onEnvelopes: () => () => {},
+    async publishTopic() {},
+    onTopics: () => () => {},
+    fetchTopic: async () => [],
+    close() {},
+  });
+
+  /** Omer's book, with John a contact our human granted `invoke` (and the grant-wide limit). */
+  function book(invoke: Record<string, unknown> = INVOKE, maxFrequency = '100/day'): ContactBook {
+    const b = new ContactBook();
+    const req = createContactRequest(john, johnCard, { toHint: omer.id, greeting: 'hi' });
+    b.receiveRequest(req, 'claimed');
+    const scope = grantScope({ may_initiate: true, max_frequency: maxFrequency, invoke: { ...MEETING_INVOKE, ...invoke } as GrantScope['invoke'] });
+    b.recordIssuedGrant(createGrant(omer, omerCard, req, { tier: 'friend', scope }), req, 'claimed');
+    return b;
+  }
+  /** Admit `n` tasks one minute apart from `start`. */
+  const admitN = (b: ContactBook, cap: string, n: number, start = 0) => {
+    for (let i = 0; i < n; i++) expect(b.admitTask(john.id, cap, { open: 0 }, at(start + i * MIN))).toEqual({ ok: true });
+  };
+  const restart = (b: ContactBook) => new ContactBook(JSON.parse(JSON.stringify(b.toJSON())));
+  const abuseOf = (r: unknown) => (r as { abuse?: TaskAbuse }).abuse;
+
+  it('max_frequency per capability: at the limit, one past it, and at the window boundary', () => {
+    const b = book();
+    admitN(b, REVIEW, 5);
+    const over = b.admitTask(john.id, REVIEW, { open: 0 }, at(10 * MIN));
+    expect(over).toMatchObject({ ok: false, code: 'rate', limit: 'max_frequency' });
+    expect(abuseOf(over)).toBeUndefined();
+    expect(b.contact(john.id)).toBeDefined(); // the grant stays
+    expect(b.taskRejections(john.id)).toBe(1);
+    // The first admission leaves the window exactly one day after it, not a millisecond before.
+    expect(b.admitTask(john.id, REVIEW, { open: 0 }, at(DAY - 1))).toMatchObject({ ok: false, limit: 'max_frequency' });
+    expect(b.admitTask(john.id, REVIEW, { open: 0 }, at(DAY))).toEqual({ ok: true });
+    expect(b.admitTask(john.id, REVIEW, { open: 0 }, at(DAY + 1))).toMatchObject({ ok: false, limit: 'max_frequency' });
+    expect(b.admitTask(john.id, REVIEW, { open: 0 }, at(DAY + MIN))).toEqual({ ok: true }); // the second one left
+    // Another capability has its own counters.
+    expect(b.admitTask(john.id, LOOKUP, { open: 0 }, at(DAY + MIN))).toEqual({ ok: true });
+  });
+
+  it("max_open: the grant's figure (or the engine's), and a refusal is counted but admits nothing", () => {
+    const b = book();
+    expect(b.admitTask(john.id, REVIEW, { open: 1 }, T0)).toEqual({ ok: true });
+    expect(b.admitTask(john.id, REVIEW, { open: 2 }, T0)).toMatchObject({ ok: false, code: 'rate', limit: 'max_open' });
+    // The engine's max_open (it also knows the capability's default) is the one applied.
+    expect(b.admitTask(john.id, REVIEW, { open: 2, maxOpen: 3 }, T0)).toEqual({ ok: true });
+    expect(b.state.taskRate![john.id].admitted[REVIEW]).toHaveLength(2);
+    expect(b.taskRejections(john.id)).toBe(1);
+  });
+
+  it(`(b) one capability: more than ${TASK_RATE.abuseFactor}x its limit rejected in its window revokes; exactly that many does not`, () => {
+    const b = book();
+    admitN(b, REVIEW, 5);
+    for (let i = 0; i < 15; i++) {
+      const r = b.admitTask(john.id, REVIEW, { open: 0 }, at(10 * MIN + i));
+      expect(r).toMatchObject({ ok: false, code: 'rate' });
+      expect(abuseOf(r)).toBeUndefined();
+    }
+    expect(b.contact(john.id)).toBeDefined(); // 15 = 3 x 5: not over
+    const r = b.admitTask(john.id, REVIEW, { open: 0 }, at(20 * MIN));
+    expect(r).toMatchObject({ ok: false, code: 'rate', limit: 'max_frequency' });
+    expect(abuseOf(r)).toEqual({ peer: john.id, capability: REVIEW, trigger: 'capability', rejected: 16, threshold: 15, windowMs: DAY });
+    // The book reports; the caller revokes (Agent.admitTask does, with rdv/revoke).
+    expect(b.contact(john.id)).toBeDefined();
+    b.revoke(john.id);
+    expect(b.state.taskRate?.[john.id]).toBeUndefined(); // the counters go with the contact
+  });
+
+  it('(b) one capability: rejections that left the window do not count', () => {
+    const b = book();
+    admitN(b, REVIEW, 5);
+    for (let i = 0; i < 15; i++) b.admitTask(john.id, REVIEW, { open: 0 }, at(10 * MIN + i));
+    admitN(b, REVIEW, 5, DAY + 10 * MIN);
+    for (let i = 0; i < 15; i++) expect(abuseOf(b.admitTask(john.id, REVIEW, { open: 0 }, at(DAY + 20 * MIN + i)))).toBeUndefined();
+    expect(b.taskRejections(john.id)).toBe(30);
+  });
+
+  it(`(b) all capabilities: more than ${TASK_RATE.dailyRejections} rejections in 24 hours revoke; ${TASK_RATE.dailyRejections} do not`, () => {
+    const b = book();
+    // Two capabilities with no max_frequency (max_open only), so only the 24-hour rule applies.
+    for (let i = 0; i < 50; i++) {
+      const r = b.admitTask(john.id, i % 2 ? LOOKUP : PING, { open: 1 }, at(i * MIN));
+      expect(r).toMatchObject({ ok: false, code: 'rate', limit: 'max_open' });
+      expect(abuseOf(r)).toBeUndefined();
+    }
+    const r = b.admitTask(john.id, LOOKUP, { open: 1 }, at(50 * MIN));
+    expect(abuseOf(r)).toEqual({ peer: john.id, capability: LOOKUP, trigger: 'daily', rejected: 51, threshold: 50, windowMs: DAY });
+  });
+
+  it('(b) all capabilities: the 24-hour window slides', () => {
+    const b = book();
+    for (let i = 0; i < 50; i++) b.admitTask(john.id, LOOKUP, { open: 1 }, at(i * MIN));
+    // 24 hours after the first rejection it no longer counts: the 51st overall is the 50th in the window.
+    const r = b.admitTask(john.id, LOOKUP, { open: 1 }, at(DAY));
+    expect(r).toMatchObject({ ok: false, code: 'rate' });
+    expect(abuseOf(r)).toBeUndefined();
+    expect(abuseOf(b.admitTask(john.id, LOOKUP, { open: 1 }, at(DAY + 1)))).toMatchObject({ trigger: 'daily' });
+  });
+
+  it('counters are bounded: rejection times per capability never exceed what the thresholds need', () => {
+    const b = book({ [LOOKUP]: { max_open: 1, max_frequency: '1000/day' } });
+    for (let i = 0; i < 500; i++) b.admitTask(john.id, LOOKUP, { open: 1 }, at(i));
+    expect(b.state.taskRate![john.id].rejected[LOOKUP]).toHaveLength(TASK_RATE.rejectedKept);
+    expect(b.taskRejections(john.id)).toBe(500);
+  });
+
+  it('the counters survive a restart (toJSON / fromJSON)', () => {
+    const b = book();
+    admitN(b, REVIEW, 5);
+    for (let i = 0; i < 15; i++) b.admitTask(john.id, REVIEW, { open: 0 }, at(10 * MIN + i));
+    const again = restart(b);
+    expect(abuseOf(again.admitTask(john.id, REVIEW, { open: 0 }, at(30 * MIN)))).toMatchObject({ trigger: 'capability', rejected: 16 });
+    expect(again.taskRejections(john.id)).toBe(16);
+    // Admissions too: after a restart the sixth task of the day is still refused.
+    const c = book();
+    admitN(c, REVIEW, 5);
+    expect(restart(c).admitTask(john.id, REVIEW, { open: 0 }, at(10 * MIN))).toMatchObject({ ok: false, limit: 'max_frequency' });
+    // And through the agent's own state.
+    const agent = new Agent(omer, omerCard, noTransport(), { book: c.toJSON() });
+    const reloaded = Agent.fromJSON(JSON.parse(JSON.stringify(agent.toJSON())), () => noTransport());
+    expect(reloaded.book.admitTask(john.id, REVIEW, { open: 0 }, at(10 * MIN))).toMatchObject({ ok: false, limit: 'max_frequency' });
+  });
+
+  it('a flood from a stranger, or for a capability the grant does not allow, touches no counter (NOTES 64)', () => {
+    const b = book();
+    const before = JSON.stringify(b.toJSON());
+    for (let i = 0; i < 1000; i++) expect(b.admitTask(generateKey().id, REVIEW, { open: 0 }, at(i))).toMatchObject({ ok: false, code: 'scope' });
+    for (let i = 0; i < 100; i++) expect(b.admitTask(john.id, 'https://rendezvous.nesher.co/ext/not-granted/v1', {}, at(i))).toMatchObject({ code: 'scope' });
+    expect(JSON.stringify(b.toJSON())).toBe(before);
+    expect(b.state.taskRate).toBeUndefined();
+    b.block(john.id);
+    expect(b.admitTask(john.id, REVIEW, {}, T0)).toMatchObject({ code: 'scope' });
+  });
+
+  it('clock: an unreadable now refuses without counting; unreadable or future stored times count, for one window', () => {
+    const b = book();
+    expect(b.admitTask(john.id, REVIEW, { open: 0 }, new Date(NaN))).toMatchObject({ ok: false, code: 'rate', limit: 'clock' });
+    expect(b.state.taskRate).toBeUndefined();
+    // A saved file whose admissions lie a year ahead (our clock went back) or were mangled.
+    const far = T0.getTime() + 365 * DAY;
+    b.state.taskRate = { [john.id]: { admitted: { [REVIEW]: [far, far, null, 'x', far] as unknown as number[] }, rejected: {}, total: 0 } };
+    expect(b.admitTask(john.id, REVIEW, { open: 0 }, T0)).toMatchObject({ ok: false, limit: 'max_frequency' }); // fail closed
+    expect(b.state.taskRate[john.id].admitted[REVIEW].every((t) => t === T0.getTime())).toBe(true);
+    // Read as "now", they leave one window later instead of never.
+    expect(b.admitTask(john.id, REVIEW, { open: 0 }, at(DAY))).toEqual({ ok: true });
+    // The grant-wide and control limits fail closed too: nothing admitted, nothing revoked.
+    expect(b.admitInbound(john.id, new Date(NaN))).toBe(false);
+    expect(b.contact(john.id)).toBeDefined();
+    expect(b.admitControl('resend', john.id, RESEND_LIMIT, new Date(NaN))).toBe(false);
+  });
+
+  it('a "0/day" capability refuses every task, and revokes only past 3 rejections', () => {
+    const b = book({ [REVIEW]: { max_frequency: '0/day' } });
+    for (let i = 0; i < 3; i++) expect(abuseOf(b.admitTask(john.id, REVIEW, { open: 0 }, at(i)))).toBeUndefined();
+    expect(abuseOf(b.admitTask(john.id, REVIEW, { open: 0 }, at(3)))).toMatchObject({ trigger: 'capability', threshold: 3 });
+  });
+
+  it('messages and meetings keep the grant-wide max_frequency as before; task counters are separate', () => {
+    const b = book(INVOKE, '3/minute');
+    admitN(b, REVIEW, 5);
+    for (let i = 0; i < 15; i++) b.admitTask(john.id, REVIEW, { open: 0 }, at(10 * MIN + i));
+    expect(b.state.rate[john.id]).toBeUndefined(); // tasks never fed the grant-wide window
+    expect(b.mayInvoke(john.id, MEETINGS_CAPABILITY, 'inbound', at(11 * MIN))).toBe(true);
+    const t = at(30 * MIN);
+    for (let i = 0; i < 3; i++) expect(b.admitInbound(john.id, t)).toBe(true);
+    expect(b.admitInbound(john.id, t)).toBe(false); // over the grant-wide limit: revoked, as before (§10)
+    expect(b.contact(john.id)).toBeUndefined();
+    expect(b.state.taskRate?.[john.id]).toBeUndefined();
+  });
+
+  it("our human's new grant starts the counters afresh; a revoke from the peer drops them", () => {
+    const b = book();
+    admitN(b, REVIEW, 5);
+    b.allowInbound(john.id, { tier: 'friend', scope: { may_initiate: true, invoke: { ...MEETING_INVOKE, ...INVOKE } as GrantScope['invoke'] } });
+    expect(b.admitTask(john.id, REVIEW, { open: 0 }, at(10 * MIN))).toEqual({ ok: true });
+    expect(b.receiveRevoke(createRevoke(john, omer.id, null), omer.id)).toBe(true);
+    expect(b.state.taskRate?.[john.id]).toBeUndefined();
+  });
+
+  it('Agent.admitTask revokes for gross abuse through the revoke path: state saved, rdv/revoke sent, task-abuse emitted', async () => {
+    const sent: unknown[] = [];
+    const saved: string[] = [];
+    const agent = new Agent(omer, omerCard, noTransport(sent), { book: book().toJSON() });
+    agent.beforeSend = (a) => void saved.push(JSON.stringify(a.toJSON().book));
+    const abuses: TaskAbuse[] = [];
+    agent.on('task-abuse', (a) => abuses.push(a));
+    for (let i = 0; i < 5; i++) agent.admitTask(john.id, REVIEW, { open: 0 }, at(i));
+    for (let i = 0; i < 15; i++) expect(agent.admitTask(john.id, REVIEW, { open: 0 }, at(10 + i))).toMatchObject({ ok: false, code: 'rate' });
+    await agent.idle();
+    expect(sent).toHaveLength(0);
+    expect(abuses).toHaveLength(0);
+    expect(agent.admitTask(john.id, REVIEW, { open: 0 }, at(100))).toMatchObject({ ok: false, code: 'rate', abuse: { trigger: 'capability' } });
+    expect(agent.book.contact(john.id)).toBeUndefined(); // at once: later tasks in the same batch are refused
+    expect(agent.admitTask(john.id, REVIEW, { open: 0 }, at(101))).toMatchObject({ code: 'scope' });
+    await agent.idle();
+    expect(abuses).toEqual([{ peer: john.id, capability: REVIEW, trigger: 'capability', rejected: 16, threshold: 15, windowMs: DAY }]);
+    expect(sent).toHaveLength(1);
+    const opened = openEnvelope(john, sent[0]);
+    expect(opened.ok && opened.payload.type).toBe('rdv/revoke');
+    // Saved before the revoke left, with the contact and its counters gone.
+    expect(saved).toHaveLength(1);
+    expect(JSON.parse(saved[0]).contacts[john.id]).toBeUndefined();
+    expect(JSON.parse(saved[0]).taskRate?.[john.id]).toBeUndefined();
   });
 });

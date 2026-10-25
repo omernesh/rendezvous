@@ -150,6 +150,12 @@ export interface TaskEngineState {
   tasks: Record<string, TaskRecord>;
   /** Peer tasks refused or dropped without asking our human, by reason (shown to the human). */
   dropped: Partial<Record<ReasonCode, number>>;
+  /**
+   * Requester: when we sent task/requests, by peer and capability (epoch ms,
+   * within the capability's `max_frequency` window in the peer's grant), so
+   * we never send what the peer's limiter would refuse (outboundLimit).
+   */
+  sent?: Record<string, Record<string, number[]>>;
 }
 
 export const emptyTaskState = (): TaskEngineState => ({ v: 1, tasks: {}, dropped: {} });
@@ -168,7 +174,20 @@ export interface TaskCtx {
   invoke?: Readonly<Record<string, unknown>> | null;
   /** The peer's tier in our contact book (receive). */
   tier?: string;
+  /**
+   * The per-capability limiter (receive; SPEC §5.3, issue #28), e.g.
+   * `(cap, o) => agent.admitTask(peer, cap, o, now)` from core. Called once
+   * for a new task that passed every other check (capability known, grant,
+   * input, room), with the peer's open tasks for the capability and the
+   * engine's `max_open` for it; it counts what it admits and refuses. Any
+   * refusal rejects that task only (`rejected`, its `code`), keeps no state
+   * and is counted in `dropped`. Absent: the engine checks `max_open` alone.
+   */
+  limit?: (capability: string, open: { open: number; maxOpen: number }) => TaskLimitVerdict;
 }
+
+/** A limiter's answer (core's `TaskAdmission` is one). */
+export type TaskLimitVerdict = { ok: true } | { ok: false; code: 'rate' | 'scope'; reason: string };
 
 // --- results ----------------------------------------------------------------
 
@@ -247,10 +266,23 @@ function invokeLimits(invoke: TaskCtx['invoke'], uri: string): Record<string, un
 }
 const taskCapable = (invoke: TaskCtx['invoke']) => !!invoke && typeof invoke === 'object' && Object.keys(invoke).some((k) => invokeLimits(invoke, k));
 
-function maxOpen(cap: Capability, limits: Record<string, unknown>): number {
+function maxOpen(cap: Capability | undefined, limits: Record<string, unknown>): number {
   const m = limits.max_open;
   if (Number.isSafeInteger(m) && (m as number) >= 1) return m as number;
-  return cap.maxOpen ?? MAX_OPEN_DEFAULT;
+  return cap?.maxOpen ?? MAX_OPEN_DEFAULT;
+}
+
+const RATE_UNITS: Record<string, number> = { minute: 60_000, hour: 3_600_000, day: 86_400_000 };
+/** A `max_frequency` ("<n>/<minute|hour|day>", SPEC §5.3), or null when absent or unreadable. */
+export function parseRate(spec: unknown): { count: number; windowMs: number } | null {
+  const m = typeof spec === 'string' ? /^(\d+)\/(minute|hour|day)$/.exec(spec) : null;
+  return m ? { count: Number(m[1]), windowMs: RATE_UNITS[m[2]] } : null;
+}
+
+/** Stored send times within `windowMs` of `now`; an unreadable or future entry counts as `now` (fail closed). */
+function recent(list: unknown, windowMs: number, now: number): number[] {
+  if (!Array.isArray(list)) return [];
+  return list.map((t) => (typeof t === 'number' && Number.isFinite(t) && t <= now ? t : now)).filter((t) => t > now - windowMs);
 }
 
 /** Forward transitions a requester accepts from the executor. */
@@ -402,6 +434,16 @@ class Run {
   }
 
   // --- bounds -------------------------------------------------------------
+
+  get limiter(): TaskCtx['limit'] {
+    return typeof this.ctx.limit === 'function' ? this.ctx.limit : undefined;
+  }
+
+  /** Could makeRoom(peer) succeed? Changes nothing. */
+  hasRoom(peer: string): boolean {
+    const mine = Object.values(this.state.tasks).filter((t) => t.peer === peer);
+    return mine.length < TASK_BOUNDS.tasksPerPeer || mine.filter((t) => isFinished(t.state)).length >= mine.length - TASK_BOUNDS.tasksPerPeer + 1;
+  }
 
   /** Make room for one more task with `peer`: evict its oldest finished tasks, tombstones first. False if all are open. */
   makeRoom(peer: string): boolean {
@@ -735,8 +777,16 @@ function onMessage(run: Run, from: string, m: TaskMessage, data: TaskVerbData, t
     if (!(err instanceof SchemaError)) throw err;
     return run.refuse(from, m, 'input', err.message, cap.uri);
   }
-  if (run.openFor(from, cap.uri) >= maxOpen(cap, limits)) return run.refuse(from, m, 'rate', `too many open ${cap.uri} tasks (max_open ${maxOpen(cap, limits)})`, cap.uri);
-  if (!run.makeRoom(from)) return run.refuse(from, m, 'rate', `too many open tasks with this peer (max ${TASK_BOUNDS.tasksPerPeer})`, cap.uri);
+  const open = run.openFor(from, cap.uri);
+  const most = maxOpen(cap, limits);
+  if (!run.limiter && open >= most) return run.refuse(from, m, 'rate', `too many open ${cap.uri} tasks (max_open ${most})`, cap.uri);
+  // Not a per-capability limit: checked before the limiter, so it is not counted towards gross abuse.
+  if (!run.hasRoom(from)) return run.refuse(from, m, 'rate', `too many open tasks with this peer (max ${TASK_BOUNDS.tasksPerPeer})`, cap.uri);
+  if (run.limiter) {
+    const verdict = run.limiter(cap.uri, { open, maxOpen: most });
+    if (!verdict.ok) return run.refuse(from, m, verdict.code === 'scope' ? 'scope' : 'rate', verdict.reason, cap.uri);
+  }
+  run.makeRoom(from);
 
   const task = newTask(run, m, from, cap.uri, run.peerExpires(data.expires));
   task.approval = cap.approval;
@@ -802,12 +852,48 @@ export interface RequestOptions {
   peerCapabilities?: readonly string[];
 }
 
-/** Open a task on `peer`. Throws TaskError when the capability, grant, card or bounds rule it out. */
+/**
+ * Would one more task for `capability` on `peer` go over the peer's grant to
+ * us (`ctx.invoke`: `max_open`, default the capability's or 4, and
+ * `max_frequency`)? The reason, or null when it may be sent. The peer's
+ * limiter would refuse it (`rate`), and enough refusals revoke the grant
+ * (SPEC §5.3), so our agent checks before sending; requestTask does.
+ */
+export function outboundLimit(state: TaskEngineState, peer: string, capability: string, ctx: Pick<TaskCtx, 'now' | 'invoke' | 'registry'>): string | null {
+  const limits = invokeLimits(ctx.invoke, capability);
+  if (!limits) return `the peer's grant does not let us invoke ${capability}`;
+  const now = ctx.now.getTime();
+  if (!Number.isFinite(now)) return 'our clock is unreadable';
+  const most = maxOpen(ctx.registry.get(capability), limits);
+  const open = Object.values(state.tasks).filter((t) => t.role === 'requester' && t.peer === peer && t.capability === capability && !isFinished(t.state)).length;
+  if (open >= most) return `${open} ${capability} tasks are open with this peer (its grant allows max_open ${most})`;
+  const rate = parseRate(limits.max_frequency);
+  const sent = state.sent && Object.hasOwn(state.sent, peer) && Object.hasOwn(state.sent[peer], capability) ? state.sent[peer][capability] : [];
+  if (rate && recent(sent, rate.windowMs, now).length >= rate.count) return `the peer's grant allows ${String(limits.max_frequency)} for ${capability}; wait before sending another`;
+  return null;
+}
+
+/** Record a task/request we send, for outboundLimit (only what the peer's grant limits; pruned to its window). */
+function recordSent(run: Run, peer: string, capability: string): void {
+  const rate = parseRate(invokeLimits(run.ctx.invoke, capability)?.max_frequency);
+  const all = (run.state.sent ??= {});
+  const mine = Object.hasOwn(all, peer) ? all[peer] : (all[peer] = {});
+  if (rate) mine[capability] = [...recent(mine[capability], rate.windowMs, run.now), run.now].slice(-Math.max(rate.count, 1));
+  else delete mine[capability];
+  for (const [p, caps] of Object.entries(all)) {
+    for (const k of Object.keys(caps)) if (!caps[k].length) delete caps[k];
+    if (!Object.keys(caps).length) delete all[p];
+  }
+  if (!Object.keys(all).length) delete run.state.sent;
+}
+
+/** Open a task on `peer`. Throws TaskError when the capability, grant, its limits (outboundLimit), card or bounds rule it out. */
 export function requestTask(state: TaskEngineState, peer: string, capability: string, ctx: TaskCtx, opts: RequestOptions = {}): TaskStep & { taskId: string } {
-  const run = new Run(state, ctx);
   const cap = ctx.registry.get(capability);
   if (!cap) throw new TaskError(`unknown capability ${capability}`);
-  if (!invokeLimits(ctx.invoke, capability)) throw new TaskError(`the peer's grant does not let us invoke ${capability}`);
+  const over = outboundLimit(state, peer, capability, ctx);
+  if (over) throw new TaskError(over);
+  const run = new Run(state, ctx);
   if (opts.peerCapabilities && !(opts.peerCapabilities.includes(TASKS_URI) && opts.peerCapabilities.includes(capability))) {
     throw new TaskError(`the peer's card does not advertise ${opts.peerCapabilities.includes(TASKS_URI) ? capability : TASKS_URI}`);
   }
@@ -837,6 +923,7 @@ export function requestTask(state: TaskEngineState, peer: string, capability: st
     ...(opts.referenceTaskIds?.length ? { referenceTaskIds: [...opts.referenceTaskIds] } : {}),
   };
   run.state.tasks[task.id] = task;
+  recordSent(run, peer, cap.uri);
   run.message(task, { rdv: 'task/request', capability: cap.uri, ...(input !== undefined ? { input } : {}), expires }, extra);
   run.event({ kind: 'requested', taskId: task.id, peer, state: task.state, capability: cap.uri });
   return { ...run.result(), taskId: task.id };
