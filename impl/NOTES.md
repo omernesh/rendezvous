@@ -326,6 +326,12 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
     model-supplied calendar paths only inside its home, the `--calendar`
     directory or a `--calendar-dir`, after `realpath`, and the `.json` check
     escapes the dot.
+48. **Durable state writes** (M3). `writeAtomic` fsyncs the temp file
+    before the rename and the directory after it (POSIX; Windows can't fsync
+    a directory and NTFS journals the rename). `writeAgentState` first copies
+    the current agent.json, if it parses, to `agent.json.bak` (mode 600);
+    `readAgentState` falls back to the backup when agent.json is missing,
+    empty or torn, and says so on stderr. The secret key is in both.
 
 ## Not implemented yet
 

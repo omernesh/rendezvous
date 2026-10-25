@@ -185,6 +185,28 @@ describe('inbound items that change nothing (security review M1)', () => {
   });
 });
 
+describe('agent.json durability (security review M3)', () => {
+  it('keeps the last good state as agent.json.bak and falls back to it when agent.json is torn', async () => {
+    const dir = tmp();
+    try {
+      const home = join(dir, 'h');
+      const first = await rdv(['init', '--email', 'bob@x.com', '--relay', 'ws://127.0.0.1:9'], home);
+      const id = first.lines[0].id;
+      const { Home } = await import('../src/home.js');
+      const h = new Home(home);
+      h.writeAgentState(h.readAgentState()); // a second save: the backup now holds the first state
+      const bak = JSON.parse(readFileSync(join(home, 'agent.json.bak'), 'utf8'));
+      expect(bak.card.id).toBe(id);
+      writeFileSync(join(home, 'agent.json'), ''); // power cut after the rename
+      const who = await rdv(['whoami'], home);
+      expect(who.lines[0].id).toBe(id);
+      expect(who.stderr).toContain('agent.json.bak');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('floods are shown to the human', () => {
   it('rdv contact pending reports dropped probe answers and dropped requests', async () => {
     const dir = tmp();

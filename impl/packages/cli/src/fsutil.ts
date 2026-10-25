@@ -3,13 +3,13 @@ import { randomBytes } from 'node:crypto';
 import {
   chmodSync,
   closeSync,
+  fsyncSync,
   openSync,
   readFileSync,
   renameSync,
   rmSync,
   statSync,
   unlinkSync,
-  writeFileSync,
   writeSync,
 } from 'node:fs';
 import { hostname } from 'node:os';
@@ -22,13 +22,24 @@ function sleepSync(ms: number): void {
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /**
- * Write to a temp file in the same directory, then rename over the target, so
- * a reader (or a crash) never sees a half-written file. `mode` is applied
- * where the OS supports POSIX permissions; on Windows it is best effort.
+ * Write to a temp file in the same directory, fsync it, then rename over the
+ * target and fsync the directory, so a reader (or a crash, or a power cut)
+ * never sees a half-written or empty file (security review M3). `mode` is
+ * applied where the OS supports POSIX permissions; on Windows it is best
+ * effort.
  */
 export function writeAtomic(path: string, data: string, mode = 0o644): void {
   const tmp = join(dirname(path), `.${basename(path)}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`);
-  writeFileSync(tmp, data, { mode });
+  const fd = openSync(tmp, 'w', mode);
+  try {
+    writeSync(fd, data);
+    fsyncSync(fd);
+  } catch (err) {
+    closeSync(fd);
+    rmSync(tmp, { force: true });
+    throw err;
+  }
+  closeSync(fd);
   try {
     // Windows can refuse the rename briefly while another process (or an
     // antivirus scanner) has the target open.
@@ -46,10 +57,26 @@ export function writeAtomic(path: string, data: string, mode = 0o644): void {
     rmSync(tmp, { force: true });
     throw err;
   }
+  syncDir(dirname(path));
   try {
     chmodSync(path, mode);
   } catch {
     // not supported (e.g. some Windows filesystems)
+  }
+}
+
+/** Make a rename durable (POSIX). Windows can't open a directory for fsync; NTFS journals the rename. */
+function syncDir(dir: string): void {
+  if (process.platform === 'win32') return;
+  try {
+    const fd = openSync(dir, 'r');
+    try {
+      fsyncSync(fd);
+    } finally {
+      closeSync(fd);
+    }
+  } catch {
+    // some filesystems refuse directory fsync
   }
 }
 

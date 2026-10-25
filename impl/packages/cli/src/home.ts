@@ -1,5 +1,6 @@
 // The state directory (`--home`, default ~/.rendezvous/<profile>):
 //   agent.json   Agent.toJSON(), holds the secret key (mode 600)
+//   agent.json.bak  the previous good agent.json (mode 600), read if agent.json is torn
 //   config.json  relays, addresses, policy
 //   inbox.jsonl  received payloads, one JSON object per line
 //   cards.json   cards found by `rdv lookup` (so `contact request <agent-id>` works)
@@ -61,6 +62,9 @@ export class Home {
   get agentPath() {
     return join(this.dir, 'agent.json');
   }
+  get agentBackupPath() {
+    return join(this.dir, 'agent.json.bak');
+  }
   get configPath() {
     return join(this.dir, 'config.json');
   }
@@ -103,11 +107,37 @@ export class Home {
     }
   }
 
+  /** agent.json, or its backup if agent.json is missing, empty or torn (the key must never be lost). */
   readAgentState(): AgentState {
-    return readJson<AgentState>(this.agentPath);
+    try {
+      const s = readJson<AgentState>(this.agentPath);
+      if (isAgentState(s)) return s;
+    } catch (err) {
+      if (!existsSync(this.agentBackupPath)) throw err;
+    }
+    const bak = readJson<AgentState>(this.agentBackupPath);
+    if (!isAgentState(bak)) throw new CliError(`cannot read ${this.agentPath} or its backup`);
+    process.stderr.write(`rdv: ${this.agentPath} was unreadable; using ${this.agentBackupPath}\n`);
+    return bak;
   }
 
+  /** Keep the current good state as agent.json.bak, then replace agent.json (both durable). */
   writeAgentState(state: AgentState): void {
+    let prev: string | undefined;
+    try {
+      prev = readFileSync(this.agentPath, 'utf8');
+    } catch {
+      // first write
+    }
+    if (prev !== undefined) {
+      let good = false;
+      try {
+        good = isAgentState(JSON.parse(prev));
+      } catch {
+        // torn: keep the old backup
+      }
+      if (good) writeAtomic(this.agentBackupPath, prev, 0o600);
+    }
     writeAtomic(this.agentPath, JSON.stringify(state, null, 2) + '\n', 0o600);
   }
 
@@ -157,10 +187,15 @@ export class Home {
 
   /** `rdv init --force`: drop everything derived from the old key. */
   reset(): void {
-    for (const p of [this.agentPath, this.configPath, this.inboxPath, this.cardsPath, this.negotiationsPath, this.consentPath]) {
+    for (const p of [this.agentPath, this.agentBackupPath, this.configPath, this.inboxPath, this.cardsPath, this.negotiationsPath, this.consentPath]) {
       rmSync(p, { force: true });
     }
   }
+}
+
+function isAgentState(s: unknown): s is AgentState {
+  const x = s as AgentState | null;
+  return !!x && typeof x === 'object' && typeof x.secretKey === 'string' && !!x.card && !!x.book;
 }
 
 function readJson<T>(path: string): T {
