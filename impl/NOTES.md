@@ -337,6 +337,10 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
     waiters that saw the same stale content can no longer have the second
     one delete the first one's fresh lock. A `.break` left by a crash is
     cleared after 5 s.
+50. **A probe is bound to its topic** (L2). A topic doc is handled only if
+    it arrived on one of our own `dtopic`s and its `to_hint` maps to that
+    same topic, so a probe for John re-posted on Carol's topic is dropped
+    (Carol never grants a request that was not meant for her).
 
 ## Not implemented yet
 

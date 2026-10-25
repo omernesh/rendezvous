@@ -3,6 +3,7 @@ import {
   Agent,
   type AgentKey,
   createCard,
+  dtopic,
   type Envelope,
   generateKey,
   NostrTransport,
@@ -106,6 +107,21 @@ describe('two agents over a Nostr relay', () => {
     await john.revoke(omer.id);
     await revoked;
     await expect(omer.send(john.id, { type: 'a2a/message' })).rejects.toThrow(/no active contact/);
+  });
+
+  it('ignores a probe re-posted on another address topic (security review L2)', async () => {
+    const omer = make('omer@example.com');
+    const john = make('john@doe.com');
+    const carol = make('carol@example.com');
+    await new Promise((r) => setTimeout(r, 200));
+    const dropped = new Promise<string>((resolve) => carol.once('dropped', (reason) => resolve(reason)));
+    const johnSees = waitFor(john, 'request');
+    const req = await omer.requestContact('john@doe.com', 'hi'); // meant for John
+    await johnSees;
+    // Someone copies it onto Carol's topic.
+    await omer.transport.publishTopic(dtopic({ type: 'email', value: 'carol@example.com' }), req);
+    expect(await dropped).toBe('topic doc is not a probe for this topic');
+    expect(carol.pendingRequests()).toEqual([]);
   });
 
   it('ignores messages from strangers', async () => {

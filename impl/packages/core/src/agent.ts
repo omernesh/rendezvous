@@ -115,7 +115,7 @@ export class Agent extends EventEmitter<AgentEvents> {
   start(): void {
     this.unsubscribers.push(this.transport.onEnvelopes(this.id, (raw) => this.enqueue(() => this.handleEnvelope(raw))));
     const topics = (this.card.discovery?.addresses ?? []).map(dtopic);
-    this.unsubscribers.push(this.transport.onTopics(topics, (doc) => this.enqueue(() => this.handleTopicDoc(doc))));
+    this.unsubscribers.push(this.transport.onTopics(topics, (doc, topic) => this.enqueue(() => this.handleTopicDoc(doc, topic))));
   }
 
   stop(): void {
@@ -280,9 +280,13 @@ export class Agent extends EventEmitter<AgentEvents> {
     return contact;
   }
 
-  private async handleTopicDoc(doc: unknown): Promise<void> {
+  private async handleTopicDoc(doc: unknown, topic: string): Promise<void> {
     if (!verifyContactRequest(doc)) return this.drop('topic doc is not a valid contact request');
     if (doc.from === this.id) return;
+    // Bound to where it arrived (security review L2): a probe for someone else,
+    // re-posted on our topic, is not a probe for us.
+    const ours = (this.card.discovery?.addresses ?? []).map(dtopic);
+    if (!ours.includes(topic) || topicForHint(doc.to_hint) !== topic) return this.drop('topic doc is not a probe for this topic');
     await this.handleContactRequest(doc, 'claimed', 'topic');
   }
 
