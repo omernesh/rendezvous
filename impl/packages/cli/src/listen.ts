@@ -8,9 +8,14 @@
 // on that state, save, release. Events are printed only after the state that
 // produced them is on disk, so a reaction to an event always sees it.
 import { spawn } from 'node:child_process';
+import { expire, isA2APayload, isTerminal, receive, type Step } from '@rendezvous/a2a';
 import { Agent, dtopic, type Envelope, NostrTransport, type Tier, type Transport } from '@rendezvous/core';
 import type { Home, InboxEntry } from './home.js';
+import { buildCtx, carryOut, dinnerText, dinnerView, meetingScope, type NegotiateOptions } from './negotiate.js';
 import { clean, contactText, contactView, inboxText, type Output, requestText, requestView } from './output.js';
+
+/** How often `listen --negotiate` checks pending negotiations for expiry. */
+const SWEEP_MS = 30_000;
 
 /** Passes sends through to the real transport; inbound items are fed in by hand. */
 class FeedTransport implements Transport {
@@ -53,6 +58,8 @@ interface Emitted {
 export interface ListenOptions {
   autoGrant?: Tier;
   exec?: string;
+  /** Run the dinner negotiation engine on inbound a2a/* payloads (PLAN §5.3). */
+  negotiate?: NegotiateOptions;
 }
 
 export async function listen(home: Home, out: Output, opts: ListenOptions): Promise<void> {
@@ -66,7 +73,7 @@ export async function listen(home: Home, out: Output, opts: ListenOptions): Prom
     if (opts.exec) await runExec(opts.exec, home, e.obj);
   };
 
-  const processOne = async (feed: (t: FeedTransport) => void): Promise<void> => {
+  const processOne = async (feed: (t: FeedTransport) => void, sweep = false): Promise<void> => {
     const events: Emitted[] = [];
     await home.locked(
       async () => {
@@ -104,6 +111,8 @@ export async function listen(home: Home, out: Output, opts: ListenOptions): Prom
           }
         }
         await agent.idle();
+        if (opts.negotiate) await negotiate(agent, inbox, sweep, events);
+        await agent.idle();
         agent.stop();
         // Inbox first, then state: a crash in between re-delivers rather than loses.
         for (const e of inbox) home.appendInbox(e);
@@ -114,10 +123,37 @@ export async function listen(home: Home, out: Output, opts: ListenOptions): Prom
     for (const e of events) await print(e);
   };
 
+  // Inside the lock: feed this item's a2a payloads to the engine, hold, send, save.
+  const negotiate = async (agent: Agent, inbox: InboxEntry[], sweep: boolean, events: Emitted[]) => {
+    const n = opts.negotiate!;
+    const a2a = inbox.filter((e) => isA2APayload(e.payload));
+    if (a2a.length === 0 && !sweep) return;
+    let state = home.readNegotiations();
+    const before = JSON.stringify(state);
+    const steps: Step[] = [];
+    for (const e of a2a) {
+      const ctx = await buildCtx(n, meetingScope(agent.book.contact(e.from)));
+      const step = receive(state, e.from, e.payload, ctx);
+      steps.push(step);
+      state = step.state;
+    }
+    if (sweep) {
+      const step = expire(state, { now: new Date() });
+      steps.push(step);
+      state = step.state;
+    }
+    for (const step of steps) {
+      const errors = await carryOut(agent, n.calendar, step);
+      for (const ev of step.events) events.push({ obj: dinnerView(ev), human: dinnerText(ev) });
+      for (const message of errors) events.push({ obj: { event: 'error', message }, human: `error: ${clean(message)}` });
+    }
+    if (JSON.stringify(state) !== before) home.writeNegotiations(state);
+  };
+
   let chain: Promise<void> = Promise.resolve();
-  const enqueue = (feed: (t: FeedTransport) => void) => {
+  const enqueue = (feed: (t: FeedTransport) => void, sweep = false) => {
     chain = chain
-      .then(() => processOne(feed))
+      .then(() => processOne(feed, sweep))
       .catch((err: Error) => out.emit({ event: 'error', message: err.message }, `error: ${clean(err.message)}`));
   };
 
@@ -133,11 +169,23 @@ export async function listen(home: Home, out: Output, opts: ListenOptions): Prom
   // Relay sockets come and go (the transport re-subscribes); this timer keeps
   // the process alive in between instead of exiting with nothing left to do.
   const keepAlive = setInterval(() => {}, 1 << 30);
+  const sweeper = opts.negotiate
+    ? setInterval(() => {
+        let pending = true; // unreadable state: let processOne report it
+        try {
+          pending = Object.values(home.readNegotiations().tasks).some((t) => !isTerminal(t.state) && t.expires);
+        } catch {
+          // fall through
+        }
+        if (pending) enqueue(() => {}, true);
+      }, SWEEP_MS)
+    : undefined;
   await new Promise<void>((resolve) => {
     process.once('SIGINT', resolve);
     process.once('SIGTERM', resolve);
   });
   clearInterval(keepAlive);
+  if (sweeper) clearInterval(sweeper);
   for (const u of unsubs) u();
   await chain;
   real.close();

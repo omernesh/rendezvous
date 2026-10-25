@@ -3,10 +3,12 @@
 //   config.json  relays, addresses, policy
 //   inbox.jsonl  received payloads, one JSON object per line
 //   cards.json   cards found by `rdv lookup` (so `contact request <agent-id>` works)
+//   negotiations.json  dinner negotiations (@rendezvous/a2a engine state)
 //   lock         held while a command reads and writes state
 import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { emptyState, type NegotiationState } from '@rendezvous/a2a';
 import type { AddressCard, AgentState, DiscoveryAddress, InboundPolicy, Payload } from '@rendezvous/core';
 import { acquireLock, writeAtomic } from './fsutil.js';
 
@@ -59,6 +61,9 @@ export class Home {
   get cardsPath() {
     return join(this.dir, 'cards.json');
   }
+  get negotiationsPath() {
+    return join(this.dir, 'negotiations.json');
+  }
   get lockPath() {
     return join(this.dir, 'lock');
   }
@@ -110,6 +115,17 @@ export class Home {
     writeAtomic(this.cardsPath, JSON.stringify(cards, null, 2) + '\n', 0o644);
   }
 
+  readNegotiations(): NegotiationState {
+    if (!existsSync(this.negotiationsPath)) return emptyState();
+    const s = readJson<NegotiationState>(this.negotiationsPath);
+    if (s?.v !== 1 || typeof s.tasks !== 'object' || s.tasks === null) throw new CliError(`unrecognized ${this.negotiationsPath}`);
+    return s;
+  }
+
+  writeNegotiations(state: NegotiationState): void {
+    writeAtomic(this.negotiationsPath, JSON.stringify(state, null, 2) + '\n', 0o600);
+  }
+
   appendInbox(entry: InboxEntry): void {
     appendFileSync(this.inboxPath, JSON.stringify(entry) + '\n', { mode: 0o600 });
   }
@@ -121,7 +137,7 @@ export class Home {
 
   /** `rdv init --force`: drop everything derived from the old key. */
   reset(): void {
-    for (const p of [this.agentPath, this.configPath, this.inboxPath, this.cardsPath]) rmSync(p, { force: true });
+    for (const p of [this.agentPath, this.configPath, this.inboxPath, this.cardsPath, this.negotiationsPath]) rmSync(p, { force: true });
   }
 }
 

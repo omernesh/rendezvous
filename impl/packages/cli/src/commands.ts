@@ -17,8 +17,20 @@ import {
   topicForHint,
   verifyCard,
 } from '@rendezvous/core';
+import { cancel, NegotiationError, parseInstant, propose } from '@rendezvous/a2a';
 import { CliError, type Config, Home, type InboxEntry, parseJsonLines } from './home.js';
 import { listen } from './listen.js';
+import {
+  buildCtx,
+  DEFAULT_LISTEN_WINDOW,
+  dinnerText,
+  dinnerView,
+  meetingScope,
+  type NegotiateOptions,
+  taskText,
+  taskView,
+  validateNegotiateOptions,
+} from './negotiate.js';
 import { cardText, contactText, contactView, inboxText, type Output, requestText, requestView } from './output.js';
 
 export const TIERS: Tier[] = ['spouse', 'family', 'friend', 'colleague', 'business', 'stranger'];
@@ -277,7 +289,14 @@ export async function send({ home, out, values, positionals }: Ctx): Promise<voi
 
 export async function listenCmd({ home, out, values }: Ctx): Promise<void> {
   home.requireInit();
-  await listen(home, out, { autoGrant: tierOf(values['auto-grant']), exec: str(values.exec) });
+  let negotiate: NegotiateOptions | undefined;
+  if (values.negotiate === true) {
+    negotiate = negotiateOpts(values, DEFAULT_LISTEN_WINDOW);
+    await validateNegotiateOptions(negotiate);
+  } else if (values.calendar !== undefined || values.window !== undefined) {
+    throw new CliError('--calendar and --window go with --negotiate', 2);
+  }
+  await listen(home, out, { autoGrant: tierOf(values['auto-grant']), exec: str(values.exec), negotiate });
 }
 
 export async function inbox({ home, out, values }: Ctx): Promise<void> {
@@ -309,4 +328,67 @@ export async function inbox({ home, out, values }: Ctx): Promise<void> {
     process.once('SIGTERM', resolve);
   });
   clearInterval(timer);
+}
+
+// --- dinner negotiation (PLAN §5.3) ----------------------------------------
+
+function negotiateOpts(values: Ctx['values'], defaultWindow?: string): NegotiateOptions {
+  const calendar = str(values.calendar);
+  if (!calendar) throw new CliError('--calendar <file.json> is required', 2);
+  const window = str(values.window) ?? defaultWindow;
+  if (!window) throw new CliError('--window "<when>" is required (e.g. "next week evenings")', 2);
+  const m = str(values.minutes);
+  const minutes = m === undefined ? undefined : Number(m);
+  if (minutes !== undefined && !(Number.isInteger(minutes) && minutes >= 15 && minutes <= 720)) {
+    throw new CliError('--minutes must be a whole number of minutes, 15–720', 2);
+  }
+  return { calendar, window, tz: str(values.tz), minutes };
+}
+
+export async function dinnerPropose({ home, out, values, positionals }: Ctx): Promise<void> {
+  const peer = positionals[0];
+  const opts = negotiateOpts(values);
+  const place = { ...(str(values.place) ? { name: str(values.place) } : {}), ...(str(values.area) ? { area: str(values.area) } : {}) };
+  const expires = str(values.expires);
+  if (expires !== undefined && parseInstant(expires) === null) throw new CliError('--expires must be an RFC 3339 date-time with an offset', 2);
+  const step = await withAgent(home, async (agent) => {
+    const contact = agent.book.contact(peer);
+    if (!contact) throw new CliError(`no active contact ${peer}`);
+    const ctx = await buildCtx(opts, meetingScope(contact));
+    let s;
+    try {
+      s = propose(home.readNegotiations(), peer, ctx, { place: Object.keys(place).length ? place : undefined, expires });
+    } catch (err) {
+      if (err instanceof NegotiationError) throw new CliError(err.message);
+      throw err;
+    }
+    for (const o of s.outgoing) await agent.send(o.to, o.payload as unknown as Payload);
+    home.writeNegotiations(s.state);
+    return s;
+  });
+  for (const e of step.events) out.emit(dinnerView(e), dinnerText(e));
+}
+
+export async function dinnerCancel({ home, out, values, positionals }: Ctx): Promise<void> {
+  const step = await withAgent(home, async (agent) => {
+    let s;
+    try {
+      s = cancel(home.readNegotiations(), positionals[0], { now: new Date() }, str(values.reason));
+    } catch (err) {
+      if (err instanceof NegotiationError) throw new CliError(err.message);
+      throw err;
+    }
+    for (const o of s.outgoing) await agent.send(o.to, o.payload as unknown as Payload);
+    home.writeNegotiations(s.state);
+    return s;
+  });
+  for (const e of step.events) out.emit(dinnerView(e), dinnerText(e));
+}
+
+export async function dinnerList({ home, out }: Ctx): Promise<void> {
+  home.requireInit();
+  const tasks = await home.locked(async () => Object.values(home.readNegotiations().tasks));
+  tasks.sort((a, b) => a.created.localeCompare(b.created));
+  if (tasks.length === 0 && !out.json) out.emit({}, 'no negotiations');
+  for (const t of tasks) out.emit(taskView(t), taskText(t));
 }

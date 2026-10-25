@@ -89,11 +89,43 @@ const COMMANDS: Record<string, Command> = {
     options: { json: { type: 'string' }, payload: { type: 'string' } },
     run: cmd.send,
   },
+  'dinner propose': {
+    usage:
+      'rdv dinner propose <agent-id> --calendar cal.json --window "next week evenings" [--tz +02:00] [--minutes 120] [--place "…"] [--area "…"] [--expires <rfc3339>]',
+    summary: 'Propose dinner: offer up to 3 free slots from the window (A2A task)',
+    args: 1,
+    options: {
+      calendar: { type: 'string' },
+      window: { type: 'string' },
+      tz: { type: 'string' },
+      minutes: { type: 'string' },
+      place: { type: 'string' },
+      area: { type: 'string' },
+      expires: { type: 'string' },
+    },
+    run: cmd.dinnerPropose,
+  },
+  'dinner cancel': {
+    usage: 'rdv dinner cancel <task-id> [--reason "…"]',
+    summary: 'Cancel a pending dinner negotiation (rdv/cancel)',
+    args: 1,
+    options: { reason: { type: 'string' } },
+    run: cmd.dinnerCancel,
+  },
+  'dinner list': { usage: 'rdv dinner list', summary: 'List dinner negotiations and their state', args: 0, run: cmd.dinnerList },
   listen: {
-    usage: 'rdv listen [--auto-grant <tier>] [--exec <script>]',
-    summary: 'Long-running: print events; optionally auto-grant (demo only) or pipe each event to a script',
+    usage:
+      'rdv listen [--auto-grant <tier>] [--exec <script>] [--negotiate --calendar cal.json [--window "next week evenings"] [--tz +02:00]]',
+    summary: 'Long-running: print events; optionally auto-grant (demo only), pipe events to a script, or negotiate dinner',
     args: 0,
-    options: { 'auto-grant': { type: 'string' }, exec: { type: 'string' } },
+    options: {
+      'auto-grant': { type: 'string' },
+      exec: { type: 'string' },
+      negotiate: { type: 'boolean' },
+      calendar: { type: 'string' },
+      window: { type: 'string' },
+      tz: { type: 'string' },
+    },
     run: cmd.listenCmd,
   },
   inbox: {
