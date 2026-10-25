@@ -33,16 +33,28 @@ export interface CalendarFile {
 
 export class CalendarError extends Error {}
 
+const CALENDAR_KEYS = new Set(['timezone', 'busy']);
+const ENTRY_KEYS = new Set(['start', 'end', 'title']);
+
+/**
+ * Strict: exactly `{ "busy": [...], "timezone"?: "+02:00" }`, entries with only
+ * start/end/title. Anything else is not a calendar, so `hold` never rewrites
+ * some other JSON file it was pointed at (security review M2).
+ */
 export function validateCalendar(input: unknown, where = 'calendar'): CalendarFile {
   if (typeof input !== 'object' || input === null || Array.isArray(input)) throw new CalendarError(`${where}: not a JSON object`);
   const c = input as Record<string, unknown>;
+  const extra = Object.keys(c).filter((k) => !CALENDAR_KEYS.has(k));
+  if (extra.length) throw new CalendarError(`${where}: not a calendar (unknown top-level keys)`);
   if (c.timezone !== undefined && (typeof c.timezone !== 'string' || parseOffset(c.timezone) === null)) {
     throw new CalendarError(`${where}: timezone must be a fixed offset like "+02:00"`);
   }
-  const busy = c.busy ?? [];
+  const busy = c.busy;
   if (!Array.isArray(busy)) throw new CalendarError(`${where}: busy must be a list`);
   busy.forEach((e, i) => {
+    if (typeof e !== 'object' || e === null || Array.isArray(e)) throw new CalendarError(`${where}: busy[${i}] must be an object`);
     const entry = e as Record<string, unknown>;
+    if (Object.keys(entry).some((k) => !ENTRY_KEYS.has(k))) throw new CalendarError(`${where}: busy[${i}] has unknown keys`);
     const s = parseInstant(entry?.start);
     const en = parseInstant(entry?.end);
     if (s === null || en === null || en <= s) {
@@ -50,7 +62,7 @@ export function validateCalendar(input: unknown, where = 'calendar'): CalendarFi
     }
     if (entry.title !== undefined && typeof entry.title !== 'string') throw new CalendarError(`${where}: busy[${i}].title must be a string`);
   });
-  return { ...(c as object), busy: busy as CalendarEntry[] } as CalendarFile;
+  return { ...(c.timezone !== undefined ? { timezone: c.timezone as string } : {}), busy: busy as CalendarEntry[] };
 }
 
 function busyIn(entries: CalendarEntry[], range: Slot): Slot[] {

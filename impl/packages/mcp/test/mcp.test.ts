@@ -305,6 +305,23 @@ describe('hardening (security review)', () => {
       expect(r.text).not.toContain('SECRET');
     }
     expect((await omer.call('rdv_init', { calendar: join(root, 'x.txt') })).text).toContain('.json');
+    expect((await omer.call('rdv_init', { calendar: join(root, 'xjson') })).text).toContain('.json'); // the dot is literal
+    // Only allowed directories (home, --calendar dir, --calendar-dir): nothing elsewhere on disk.
+    const elsewhere = mkdtempSync(join(tmpdir(), 'rdv-elsewhere-'));
+    try {
+      const cal = join(elsewhere, 'cal.json');
+      writeFileSync(cal, JSON.stringify({ busy: [] }));
+      const out = await omer.call('rdv_init', { calendar: cal });
+      expect(out.isError).toBe(true);
+      expect(out.text).toContain('outside the directories');
+    } finally {
+      rmSync(elsewhere, { recursive: true, force: true });
+    }
+    // A JSON file that is not a calendar is refused and left alone.
+    const pkg = join(root, 'package.json');
+    writeFileSync(pkg, '{"name":"pkg","scripts":{"a":"b"}}');
+    expect((await omer.call('rdv_init', { calendar: pkg })).isError).toBe(true);
+    expect(readFileSync(pkg, 'utf8')).toBe('{"name":"pkg","scripts":{"a":"b"}}');
     // Unexpected errors (here: a corrupt state file) reach only the human log.
     writeFileSync(join(root, 'omer', 'negotiations.json'), '{"v":1, SECRET-STATE-456');
     const broken = await omer.call('rdv_negotiate', { action: 'status' });

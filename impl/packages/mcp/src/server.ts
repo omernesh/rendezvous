@@ -8,7 +8,8 @@
 //             or a confirm phrase that only reaches human-facing channels.
 //   injection peer-written text comes back only as `untrusted_peer_text`;
 //             only `data` parts drive the negotiation engine.
-import { resolve } from 'node:path';
+import { realpathSync } from 'node:fs';
+import { dirname, isAbsolute, relative, resolve } from 'node:path';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { Transport as McpTransport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import { type CallToolResult, SubscribeRequestSchema, UnsubscribeRequestSchema } from '@modelcontextprotocol/sdk/types.js';
@@ -82,6 +83,12 @@ export interface RdvMcpOptions {
   sweepMs?: number;
   /** How long to wait for the human to answer an approval form (default 10 min). */
   elicitTimeoutMs?: number;
+  /**
+   * Directories a calendar path from the model may live in (M2). Always
+   * allowed too: the home dir and the directory of `calendar`. The model
+   * can't point the server at any other file.
+   */
+  calendarDirs?: string[];
 }
 
 class ToolError extends Error {}
@@ -202,9 +209,13 @@ export class RdvMcpServer {
   private readonly humanLog: (line: string) => void;
   private readonly sweepMs: number;
   private readonly elicitTimeoutMs: number;
+  private readonly calendarDirs: string[];
 
   constructor(opts: RdvMcpOptions) {
     this.home = opts.home;
+    this.calendarDirs = [opts.home.dir, ...(opts.calendar ? [dirname(resolve(opts.calendar))] : []), ...(opts.calendarDirs ?? [])].map((d) =>
+      resolve(d),
+    );
     this.settings = {
       calendar: opts.calendar ? resolve(opts.calendar) : undefined,
       window: opts.window,
@@ -687,16 +698,39 @@ export class RdvMcpServer {
   // --- tool bodies --------------------------------------------------------------
 
   private async applySettings(a: { calendar?: string; window?: string; tz?: string }): Promise<void> {
+    if (a.calendar && !/\.json$/i.test(a.calendar)) throw new ToolError('calendar must be a .json calendar file');
     const next = {
-      calendar: a.calendar ? resolve(a.calendar) : this.settings.calendar,
+      calendar: a.calendar ? this.allowedCalendar(a.calendar) : this.settings.calendar,
       window: a.window ?? this.settings.window,
       tz: a.tz ?? this.settings.tz,
     };
-    if (a.calendar && !/.json$/i.test(a.calendar)) throw new ToolError('calendar must be a .json calendar file');
     if (next.calendar && (a.calendar || a.window || a.tz)) {
       await guardCalendar(() => validateNegotiateOptions({ calendar: next.calendar!, window: next.window ?? DEFAULT_LISTEN_WINDOW, tz: next.tz }));
     }
     this.settings = next;
+  }
+
+  /** A model-supplied calendar path, if it resolves (symlinks too) inside an allowed directory. */
+  private allowedCalendar(path: string): string {
+    const abs = resolve(path);
+    const real = (p: string) => {
+      try {
+        return realpathSync(p);
+      } catch {
+        return p;
+      }
+    };
+    const target = real(abs);
+    const inside = this.calendarDirs.some((d) => {
+      const rel = relative(real(d), target);
+      return rel !== '' && !rel.startsWith('..') && !isAbsolute(rel);
+    });
+    if (!inside) {
+      throw new ToolError(
+        'that calendar is outside the directories this server allows (its home, the --calendar directory, or --calendar-dir); ask your user to move it there or start the server with --calendar-dir',
+      );
+    }
+    return abs;
   }
 
   private status() {

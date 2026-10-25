@@ -315,6 +315,14 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
     keeps the last 1000 events in memory, compacts `mcp-events.jsonl` at
     2000 lines, reads by cursor without re-parsing, and hides drop reasons a
     stranger can cause at will.
+47. **Calendar files are strict, and MCP calendar paths are fenced** (M2).
+    A calendar is exactly `{ "busy": [...], "timezone"?: … }` with entries of
+    `start`/`end`/`title`; any other JSON is refused before it is read for
+    slots or rewritten by `hold` (which is what chmods it), so the model can
+    no longer turn `package.json` into a calendar. The MCP server takes
+    model-supplied calendar paths only inside its home, the `--calendar`
+    directory or a `--calendar-dir`, after `realpath`, and the `.json` check
+    escapes the dot.
 
 ## Not implemented yet
 

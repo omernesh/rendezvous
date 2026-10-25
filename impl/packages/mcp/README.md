@@ -19,6 +19,8 @@ node packages/mcp/dist/src/bin.js --home ~/.rendezvous/omer --calendar cal.json 
 
 Options: `--home <dir>` or `--profile <name>` (same resolution as `rdv`:
 `--home`, `$RDV_HOME`, `~/.rendezvous/<profile>`), `--calendar <file.json>`,
+`--calendar-dir <dir>` (repeatable, env `RDV_CALENDAR_DIR`: where the assistant
+may pick other calendar files from),
 `--window "next week evenings"`, `--tz +02:00` (env `RDV_CALENDAR`,
 `RDV_WINDOW`, `RDV_TZ`). Without a calendar, incoming dinner proposals are
 listed but not answered. stdout carries MCP; human-facing notices go to stderr.
@@ -106,7 +108,10 @@ run as. Revoking and declining need no confirmation: they only reduce access.
   validation); text parts are display only.
 - The model can't make the server read local files: `rdv_request_contact`
   takes addresses and agent IDs (no card files), calendar paths must end in
-  `.json`, and calendar errors never echo file contents.
+  `.json` and resolve (symlinks included) inside the home, the `--calendar`
+  directory or a `--calendar-dir`, the file must be a strict calendar
+  (`busy` list, optional `timezone`, nothing else) before it is read or
+  rewritten, and calendar errors never echo file contents.
 - Errors that could quote peer or file content (inbound handling, fs and
   JSON parse failures) go to the server log for the human; the model gets a
   generic line. Only our own messages (bad input, negotiation rules) reach it.

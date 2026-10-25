@@ -1,5 +1,27 @@
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { parsePayload } from '../src/index.js';
+import { JsonFileCalendar, parsePayload, validateCalendar } from '../src/index.js';
+
+describe('calendar files are strict (security review M2)', () => {
+  it('rejects JSON that is not a calendar, and hold never rewrites it', async () => {
+    expect(() => validateCalendar({ name: 'pkg', scripts: { a: 'b' } })).toThrow(/not a calendar/);
+    expect(() => validateCalendar({})).toThrow(/busy/);
+    expect(() => validateCalendar({ busy: [{ start: '2026-11-05T19:00:00+02:00', end: '2026-11-05T21:00:00+02:00', x: 1 }] })).toThrow(/unknown keys/);
+    expect(validateCalendar({ timezone: '+02:00', busy: [] })).toEqual({ timezone: '+02:00', busy: [] });
+    const dir = mkdtempSync(join(tmpdir(), 'rdv-cal-'));
+    try {
+      const victim = join(dir, 'package.json');
+      const original = JSON.stringify({ name: 'pkg', scripts: { a: 'b' } });
+      writeFileSync(victim, original);
+      await expect(new JsonFileCalendar(victim).hold({ start: '2026-11-01T19:00:00+02:00', end: '2026-11-01T21:00:00+02:00' }, 'Dinner')).rejects.toThrow();
+      expect(readFileSync(victim, 'utf8')).toBe(original);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
 
 const U = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 const slot = { start: '2026-11-05T19:00:00+02:00', end: '2026-11-05T21:00:00+02:00' };

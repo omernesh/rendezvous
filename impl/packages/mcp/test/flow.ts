@@ -2,7 +2,7 @@
 // in-memory MCP transport, one per person, plus the two-person dinner flow
 // (used by the in-memory test and the live-relay test).
 import { readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import {
@@ -53,7 +53,8 @@ export function parseResult(text: string): unknown {
 export async function makeSide(name: string, dir: string, opts: { elicit?: ElicitHandler } = {}): Promise<Side> {
   const home = new Home(dir);
   const humanLog: string[] = [];
-  const server = new RdvMcpServer({ home, humanLog: (l) => humanLog.push(l), sweepMs: 3_600_000 });
+  // The flows keep calendars next to the homes: the human allows that directory (--calendar-dir).
+  const server = new RdvMcpServer({ home, humanLog: (l) => humanLog.push(l), sweepMs: 3_600_000, calendarDirs: [dirname(dir)] });
   const [clientT, serverT] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: `${name}-claude`, version: '0.0.0' }, { capabilities: opts.elicit ? { elicitation: {} } : {} });
   if (opts.elicit) client.setRequestHandler(ElicitRequestSchema, async (req) => opts.elicit!(req.params));
