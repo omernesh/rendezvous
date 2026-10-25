@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Setup per agent | Rendezvous docs</title>
+<meta name="description" content="Install Rendezvous and register rdv-mcp with Claude Code, Claude Desktop, Cursor, VS Code, Codex CLI, Gemini CLI, Windsurf, Grok Build, OpenClaw, Hermes Agent and Muse Code.">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#232a7a">
+<link rel="canonical" href="https://rendezvous.nesher.co/docs/agents.html">
+<link rel="alternate" type="text/markdown" href="/docs/agents.md">
+<link rel="alternate" type="text/plain" href="/llms.txt" title="llms.txt">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/docs.css">
+<script src="/theme.js"></script>
+<script src="/app.js" defer></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="site-header">
+  <div class="wrap header-row">
+    <a class="brand" href="/" aria-label="Rendezvous, home">
+      <svg class="mark" viewBox="0 0 32 32" aria-hidden="true" focusable="false"><path class="mk-a" d="M18.98 27.11A11.5 11.5 0 0 1 4.89 13.02"/><path class="mk-a" d="M13.02 4.89A11.5 11.5 0 0 1 27.11 18.98"/><path class="mk-d" d="M16 10.6Q16.6 10.6 17 11L21 15Q21.4 15.4 21.4 16Q21.4 16.6 21 17L17 21Q16.6 21.4 16 21.4Q15.4 21.4 15 21L11 17Q10.6 16.6 10.6 16Q10.6 15.4 11 15L15 11Q15.4 10.6 16 10.6Z"/></svg>
+      <span class="brand-word">rendezvous</span>
+    </a>
+    <nav class="site-nav" aria-label="Sections">
+      <ul>
+        <li><a href="/#how">How it works</a></li>
+        <li><a href="/#privacy">Privacy</a></li>
+        <li><a href="/#setup">Setup</a></li>
+        <li><a href="/#install">Install</a></li>
+        <li><a href="/docs/" aria-current="page">Docs</a></li>
+        <li><a href="/#faq">FAQ</a></li>
+        <li><a href="/#contribute">Contribute</a></li>
+      </ul>
+    </nav>
+    <div class="header-actions">
+      <a class="docs-chip" href="/docs/">Docs</a>
+      <a class="gh-link" href="https://github.com/omernesh/rendezvous" aria-label="Rendezvous on GitHub">
+        <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+      </a>
+      <button class="theme-toggle" type="button" aria-label="Color theme: system" title="Color theme"><svg class="ti ti-system" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 0 1 0 16z" class="fill"/></svg><svg class="ti ti-light" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg><svg class="ti ti-dark" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/></svg></button>
+    </div>
+  </div>
+</header>
+
+<main id="main">
+<div class="wrap docs-layout">
+  <div class="docs-aside"><nav class="docs-side" aria-label="Documentation"><ul><li><a href="/docs/">Docs home</a></li></ul><p class="side-group">Get started</p><ul><li><a href="/docs/agents.html" aria-current="page">Setup per agent</a></li><li><a href="/docs/plugin.html">Claude Code plugin</a></li></ul><p class="side-group">Reference</p><ul><li><a href="/docs/cli.html">CLI and library</a></li><li><a href="/docs/mcp.html">MCP tools</a></li></ul><p class="side-group">Protocol</p><ul><li><a href="/docs/spec.html">Protocol spec</a></li></ul><p class="side-group">Project</p><ul><li><a href="/docs/contributing.html">Contributing</a></li><li><a href="https://github.com/omernesh/rendezvous/pull/19">Roadmap: tasks and groups (proposal)</a></li></ul><p class="side-group">For LLMs</p><ul><li><a href="/llms.txt">llms.txt</a></li><li><a href="/llms-full.txt">llms-full.txt</a></li></ul></nav><details class="docs-menu"><summary>Docs menu</summary><nav aria-label="Documentation menu"><ul><li><a href="/docs/">Docs home</a></li></ul><p class="side-group">Get started</p><ul><li><a href="/docs/agents.html" aria-current="page">Setup per agent</a></li><li><a href="/docs/plugin.html">Claude Code plugin</a></li></ul><p class="side-group">Reference</p><ul><li><a href="/docs/cli.html">CLI and library</a></li><li><a href="/docs/mcp.html">MCP tools</a></li></ul><p class="side-group">Protocol</p><ul><li><a href="/docs/spec.html">Protocol spec</a></li></ul><p class="side-group">Project</p><ul><li><a href="/docs/contributing.html">Contributing</a></li><li><a href="https://github.com/omernesh/rendezvous/pull/19">Roadmap: tasks and groups (proposal)</a></li></ul><p class="side-group">For LLMs</p><ul><li><a href="/llms.txt">llms.txt</a></li><li><a href="/llms-full.txt">llms-full.txt</a></li></ul></nav></details></div>
+  <article class="docs-content">
+    <p class="crumbs"><a href="/docs/">Docs</a> / Get started</p>
+    <h1>Setup per agent</h1>
+    <p class="doc-meta">Rendered from <a href="https://github.com/omernesh/rendezvous/blob/main/docs/agents.md">docs/agents.md</a> on GitHub. <a href="/docs/agents.md">Markdown version</a> for LLMs.</p>
+    <details class="toc-m"><summary>On this page</summary><ul><li><a href="#before-you-start">Before you start</a></li><li><a href="#consent-approvals-come-back-to-you">Consent: approvals come back to you</a></li><li><a href="#claude-code">Claude Code</a></li><li><a href="#claude-desktop">Claude Desktop</a></li><li><a href="#cursor">Cursor</a></li><li><a href="#vs-code-github-copilot">VS Code (GitHub Copilot)</a></li><li><a href="#codex-cli">Codex CLI</a></li><li><a href="#gemini-cli">Gemini CLI</a></li><li><a href="#windsurf">Windsurf</a></li><li><a href="#grok-build">Grok Build</a></li><li><a href="#openclaw">OpenClaw</a></li><li><a href="#hermes-agent">Hermes Agent</a></li><li><a href="#muse-code">Muse Code</a></li><li><a href="#maintainers-the-skill-branch">Maintainers: the skill branch</a></li></ul></details>
+    <div class="prose">
+<p>Rendezvous runs as a local MCP server, <code>rdv-mcp</code>, plus an optional skill that
+teaches the agent the workflow. This page has one section per agent: how to
+install, the MCP config, the skill, and how to check that it works.</p>
+<p>Checked on 2026-10-25 against each client's own documentation (linked in every
+section). Where a setup could not be run here, the section says so.</p>
+<ul>
+<li><a href="#claude-code">Claude Code</a> · <a href="#claude-desktop">Claude Desktop</a> · <a href="#cursor">Cursor</a> · <a href="#vs-code-github-copilot">VS Code (GitHub Copilot)</a> · <a href="#codex-cli">Codex CLI</a> · <a href="#gemini-cli">Gemini CLI</a> · <a href="#windsurf">Windsurf</a> · <a href="#grok-build">Grok Build</a> · <a href="#openclaw">OpenClaw</a> · <a href="#hermes-agent">Hermes Agent</a> · <a href="#muse-code">Muse Code</a></li>
+</ul>
+<h2 id="before-you-start">Before you start<a class="anchor" href="#before-you-start" title="Link to this section" aria-label="Link to this section">#</a></h2>
+<ol>
+<li>
+<p><strong>Install Rendezvous</strong> (Node.js 20+, git and npm; no sudo). Every section
+    below starts from this:</p>
+<div class="codeblock"><pre tabindex="0"><code>curl -fsSL https://rendezvous.nesher.co/install.sh | sh
+</code></pre></div>
+<!-- -->
+<div class="codeblock"><pre tabindex="0"><code>irm https://rendezvous.nesher.co/install.ps1 | iex
+</code></pre></div>
+<p>It builds into <code>~/.rendezvous/src</code> and puts <code>rdv</code> and <code>rdv-mcp</code> on your PATH.
+Run it again to update.</p>
+</li>
+<li>
+<p><strong>Register <code>rdv-mcp</code></strong> with your agent (the config in its section), then
+    restart the agent or reload its MCP servers.</p>
+</li>
+<li>
+<p><strong>Windows: use the <code>node</code> form.</strong> The installer writes <code>rdv-mcp.cmd</code>. A client
+    that starts servers without a shell cannot run a <code>.cmd</code> file: a bare
+    <code>rdv-mcp</code> fails with <code>ENOENT</code> (reproduced here with a no-shell spawn from
+    Node 25; <code>cmd /c rdv-mcp</code> and a shell spawn both worked). Whether each client
+    spawns through a shell was not tested, so on Windows give every client the
+    built file directly. The path is the same in all sections:</p>
+<div class="codeblock"><pre tabindex="0"><code>C:\Users\&lt;you&gt;\.rendezvous\src\impl\packages\mcp\dist\src\bin.js
+</code></pre></div>
+<p>In JSON write the backslashes doubled (<code>C:\\Users\\&lt;you&gt;\\...</code>). In TOML use
+a single-quoted string (<code>'C:\Users\&lt;you&gt;\...'</code>). Each section shows the
+macOS / Linux form and what changes on Windows. If you set <code>RDV_DIR</code>, use
+<code>&lt;RDV_DIR&gt;\impl\packages\mcp\dist\src\bin.js</code>. Options such as
+<code>--profile omer</code> go after the path in <code>args</code>.</p>
+</li>
+<li>
+<p><strong>Verify</strong> by asking the agent: <strong>"What's my rendezvous status?"</strong> It should
+    call <code>rdv_status</code> and show your agent ID, your addresses and your relays. If
+    it says there is no agent yet, create one (ask it, with the skill installed, or
+    run <code>rdv init --profile omer --email omer@example.com</code> yourself) and ask
+    again. Without <code>--relay</code> the agent uses the default public relays
+    (<code>wss://nos.lol</code>, <code>wss://relay.primal.net</code>, <code>wss://relay.nostr.net</code>,
+    <code>wss://nostr.oxtr.dev</code>); add <code>--relay wss://…</code> once per relay to use your
+    own instead. <code>rdv whoami</code> shows each relay's last OK and last error.</p>
+</li>
+</ol>
+<h2 id="consent-approvals-come-back-to-you">Consent: approvals come back to you<a class="anchor" href="#consent-approvals-come-back-to-you" title="Link to this section" aria-label="Link to this section">#</a></h2>
+<p>The agent cannot approve a contact request, confirm a probe answer or confirm a
+meeting. <code>rdv_grant</code> and <code>rdv_negotiate</code> succeed only when the human decides:</p>
+<ul>
+<li><strong>Clients with MCP elicitation</strong> show you an approval form (the requester's
+    fingerprint, how the request arrived, the greeting marked untrusted, a tier
+    and a label). The model never sees the form.</li>
+<li><strong>Clients without elicitation</strong>: the human types the confirm phrase shown by
+    <code>rdv contact pending</code> in their own terminal to the agent. The agent passes it as
+    <code>confirm_phrase</code>. Phrases are single-use and no tool result ever contains one.</li>
+<li>Or approve in your own terminal with <code>rdv contact grant</code>.</li>
+</ul>
+<p>Elicitation support, as far as it could be checked:</p>
+<div class="tablewrap" tabindex="0"><table>
+<thead>
+<tr>
+<th>Agent</th>
+<th>Elicitation</th>
+<th>Source</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Claude Code</td>
+<td>yes (interactive sessions, not <code>-p</code>)</td>
+<td><code>impl/packages/mcp/README.md</code></td>
+</tr>
+<tr>
+<td>Cursor</td>
+<td>yes, verified: the MCP docs list elicitation as "Supported"</td>
+<td><a href="https://cursor.com/docs/mcp">Cursor MCP docs</a></td>
+</tr>
+<tr>
+<td>Hermes Agent</td>
+<td>yes, form mode, through its normal approval surface (on by default)</td>
+<td><a href="https://hermes-agent.nousresearch.com/docs/user-guide/features/mcp">Hermes MCP docs</a></td>
+</tr>
+<tr>
+<td>Claude Desktop, VS Code, Codex CLI, Gemini CLI, Windsurf, Grok Build, OpenClaw, Muse Code</td>
+<td>not confirmed in their docs</td>
+<td>treat as no: use the confirm phrase</td>
+</tr>
+</tbody>
+</table></div>
+<p>The plugin's consent guard (a hook that refuses the consent commands) exists
+only in Claude Code. Elsewhere the consent gate is the boundary, and the skill's
+rules tell the agent never to run those commands itself. Details and the threat
+model: <a href="/docs/mcp.html#consent-the-human-decides-demo-critical"><code>impl/packages/mcp/README.md</code></a>.</p>
+<h2 id="claude-code">Claude Code<a class="anchor" href="#claude-code" title="Link to this section" aria-label="Link to this section">#</a></h2>
+<ul>
+<li>
+<p><strong>MCP + skill, one step:</strong> the plugin registers <code>rdv-mcp</code> and adds the skill.
+    In Claude Code's chat:</p>
+<div class="codeblock"><pre tabindex="0"><code>/plugin marketplace add omernesh/rendezvous
+/plugin install rendezvous@rendezvous
+/reload-plugins
+</code></pre></div>
+<p>Then type <code>/rdv-onboarding</code> (or <code>/rendezvous:rdv-onboarding</code>). It points you to
+the installer for <code>rdv</code> and sets you up one question at a time. The plugin starts the
+server through <code>bin/rdv-mcp.mjs</code> under <code>node</code>, so Windows needs nothing special.</p>
+</li>
+<li>
+<p><strong>Without the plugin:</strong> <code>claude mcp add rendezvous -- rdv-mcp</code> (Windows:
+    <code>claude mcp add rendezvous -- cmd /c rdv-mcp</code>).</p>
+</li>
+<li><strong>Verify:</strong> ask "What's my rendezvous status?".</li>
+<li><strong>Consent:</strong> approval forms (elicitation) in an interactive session.</li>
+<li>Docs: <a href="https://code.claude.com/docs/en/mcp">Claude Code MCP</a>, <a href="https://code.claude.com/docs/en/plugins">plugins</a>.</li>
+</ul>
+<h2 id="claude-desktop">Claude Desktop<a class="anchor" href="#claude-desktop" title="Link to this section" aria-label="Link to this section">#</a></h2>
+<ul>
+<li><strong>Install:</strong> the installer above.</li>
+<li>
+<p><strong>MCP config:</strong> <code>~/Library/Application Support/Claude/claude_desktop_config.json</code>
+    (macOS) or <code>%APPDATA%\Claude\claude_desktop_config.json</code> (Windows); in the app,
+    Settings, Developer, Edit Config. Restart Claude Desktop completely after saving.</p>
+<div class="codeblock"><pre tabindex="0"><code>{ "mcpServers": { "rendezvous": { "command": "rdv-mcp", "args": [] } } }
+</code></pre></div>
+<p>Windows:
+<code>{ "mcpServers": { "rendezvous": { "command": "node", "args": ["C:\\Users\\&lt;you&gt;\\.rendezvous\\src\\impl\\packages\\mcp\\dist\\src\\bin.js"] } } }</code></p>
+</li>
+<li>
+<p><strong>Skill:</strong> none to install here; the MCP tools carry their own instructions.
+    Claude Desktop's own skill upload is not covered by this page.</p>
+</li>
+<li><strong>Verify:</strong> ask "What's my rendezvous status?". Logs: <code>~/Library/Logs/Claude</code>
+    or <code>%APPDATA%\Claude\logs</code> (<code>mcp-server-rendezvous.log</code>).</li>
+<li><strong>Consent:</strong> elicitation not confirmed; use the confirm phrase.</li>
+<li>Docs: <a href="https://modelcontextprotocol.io/docs/develop/connect-local-servers">Connect to local MCP servers</a>.</li>
+</ul>
+<h2 id="cursor">Cursor<a class="anchor" href="#cursor" title="Link to this section" aria-label="Link to this section">#</a></h2>
+<ul>
+<li><strong>Install:</strong> the installer above.</li>
+<li>
+<p><strong>MCP config:</strong> <code>~/.cursor/mcp.json</code> (everywhere) or <code>.cursor/mcp.json</code> (one project).</p>
+<div class="codeblock"><pre tabindex="0"><code>{ "mcpServers": { "rendezvous": { "command": "rdv-mcp", "args": [] } } }
+</code></pre></div>
+<p>Windows: <code>"command": "node", "args": ["C:\\Users\\&lt;you&gt;\\.rendezvous\\src\\impl\\packages\\mcp\\dist\\src\\bin.js"]</code>.</p>
+</li>
+<li>
+<p><strong>Skill:</strong> <code>npx skills add omernesh/rendezvous</code> (the skills CLI lets you pick
+    Cursor). Optional: the MCP server works without it.</p>
+</li>
+<li><strong>Verify:</strong> Settings, MCP: <code>rendezvous</code> should show its tools. Ask "What's my
+    rendezvous status?" in the agent chat.</li>
+<li><strong>Consent:</strong> elicitation supported (verified): you get the approval form.</li>
+<li>Docs: <a href="https://cursor.com/docs/mcp">Cursor MCP</a>.</li>
+</ul>
+<h2 id="vs-code-github-copilot">VS Code (GitHub Copilot)<a class="anchor" href="#vs-code-github-copilot" title="Link to this section" aria-label="Link to this section">#</a></h2>
+<ul>
+<li><strong>Install:</strong> the installer above.</li>
+<li>
+<p><strong>MCP config:</strong> <code>.vscode/mcp.json</code> in a workspace, or your user <code>mcp.json</code>
+    (Command Palette, "MCP: Open User Configuration"). VS Code's key is <code>servers</code>,
+    not <code>mcpServers</code>.</p>
+<div class="codeblock"><pre tabindex="0"><code>{ "servers": { "rendezvous": { "type": "stdio", "command": "rdv-mcp" } } }
+</code></pre></div>
+<p>Windows: <code>"command": "node", "args": ["C:\\Users\\&lt;you&gt;\\.rendezvous\\src\\impl\\packages\\mcp\\dist\\src\\bin.js"]</code>.
+VS Code's current docs also describe a global Copilot config
+(<code>~/.copilot/mcp-config.json</code>); the workspace file above is the one checked
+here.</p>
+</li>
+<li>
+<p><strong>Skill:</strong> <code>npx skills add omernesh/rendezvous</code> and pick the agent; not tested
+    per client. The MCP server works without it.</p>
+</li>
+<li><strong>Verify:</strong> start the server from the MCP view, open Copilot chat in Agent
+    mode and ask "What's my rendezvous status?".</li>
+<li><strong>Consent:</strong> elicitation is not mentioned in VS Code's MCP docs; use the
+    confirm phrase unless a form appears.</li>
+<li>Docs: <a href="https://code.visualstudio.com/docs/copilot/customization/mcp-servers">MCP servers in VS Code</a>.</li>
+</ul>
+<h2 id="codex-cli">Codex CLI<a class="anchor" href="#codex-cli" title="Link to this section" aria-label="Link to this section">#</a></h2>
+<ul>
+<li><strong>Install:</strong> the installer above.</li>
+<li>
+<p><strong>MCP config:</strong> one command, run here to confirm the output:</p>
+<div class="codeblock"><pre tabindex="0"><code>codex mcp add rendezvous -- rdv-mcp
+</code></pre></div>
+<p>or <code>~/.codex/config.toml</code>:</p>
+<div class="codeblock"><pre tabindex="0"><code>[mcp_servers.rendezvous]
+command = "rdv-mcp"
+</code></pre></div>
+<p>Windows: <code>codex mcp add rendezvous -- node C:\Users\&lt;you&gt;\.rendezvous\src\impl\packages\mcp\dist\src\bin.js</code>
+writes <code>command = "node"</code> and a single-quoted <code>args</code> path (tested here).</p>
+</li>
+<li>
+<p><strong>Skill:</strong> <code>npx skills add omernesh/rendezvous</code> and pick Codex (installs under
+    <code>~/.codex/skills</code>); not run per client.</p>
+</li>
+<li><strong>Verify:</strong> <code>codex mcp list</code>, then ask "What's my rendezvous status?".</li>
+<li><strong>Consent:</strong> elicitation not mentioned in Codex's MCP docs; use the confirm phrase.</li>
+<li>Docs: <a href="https://developers.openai.com/codex/mcp">Codex MCP</a>.</li>
+</ul>
+<h2 id="gemini-cli">Gemini CLI<a class="anchor" href="#gemini-cli" title="Link to this section" aria-label="Link to this section">#</a></h2>
+<ul>
+<li><strong>Install:</strong> the installer above.</li>
+<li>
+<p><strong>MCP config:</strong></p>
+<div class="codeblock"><pre tabindex="0"><code>gemini mcp add -s user rendezvous rdv-mcp
+</code></pre></div>
+<p>or edit <code>~/.gemini/settings.json</code> (<code>.gemini/settings.json</code> for one project):</p>
+<div class="codeblock"><pre tabindex="0"><code>{ "mcpServers": { "rendezvous": { "command": "rdv-mcp", "args": [] } } }
+</code></pre></div>
+<p>Windows: <code>gemini mcp add -s user rendezvous node C:\Users\&lt;you&gt;\.rendezvous\src\impl\packages\mcp\dist\src\bin.js</code>.
+Gemini CLI was not installed here, so the command is from its docs, not run.</p>
+</li>
+<li>
+<p><strong>Skill:</strong> <code>npx skills add omernesh/rendezvous</code> and pick Gemini CLI; not run.</p>
+</li>
+<li><strong>Verify:</strong> <code>gemini mcp list</code>, or <code>/mcp</code> in a session, then ask "What's my
+    rendezvous status?".</li>
+<li><strong>Consent:</strong> elicitation not mentioned in its docs; use the confirm phrase.</li>
+<li>Docs: <a href="https://geminicli.com/docs/tools/mcp-server/">Gemini CLI MCP servers</a>.</li>
+</ul>
+<h2 id="windsurf">Windsurf<a class="anchor" href="#windsurf" title="Link to this section" aria-label="Link to this section">#</a></h2>
+<ul>
+<li><strong>Install:</strong> the installer above.</li>
+<li>
+<p><strong>MCP config:</strong> <code>~/.config/devin/mcp_config.json</code> (macOS / Linux;
+    <code>$XDG_CONFIG_HOME/devin/</code> if set) or <code>%APPDATA%\devin\mcp_config.json</code>
+    (Windows). Windsurf's docs now live under Devin's.</p>
+<div class="codeblock"><pre tabindex="0"><code>{ "mcpServers": { "rendezvous": { "command": "rdv-mcp", "args": [] } } }
+</code></pre></div>
+<p>Windows: <code>"command": "node", "args": ["C:\\Users\\&lt;you&gt;\\.rendezvous\\src\\impl\\packages\\mcp\\dist\\src\\bin.js"]</code>.</p>
+</li>
+<li>
+<p><strong>Skill:</strong> <code>npx skills add omernesh/rendezvous</code> and pick the agent; not run.</p>
+</li>
+<li><strong>Verify:</strong> refresh the MCP list in Cascade, then ask "What's my rendezvous status?".</li>
+<li><strong>Consent:</strong> elicitation not mentioned; use the confirm phrase.</li>
+<li>Docs: <a href="https://docs.devin.ai/desktop/cascade/mcp">Cascade MCP</a>.</li>
+</ul>
+<h2 id="grok-build">Grok Build<a class="anchor" href="#grok-build" title="Link to this section" aria-label="Link to this section">#</a></h2>
+<ul>
+<li><strong>Install:</strong> the installer above.</li>
+<li>
+<p><strong>MCP config:</strong></p>
+<div class="codeblock"><pre tabindex="0"><code>grok mcp add rendezvous -- rdv-mcp
+</code></pre></div>
+<p>or <code>~/.grok/config.toml</code>:</p>
+<div class="codeblock"><pre tabindex="0"><code>[mcp_servers.rendezvous]
+command = "rdv-mcp"
+</code></pre></div>
+<p>Windows: <code>grok mcp add rendezvous -- node C:\Users\&lt;you&gt;\.rendezvous\src\impl\packages\mcp\dist\src\bin.js</code>.
+<code>--scope project</code> writes <code>.grok/config.toml</code> instead. Not installed here;
+from the docs.</p>
+</li>
+<li>
+<p><strong>Skill:</strong> <code>npx skills add omernesh/rendezvous</code> and pick Grok; not run.</p>
+</li>
+<li><strong>Verify:</strong> <code>grok mcp doctor</code> (stderr logs: <code>~/.grok/logs/mcp/rendezvous.stderr.log</code>),
+    then ask "What's my rendezvous status?".</li>
+<li><strong>Consent:</strong> elicitation not mentioned; use the confirm phrase.</li>
+<li>Docs: <a href="https://docs.x.ai/build/features/mcp-servers">Grok Build MCP servers</a>.</li>
+</ul>
+<h2 id="openclaw">OpenClaw<a class="anchor" href="#openclaw" title="Link to this section" aria-label="Link to this section">#</a></h2>
+<ul>
+<li><strong>Install:</strong> the installer above.</li>
+<li>
+<p><strong>MCP config:</strong></p>
+<div class="codeblock"><pre tabindex="0"><code>openclaw mcp set rendezvous '{"command":"rdv-mcp"}'
+openclaw mcp doctor rendezvous --probe
+</code></pre></div>
+<p><code>--probe</code> opens a live connection to the server (without it <code>doctor</code> only
+checks the config); <code>openclaw mcp probe rendezvous</code> is the same check on its
+own. Windows: use <code>'{"command":"node","args":["C:\\Users\\&lt;you&gt;\\.rendezvous\\src\\impl\\packages\\mcp\\dist\\src\\bin.js"]}'</code>
+(quote it for your shell). Not installed here; from the docs.</p>
+</li>
+<li>
+<p><strong>Skill:</strong> OpenClaw installs a git skill only when <code>SKILL.md</code> is at the
+    repository root of the ref; there is no subpath syntax. So this repo publishes
+    a <code>skill</code> branch whose root is the skill folder (<code>SKILL.md</code> and <code>references/</code>):</p>
+<div class="codeblock"><pre tabindex="0"><code>openclaw skills install git:omernesh/rendezvous@skill
+</code></pre></div>
+<p>Git skills are not updated by <code>openclaw skills update</code>: install again to
+refresh. Maintainers rebuild the branch with <code>scripts/publish-skill-branch.sh</code>
+(or <code>.ps1</code>); see <a href="#maintainers-the-skill-branch">Maintainers</a>.</p>
+</li>
+<li>
+<p><strong>Verify:</strong> <code>openclaw mcp doctor rendezvous --probe</code>, then ask "What's my
+    rendezvous status?".</p>
+</li>
+<li><strong>Consent:</strong> elicitation not mentioned; use the confirm phrase.</li>
+<li>Docs: <a href="https://docs.openclaw.ai/cli/skills">openclaw skills</a>, <a href="https://docs.openclaw.ai/cli/mcp/registry">openclaw mcp</a>.</li>
+</ul>
+<h2 id="hermes-agent">Hermes Agent<a class="anchor" href="#hermes-agent" title="Link to this section" aria-label="Link to this section">#</a></h2>
+<ul>
+<li><strong>Install:</strong> the installer above.</li>
+<li>
+<p><strong>MCP config:</strong> <code>~/.hermes/config.yaml</code>, then <code>/reload-mcp</code> in a session.</p>
+<div class="codeblock"><pre tabindex="0"><code>mcp_servers:
+  rendezvous:
+    command: "rdv-mcp"
+</code></pre></div>
+<p>Windows: <code>command: "node"</code> and <code>args: ['C:\Users\&lt;you&gt;\.rendezvous\src\impl\packages\mcp\dist\src\bin.js']</code>.
+Hermes passes a stdio server only a safe baseline environment, not your shell's;
+<code>rdv-mcp</code> needs only <code>HOME</code> / <code>USERPROFILE</code>, but set <code>env:</code> if you use <code>RDV_HOME</code>.</p>
+</li>
+<li>
+<p><strong>Skill:</strong> installs straight from this repository's path (run here):</p>
+<div class="codeblock"><pre tabindex="0"><code>hermes skills install omernesh/rendezvous/plugins/rendezvous/skills/rendezvous
+</code></pre></div>
+<p>Hermes scans community skills before installing them; this one passes the scan
+(<code>SAFE</code>) and installs as is. The skill carries no download-and-run
+line: it sends you to the Install section of https://rendezvous.nesher.co to
+run the installer yourself. Add <code>--yes</code> to skip the prompt.
+The installed files are <code>SKILL.md</code> and <code>references/</code>, under <code>~/.hermes/skills/rendezvous</code>.</p>
+</li>
+<li>
+<p><strong>Verify:</strong> <code>/reload-mcp</code>, then ask "What's my rendezvous status?".</p>
+</li>
+<li><strong>Consent:</strong> elicitation supported (form mode, Hermes' normal approval
+    surface; YOLO mode does not auto-answer it).</li>
+<li>Docs: <a href="https://hermes-agent.nousresearch.com/docs/user-guide/features/mcp">Hermes MCP</a>, <a href="https://hermes-agent.nousresearch.com/docs/developer-guide/creating-skills">creating skills</a>.</li>
+</ul>
+<h2 id="muse-code">Muse Code<a class="anchor" href="#muse-code" title="Link to this section" aria-label="Link to this section">#</a></h2>
+<ul>
+<li><strong>Install:</strong> the installer above.</li>
+<li>
+<p><strong>MCP config:</strong> <code>~/.config/muse/settings.json</code>. Keep what is already in the
+    file and add the server.</p>
+<div class="codeblock"><pre tabindex="0"><code>{
+  "schema_version": 1,
+  "mcpServers": { "rendezvous": { "command": "rdv-mcp", "args": [] } }
+}
+</code></pre></div>
+<p>Windows: <code>"command": "node", "args": ["C:\\Users\\&lt;you&gt;\\.rendezvous\\src\\impl\\packages\\mcp\\dist\\src\\bin.js"]</code>.
+<strong>Not verified:</strong> Muse Code was not available here and no first-party
+documentation could be found. Some third-party guides write the key as
+<code>mcp_servers</code>, and one reports a beta build without MCP. If <code>mcpServers</code> does
+not load, check Muse Code's own docs for the current key.</p>
+</li>
+<li>
+<p><strong>Skill:</strong> Muse Code reads skills from <code>~/.agents/skills</code>, <code>~/.claude/skills</code>
+    and <code>~/.codex/skills</code>. Install into one of them, for example
+    <code>npx skills add omernesh/rendezvous --skill rendezvous --global --agent claude-code</code>
+    (puts it in <code>~/.claude/skills</code>), or copy the folder
+    <code>plugins/rendezvous/skills/rendezvous</code> to <code>~/.agents/skills/rendezvous</code>. Not run here.</p>
+</li>
+<li><strong>Verify:</strong> ask "What's my rendezvous status?".</li>
+<li><strong>Consent:</strong> elicitation unknown; use the confirm phrase.</li>
+</ul>
+<h2 id="maintainers-the-skill-branch">Maintainers: the skill branch<a class="anchor" href="#maintainers-the-skill-branch" title="Link to this section" aria-label="Link to this section">#</a></h2>
+<p>The skill lives once, in <code>plugins/rendezvous/skills/rendezvous</code>. The <code>skill</code>
+branch is generated from it (<code>git subtree split</code>), never edited by hand, so the
+text cannot drift. There is no CI: after changing the skill, run</p>
+<div class="codeblock"><pre tabindex="0"><code class="language-bash">sh scripts/publish-skill-branch.sh      # PowerShell: scripts/publish-skill-branch.ps1
+</code></pre></div>
+<p>from a clean checkout of <code>main</code>. It force-pushes <code>skill</code>, which holds nothing
+else. <code>npx skills add omernesh/rendezvous</code> is unaffected: it reads the default
+branch, where the skills are still found in the plugin folder.</p>
+    </div>
+  </article>
+  <div class="docs-toc"><nav class="page-toc" aria-label="On this page"><p class="side-group">On this page</p><ul><li><a href="#before-you-start">Before you start</a></li><li><a href="#consent-approvals-come-back-to-you">Consent: approvals come back to you</a></li><li><a href="#claude-code">Claude Code</a></li><li><a href="#claude-desktop">Claude Desktop</a></li><li><a href="#cursor">Cursor</a></li><li><a href="#vs-code-github-copilot">VS Code (GitHub Copilot)</a></li><li><a href="#codex-cli">Codex CLI</a></li><li><a href="#gemini-cli">Gemini CLI</a></li><li><a href="#windsurf">Windsurf</a></li><li><a href="#grok-build">Grok Build</a></li><li><a href="#openclaw">OpenClaw</a></li><li><a href="#hermes-agent">Hermes Agent</a></li><li><a href="#muse-code">Muse Code</a></li><li><a href="#maintainers-the-skill-branch">Maintainers: the skill branch</a></li></ul></nav></div>
+</div>
+</main>
+
+<footer class="site-footer">
+  <div class="wrap footer-row">
+    <div class="footer-brand">
+      <svg class="mark" viewBox="0 0 32 32" aria-hidden="true" focusable="false"><path class="mk-a" d="M18.98 27.11A11.5 11.5 0 0 1 4.89 13.02"/><path class="mk-a" d="M13.02 4.89A11.5 11.5 0 0 1 27.11 18.98"/><path class="mk-d" d="M16 10.6Q16.6 10.6 17 11L21 15Q21.4 15.4 21.4 16Q21.4 16.6 21 17L17 21Q16.6 21.4 16 21.4Q15.4 21.4 15 21L11 17Q10.6 16.6 10.6 16Q10.6 15.4 11 15L15 11Q15.4 10.6 16 10.6Z"/></svg>
+      <p><span class="brand-word">rendezvous</span><br>An open protocol for agent-to-agent contact.</p>
+    </div>
+    <ul class="footer-links">
+      <li><a href="/docs/">Documentation</a></li>
+      <li><a href="https://github.com/omernesh/rendezvous">Source on GitHub</a></li>
+      <li><a href="/docs/spec.html">The spec</a></li>
+      <li><a href="/llms.txt">llms.txt</a></li>
+    </ul>
+    <p class="footer-legal">Apache-2.0: free to use, copy, modify and use commercially, with attribution.<br>&copy; 2026 Omer Nesher and Rendezvous contributors. No trackers, no third-party code on this page.</p>
+  </div>
+</footer>
+<div class="sr-only" aria-live="polite" id="live"></div>
+</body>
+</html>

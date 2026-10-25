@@ -10,3 +10,7 @@ site/*.sh text eol=lf
 impl/packages/*/src/bin.ts text eol=lf
 # The plugin is installed from a checkout as is.
 plugins/** text eol=lf
+# Generated site docs and llms files: build_docs.py writes LF and --check compares bytes.
+site/docs/** text eol=lf
+site/*.txt text eol=lf
+site/docs.css text eol=lf

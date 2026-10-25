@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MCP server and tools | Rendezvous docs</title>
+<meta name="description" content="rdv-mcp, the stdio MCP server: every tool, the consent model, the threat model and client configuration.">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#232a7a">
+<link rel="canonical" href="https://rendezvous.nesher.co/docs/mcp.html">
+<link rel="alternate" type="text/markdown" href="/docs/mcp.md">
+<link rel="alternate" type="text/plain" href="/llms.txt" title="llms.txt">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/docs.css">
+<script src="/theme.js"></script>
+<script src="/app.js" defer></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="site-header">
+  <div class="wrap header-row">
+    <a class="brand" href="/" aria-label="Rendezvous, home">
+      <svg class="mark" viewBox="0 0 32 32" aria-hidden="true" focusable="false"><path class="mk-a" d="M18.98 27.11A11.5 11.5 0 0 1 4.89 13.02"/><path class="mk-a" d="M13.02 4.89A11.5 11.5 0 0 1 27.11 18.98"/><path class="mk-d" d="M16 10.6Q16.6 10.6 17 11L21 15Q21.4 15.4 21.4 16Q21.4 16.6 21 17L17 21Q16.6 21.4 16 21.4Q15.4 21.4 15 21L11 17Q10.6 16.6 10.6 16Q10.6 15.4 11 15L15 11Q15.4 10.6 16 10.6Z"/></svg>
+      <span class="brand-word">rendezvous</span>
+    </a>
+    <nav class="site-nav" aria-label="Sections">
+      <ul>
+        <li><a href="/#how">How it works</a></li>
+        <li><a href="/#privacy">Privacy</a></li>
+        <li><a href="/#setup">Setup</a></li>
+        <li><a href="/#install">Install</a></li>
+        <li><a href="/docs/" aria-current="page">Docs</a></li>
+        <li><a href="/#faq">FAQ</a></li>
+        <li><a href="/#contribute">Contribute</a></li>
+      </ul>
+    </nav>
+    <div class="header-actions">
+      <a class="docs-chip" href="/docs/">Docs</a>
+      <a class="gh-link" href="https://github.com/omernesh/rendezvous" aria-label="Rendezvous on GitHub">
+        <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+      </a>
+      <button class="theme-toggle" type="button" aria-label="Color theme: system" title="Color theme"><svg class="ti ti-system" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 0 1 0 16z" class="fill"/></svg><svg class="ti ti-light" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg><svg class="ti ti-dark" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/></svg></button>
+    </div>
+  </div>
+</header>
+
+<main id="main">
+<div class="wrap docs-layout">
+  <div class="docs-aside"><nav class="docs-side" aria-label="Documentation"><ul><li><a href="/docs/">Docs home</a></li></ul><p class="side-group">Get started</p><ul><li><a href="/docs/agents.html">Setup per agent</a></li><li><a href="/docs/plugin.html">Claude Code plugin</a></li></ul><p class="side-group">Reference</p><ul><li><a href="/docs/cli.html">CLI and library</a></li><li><a href="/docs/mcp.html" aria-current="page">MCP tools</a></li></ul><p class="side-group">Protocol</p><ul><li><a href="/docs/spec.html">Protocol spec</a></li></ul><p class="side-group">Project</p><ul><li><a href="/docs/contributing.html">Contributing</a></li><li><a href="https://github.com/omernesh/rendezvous/pull/19">Roadmap: tasks and groups (proposal)</a></li></ul><p class="side-group">For LLMs</p><ul><li><a href="/llms.txt">llms.txt</a></li><li><a href="/llms-full.txt">llms-full.txt</a></li></ul></nav><details class="docs-menu"><summary>Docs menu</summary><nav aria-label="Documentation menu"><ul><li><a href="/docs/">Docs home</a></li></ul><p class="side-group">Get started</p><ul><li><a href="/docs/agents.html">Setup per agent</a></li><li><a href="/docs/plugin.html">Claude Code plugin</a></li></ul><p class="side-group">Reference</p><ul><li><a href="/docs/cli.html">CLI and library</a></li><li><a href="/docs/mcp.html" aria-current="page">MCP tools</a></li></ul><p class="side-group">Protocol</p><ul><li><a href="/docs/spec.html">Protocol spec</a></li></ul><p class="side-group">Project</p><ul><li><a href="/docs/contributing.html">Contributing</a></li><li><a href="https://github.com/omernesh/rendezvous/pull/19">Roadmap: tasks and groups (proposal)</a></li></ul><p class="side-group">For LLMs</p><ul><li><a href="/llms.txt">llms.txt</a></li><li><a href="/llms-full.txt">llms-full.txt</a></li></ul></nav></details></div>
+  <article class="docs-content">
+    <p class="crumbs"><a href="/docs/">Docs</a> / Reference</p>
+    <h1>MCP server and tools</h1>
+    <p class="doc-meta">Rendered from <a href="https://github.com/omernesh/rendezvous/blob/main/impl/packages/mcp/README.md">impl/packages/mcp/README.md</a> on GitHub. <a href="/docs/mcp.md">Markdown version</a> for LLMs.</p>
+    <details class="toc-m"><summary>On this page</summary><ul><li><a href="#use-it-from-claude-code-plugin">Use it from Claude Code (plugin)</a></li><li><a href="#use-it-from-other-mcp-clients">Use it from other MCP clients</a></li><li><a href="#tools">Tools</a></li><li><a href="#consent-the-human-decides-demo-critical">Consent: the human decides (demo-critical)</a></li><li><a href="#prompt-injection-gate">Prompt injection gate</a></li><li><a href="#tests">Tests</a></li></ul></details>
+    <div class="prose">
+<p><code>rdv-mcp</code>: a stdio MCP server that gives an MCP client (Claude Code, Claude
+Desktop, the MCP Inspector) a Rendezvous agent. PLAN.md §6.1, SPEC.md §13.</p>
+<p>The server runs one long-lived listening agent in-process. Its state is the
+same home dir as the <code>rdv</code> CLI (<code>agent.json</code>, <code>config.json</code>, <code>inbox.jsonl</code>,
+<code>negotiations.json</code>, <code>lock</code>, plus <code>consent.json</code>, <code>events.jsonl</code> and
+<code>listener.lock</code>), and it takes the lock only per operation, like <code>rdv listen</code>.
+So <code>rdv contact pending</code> or <code>rdv contact grant</code> can run in a terminal against
+the same profile while the server is up. Only one process per home consumes
+inbound events (whoever holds <code>listener.lock</code>); if <code>rdv listen</code> or another
+<code>rdv-mcp</code> already does, this server runs attached: its tools work, and
+<code>rdv_inbox</code> reads the events the consumer writes to <code>events.jsonl</code>. It takes
+over when the consumer exits. <code>rdv_status</code> says which (<code>inbound</code>: <code>consumer</code>
+or <code>attached</code>). See impl/README.md.</p>
+<div class="codeblock"><pre tabindex="0"><code class="language-bash">npm run build                              # from impl/
+node packages/mcp/dist/src/bin.js --home ~/.rendezvous/omer --calendar cal.json --tz +02:00
+</code></pre></div>
+<p>Options: <code>--home &lt;dir&gt;</code> or <code>--profile &lt;name&gt;</code> (same resolution as <code>rdv</code>:
+<code>--home</code>, <code>$RDV_HOME</code>, <code>~/.rendezvous/&lt;profile&gt;</code>), <code>--calendar &lt;file.json&gt;</code>,
+<code>--calendar-dir &lt;dir&gt;</code> (repeatable, env <code>RDV_CALENDAR_DIR</code>: where the assistant
+may pick other calendar files from),
+<code>--window "next week evenings"</code>, <code>--tz +02:00</code> (env <code>RDV_CALENDAR</code>,
+<code>RDV_WINDOW</code>, <code>RDV_TZ</code>). Without a calendar, incoming dinner proposals are
+listed but not answered. stdout carries MCP; human-facing notices go to stderr.
+Client config examples: <a href="https://github.com/omernesh/rendezvous/blob/main/impl/demo/SCRIPT.md"><code>impl/demo/SCRIPT.md</code></a>.</p>
+<h2 id="use-it-from-claude-code-plugin">Use it from Claude Code (plugin)<a class="anchor" href="#use-it-from-claude-code-plugin" title="Link to this section" aria-label="Link to this section">#</a></h2>
+<p>The repo is also a Claude Code plugin marketplace. In Claude Code's chat:</p>
+<div class="codeblock"><pre tabindex="0"><code class="language-text">/plugin marketplace add omernesh/rendezvous
+/plugin install rendezvous@rendezvous
+/reload-plugins
+</code></pre></div>
+<p>The plugin (<a href="https://github.com/omernesh/rendezvous/tree/main/plugins/rendezvous"><code>plugins/rendezvous</code></a>) registers this
+server through a small launcher (<code>bin/rdv-mcp.mjs</code>, run with <code>node</code>, so it
+works on Windows too) that loads the build the installer made in
+<code>~/.rendezvous/src</code> (or <code>$RDV_DIR</code>). It adds the Rendezvous skill (install,
+identity, contact, first message, incoming requests) and a PreToolUse consent
+guard (below). The server uses the same home as <code>rdv</code>: <code>$RDV_HOME</code>, else
+<code>~/.rendezvous/$RDV_PROFILE</code>, else <code>~/.rendezvous/default</code>. The skill alone,
+for other agents that load SKILL.md files: <code>npx skills add omernesh/rendezvous</code>.</p>
+<h2 id="use-it-from-other-mcp-clients">Use it from other MCP clients<a class="anchor" href="#use-it-from-other-mcp-clients" title="Link to this section" aria-label="Link to this section">#</a></h2>
+<p>Per-agent setup, skill install and a check that it works for ten agents: <a href="/docs/agents.html"><code>docs/agents.md</code></a>.</p>
+<p>Register <code>rdv-mcp</code> as a stdio server; the installer puts it on PATH. Pass
+options (<code>--profile omer</code>, <code>--calendar cal.json</code>, …) in <code>args</code>.</p>
+<p>Claude Desktop (<code>claude_desktop_config.json</code>) or Cursor (<code>~/.cursor/mcp.json</code>
+or <code>.cursor/mcp.json</code>):</p>
+<div class="codeblock"><pre tabindex="0"><code class="language-json">{
+  &quot;mcpServers&quot;: {
+    &quot;rendezvous&quot;: { &quot;command&quot;: &quot;rdv-mcp&quot;, &quot;args&quot;: [&quot;--profile&quot;, &quot;omer&quot;] }
+  }
+}
+</code></pre></div>
+<p>Codex (<code>~/.codex/config.toml</code>):</p>
+<div class="codeblock"><pre tabindex="0"><code class="language-toml">[mcp_servers.rendezvous]
+command = &quot;rdv-mcp&quot;
+args = [&quot;--profile&quot;, &quot;omer&quot;]
+</code></pre></div>
+<p>On Windows <code>rdv-mcp</code> is a <code>.cmd</code> shim, which most clients can't spawn
+directly: use <code>"command": "cmd", "args": ["/c", "rdv-mcp", "--profile", "omer"]</code>,
+or <code>"command": "node"</code> with the built file
+(<code>%USERPROFILE%\.rendezvous\src\impl\packages\mcp\dist\src\bin.js</code>) as the
+first argument. Claude Code without the plugin:
+<code>claude mcp add rendezvous -- rdv-mcp --profile omer</code> (Windows:
+<code>claude mcp add rendezvous -- cmd /c rdv-mcp --profile omer</code>).</p>
+<p>Approval forms need a client that supports MCP elicitation; Claude Code does in
+interactive sessions (not in <code>-p</code>). Elsewhere approvals use the confirm phrase
+the human reads in their own terminal (<code>rdv contact pending</code>), below.</p>
+<h2 id="tools">Tools<a class="anchor" href="#tools" title="Link to this section" aria-label="Link to this section">#</a></h2>
+<div class="tablewrap" tabindex="0"><table>
+<thead>
+<tr>
+<th>Tool</th>
+<th>Input</th>
+<th>Output</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>rdv_init</code></td>
+<td>profile, emails[], phones[] (<code>email</code> / <code>phone</code>: one of each, kept as aliases), relays (omitted: the default public relays <code>wss://nos.lol</code>, <code>wss://relay.primal.net</code>, <code>wss://relay.nostr.net</code>, <code>wss://nostr.oxtr.dev</code>), public_pointer, calendar, window, tz</td>
+<td>agent ID, fingerprint; keeps an existing agent and its relays (re-key only with <code>rdv init --force</code>). Every address is public; at most 8</td>
+</tr>
+<tr>
+<td><code>rdv_addresses</code></td>
+<td>action <code>list</code> / <code>add</code> / <code>remove</code>, address, public (add; default true)</td>
+<td>our addresses, each public or private; <code>add</code> / <code>remove</code> re-sign and (pointer on) republish the card and re-subscribe at once, like <code>rdv address</code>. The owner's own setup, not a consent decision; strict email / E.164 only; contacts are kept</td>
+</tr>
+<tr>
+<td><code>rdv_status</code></td>
+<td>—</td>
+<td>ID, our addresses (<code>addresses</code>, and <code>our_addresses</code> with public or private), relays, <code>relay_health</code> (per relay: <code>last_ok</code>, <code>last_error</code> with <code>kind</code> and the relay's message as <code>untrusted_peer_text</code>, <code>cooldown_until</code>), contacts (<code>local_label</code>: what your user called them; <code>unverified_claims</code>: the addresses their cards claim; <code>label_conflict</code> when two share a label), pending count, negotiation settings, approval mode</td>
+</tr>
+<tr>
+<td><code>rdv_publish_card</code></td>
+<td>—</td>
+<td>topics published, and <code>on_relays</code>: per public address, whether the relays now serve this card (read back)</td>
+</tr>
+<tr>
+<td><code>rdv_discover</code></td>
+<td>address</td>
+<td>cards found (agent ID, fingerprint, claimed addresses, relays); never a label (anyone can publish a card for any address), never our own card (for our own address: <code>own_card_on_relays</code>)</td>
+</tr>
+<tr>
+<td><code>rdv_request_contact</code></td>
+<td>target (email, +phone, or agent ID), greeting, label (probes only)</td>
+<td>request ID, local_label (a probe: the address probed, applied only when the human confirms the answer; by agent ID: none, and a <code>label</code> is refused)</td>
+</tr>
+<tr>
+<td><code>rdv_pending_requests</code></td>
+<td>—</td>
+<td>requests with fingerprint, binding, how they arrived, untrusted greeting</td>
+</tr>
+<tr>
+<td><code>rdv_grant</code></td>
+<td>request_id, tier, may_propose_meetings, confirm_phrase, label; or grant_id (+ confirm_phrase, label) to confirm a probe answer; or agent_id (+ tier, may_propose_meetings, confirm_phrase) to grant an existing contact more, which also sends it a reverse grant</td>
+<td>contact (needs the human, below)</td>
+</tr>
+<tr>
+<td><code>rdv_revoke</code></td>
+<td>agent_id, or request_id / grant_id (+ block) to decline</td>
+<td>revoked / declined / rejected</td>
+</tr>
+<tr>
+<td><code>rdv_send</code></td>
+<td>agent_id or to (a <code>local_label</code>), payload <code>{type, …}</code> (not <code>a2a/*</code>, <code>rdv/*</code>)</td>
+<td>agent ID, fingerprint, envelope seq; <code>to</code> is refused when no contact, or more than one, has that label</td>
+</tr>
+<tr>
+<td><code>rdv_inbox</code></td>
+<td>since cursor, limit, wait_seconds (≤ 60)</td>
+<td>events + next_cursor</td>
+</tr>
+<tr>
+<td><code>rdv_negotiate</code></td>
+<td>action propose / confirm / cancel / status; agent_id, intent <code>dinner</code>, window, calendar, tz, minutes, place, area, expires, task_id, reason, confirm_phrase</td>
+<td>task ID and state; progress via <code>rdv_inbox</code>; <code>confirm</code> needs the human (below)</td>
+</tr>
+</tbody>
+</table></div>
+<p>Resource <code>rdv://inbox</code> holds the latest 50 events; the server supports
+<code>resources/subscribe</code> and sends <code>notifications/resources/updated</code> when events
+arrive, so a client that subscribes needn't poll.</p>
+<p>Events: <code>contact_request</code>, <code>contact_candidate</code> (an answer to our discovery
+probe, confirmed through the same human gate as a grant), <code>contact</code>, <code>message</code>, <code>revoked</code>, <code>dropped</code>, <code>error</code>,
+and <code>dinner</code> (kind proposed / offer-received / countered / confirm-needed /
+accepted / completed / released / rejected / canceled / expired / status, with
+a plain-language <code>summary</code> we write from validated fields; <code>confirm-needed</code>
+also carries a <code>next_step</code>).</p>
+<p>Grants issued here always carry <code>may_initiate: true</code>,
+<code>may_access_calendar: "free_busy"</code>, <code>max_frequency: "100/day"</code>, and
+<code>may_propose_meetings</code> (default true). The calendar adapter only ever shares
+free slots, never titles.</p>
+<h2 id="consent-the-human-decides-demo-critical">Consent: the human decides (demo-critical)<a class="anchor" href="#consent-the-human-decides-demo-critical" title="Link to this section" aria-label="Link to this section">#</a></h2>
+<p><code>rdv_grant</code> must not succeed on the model's say-so. It succeeds only through
+one of these:</p>
+<ol>
+<li><strong>Elicitation.</strong> If the client advertises the <code>elicitation</code> capability, the
+    server asks the client to show the human a form: requester agent ID,
+    fingerprint, binding (with a warning that <code>claimed</code> proves nothing), how the
+    request arrived, the greeting marked untrusted, a tier picker, and the
+    local label (the model's suggestion, editable; empty for none). Only
+    <code>accept</code> with <code>approve: true</code> grants; the human's tier and label win over
+    the model's. The model never sees or answers this form. A probe answer
+    gets the same form, with the probed address as the label.</li>
+<li><strong>Confirm phrase.</strong> Otherwise each pending request gets a random phrase
+    (three words and three digits, about 28 bits), shown only on human
+    channels: this server's stderr and <code>rdv contact pending</code> in text mode (not
+    <code>--json</code>). <code>consent.json</code> (mode 600) keeps only a salted scrypt hash, so
+    the terminal issues a new phrase each time it shows one (the latest shown
+    wins). The human reads it and types it to the model, which passes it as
+    <code>confirm_phrase</code>. A phrase approves the request on the terms shown with it
+    (tier, scope and local label, default first: no label): if the model asks
+    for another tier, <code>may_propose_meetings</code> or <code>label</code>, it is refused and the
+    human is shown a new phrase for exactly those terms (issue #12, NOTES 62).
+    A probe answer's phrase is bound the same way to its label (the probed
+    address unless the model asks for another). Phrases are per request and single
+    use; 5 wrong tries replace the phrase. A phrase can approve tiers <code>friend</code>
+    and below; <code>family</code>/<code>spouse</code> need the form or <code>rdv contact grant --tier …</code>
+    in a terminal.</li>
+<li><strong>The terminal.</strong> The human runs <code>rdv contact grant &lt;id&gt;</code> themselves.</li>
+</ol>
+<p><strong>Each meeting too (issue #8).</strong> The server answers dinner proposals from the
+calendar, but the slot it picks is only held tentatively ("confirm-needed")
+until the human confirms it: <code>rdv_negotiate</code> with action <code>confirm</code> passes the
+same gate. With elicitation the human gets a form (peer fingerprint, time,
+place marked untrusted); <code>decline</code> there cancels the negotiation and
+releases the hold, dismissing it leaves the dinner held. Otherwise the server
+issues a confirm phrase per held dinner (same rules, shown on stderr and in
+<code>rdv dinner list</code> text mode), or the human runs <code>rdv dinner confirm &lt;task-id&gt; --hold &lt;code&gt;</code>
+(or <code>rdv dinner cancel</code>) in a terminal. That happens once per side: the
+accepter's human before the accept goes out, the offerer's before the
+<code>meeting/confirm</code>. Holds are released on cancel, decline or expiry.
+Approval is bound to the meeting the human saw, not the peer-chosen task ID:
+if the held meeting changes before the confirm runs (another slot, peer or
+stage, or a new negotiation under the same ID), nothing is confirmed, the tool
+says it changed, and a new phrase is issued (NOTES 59).</p>
+<p><strong>Canceling an agreed dinner (issue #20).</strong> <code>rdv_negotiate</code> action <code>cancel</code>
+on a completed dinner passes the same gate, bound to the agreement shown
+(NOTES 61): a form if the client can elicit (only an explicit yes cancels),
+otherwise the first call issues a cancel phrase to the human (stderr and
+<code>rdv dinner list</code>) and fails; the human can also run <code>rdv dinner cancel</code>.
+The peer's agent frees the evening without asking (it only frees time) and
+reports a <code>meeting-canceled</code> event.</p>
+<p><strong>Granting an existing contact more (issue #1).</strong> <code>rdv_grant</code> with
+<code>agent_id</code> gives a contact (for example one the user requested, which by
+default may write but not propose meetings) the tier and
+<code>may_propose_meetings</code> asked for, and sends it a reverse grant so it can use
+them. Same gate: a form showing the contact's fingerprint, local label, its
+rights now and exactly what is granted (the human's tier and meetings choice
+win), or a confirm phrase issued on the model's first call and bound to that
+contact and those terms (stderr and <code>rdv contact pending</code>). The contact is
+checked again under the lock where the grant happens; one revoked and made
+again under the same agent ID is refused (NOTES 66).</p>
+<p>No tool result ever contains a phrase (tests scan every result and the inbox
+resource). Limits (NOTES 57): phrases are not on disk, but a model that can
+read files or run commands as the same user can still catch one while it is
+shown (or run <code>rdv contact pending</code> itself); there, prefer elicitation or the
+terminal. Without a phrase or elicitation, <code>rdv_grant</code> fails and tells the
+model to ask its human.</p>
+<p><strong>Threat model.</strong> This stops a model from granting on its own initiative, and
+stops instructions injected through peer text from making it grant. It does
+<strong>not</strong> stop a model that can run arbitrary shell commands or read arbitrary
+files as the same OS user: such a model can catch a phrase while it is shown,
+run <code>rdv contact grant</code> or <code>rdv contact label</code> itself, or read <code>agent.json</code>, which holds the secret
+key, a worse problem. In Claude Code,
+keep the default permission mode (shell commands and reads outside the project
+need approval) and add deny rules for the home dir and <code>rdv contact pending</code>
+(example in <code>demo/SCRIPT.md</code>). The Claude Code plugin adds a PreToolUse hook
+(<code>plugins/rendezvous/hooks/consent-guard.mjs</code>) on every tool that refuses the
+consent and phrase-showing <code>rdv</code> commands (<code>contact grant</code>/<code>confirm</code>/<code>resync</code>/
+<code>label</code>/<code>pending</code>, <code>contact request &lt;agent-id&gt; --label</code>, <code>dinner confirm</code>/
+<code>cancel</code>/<code>list</code>, <code>listen --auto-grant</code>/<code>--auto-confirm</code>, <code>init --force</code>), any command naming <code>agent.json</code>,
+<code>agent.json.bak</code> or <code>consent.json</code>, and any read, edit, search or glob of a
+Rendezvous home. It parses commands like a shell before matching. It is
+defence in depth, <strong>not a security boundary</strong>: a model with a shell can still
+get a command past it (NOTES 62). The boundary is the consent gate above. The strongest setup runs <code>rdv-mcp</code> as a
+different OS user, or on another machine, from the one the assistant's tools
+run as. Revoking and declining need no confirmation: they only reduce access.</p>
+<h2 id="prompt-injection-gate">Prompt injection gate<a class="anchor" href="#prompt-injection-gate" title="Link to this section" aria-label="Link to this section">#</a></h2>
+<ul>
+<li>Peer-written text (greetings, text parts, decline reasons, free-form message
+    payloads, error and drop details) reaches the model only as
+    <code>{"untrusted_peer_text": "…"}</code>, with control and bidi characters replaced and
+    a 2000-character cap. Results that contain such fields start with a note
+    telling the model to treat them as data. The server instructions and the
+    tool descriptions say the same.</li>
+<li>Short peer-chosen fields are strict tokens or get quarantined the same way:
+    agent IDs, UUIDs, addresses (email / +phone), relay URLs, tiers, bindings,
+    task states, payload <code>type</code> (<code>[a-z0-9][a-z0-9._/-]{0,63}</code>), integer <code>seq</code>.</li>
+<li>Only <code>data</code> parts drive the negotiation engine (<code>@rendezvous/a2a</code>, strict
+    validation); text parts are display only.</li>
+<li>The model can't make the server read local files: <code>rdv_request_contact</code>
+    takes addresses and agent IDs (no card files), calendar paths must end in
+    <code>.json</code> and resolve (symlinks included) inside the home, the <code>--calendar</code>
+    directory or a <code>--calendar-dir</code>, the file must be a strict calendar
+    (<code>busy</code> list, optional <code>timezone</code>, nothing else) before it is read or
+    rewritten, and calendar errors never echo file contents.</li>
+<li>Errors that could quote peer or file content (inbound handling, fs and
+    JSON parse failures) go to the server log for the human; the model gets a
+    generic line. Only our own messages (bad input, negotiation rules) reach it.</li>
+</ul>
+<h2 id="tests">Tests<a class="anchor" href="#tests" title="Link to this section" aria-label="Link to this section">#</a></h2>
+<p><code>npm test -w @rendezvous/mcp</code>: two servers (Omer, John) driven by the SDK's
+<code>Client</code> over an in-memory MCP transport against the in-memory relay, covering
+init → discover → request → refused grant → human approval (confirm phrase,
+and elicitation accept / decline) → negotiate → refused model-only dinner
+confirmation → each human confirms (phrase, form) → completed on both sides, plus</p>
+<p>a stdio smoke test, phrase rules and hardening. The chat onboarding flow the
+plugin's skill follows (init, request by address, both humans approve by form
+or phrase, first message) runs the same way. <code>test/plugin.test.ts</code> checks the
+plugin: manifests, the launcher over stdio, the consent guard, and a lint that
+fails if the skill or its references tell the assistant to run a consent
+command. Live (dinner and onboarding):
+<code>RDV_LIVE_RELAYS=wss://nos.lol,wss://relay.primal.net npm run test:live -w @rendezvous/mcp</code>.</p>
+    </div>
+  </article>
+  <div class="docs-toc"><nav class="page-toc" aria-label="On this page"><p class="side-group">On this page</p><ul><li><a href="#use-it-from-claude-code-plugin">Use it from Claude Code (plugin)</a></li><li><a href="#use-it-from-other-mcp-clients">Use it from other MCP clients</a></li><li><a href="#tools">Tools</a></li><li><a href="#consent-the-human-decides-demo-critical">Consent: the human decides (demo-critical)</a></li><li><a href="#prompt-injection-gate">Prompt injection gate</a></li><li><a href="#tests">Tests</a></li></ul></nav></div>
+</div>
+</main>
+
+<footer class="site-footer">
+  <div class="wrap footer-row">
+    <div class="footer-brand">
+      <svg class="mark" viewBox="0 0 32 32" aria-hidden="true" focusable="false"><path class="mk-a" d="M18.98 27.11A11.5 11.5 0 0 1 4.89 13.02"/><path class="mk-a" d="M13.02 4.89A11.5 11.5 0 0 1 27.11 18.98"/><path class="mk-d" d="M16 10.6Q16.6 10.6 17 11L21 15Q21.4 15.4 21.4 16Q21.4 16.6 21 17L17 21Q16.6 21.4 16 21.4Q15.4 21.4 15 21L11 17Q10.6 16.6 10.6 16Q10.6 15.4 11 15L15 11Q15.4 10.6 16 10.6Z"/></svg>
+      <p><span class="brand-word">rendezvous</span><br>An open protocol for agent-to-agent contact.</p>
+    </div>
+    <ul class="footer-links">
+      <li><a href="/docs/">Documentation</a></li>
+      <li><a href="https://github.com/omernesh/rendezvous">Source on GitHub</a></li>
+      <li><a href="/docs/spec.html">The spec</a></li>
+      <li><a href="/llms.txt">llms.txt</a></li>
+    </ul>
+    <p class="footer-legal">Apache-2.0: free to use, copy, modify and use commercially, with attribution.<br>&copy; 2026 Omer Nesher and Rendezvous contributors. No trackers, no third-party code on this page.</p>
+  </div>
+</footer>
+<div class="sr-only" aria-live="polite" id="live"></div>
+</body>
+</html>

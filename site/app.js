@@ -50,13 +50,13 @@
     });
   }
 
-  Array.prototype.forEach.call(document.querySelectorAll('.cmd'), function (block) {
+  Array.prototype.forEach.call(document.querySelectorAll('.cmd, .codeblock'), function (block) {
     var code = block.querySelector('code');
     if (!code) return;
     var btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'copy';
-    btn.setAttribute('aria-label', 'Copy command');
+    btn.setAttribute('aria-label', block.classList.contains('codeblock') ? 'Copy code' : 'Copy command');
     var label = document.createElement('span');
     label.className = 'copy-label';
     label.textContent = 'Copy';
@@ -68,7 +68,7 @@
       copyText(code.textContent).then(function () {
         btn.classList.add('done');
         label.textContent = 'Copied';
-        announce('Command copied to the clipboard');
+        announce('Copied to the clipboard');
         clearTimeout(timer);
         timer = setTimeout(function () {
           btn.classList.remove('done');

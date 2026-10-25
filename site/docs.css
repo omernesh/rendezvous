@@ -1,0 +1,365 @@
+/* Docs pages. Loaded after style.css; same tokens, so light and dark follow the site theme. */
+
+.docs-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 20px 48px;
+  padding-block: 28px 80px;
+}
+@media (min-width: 900px) {
+  .docs-layout {
+    grid-template-columns: 230px minmax(0, 1fr);
+  }
+  .docs-toc {
+    display: none;
+  }
+}
+@media (min-width: 1240px) {
+  .docs-layout {
+    grid-template-columns: 230px minmax(0, 1fr) 220px;
+  }
+  .docs-toc {
+    display: block;
+  }
+  .toc-m {
+    display: none;
+  }
+}
+
+/* sidebar: always visible on wide screens, a collapsible menu on narrow ones */
+.docs-aside,
+.docs-toc {
+  min-width: 0;
+}
+.docs-side,
+.page-toc {
+  font-size: 0.92rem;
+}
+.docs-side ul,
+.page-toc ul,
+.docs-menu ul,
+.toc-m ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.side-group {
+  margin: 18px 0 4px;
+  font-size: 0.74rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-weight: 600;
+}
+.docs-side a,
+.docs-menu a {
+  display: block;
+  padding: 6px 10px;
+  border-radius: 8px;
+  color: var(--text);
+  text-decoration: none;
+}
+.docs-side a:hover,
+.docs-menu a:hover {
+  background: var(--bg-alt);
+  color: var(--heading);
+}
+.docs-side a[aria-current='page'],
+.docs-menu a[aria-current='page'] {
+  background: var(--bg-alt);
+  color: var(--heading);
+  font-weight: 600;
+  box-shadow: inset 3px 0 0 var(--mk-d);
+}
+.docs-menu {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+}
+.docs-menu summary,
+.toc-m summary {
+  cursor: pointer;
+  padding: 12px 14px;
+  font-weight: 600;
+  color: var(--heading);
+  list-style: none;
+}
+.docs-menu summary::-webkit-details-marker,
+.toc-m summary::-webkit-details-marker {
+  display: none;
+}
+.docs-menu summary::after,
+.toc-m summary::after {
+  content: '';
+  float: right;
+  width: 8px;
+  height: 8px;
+  margin-top: 5px;
+  border-right: 2px solid var(--mk-a);
+  border-bottom: 2px solid var(--mk-a);
+  transform: rotate(45deg);
+  transition: transform 0.2s;
+}
+.docs-menu[open] summary::after,
+.toc-m[open] summary::after {
+  transform: rotate(-135deg);
+  margin-top: 8px;
+}
+.docs-menu nav {
+  padding: 0 8px 12px;
+}
+@media (min-width: 900px) {
+  .docs-menu {
+    display: none;
+  }
+  .docs-aside {
+    position: sticky;
+    top: 84px;
+    align-self: start;
+    max-height: calc(100vh - 100px);
+    overflow-y: auto;
+    padding-bottom: 24px;
+  }
+}
+@media (max-width: 899px) {
+  .docs-side {
+    display: none;
+  }
+}
+.docs-toc {
+  position: sticky;
+  top: 84px;
+  align-self: start;
+  max-height: calc(100vh - 100px);
+  overflow-y: auto;
+}
+.page-toc li {
+  margin: 0;
+}
+.page-toc a {
+  display: block;
+  padding: 4px 8px;
+  color: var(--muted);
+  text-decoration: none;
+  border-left: 2px solid var(--line);
+  overflow-wrap: anywhere;
+}
+.page-toc a:hover {
+  color: var(--heading);
+  border-left-color: var(--mk-d);
+}
+.page-toc ul ul a {
+  padding-left: 20px;
+  font-size: 0.88rem;
+}
+.toc-m {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  margin: 0 0 24px;
+  background: var(--surface);
+}
+.toc-m ul {
+  padding: 0 14px 12px;
+}
+.toc-m ul ul {
+  padding: 0 0 0 14px;
+}
+.toc-m a {
+  display: block;
+  padding: 5px 0;
+  overflow-wrap: anywhere;
+}
+
+/* article */
+.docs-content {
+  min-width: 0;
+  max-width: 50rem;
+}
+.docs-content h1 {
+  font-family: var(--font-display);
+  font-weight: 600;
+  color: var(--heading);
+  font-size: clamp(1.9rem, 1.3rem + 2.4vw, 2.7rem);
+  line-height: 1.1;
+  letter-spacing: -0.025em;
+  margin: 0 0 12px;
+  text-wrap: balance;
+}
+.crumbs {
+  margin: 0 0 10px;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+.doc-meta {
+  font-size: 0.88rem;
+  color: var(--muted);
+  margin-bottom: 28px;
+}
+.lede-doc {
+  font-size: 1.12rem;
+  color: var(--muted);
+  margin-bottom: 20px;
+}
+.docs-content > h2 {
+  font-size: 1.5rem;
+  margin: 44px 0 12px;
+}
+
+.prose {
+  overflow-wrap: break-word;
+}
+.prose h2,
+.prose h3,
+.prose h4 {
+  position: relative;
+  scroll-margin-top: 80px;
+}
+.prose h2 {
+  font-size: clamp(1.4rem, 1.15rem + 1vw, 1.8rem);
+  margin: 52px 0 14px;
+  padding-top: 28px;
+  border-top: 1px solid var(--line);
+  line-height: 1.2;
+}
+.prose h2:first-child {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+.prose h3 {
+  font-size: 1.2rem;
+  margin: 34px 0 10px;
+}
+.prose h4 {
+  font-family: var(--font-display);
+  font-size: 1.02rem;
+  font-weight: 600;
+  color: var(--heading);
+  margin: 26px 0 8px;
+}
+.prose .anchor {
+  margin-left: 8px;
+  text-decoration: none;
+  color: var(--muted);
+  opacity: 0;
+  font-weight: 400;
+}
+.prose h2:hover .anchor,
+.prose h3:hover .anchor,
+.prose h4:hover .anchor,
+.prose .anchor:focus-visible {
+  opacity: 1;
+}
+@media (hover: none) {
+  .prose .anchor {
+    opacity: 0.55;
+  }
+}
+.prose ul,
+.prose ol {
+  margin: 0 0 1em;
+  padding-left: 1.4em;
+}
+.prose li {
+  margin: 0.3em 0;
+}
+.prose li > p {
+  margin: 0 0 0.5em;
+}
+.prose blockquote {
+  margin: 1.2em 0;
+  padding: 10px 16px;
+  border-left: 3px solid var(--mk-d);
+  background: var(--bg-alt);
+  border-radius: 0 10px 10px 0;
+  color: var(--text);
+}
+.prose blockquote > :last-child {
+  margin-bottom: 0;
+}
+.prose hr {
+  border: 0;
+  border-top: 1px solid var(--line);
+  margin: 36px 0;
+}
+.prose img {
+  max-width: 100%;
+  height: auto;
+}
+
+/* code: boxes scroll inside themselves, never the page */
+.codeblock {
+  position: relative;
+  margin: 0 0 1.2em;
+  background: var(--code-bg);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  min-width: 0;
+}
+.codeblock pre {
+  margin: 0;
+  padding: 14px 52px 14px 16px;
+  overflow-x: auto;
+  color: var(--code-text);
+  font-size: 0.86rem;
+  line-height: 1.55;
+  scrollbar-width: thin;
+}
+.codeblock pre code {
+  background: none;
+  padding: 0;
+  overflow-wrap: normal;
+  font-size: inherit;
+}
+.codeblock .copy {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  margin: 0;
+  min-height: 30px;
+}
+@media (min-width: 481px) {
+  .codeblock pre {
+    padding-right: 96px;
+  }
+}
+
+/* tables */
+.tablewrap {
+  overflow-x: auto;
+  margin: 0 0 1.4em;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  scrollbar-width: thin;
+}
+.prose table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 0.92rem;
+}
+.prose th,
+.prose td {
+  text-align: left;
+  vertical-align: top;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--line);
+  line-height: 1.5;
+  min-width: 7em;
+}
+.prose th {
+  background: var(--bg-alt);
+  color: var(--heading);
+  font-weight: 600;
+}
+.prose tr:last-child td {
+  border-bottom: 0;
+}
+.prose td code {
+  overflow-wrap: normal;
+  white-space: nowrap;
+}
+
+/* the docs index uses the site's .entry list */
+.docs-content .entry {
+  margin-top: 28px;
+}

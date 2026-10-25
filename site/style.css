@@ -1476,3 +1476,76 @@ q {
 .works-with .fine {
   margin-top: 10px;
 }
+
+/* ---------- docs link in the header (the section nav is hidden on small screens) ---------- */
+.docs-chip {
+  display: none;
+  padding: 7px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  color: var(--heading);
+  text-decoration: none;
+  font-size: 0.9rem;
+  font-weight: 500;
+  margin-right: 4px;
+}
+.docs-chip:hover {
+  border-color: var(--mk-d);
+  color: var(--heading);
+}
+@media (max-width: 899px) {
+  .docs-chip {
+    display: inline-block;
+  }
+}
+.site-nav a[aria-current='page'] {
+  color: var(--heading);
+  background: var(--bg-alt);
+}
+
+/* ---------- faq groups ---------- */
+.faq-group {
+  margin-top: 44px;
+}
+.faq-group.first {
+  margin-top: 32px;
+}
+.faq-group h3 {
+  font-size: 1.3rem;
+  margin: 0 0 4px;
+}
+.faq-group .faq {
+  margin-top: 12px;
+}
+.faq details ul {
+  margin: 0 0 22px;
+  padding-left: 1.2em;
+  max-width: 44em;
+}
+.faq details li {
+  margin-bottom: 6px;
+}
+.faq details pre {
+  margin: 0 0 22px;
+  padding: 12px 14px;
+  background: var(--code-bg);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow-x: auto;
+  max-width: 44em;
+  color: var(--code-text);
+  line-height: 1.55;
+}
+.tag {
+  display: inline-block;
+  padding: 1px 8px;
+  margin-right: 4px;
+  border-radius: 999px;
+  background: var(--clear-bg);
+  color: var(--clear-ink);
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  vertical-align: 0.08em;
+  white-space: nowrap;
+}
