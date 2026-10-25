@@ -172,6 +172,11 @@ export class NostrTransport implements Transport {
     this.destroyed = true;
     for (const t of this.timers) clearTimeout(t);
     this.timers.clear();
+    // nostr-tools detaches its handlers before closing a socket; `ws` then
+    // emits 'error' for a socket that is still connecting, and an 'error' with
+    // no listener crashes the process. Swallow it: we are shutting down.
+    const relays = (this.pool as unknown as { relays: Map<string, { ws?: { on?: (ev: string, fn: () => void) => void } }> }).relays;
+    for (const r of relays.values()) r.ws?.on?.('error', () => {});
     this.pool.destroy();
   }
 }

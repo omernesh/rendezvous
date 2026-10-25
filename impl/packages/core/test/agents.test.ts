@@ -391,6 +391,30 @@ describe('gap buffer bounds (security regression)', () => {
 });
 
 describe('relay drops', () => {
+  it('close() while a relay socket is still connecting does not crash the process', async () => {
+    // A TCP server that never answers the WebSocket handshake.
+    const { createServer } = await import('node:net');
+    const sockets: import('node:net').Socket[] = [];
+    const server = createServer((s) => sockets.push(s));
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', () => r()));
+    const port = (server.address() as { port: number }).port;
+    const errors: unknown[] = [];
+    const onUncaught = (e: unknown) => errors.push(e);
+    process.on('uncaughtException', onUncaught);
+    try {
+      const t = new NostrTransport({ key: generateKey(), relays: [`ws://127.0.0.1:${port}`] });
+      void t.fetchTopic('x', 2000).catch(() => {});
+      await new Promise((r) => setTimeout(r, 100)); // the handshake is now pending
+      t.close();
+      await new Promise((r) => setTimeout(r, 100));
+      expect(errors).toEqual([]);
+    } finally {
+      process.off('uncaughtException', onUncaught);
+      for (const s of sockets) s.destroy();
+      await new Promise((r) => server.close(() => r(undefined)));
+    }
+  });
+
   it('re-subscribes after the relay goes away and comes back', async () => {
     let relay = await startTestRelay();
     const port = Number(new URL(relay.url).port);
