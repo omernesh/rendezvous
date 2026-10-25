@@ -78,6 +78,9 @@ The verb sits in the message's `data` part (`data.rdv`): `meeting/propose`,
 |---|---|
 | `model` | Types and `parsePayload`: strict validation of peer input (known keys only, UUIDs, 1–3 RFC 3339 slots with offsets, bounded text) |
 | `engine` | Pure state machine: `propose`, `receive`, `confirmMeeting`, `cancel`, `cancelMeeting`, `expire` return `{ state, outgoing, effects, events }`; no I/O, no clock |
+| `capabilities` | General tasks (SPEC §7.6.3): `CapabilityRegistry` (URI, approval class, strict `input` and result `data` schemas built with `s`) |
+| `taskmodel` | `parseTaskPayload` for `tasks/v1` (`task/request`, `task/input`, `rdv/cancel`, status updates, `a2a/artifact-update`), and `routeA2A`, which picks the meetings or the tasks engine |
+| `tasks` | Pure task engine: `requestTask`, `receiveTask`, `inputTask`, `cancelTask`, `startTask`, `rejectTask`, `askInput`, `sendArtifact`, `finishTask`, `expireTasks`; start and release gates as effects; bounds of §7.4 |
 | `calendar` | `CalendarAdapter` (`freeBusy(range)`, `hold(slot)`, `release(slot, note)`), `MemoryCalendar`, `JsonFileCalendar` (titles never leave the file) |
 | `window` | `parseWindow`: RFC 3339 ranges and a few phrases, with `now` and the UTC offset passed in |
 | `time` | Instants, fixed offsets, slot formatting |

@@ -218,6 +218,18 @@ The verb sits in the message's <code>data</code> part (<code>data.rdv</code>): <
 <td>Pure state machine: <code>propose</code>, <code>receive</code>, <code>confirmMeeting</code>, <code>cancel</code>, <code>cancelMeeting</code>, <code>expire</code> return <code>{ state, outgoing, effects, events }</code>; no I/O, no clock</td>
 </tr>
 <tr>
+<td><code>capabilities</code></td>
+<td>General tasks (SPEC §7.6.3): <code>CapabilityRegistry</code> (URI, approval class, strict <code>input</code> and result <code>data</code> schemas built with <code>s</code>)</td>
+</tr>
+<tr>
+<td><code>taskmodel</code></td>
+<td><code>parseTaskPayload</code> for <code>tasks/v1</code> (<code>task/request</code>, <code>task/input</code>, <code>rdv/cancel</code>, status updates, <code>a2a/artifact-update</code>), and <code>routeA2A</code>, which picks the meetings or the tasks engine</td>
+</tr>
+<tr>
+<td><code>tasks</code></td>
+<td>Pure task engine: <code>requestTask</code>, <code>receiveTask</code>, <code>inputTask</code>, <code>cancelTask</code>, <code>startTask</code>, <code>rejectTask</code>, <code>askInput</code>, <code>sendArtifact</code>, <code>finishTask</code>, <code>expireTasks</code>; start and release gates as effects; bounds of §7.4</td>
+</tr>
+<tr>
 <td><code>calendar</code></td>
 <td><code>CalendarAdapter</code> (<code>freeBusy(range)</code>, <code>hold(slot)</code>, <code>release(slot, note)</code>), <code>MemoryCalendar</code>, <code>JsonFileCalendar</code> (titles never leave the file)</td>
 </tr>

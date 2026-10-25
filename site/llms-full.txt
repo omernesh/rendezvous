@@ -520,6 +520,9 @@ The verb sits in the message's `data` part (`data.rdv`): `meeting/propose`,
 |---|---|
 | `model` | Types and `parsePayload`: strict validation of peer input (known keys only, UUIDs, 1–3 RFC 3339 slots with offsets, bounded text) |
 | `engine` | Pure state machine: `propose`, `receive`, `confirmMeeting`, `cancel`, `cancelMeeting`, `expire` return `{ state, outgoing, effects, events }`; no I/O, no clock |
+| `capabilities` | General tasks (SPEC §7.6.3): `CapabilityRegistry` (URI, approval class, strict `input` and result `data` schemas built with `s`) |
+| `taskmodel` | `parseTaskPayload` for `tasks/v1` (`task/request`, `task/input`, `rdv/cancel`, status updates, `a2a/artifact-update`), and `routeA2A`, which picks the meetings or the tasks engine |
+| `tasks` | Pure task engine: `requestTask`, `receiveTask`, `inputTask`, `cancelTask`, `startTask`, `rejectTask`, `askInput`, `sendArtifact`, `finishTask`, `expireTasks`; start and release gates as effects; bounds of §7.4 |
 | `calendar` | `CalendarAdapter` (`freeBusy(range)`, `hold(slot)`, `release(slot, note)`), `MemoryCalendar`, `JsonFileCalendar` (titles never leave the file) |
 | `window` | `parseWindow`: RFC 3339 ranges and a few phrases, with `now` and the UTC offset passed in |
 | `time` | Instants, fixed offsets, slot formatting |
@@ -1231,8 +1234,15 @@ Rules:
 - `rendezvous` is ordered by preference; `pref: 0` entries (like DNS TXT) are
   lookup hints rather than delivery addresses.
 - The card is versioned (`v`), signed, and revocable via expiry.
-- `capabilities` also lists the A2A extension URIs the agent supports for
-  the meeting verbs, which is how a peer learns what it may send (§7.5).
+- `capabilities` lists `rdv/v1`, `a2a/0.3`, then the extension URIs the
+  agent supports: lifecycle extensions (`…/ext/meetings/v1`,
+  `…/ext/tasks/v1`), profile extensions (`…/ext/files/v1`,
+  `…/ext/groups/v1`) and capability URIs (`…/ext/request/v1`, …).
+  Advertising a capability says the software can do it; whether a given peer
+  *may* invoke it is the grant (§5.3). A requester SHOULD NOT send a task
+  whose capability the executor's card does not list (§7.5, §7.6). At most
+  32 URIs, each at most 200 characters; a receiver rejects a card over these
+  limits. (**Spec change**, issue #22.)
 - **Changing a card.** An agent may list several addresses, and its owner
   may add or remove them at any time. Each change re-signs the card with a
   `created` later than the previous card's (`v` is the schema version and
@@ -1859,7 +1869,8 @@ where hole-punching fails (TURN relays carry the ciphertext).
 
 Two payload types carry A2A v0.3 objects: `a2a/message` holds a `Message`
 (one negotiation turn) and `a2a/task-update` holds a `TaskStatusUpdateEvent`
-(an acknowledgement or end state). A whole `Task` object is never sent; each
+(an acknowledgement or end state). General tasks (§7.6) add a third,
+`a2a/artifact-update`, holding a `TaskArtifactUpdateEvent` (a result). A whole `Task` object is never sent; each
 side keeps its own copy. A2A assumes a client and a server agent, but both
 peers here are agents, so `role` is always `"agent"`. `messageId`, `taskId`
 and `contextId` are UUIDs; one `contextId` covers one negotiation.
@@ -1952,6 +1963,29 @@ Peer state is bounded: only a meeting-capable grant may create tasks (or
 tombstones); a receiver SHOULD cap tasks per peer (reference: 32, evicting
 finished ones and tombstones first and refusing when all are pending) and
 prune finished tasks (reference: after 30 days).
+
+**General tasks** (**spec change**, issue #22). Every task a peer can create
+under §7.6 costs the receiver memory and its human attention, and keys are
+free. A receiver bounds both (reference values in brackets):
+
+- Only a grant whose `invoke` covers the capability may create a task or a
+  tombstone; anything else is refused before state is kept.
+- Per peer: open tasks across all capabilities [32] and `max_open` per
+  capability [4]; finished tasks and tombstones are evicted first, and a
+  new task is refused when all are open.
+- **Waiting for the human:** per peer [4], in all [64]. When full, the
+  weakest waiting task is rejected with `rejected` (lowest tier first, then
+  the oldest), the newcomer included, and the drop is counted for the
+  human, as pending requests are.
+- Per task: seen `messageId`s [64]; `task/input` [8]; status updates
+  processed [64]; artifacts [8]; artifact chunks [64]; unsupported and
+  finished replies [8 each].
+- Sizes: an envelope's plaintext [32 KiB, §6.4]; a text part [16,000
+  characters]; inline file bytes [16 KiB]; a referenced file [25 MiB,
+  receiver policy], fetched only after the start gate; transfer negotiation
+  messages [16 per transfer, 16 KiB of `data` each].
+- Finished tasks are pruned [after 30 days]; a peer's `expires` defaults
+  to 48 hours and is clamped to 7 days, as for meetings.
 
 ### 7.5 Extending the meeting verbs
 
@@ -2055,6 +2089,123 @@ the other agent may keep the dinner. An agent that knows §7.5 but not this
 extension answers unsupported, and the sender learns it in-band. Both close
 the gap left open in §11.8 as far as a protocol can: the canceling side now
 knows.
+
+### 7.6 General tasks
+
+**Spec change** (issue #22; design `docs/design/general-tasks-and-groups.md`
+Part A). Meetings are one kind of task. Any other work between two agents
+uses the **tasks extension**, `https://rendezvous.nesher.co/ext/tasks/v1`,
+which defines a lifecycle and leaves the meaning of the work to a
+**capability**: an extension URI that names what is asked for (for example
+`…/ext/review/v1`) and defines its input, its results and its approval
+class (§7.6.3). The *requester* sends the task; the *executor* does it.
+
+#### 7.6.1 Payloads
+
+- `a2a/message` (§7.1) carries the requester's turns. Its `data` part names
+  one of three verbs:
+
+  | `data.rdv` | Fields | Meaning |
+  |---|---|---|
+  | `task/request` | `capability` (URI), optional `input` (object), optional `expires` | open a task |
+  | `task/input` | optional `input` | answer an `input-required` status |
+  | `rdv/cancel` | optional `reason` | withdraw a task that is not terminal |
+
+  `input` is validated against the capability's schema. Text parts are the
+  human-readable request; file parts follow §7.7. A message carries at most
+  one `data` part, 8 parts in all, and lists in `extensions` the tasks URI,
+  the capability URI and, when it has file parts, the files URI.
+- `a2a/task-update` (§7.1) carries the executor's state changes. Under this
+  extension its `status` MAY carry an A2A `message` (text and data parts
+  only): the question of an `input-required`, or the reason of a `rejected`
+  or `failed`.
+- `a2a/artifact-update` (new) carries an A2A `TaskArtifactUpdateEvent`:
+  `{taskId, contextId, artifact: {artifactId, name?, description?, parts,
+  extensions?, metadata?}, append?, lastChunk?}`. Parts are text, data
+  (shaped by the capability) and files (§7.7). Only the executor sends it.
+
+`taskId`, `contextId`, `messageId` and `artifactId` are UUIDs. The
+requester chooses `taskId` and `contextId` (one `contextId` may span
+related tasks; `referenceTaskIds` points at earlier ones, for instance a
+task whose artifact is the input of this one).
+
+#### 7.6.2 States
+
+`submitted` (received; waiting for the executor's start gate, §5.5) →
+`working` → `input-required` ⇄ `working` → `completed` | `failed` |
+`rejected` | `canceled`. `rejected` means the executor (or its human)
+refused before starting; `failed` means it started and could not finish.
+These are A2A v0.3 states. A status update MAY say in `metadata`, under
+`<tasks URI>/awaiting`, `"human"` while a gate is open; it is ignorable. A
+requester sends `task/input` only while the task is `input-required`, and
+at most 8 times per task. Expiry, deduplication by `messageId`, tombstones
+for a cancel that overtakes its request, and the answer to a verb for a
+finished task work as in §7.3. `rdv/cancel` belongs to both the meetings
+and the tasks extension; the task's capability says which applies.
+
+The executor's state is the task's state: the requester follows its status
+updates forward only (nothing returns to `submitted`, nothing leaves a
+terminal state) and ignores the rest. A status update that ends or refuses
+a task MAY give a machine reason in `metadata` under `<tasks URI>/reason`:
+`scope` (the grant does not allow the capability), `rate` (a per-peer or
+per-capability limit), `input` (`input` does not match the capability's
+schema), `busy` (too many tasks wait for the human, §7.4), `human` (the
+executor's human said no), `expired`, `unsupported` or `error` (it started
+and could not finish). It is ignorable and written by the peer: the
+requester shows it and acts on nothing else.
+
+A task refused before the executor keeps any state (scope, rate, input) is
+answered with a `rejected` status and its reason. A task whose capability
+the executor does not implement is answered as unsupported (§7.5 rule 5,
+with the same `<meetings URI>/unsupported` key, whose value may also name
+the `capability`), and only within a grant that allows some capability.
+Neither creates state, and both are counted for the human.
+
+#### 7.6.3 Capabilities
+
+A capability is an extension URI whose definition states:
+
+1. the JSON shape of `input` and of the `data` parts of its artifacts
+   (`data.rdv` names the shape, e.g. `review/result`), validated strictly
+   as in §7.5;
+2. its **approval class**, one of:
+   - `notify`: the executor only shows the task to its human; nothing is
+     done or returned beyond a status.
+   - `auto`: bounded, deterministic work that discloses nothing the grant
+     does not already allow (a free/busy query, the meeting negotiation).
+     The grant alone is the approval.
+   - `confirm`: work that commits the human (books, pays, sends, signs) or
+     discloses data beyond the grant. Each task needs its human's approval
+     to start, and each artifact needs it to be released.
+   - `free-form`: the task is defined by peer text and done by a model.
+     It is gated like `confirm`: each task needs approval to start, and
+     each artifact needs it to be released. No per-capability standing
+     policy may waive the start gate; only the owner's `auto_approve: all`
+     for that contact does (§5.5.1).
+3. any extra rules (limits, how results are shaped).
+
+An executor applies the stricter of the capability's class and its own
+owner's policy; a peer can never lower it. `https://rendezvous.nesher.co/ext/request/v1`
+is the general capability: a free-text request, no `input`, results in any
+part kind, class `free-form`. It is how one agent asks another for anything
+no specific capability covers.
+
+**Why a capability URI inside one lifecycle, not one extension per task
+type.** A full verb set per kind of task (how meetings were built) is right
+for meetings, whose counters and holds are a real protocol, and wrong as
+the general path: each kind would redo cancel, expiry, dedup, bounds and
+approval. With one lifecycle a capability is a schema plus a class, and a
+generic engine can gate, bound and show any task (answering an unknown
+capability as unsupported, §7.5). Meetings are not remapped onto
+`tasks/v1`: their verbs are deployed. They count as class `auto` for
+negotiation and `confirm` for accept and confirm, which is §5.5 today.
+
+**Compatibility.** A rev-3 peer that knows §7.5 but not this extension
+answers a task as unsupported (an unknown verb); an older one drops it. A
+requester that checks the card first (§4.3) sends neither of them a task.
+`a2a/artifact-update` is an unknown payload type to both, and is never sent
+to them. Core carries the new payloads unchanged inside the envelope, so
+the wire format and test vectors do not change.
 
 ---
 
