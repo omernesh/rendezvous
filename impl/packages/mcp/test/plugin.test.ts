@@ -755,5 +755,29 @@ describe('auto-approve is the human’s (issue #25)', () => {
     expect(skill).toContain('rdv contact auto-approve');
     const onboarding = readFileSync(ONBOARDING, 'utf8');
     expect(onboarding).not.toMatch(/auto[-_ ]?approve|dangerous mode/i);
+describe('the direct-transfer setting is the human’s (issue #26)', () => {
+  const denied = [
+    'rdv file direct-transfer on',
+    'rdv --home ./h file direct-transfer on',
+    'npx rdv file direct-transfer on',
+    'rdv "file" direct-transfer on',
+    'bash -c "rdv file direct-transfer on"',
+    'rdv file $(echo direct-transfer) on',
+    'echo direct-transfer | xargs rdv file',
+  ];
+  const allowed = [
+    'rdv file prepare ./q4.pdf',
+    'rdv file list',
+    'rdv file fetch 0f1e --file 1',
+    'rdv file decline-transfer 0f1e',
+    'rdv task submit 0f1e --file abcdef012345=https://files.example.com/q4',
+    // `file` is also an ordinary program.
+    'file "$F"',
+    'file ./download.bin',
+  ];
+  it.each(denied)('the guard refuses %s', (c) => expect(checkCommand(c)).toBeTruthy());
+  it.each(allowed)('the guard allows %s', (c) => expect(checkCommand(c)).toBeUndefined());
+  it('the skill names it as the human’s only', () => {
+    expect(consentViolations('Turn it on: `rdv file direct-transfer on`.')).toHaveLength(1);
   });
 });

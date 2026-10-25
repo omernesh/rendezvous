@@ -118,6 +118,7 @@ describe('rdv commands', () => {
       'https://rendezvous.nesher.co/ext/meetings/v1',
       'https://rendezvous.nesher.co/ext/meeting-cancel/v1',
       'https://rendezvous.nesher.co/ext/tasks/v1',
+      'https://rendezvous.nesher.co/ext/files/v1', // file parts in tasks (issue #26)
       'https://rendezvous.nesher.co/ext/request/v1',
     ]);
 

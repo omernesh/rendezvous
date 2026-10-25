@@ -182,10 +182,18 @@ const COMMANDS: Record<string, Command> = {
   },
   'dinner list': { usage: 'rdv dinner list', summary: 'List dinner negotiations and their state', args: 0, run: cmd.dinnerList },
   'task request': {
-    usage: 'rdv task request <agent-id> --text "…" [--text …] [--capability <uri>] [--input \'{…}\'] [--expires <rfc3339>]',
+    usage:
+      'rdv task request <agent-id> --text "…" [--text …] [--capability <uri>] [--input \'{…}\'] [--expires <rfc3339>] [--file <sha256>=<https-url>]... [--inline <path>]...',
     summary: "Ask a contact's agent for a task (default: request/v1, a free-text request); its human approves it before anything is done",
     args: 1,
-    options: { text: { type: 'string', multiple: true }, capability: { type: 'string' }, input: { type: 'string' }, expires: { type: 'string' } },
+    options: {
+      text: { type: 'string', multiple: true },
+      capability: { type: 'string' },
+      input: { type: 'string' },
+      expires: { type: 'string' },
+      file: { type: 'string', multiple: true },
+      inline: { type: 'string', multiple: true },
+    },
     run: cmd.taskRequest,
   },
   'task list': {
@@ -208,10 +216,16 @@ const COMMANDS: Record<string, Command> = {
     run: cmd.taskDecline,
   },
   'task submit': {
-    usage: 'rdv task submit <task-id> --text "…" [--text …] [--name "…"] [--complete]',
-    summary: "Draft a result for a peer's task; it leaves only when you release it (rdv task release)",
+    usage: 'rdv task submit <task-id> [--text "…"]... [--file <sha256>=<https-url>]... [--inline <path>]... [--name "…"] [--complete]',
+    summary: "Draft a result for a peer's task, with your files if any (rdv file prepare); it leaves only when you release it (rdv task release)",
     args: 1,
-    options: { text: { type: 'string', multiple: true }, name: { type: 'string' }, complete: { type: 'boolean' } },
+    options: {
+      text: { type: 'string', multiple: true },
+      file: { type: 'string', multiple: true },
+      inline: { type: 'string', multiple: true },
+      name: { type: 'string' },
+      complete: { type: 'boolean' },
+    },
     run: cmd.taskSubmit,
   },
   'task ask': {
@@ -248,6 +262,38 @@ const COMMANDS: Record<string, Command> = {
     args: 1,
     options: { text: { type: 'string', multiple: true }, input: { type: 'string' } },
     run: cmd.taskInput,
+  },
+  'file prepare': {
+    usage: 'rdv file prepare <path> [--name "…"] [--mime type/subtype] [--plain]',
+    summary: 'Encrypt one of your files under a fresh key for a peer, and write the copy to upload anywhere (nothing is sent; --plain: not encrypted)',
+    args: 1,
+    options: { name: { type: 'string' }, mime: { type: 'string' }, plain: { type: 'boolean' } },
+    run: cmd.filePrepare,
+  },
+  'file list': {
+    usage: 'rdv file list',
+    summary: 'List prepared files, files peers sent for your tasks (not fetched), direct-transfer requests and the setting',
+    args: 0,
+    run: cmd.fileList,
+  },
+  'file fetch': {
+    usage: 'rdv file fetch <task-id> [--file <n|sha256>]',
+    summary: 'Fetch one file a peer sent for a task (only after its start gate): https only, no credentials, size cap, hash checked; saved in quarantine',
+    args: 1,
+    options: { file: { type: 'string' } },
+    run: cmd.fileFetch,
+  },
+  'file decline-transfer': {
+    usage: 'rdv file decline-transfer <transfer-id>',
+    summary: "Decline a contact's request to transfer a file directly",
+    args: 1,
+    run: cmd.fileDeclineTransfer,
+  },
+  'file direct-transfer': {
+    usage: 'rdv file direct-transfer <on|off>',
+    summary: 'Your setting for direct transfers (default off: declined). On: requests are shown to you; nothing ever connects on its own',
+    args: 1,
+    run: cmd.fileDirectTransfer,
   },
   listen: {
     usage:

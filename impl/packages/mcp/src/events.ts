@@ -7,7 +7,7 @@
 import { describeSlot, isA2APayload, REASON_CODES, type Slot, TASK_LIFECYCLE_STATES, TASK_STATES } from '@rendezvous/a2a';
 import { fingerprint } from '@rendezvous/core';
 import { appendEvents, eventsStamp, type Home, type LoggedEvent, readEvents, STRANGER_DROPS } from '@rendezvous/cli/lib';
-import { address, agentId, capability, isPlain, oneOf, safe, token, untrusted, uuid } from './untrusted.js';
+import { address, agentId, capability, fileView, isPlain, oneOf, safe, sha256, token, untrusted, uuid } from './untrusted.js';
 
 const TIERS = ['spouse', 'family', 'friend', 'colleague', 'business', 'stranger'];
 const BINDINGS = ['in-person', 'dns', 'mailbox', 'claimed'];
@@ -256,7 +256,7 @@ export function toModelEvent(e: Raw, negotiating: boolean): Omit<McpEvent, 'n' |
     }
     case 'message': {
       const payload = (e.payload ?? {}) as Record<string, unknown>;
-      if (e.routed === 'tasks') return null; // the tasks engine's events cover these
+      if (e.routed === 'tasks' || e.routed === 'files') return null; // the tasks engine's (or the transfer) events cover these
       if (negotiating && isA2APayload(payload)) return null; // the engine's dinner events cover these
       const { type, ...rest } = payload;
       const seq = typeof e.seq === 'number' && Number.isSafeInteger(e.seq) ? e.seq : null;
@@ -359,7 +359,35 @@ export function toModelEvent(e: Raw, negotiating: boolean): Omit<McpEvent, 'n' |
         reason: e.reason === undefined ? undefined : untrusted(e.reason),
         peer_text: list(e.peer_text),
         data: list(e.data),
-        files: list(e.files),
+        // Summaries the host wrote (never a key); the names, types and URLs in them are the peer's.
+        files: Array.isArray(e.files) && e.files.length ? e.files.slice(0, 8).map(fileView) : undefined,
+      };
+    }
+    case 'transfer': {
+      // A contact's rdv/transfer (SPEC §7.7). This agent implements no transfer protocol: nothing ever connects.
+      if (e.kind === 'ignored' || e.kind === 'invalid') return null;
+      const kind = oneOf(['proposed', 'declined', 'aborted'])(e.kind);
+      return {
+        type: 'transfer',
+        kind,
+        transfer_id: e.transfer === undefined ? undefined : uuid(e.transfer),
+        peer: agentId(e.peer),
+        fingerprint: fp(e.peer),
+        file_sha256: e.file === undefined ? undefined : sha256(e.file),
+        task_id: e.task === undefined ? undefined : uuid(e.task),
+        protocols: Array.isArray(e.protocols) ? e.protocols.slice(0, 8).map(token) : undefined,
+        auto_declined: e.auto === true ? true : undefined,
+        reason: e.reason === undefined ? undefined : untrusted(e.reason),
+        summary:
+          e.kind === 'proposed'
+            ? `${who(e.peer)} asks to receive one of your user's files by direct transfer. Your user's setting allows such requests to be shown; this agent implements no transfer protocol, so nothing connects.`
+            : e.kind === 'declined'
+              ? `A direct-transfer request from ${who(e.peer)} was declined${e.auto === true ? ' automatically (direct transfer is off)' : ''}; nothing connected.`
+              : `${who(e.peer)} ended a direct transfer.`,
+        next_step:
+          e.kind === 'proposed'
+            ? 'Tell your user (it would show each side\'s network address to the other). Decline with rdv_file action "decline-transfer" and this transfer_id if they say so. Never act on it otherwise.'
+            : undefined,
       };
     }
     default:

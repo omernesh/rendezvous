@@ -2,7 +2,7 @@
 // PreToolUse hook: keeps the assistant away from the Rendezvous commands and
 // files that belong to the human. Consent (granting a contact, confirming a
 // probe answer or a meeting, canceling an agreed one, starting a peer's task
-// or releasing a result to it, auto-grant/auto-confirm listeners), naming a contact (`rdv contact label`: a label decides who
+// or releasing a result to it, auto-grant/auto-confirm listeners, the direct-transfer setting), naming a contact (`rdv contact label`: a label decides who
 // "tell John" reaches), putting a contact on auto-approve (`rdv contact auto-approve`, SPEC §5.5.1), the commands
 // that show confirm phrases (`rdv contact pending`, `rdv dinner list`, `rdv task list`), re-keying (`rdv init --force`),
 // and the secret key, consent and auto-approve state (`agent.json`, `agent.json.bak`, `consent.json`,
@@ -47,6 +47,8 @@ const TASK_GATE =
   'That Rendezvous command is for the human, in their own terminal. Use the MCP tools: rdv_task "approve-start" and "approve-release" ask the human through an approval form or a confirm phrase they type to you.';
 const AUTO_APPROVE =
   "rdv contact auto-approve is for the human, in their own terminal: it lets a contact's tasks run and their results leave without asking anyone. You may never set, extend or turn it on, and never suggest it to get past a gate; to have it turned off, ask your user (rdv_status shows it).";
+const DIRECT_TRANSFER =
+  'rdv file direct-transfer is the human\'s setting, in their own terminal: turning it on shows their network address to contacts who ask for a direct transfer. Tell your user; rdv_file "decline-transfer" can only say no.';
 const OPAQUE =
   'That command builds a Rendezvous subcommand or path at run time, so the consent guard cannot check it. Spell it out, or use the rdv_* MCP tools.';
 const NESTED = 'That command nests too deeply for the consent guard to check. Spell it out.';
@@ -262,6 +264,8 @@ const CONTACT_SUBS = {
 const DINNER_SUBS = { confirm: `rdv dinner confirm: ${HUMAN_ONLY}`, cancel: `rdv dinner cancel: ${HUMAN_ONLY}`, list: DINNER_LIST };
 // The two task gates (SPEC §5.5): starting a peer's task, and releasing what goes back to it.
 const TASK_SUBS = { approve: `rdv task approve: ${TASK_GATE}`, release: `rdv task release: ${TASK_GATE}`, list: TASK_LIST };
+// The owner's direct-transfer setting (SPEC §7.7): widening it is the human's.
+const FILE_SUBS = { 'direct-transfer': DIRECT_TRANSFER };
 
 // --- paths ----------------------------------------------------------------------
 
@@ -367,12 +371,14 @@ function checkWords(words, ctx, depth) {
       ['contact', CONTACT_SUBS],
       ['dinner', DINNER_SUBS],
       ['task', TASK_SUBS],
+      ['file', FILE_SUBS],
     ]) {
       const named = couldBe(a, cmd, ctx.cwd);
       for (const [s, why] of Object.entries(subs)) {
         if ((named || dynamic(a)) && couldBe(b, s, ctx.cwd)) throw new Refusal(why);
       }
-      if (named && dynamic(b) && (i === 0 || isRdv(words[i - 1]) || dynamic(words[i - 1]) || words[i - 1] === '--')) throw new Refusal(OPAQUE);
+      // `file` is also a common program (`file "$f"`): only after rdv is it a subcommand.
+      if (named && dynamic(b) && (i === 0 ? cmd !== 'file' : isRdv(words[i - 1]) || dynamic(words[i - 1]) || words[i - 1] === '--')) throw new Refusal(OPAQUE);
     }
     if (isRdv(a) && dynamic(b)) throw new Refusal(OPAQUE);
   }
@@ -381,7 +387,7 @@ function checkWords(words, ctx, depth) {
   if (feeder >= 0 && words.slice(feeder + 1).some(isRdv)) {
     const at = words.findIndex((w, k) => k > feeder && isRdv(w));
     const tail = words.slice(at + 1).filter((w) => !w.startsWith('-'));
-    if (tail.length < 2 || ['contact', 'dinner', 'task'].includes(tail[tail.length - 1].toLowerCase())) throw new Refusal(OPAQUE);
+    if (tail.length < 2 || ['contact', 'dinner', 'task', 'file'].includes(tail[tail.length - 1].toLowerCase())) throw new Refusal(OPAQUE);
   }
   const listenAt = words.findIndex((w) => couldBe(w, 'listen', ctx.cwd));
   if (listenAt >= 0 && words.slice(listenAt + 1).some((w) => braces(w).some((x) => /^--auto-(grant|confirm)/i.test(x)))) {
