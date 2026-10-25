@@ -55,7 +55,7 @@
     <p class="crumbs"><a href="/docs/">Docs</a> / Protocol</p>
     <h1>Protocol specification</h1>
     <p class="doc-meta">Rendered from <a href="https://github.com/omernesh/rendezvous/blob/main/SPEC.md">SPEC.md</a> on GitHub. <a href="/docs/spec.md">Markdown version</a> for LLMs.</p>
-    <details class="toc-m"><summary>On this page</summary><ul><li><a href="#1-abstract">1. Abstract</a></li><li><a href="#2-motivation">2. Motivation</a></li><li><a href="#3-design-principles">3. Design principles</a></li><li><a href="#4-identity-layer">4. Identity layer</a><ul><li><a href="#41-agent-key">4.1 Agent key</a></li><li><a href="#42-agent-id">4.2 Agent ID</a></li><li><a href="#43-address-card-calling-card">4.3 Address Card ("calling card")</a></li><li><a href="#44-discovery-of-a-card">4.4 Discovery of a card</a></li><li><a href="#45-discovery-directories-optional">4.5 Discovery directories (optional)</a></li><li><a href="#46-encoding-canonical-json-and-signatures">4.6 Encoding, canonical JSON and signatures</a></li></ul></li><li><a href="#5-contact-layer-consent-handshake">5. Contact layer (consent &amp;amp; handshake)</a><ul><li><a href="#51-contact-request">5.1 Contact Request</a></li><li><a href="#52-human-channel-bootstrap">5.2 Human-channel bootstrap</a></li><li><a href="#521-mailbox-probe-email-probe-profile">5.2.1 Mailbox probe (email probe profile)</a></li><li><a href="#522-invite-no-agent-found">5.2.2 Invite (no agent found)</a></li><li><a href="#53-contact-grant-consent">5.3 Contact Grant (consent)</a></li><li><a href="#54-policy-and-revocation">5.4 Policy and revocation</a></li><li><a href="#55-consent-stays-with-the-human">5.5 Consent stays with the human</a></li><li><a href="#56-peer-text-is-untrusted-data">5.6 Peer text is untrusted data</a></li></ul></li><li><a href="#6-transport-layer">6. Transport layer</a><ul><li><a href="#61-rendezvous-hints">6.1 Rendezvous hints</a></li><li><a href="#62-primary-relay-nostr">6.2 Primary relay: Nostr</a></li><li><a href="#63-fallbacks-all-optional-all-dumb-pipes">6.3 Fallbacks (all optional, all dumb pipes)</a></li><li><a href="#64-envelope">6.4 Envelope</a></li></ul></li><li><a href="#7-session-task-layer-a2a-semantics">7. Session &amp;amp; task layer (A2A semantics)</a><ul><li><a href="#71-a2a-mapping">7.1 A2A mapping</a></li><li><a href="#72-meeting-verbs">7.2 Meeting verbs</a></li><li><a href="#73-task-states">7.3 Task states</a></li><li><a href="#74-scope-and-defaults">7.4 Scope and defaults</a></li><li><a href="#75-extending-the-meeting-verbs">7.5 Extending the meeting verbs</a></li><li><a href="#77-files">7.7 Files</a></li></ul></li><li><a href="#8-threat-model">8. Threat model</a></li><li><a href="#9-privacy">9. Privacy</a></li><li><a href="#10-anti-spam-reputation">10. Anti-spam &amp;amp; reputation</a></li><li><a href="#11-open-problems-honest">11. Open problems (honest)</a></li><li><a href="#12-scope-phases">12. Scope &amp;amp; phases</a></li><li><a href="#13-reference-implementation-distribution">13. Reference implementation &amp;amp; distribution</a></li><li><a href="#14-appendix">14. Appendix</a></li></ul></details>
+    <details class="toc-m"><summary>On this page</summary><ul><li><a href="#1-abstract">1. Abstract</a></li><li><a href="#2-motivation">2. Motivation</a></li><li><a href="#3-design-principles">3. Design principles</a></li><li><a href="#4-identity-layer">4. Identity layer</a><ul><li><a href="#41-agent-key">4.1 Agent key</a></li><li><a href="#42-agent-id">4.2 Agent ID</a></li><li><a href="#43-address-card-calling-card">4.3 Address Card ("calling card")</a></li><li><a href="#44-discovery-of-a-card">4.4 Discovery of a card</a></li><li><a href="#45-discovery-directories-optional">4.5 Discovery directories (optional)</a></li><li><a href="#46-encoding-canonical-json-and-signatures">4.6 Encoding, canonical JSON and signatures</a></li></ul></li><li><a href="#5-contact-layer-consent-handshake">5. Contact layer (consent &amp;amp; handshake)</a><ul><li><a href="#51-contact-request">5.1 Contact Request</a></li><li><a href="#52-human-channel-bootstrap">5.2 Human-channel bootstrap</a></li><li><a href="#521-mailbox-probe-email-probe-profile">5.2.1 Mailbox probe (email probe profile)</a></li><li><a href="#522-invite-no-agent-found">5.2.2 Invite (no agent found)</a></li><li><a href="#53-contact-grant-consent">5.3 Contact Grant (consent)</a></li><li><a href="#54-policy-and-revocation">5.4 Policy and revocation</a></li><li><a href="#55-consent-stays-with-the-human">5.5 Consent stays with the human</a></li><li><a href="#56-peer-text-is-untrusted-data">5.6 Peer text is untrusted data</a></li></ul></li><li><a href="#6-transport-layer">6. Transport layer</a><ul><li><a href="#61-rendezvous-hints">6.1 Rendezvous hints</a></li><li><a href="#62-primary-relay-nostr">6.2 Primary relay: Nostr</a></li><li><a href="#63-fallbacks-all-optional-all-dumb-pipes">6.3 Fallbacks (all optional, all dumb pipes)</a></li><li><a href="#64-envelope">6.4 Envelope</a></li></ul></li><li><a href="#7-session-task-layer-a2a-semantics">7. Session &amp;amp; task layer (A2A semantics)</a><ul><li><a href="#71-a2a-mapping">7.1 A2A mapping</a></li><li><a href="#72-meeting-verbs">7.2 Meeting verbs</a></li><li><a href="#73-task-states">7.3 Task states</a></li><li><a href="#74-scope-and-defaults">7.4 Scope and defaults</a></li><li><a href="#75-extending-the-meeting-verbs">7.5 Extending the meeting verbs</a></li><li><a href="#76-general-tasks">7.6 General tasks</a></li><li><a href="#77-files">7.7 Files</a></li></ul></li><li><a href="#8-threat-model">8. Threat model</a></li><li><a href="#9-privacy">9. Privacy</a></li><li><a href="#10-anti-spam-reputation">10. Anti-spam &amp;amp; reputation</a></li><li><a href="#11-open-problems-honest">11. Open problems (honest)</a></li><li><a href="#12-scope-phases">12. Scope &amp;amp; phases</a></li><li><a href="#13-reference-implementation-distribution">13. Reference implementation &amp;amp; distribution</a></li><li><a href="#14-appendix">14. Appendix</a></li></ul></details>
     <div class="prose">
 <p><strong>Status:</strong> Draft v0.1 rev 3 (2026-10-25) — for discussion<br>
 <strong>Author:</strong> Omer Nesher<br>
@@ -312,8 +312,15 @@ with zero ideology — is the template this spec follows.</p>
 <li><code>rendezvous</code> is ordered by preference; <code>pref: 0</code> entries (like DNS TXT) are
     lookup hints rather than delivery addresses.</li>
 <li>The card is versioned (<code>v</code>), signed, and revocable via expiry.</li>
-<li><code>capabilities</code> also lists the A2A extension URIs the agent supports for
-    the meeting verbs, which is how a peer learns what it may send (§7.5).</li>
+<li><code>capabilities</code> lists <code>rdv/v1</code>, <code>a2a/0.3</code>, then the extension URIs the
+    agent supports: lifecycle extensions (<code>…/ext/meetings/v1</code>,
+    <code>…/ext/tasks/v1</code>), profile extensions (<code>…/ext/files/v1</code>,
+    <code>…/ext/groups/v1</code>) and capability URIs (<code>…/ext/request/v1</code>, …).
+    Advertising a capability says the software can do it; whether a given peer
+    <em>may</em> invoke it is the grant (§5.3). A requester SHOULD NOT send a task
+    whose capability the executor's card does not list (§7.5, §7.6). At most
+    32 URIs, each at most 200 characters; a receiver rejects a card over these
+    limits. (<strong>Spec change</strong>, issue #22.)</li>
 <li><strong>Changing a card.</strong> An agent may list several addresses, and its owner
     may add or remove them at any time. Each change re-signs the card with a
     <code>created</code> later than the previous card's (<code>v</code> is the schema version and
@@ -930,7 +937,8 @@ where hole-punching fails (TURN relays carry the ciphertext).</p>
 <h3 id="71-a2a-mapping">7.1 A2A mapping<a class="anchor" href="#71-a2a-mapping" title="Link to this section" aria-label="Link to this section">#</a></h3>
 <p>Two payload types carry A2A v0.3 objects: <code>a2a/message</code> holds a <code>Message</code>
 (one negotiation turn) and <code>a2a/task-update</code> holds a <code>TaskStatusUpdateEvent</code>
-(an acknowledgement or end state). A whole <code>Task</code> object is never sent; each
+(an acknowledgement or end state). General tasks (§7.6) add a third,
+<code>a2a/artifact-update</code>, holding a <code>TaskArtifactUpdateEvent</code> (a result). A whole <code>Task</code> object is never sent; each
 side keeps its own copy. A2A assumes a client and a server agent, but both
 peers here are agents, so <code>role</code> is always <code>"agent"</code>. <code>messageId</code>, <code>taskId</code>
 and <code>contextId</code> are UUIDs; one <code>contextId</code> covers one negotiation.</p>
@@ -1048,6 +1056,29 @@ carry slots only, never event titles.</p>
 tombstones); a receiver SHOULD cap tasks per peer (reference: 32, evicting
 finished ones and tombstones first and refusing when all are pending) and
 prune finished tasks (reference: after 30 days).</p>
+<p><strong>General tasks</strong> (<strong>spec change</strong>, issue #22). Every task a peer can create
+under §7.6 costs the receiver memory and its human attention, and keys are
+free. A receiver bounds both (reference values in brackets):</p>
+<ul>
+<li>Only a grant whose <code>invoke</code> covers the capability may create a task or a
+    tombstone; anything else is refused before state is kept.</li>
+<li>Per peer: open tasks across all capabilities [32] and <code>max_open</code> per
+    capability [4]; finished tasks and tombstones are evicted first, and a
+    new task is refused when all are open.</li>
+<li><strong>Waiting for the human:</strong> per peer [4], in all [64]. When full, the
+    weakest waiting task is rejected with <code>rejected</code> (lowest tier first, then
+    the oldest), the newcomer included, and the drop is counted for the
+    human, as pending requests are.</li>
+<li>Per task: seen <code>messageId</code>s [64]; <code>task/input</code> [8]; status updates
+    processed [64]; artifacts [8]; artifact chunks [64]; unsupported and
+    finished replies [8 each].</li>
+<li>Sizes: an envelope's plaintext [32 KiB, §6.4]; a text part [16,000
+    characters]; inline file bytes [16 KiB]; a referenced file [25 MiB,
+    receiver policy], fetched only after the start gate; transfer negotiation
+    messages [16 per transfer, 16 KiB of <code>data</code> each].</li>
+<li>Finished tasks are pruned [after 30 days]; a peer's <code>expires</code> defaults
+    to 48 hours and is clamped to 7 days, as for meetings.</li>
+</ul>
 <h3 id="75-extending-the-meeting-verbs">7.5 Extending the meeting verbs<a class="anchor" href="#75-extending-the-meeting-verbs" title="Link to this section" aria-label="Link to this section">#</a></h3>
 <p><strong>Spec change</strong> (issue #4; resolves §11.11). The verb set grows:
 <code>meeting/confirm</code> and <code>meeting/cancel</code> both came after the first draft, and
@@ -1182,6 +1213,139 @@ the other agent may keep the dinner. An agent that knows §7.5 but not this
 extension answers unsupported, and the sender learns it in-band. Both close
 the gap left open in §11.8 as far as a protocol can: the canceling side now
 knows.</p>
+<h3 id="76-general-tasks">7.6 General tasks<a class="anchor" href="#76-general-tasks" title="Link to this section" aria-label="Link to this section">#</a></h3>
+<p><strong>Spec change</strong> (issue #22; design <code>docs/design/general-tasks-and-groups.md</code>
+Part A). Meetings are one kind of task. Any other work between two agents
+uses the <strong>tasks extension</strong>, <code>https://rendezvous.nesher.co/ext/tasks/v1</code>,
+which defines a lifecycle and leaves the meaning of the work to a
+<strong>capability</strong>: an extension URI that names what is asked for (for example
+<code>…/ext/review/v1</code>) and defines its input, its results and its approval
+class (§7.6.3). The <em>requester</em> sends the task; the <em>executor</em> does it.</p>
+<h4 id="761-payloads">7.6.1 Payloads<a class="anchor" href="#761-payloads" title="Link to this section" aria-label="Link to this section">#</a></h4>
+<ul>
+<li>
+<p><code>a2a/message</code> (§7.1) carries the requester's turns. Its <code>data</code> part names
+    one of three verbs:</p>
+<div class="tablewrap" tabindex="0"><table>
+<thead>
+<tr>
+<th><code>data.rdv</code></th>
+<th>Fields</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>task/request</code></td>
+<td><code>capability</code> (URI), optional <code>input</code> (object), optional <code>expires</code></td>
+<td>open a task</td>
+</tr>
+<tr>
+<td><code>task/input</code></td>
+<td>optional <code>input</code></td>
+<td>answer an <code>input-required</code> status</td>
+</tr>
+<tr>
+<td><code>rdv/cancel</code></td>
+<td>optional <code>reason</code></td>
+<td>withdraw a task that is not terminal</td>
+</tr>
+</tbody>
+</table></div>
+<p><code>input</code> is validated against the capability's schema. Text parts are the
+human-readable request; file parts follow §7.7. A message carries at most
+one <code>data</code> part, 8 parts in all, and lists in <code>extensions</code> the tasks URI,
+the capability URI and, when it has file parts, the files URI.</p>
+</li>
+<li>
+<p><code>a2a/task-update</code> (§7.1) carries the executor's state changes. Under this
+    extension its <code>status</code> MAY carry an A2A <code>message</code> (text and data parts
+    only): the question of an <code>input-required</code>, or the reason of a <code>rejected</code>
+    or <code>failed</code>.</p>
+</li>
+<li><code>a2a/artifact-update</code> (new) carries an A2A <code>TaskArtifactUpdateEvent</code>:
+    <code>{taskId, contextId, artifact: {artifactId, name?, description?, parts,
+    extensions?, metadata?}, append?, lastChunk?}</code>. Parts are text, data
+    (shaped by the capability) and files (§7.7). Only the executor sends it.</li>
+</ul>
+<p><code>taskId</code>, <code>contextId</code>, <code>messageId</code> and <code>artifactId</code> are UUIDs. The
+requester chooses <code>taskId</code> and <code>contextId</code> (one <code>contextId</code> may span
+related tasks; <code>referenceTaskIds</code> points at earlier ones, for instance a
+task whose artifact is the input of this one).</p>
+<h4 id="762-states">7.6.2 States<a class="anchor" href="#762-states" title="Link to this section" aria-label="Link to this section">#</a></h4>
+<p><code>submitted</code> (received; waiting for the executor's start gate, §5.5) →
+<code>working</code> → <code>input-required</code> ⇄ <code>working</code> → <code>completed</code> | <code>failed</code> |
+<code>rejected</code> | <code>canceled</code>. <code>rejected</code> means the executor (or its human)
+refused before starting; <code>failed</code> means it started and could not finish.
+These are A2A v0.3 states. A status update MAY say in <code>metadata</code>, under
+<code>&lt;tasks URI&gt;/awaiting</code>, <code>"human"</code> while a gate is open; it is ignorable. A
+requester sends <code>task/input</code> only while the task is <code>input-required</code>, and
+at most 8 times per task. Expiry, deduplication by <code>messageId</code>, tombstones
+for a cancel that overtakes its request, and the answer to a verb for a
+finished task work as in §7.3. <code>rdv/cancel</code> belongs to both the meetings
+and the tasks extension; the task's capability says which applies.</p>
+<p>The executor's state is the task's state: the requester follows its status
+updates forward only (nothing returns to <code>submitted</code>, nothing leaves a
+terminal state) and ignores the rest. A status update that ends or refuses
+a task MAY give a machine reason in <code>metadata</code> under <code>&lt;tasks URI&gt;/reason</code>:
+<code>scope</code> (the grant does not allow the capability), <code>rate</code> (a per-peer or
+per-capability limit), <code>input</code> (<code>input</code> does not match the capability's
+schema), <code>busy</code> (too many tasks wait for the human, §7.4), <code>human</code> (the
+executor's human said no), <code>expired</code>, <code>unsupported</code> or <code>error</code> (it started
+and could not finish). It is ignorable and written by the peer: the
+requester shows it and acts on nothing else.</p>
+<p>A task refused before the executor keeps any state (scope, rate, input) is
+answered with a <code>rejected</code> status and its reason. A task whose capability
+the executor does not implement is answered as unsupported (§7.5 rule 5,
+with the same <code>&lt;meetings URI&gt;/unsupported</code> key, whose value may also name
+the <code>capability</code>), and only within a grant that allows some capability.
+Neither creates state, and both are counted for the human.</p>
+<h4 id="763-capabilities">7.6.3 Capabilities<a class="anchor" href="#763-capabilities" title="Link to this section" aria-label="Link to this section">#</a></h4>
+<p>A capability is an extension URI whose definition states:</p>
+<ol>
+<li>the JSON shape of <code>input</code> and of the <code>data</code> parts of its artifacts
+    (<code>data.rdv</code> names the shape, e.g. <code>review/result</code>), validated strictly
+    as in §7.5;</li>
+<li>
+<p>its <strong>approval class</strong>, one of:</p>
+<ul>
+<li><code>notify</code>: the executor only shows the task to its human; nothing is
+  done or returned beyond a status.</li>
+<li><code>auto</code>: bounded, deterministic work that discloses nothing the grant
+  does not already allow (a free/busy query, the meeting negotiation).
+  The grant alone is the approval.</li>
+<li><code>confirm</code>: work that commits the human (books, pays, sends, signs) or
+  discloses data beyond the grant. Each task needs its human's approval
+  to start, and each artifact needs it to be released.</li>
+<li><code>free-form</code>: the task is defined by peer text and done by a model.
+  It is gated like <code>confirm</code>: each task needs approval to start, and
+  each artifact needs it to be released. No per-capability standing
+  policy may waive the start gate; only the owner's <code>auto_approve: all</code>
+  for that contact does (§5.5.1).
+3. any extra rules (limits, how results are shaped).</li>
+</ul>
+</li>
+</ol>
+<p>An executor applies the stricter of the capability's class and its own
+owner's policy; a peer can never lower it. <code>https://rendezvous.nesher.co/ext/request/v1</code>
+is the general capability: a free-text request, no <code>input</code>, results in any
+part kind, class <code>free-form</code>. It is how one agent asks another for anything
+no specific capability covers.</p>
+<p><strong>Why a capability URI inside one lifecycle, not one extension per task
+type.</strong> A full verb set per kind of task (how meetings were built) is right
+for meetings, whose counters and holds are a real protocol, and wrong as
+the general path: each kind would redo cancel, expiry, dedup, bounds and
+approval. With one lifecycle a capability is a schema plus a class, and a
+generic engine can gate, bound and show any task (answering an unknown
+capability as unsupported, §7.5). Meetings are not remapped onto
+<code>tasks/v1</code>: their verbs are deployed. They count as class <code>auto</code> for
+negotiation and <code>confirm</code> for accept and confirm, which is §5.5 today.</p>
+<p><strong>Compatibility.</strong> A rev-3 peer that knows §7.5 but not this extension
+answers a task as unsupported (an unknown verb); an older one drops it. A
+requester that checks the card first (§4.3) sends neither of them a task.
+<code>a2a/artifact-update</code> is an unknown payload type to both, and is never sent
+to them. Core carries the new payloads unchanged inside the envelope, so
+the wire format and test vectors do not change.</p>
 <hr>
 <h3 id="77-files">7.7 Files<a class="anchor" href="#77-files" title="Link to this section" aria-label="Link to this section">#</a></h3>
 <blockquote>
@@ -1586,7 +1750,7 @@ lookups.</p>
 vendor-neutral and unowned.</p>
     </div>
   </article>
-  <div class="docs-toc"><nav class="page-toc" aria-label="On this page"><p class="side-group">On this page</p><ul><li><a href="#1-abstract">1. Abstract</a></li><li><a href="#2-motivation">2. Motivation</a></li><li><a href="#3-design-principles">3. Design principles</a></li><li><a href="#4-identity-layer">4. Identity layer</a><ul><li><a href="#41-agent-key">4.1 Agent key</a></li><li><a href="#42-agent-id">4.2 Agent ID</a></li><li><a href="#43-address-card-calling-card">4.3 Address Card ("calling card")</a></li><li><a href="#44-discovery-of-a-card">4.4 Discovery of a card</a></li><li><a href="#45-discovery-directories-optional">4.5 Discovery directories (optional)</a></li><li><a href="#46-encoding-canonical-json-and-signatures">4.6 Encoding, canonical JSON and signatures</a></li></ul></li><li><a href="#5-contact-layer-consent-handshake">5. Contact layer (consent &amp;amp; handshake)</a><ul><li><a href="#51-contact-request">5.1 Contact Request</a></li><li><a href="#52-human-channel-bootstrap">5.2 Human-channel bootstrap</a></li><li><a href="#521-mailbox-probe-email-probe-profile">5.2.1 Mailbox probe (email probe profile)</a></li><li><a href="#522-invite-no-agent-found">5.2.2 Invite (no agent found)</a></li><li><a href="#53-contact-grant-consent">5.3 Contact Grant (consent)</a></li><li><a href="#54-policy-and-revocation">5.4 Policy and revocation</a></li><li><a href="#55-consent-stays-with-the-human">5.5 Consent stays with the human</a></li><li><a href="#56-peer-text-is-untrusted-data">5.6 Peer text is untrusted data</a></li></ul></li><li><a href="#6-transport-layer">6. Transport layer</a><ul><li><a href="#61-rendezvous-hints">6.1 Rendezvous hints</a></li><li><a href="#62-primary-relay-nostr">6.2 Primary relay: Nostr</a></li><li><a href="#63-fallbacks-all-optional-all-dumb-pipes">6.3 Fallbacks (all optional, all dumb pipes)</a></li><li><a href="#64-envelope">6.4 Envelope</a></li></ul></li><li><a href="#7-session-task-layer-a2a-semantics">7. Session &amp;amp; task layer (A2A semantics)</a><ul><li><a href="#71-a2a-mapping">7.1 A2A mapping</a></li><li><a href="#72-meeting-verbs">7.2 Meeting verbs</a></li><li><a href="#73-task-states">7.3 Task states</a></li><li><a href="#74-scope-and-defaults">7.4 Scope and defaults</a></li><li><a href="#75-extending-the-meeting-verbs">7.5 Extending the meeting verbs</a></li><li><a href="#77-files">7.7 Files</a></li></ul></li><li><a href="#8-threat-model">8. Threat model</a></li><li><a href="#9-privacy">9. Privacy</a></li><li><a href="#10-anti-spam-reputation">10. Anti-spam &amp;amp; reputation</a></li><li><a href="#11-open-problems-honest">11. Open problems (honest)</a></li><li><a href="#12-scope-phases">12. Scope &amp;amp; phases</a></li><li><a href="#13-reference-implementation-distribution">13. Reference implementation &amp;amp; distribution</a></li><li><a href="#14-appendix">14. Appendix</a></li></ul></nav></div>
+  <div class="docs-toc"><nav class="page-toc" aria-label="On this page"><p class="side-group">On this page</p><ul><li><a href="#1-abstract">1. Abstract</a></li><li><a href="#2-motivation">2. Motivation</a></li><li><a href="#3-design-principles">3. Design principles</a></li><li><a href="#4-identity-layer">4. Identity layer</a><ul><li><a href="#41-agent-key">4.1 Agent key</a></li><li><a href="#42-agent-id">4.2 Agent ID</a></li><li><a href="#43-address-card-calling-card">4.3 Address Card ("calling card")</a></li><li><a href="#44-discovery-of-a-card">4.4 Discovery of a card</a></li><li><a href="#45-discovery-directories-optional">4.5 Discovery directories (optional)</a></li><li><a href="#46-encoding-canonical-json-and-signatures">4.6 Encoding, canonical JSON and signatures</a></li></ul></li><li><a href="#5-contact-layer-consent-handshake">5. Contact layer (consent &amp;amp; handshake)</a><ul><li><a href="#51-contact-request">5.1 Contact Request</a></li><li><a href="#52-human-channel-bootstrap">5.2 Human-channel bootstrap</a></li><li><a href="#521-mailbox-probe-email-probe-profile">5.2.1 Mailbox probe (email probe profile)</a></li><li><a href="#522-invite-no-agent-found">5.2.2 Invite (no agent found)</a></li><li><a href="#53-contact-grant-consent">5.3 Contact Grant (consent)</a></li><li><a href="#54-policy-and-revocation">5.4 Policy and revocation</a></li><li><a href="#55-consent-stays-with-the-human">5.5 Consent stays with the human</a></li><li><a href="#56-peer-text-is-untrusted-data">5.6 Peer text is untrusted data</a></li></ul></li><li><a href="#6-transport-layer">6. Transport layer</a><ul><li><a href="#61-rendezvous-hints">6.1 Rendezvous hints</a></li><li><a href="#62-primary-relay-nostr">6.2 Primary relay: Nostr</a></li><li><a href="#63-fallbacks-all-optional-all-dumb-pipes">6.3 Fallbacks (all optional, all dumb pipes)</a></li><li><a href="#64-envelope">6.4 Envelope</a></li></ul></li><li><a href="#7-session-task-layer-a2a-semantics">7. Session &amp;amp; task layer (A2A semantics)</a><ul><li><a href="#71-a2a-mapping">7.1 A2A mapping</a></li><li><a href="#72-meeting-verbs">7.2 Meeting verbs</a></li><li><a href="#73-task-states">7.3 Task states</a></li><li><a href="#74-scope-and-defaults">7.4 Scope and defaults</a></li><li><a href="#75-extending-the-meeting-verbs">7.5 Extending the meeting verbs</a></li><li><a href="#76-general-tasks">7.6 General tasks</a></li><li><a href="#77-files">7.7 Files</a></li></ul></li><li><a href="#8-threat-model">8. Threat model</a></li><li><a href="#9-privacy">9. Privacy</a></li><li><a href="#10-anti-spam-reputation">10. Anti-spam &amp;amp; reputation</a></li><li><a href="#11-open-problems-honest">11. Open problems (honest)</a></li><li><a href="#12-scope-phases">12. Scope &amp;amp; phases</a></li><li><a href="#13-reference-implementation-distribution">13. Reference implementation &amp;amp; distribution</a></li><li><a href="#14-appendix">14. Appendix</a></li></ul></nav></div>
 </div>
 </main>
 

@@ -33,6 +33,8 @@ import {
   verifyGrant,
   verifyDoc,
   MAX_ADDRESSES,
+  MAX_CAPABILITY_CHARS,
+  MAX_CARD_CAPABILITIES,
   newerCard,
   normalizeAddresses,
   parseAddress,
@@ -78,6 +80,25 @@ describe('address card', () => {
     expect(verifyCard({ ...card, policy: { inbound: 'allow', public: true } }).ok).toBe(false);
     const expired = createCard(k, { rendezvous: hints, expires: '2000-01-01T00:00:00Z' });
     expect(verifyCard(expired)).toEqual({ ok: false, reason: 'card expired' });
+  });
+
+  it('bounds capabilities: at most 32 entries of at most 200 characters (SPEC §4.3, issue #22)', () => {
+    const k = generateKey();
+    const uri = (n: number) => `https://rendezvous.nesher.co/ext/x${n}/v1`;
+    const at = Array.from({ length: MAX_CARD_CAPABILITIES }, (_, i) => uri(i));
+    expect(verifyCard(createCard(k, { rendezvous: hints, capabilities: at })).ok).toBe(true);
+    expect(() => createCard(k, { rendezvous: hints, capabilities: [...at, uri(99)] })).toThrow(/more than 32/);
+    const long = 'https://e.example/' + 'a'.repeat(MAX_CAPABILITY_CHARS - 18);
+    expect(long.length).toBe(MAX_CAPABILITY_CHARS);
+    expect(verifyCard(createCard(k, { rendezvous: hints, capabilities: ['rdv/v1', long] })).ok).toBe(true);
+    expect(() => createCard(k, { rendezvous: hints, capabilities: ['rdv/v1', long + 'a'] })).toThrow(/at most 200/);
+    // A peer's card past the limits is refused, even when validly signed.
+    const card = createCard(k, { rendezvous: hints });
+    const { sig: _sig, ...body } = card;
+    expect(verifyCard(signDoc({ ...body, capabilities: [...at, uri(99)] }, k))).toEqual({ ok: false, reason: 'more than 32 capabilities' });
+    expect(verifyCard(signDoc({ ...body, capabilities: ['rdv/v1', long + 'a'] }, k)).ok).toBe(false);
+    expect(verifyCard(signDoc({ ...body, capabilities: ['rdv/v1', 7] as unknown as string[] }, k)).ok).toBe(false);
+    expect(verifyCard(signDoc({ ...body, capabilities: 'rdv/v1' as unknown as string[] }, k)).ok).toBe(false);
   });
 });
 

@@ -42,7 +42,21 @@ export interface CardOptions {
   now?: Date;
 }
 
+/** SPEC §4.3: `capabilities` lists at most 32 entries (protocol versions and extension URIs), each at most 200 characters. */
+export const MAX_CARD_CAPABILITIES = 32;
+export const MAX_CAPABILITY_CHARS = 200;
+
+/** Why a `capabilities` list breaks the §4.3 limits, or null when it is fine. */
+export function capabilitiesProblem(v: unknown): string | null {
+  if (!Array.isArray(v)) return 'missing capabilities';
+  if (v.length > MAX_CARD_CAPABILITIES) return `more than ${MAX_CARD_CAPABILITIES} capabilities`;
+  if (!v.every((c) => typeof c === 'string' && c.length <= MAX_CAPABILITY_CHARS)) return `a capability must be a string of at most ${MAX_CAPABILITY_CHARS} characters`;
+  return null;
+}
+
 export function createCard(key: AgentKey, opts: CardOptions): AddressCard {
+  const problem = opts.capabilities === undefined ? null : capabilitiesProblem(opts.capabilities);
+  if (problem) throw new Error(`card: ${problem}`);
   const body: CardBody = {
     v: 1,
     id: key.id,
@@ -97,7 +111,8 @@ export function verifyCard(input: unknown, now: Date = new Date()): CardCheck {
   if (card.v !== 1) return { ok: false, reason: 'unsupported card version' };
   if (!isAgentId(card.id)) return { ok: false, reason: 'bad agent id' };
   if (!Array.isArray(card.rendezvous)) return { ok: false, reason: 'missing rendezvous list' };
-  if (!Array.isArray(card.capabilities)) return { ok: false, reason: 'missing capabilities' };
+  const capabilities = capabilitiesProblem(card.capabilities);
+  if (capabilities) return { ok: false, reason: capabilities };
   if (!verifyDoc(card, card.id)) return { ok: false, reason: 'bad signature' };
   if (parseTimestamp(card.created) === null) return { ok: false, reason: 'bad created' };
   if (isPast(card.expires, now)) return { ok: false, reason: 'card expired' };

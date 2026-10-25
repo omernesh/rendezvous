@@ -1206,6 +1206,79 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       timeout, hash mismatch, content encoding, untrusted certificate,
       mirrors and `allowHosts`).
 
+## General tasks (v0.3)
+
+73. **`tasks/v1` lifecycle and task model** (**spec change**, §4.3, §7.1,
+    §7.4, new §7.6; issue #22, slice 1 of item 71). In `@rendezvous/a2a`:
+    `capabilities.ts` (the `CapabilityRegistry`; a capability is a URI, an
+    approval class `notify | auto | confirm | free-form`, a strict `input`
+    schema, an optional `answer` schema for `task/input`, and the `data`
+    shapes of its results, built with the small strict schema `s`),
+    `taskmodel.ts` (`parseTaskPayload` for `task/request`, `task/input`,
+    `rdv/cancel`, status updates with `failed` and `status.message`, and the
+    new `a2a/artifact-update`; `routeA2A`) and `tasks.ts` (the engine:
+    `receiveTask`, `requestTask`, `inputTask`, `cancelTask`, `expireTasks`
+    for both roles, and `startTask`, `rejectTask`, `askInput`,
+    `sendArtifact`, `finishTask` for the executor). Pure like the meeting
+    engine, `now` injected, no core import. Meetings are untouched: the
+    meeting parser still answers a task verb as unsupported, which is the
+    old-peer behaviour the tests check.
+    - **Gates are effects only.** By class, a new task completes with a
+      `notify` effect, starts at once (`start`, `auto`), or waits
+      `submitted` with a `start-gate` effect (`confirm`, `free-form`) until
+      `startTask` / `rejectTask`. A `task/input` under a gated class re-opens
+      the start gate (step `input`). Under a gated class, or with
+      `ownerData`, `askInput`, `sendArtifact` and `finishTask` with a message
+      send nothing without `released: true` and return a `release-gate`
+      effect holding the exact payload; the released call must pass the same
+      `artifactId`. Digests and the human's approval are the gates slice.
+    - **Choices the design left open.** (a) Machine reasons for refusals and
+      endings go in status metadata under `<tasks URI>/reason` (`scope`,
+      `rate`, `input`, `busy`, `human`, `expired`, `unsupported`, `error`),
+      ignorable, peer-written, display only. (b) The unsupported reply keeps
+      §7.5's `<meetings URI>/unsupported` key, so a rev-3 parser reads it;
+      its value may add `capability`. (c) The executor's state is the
+      task's state; the requester applies only forward transitions and
+      ignores status updates once finished. (d) The requester marks a task
+      `canceled` when it sends `rdv/cancel` (as meetings do) and on its own
+      expiry (sending `rdv/cancel`, reason `expired`). (e) The executor's
+      expiry ends a task `rejected` if it never started, else `failed`.
+      (f) `notify` tasks end `completed` at once. (g) Routing between the
+      two engines (`routeA2A`): `task/*` verbs and artifact updates go to
+      tasks, status updates and `rdv/cancel` to the engine that holds the
+      task, and a cancel for an unknown task to tasks only when its
+      `extensions` lists the tasks URI and not the meetings one.
+    - **Bounds** (A.7, NOTES 46): tasks and tombstones only within a
+      task-capable `invoke`; deny by default (a capability not in `invoke`
+      is `rejected`, `scope`); no `invoke` at all is dropped silently, like
+      a meeting verb without a meeting grant. 32 tasks per peer (finished
+      and tombstones evicted first), `max_open` per capability from the
+      grant entry, else the capability's, else 4. Waiting for the human: 4
+      per peer and 64 in all, the weakest (lowest tier, then the oldest
+      gate) rejected `busy`, newcomer included, with an `abort` effect.
+      Per task 64 seen ids, 8 `task/input`, 64 status updates, 8 artifacts,
+      64 chunks, 8 finished and 8 unsupported replies; text parts 16,000
+      characters; inline file bytes 16 KiB; `expires` 48 h by default,
+      clamped to 7 days; finished tasks pruned after 30 days (500 kept at
+      most). A refusal keeps no state and is counted in `state.dropped` by
+      reason, for the human. Request input, text and files are kept only
+      while the task is open (the gates need them), and peer text never
+      becomes a stored `reason`.
+    - **Files** are opaque here: inline `bytes` (base64, at most 16 KiB) or
+      a `uri`, exactly one, never fetched. The hash and fetch rules (§7.7)
+      are item 72 (core); wiring them into the task engine is the files
+      slice's a2a part (issue #26).
+    - **Core:** `verifyCard` rejects a card with more than 32
+      `capabilities` or an entry over 200 characters (`createCard` throws);
+      constants `MAX_CARD_CAPABILITIES`, `MAX_CAPABILITY_CHARS`. Payloads
+      were already opaque to core, so no wire change and the vectors are
+      unchanged.
+    - **Not advertised yet.** `cardCapabilities()` still lists only the
+      meeting URIs: §4.3 says advertising means the software can do it, and
+      neither the CLI nor the MCP server routes tasks to this engine yet,
+      nor is any capability registered. The slice that wires them adds
+      `TASKS_URI` and the registry's URIs to the card (follow-up issue).
+
 ## Not implemented yet
 
 
