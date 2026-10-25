@@ -508,6 +508,20 @@ pre {
   background: #f2c14e;
   flex: none;
 }
+.alpha-note {
+  max-width: 62ch;
+  margin: -6px 0 22px;
+  padding: 10px 14px;
+  border: 1px solid var(--on-field-line);
+  border-left: 3px solid #f2c14e;
+  border-radius: 6px;
+  font-size: 0.88rem;
+  line-height: 1.5;
+  color: var(--on-field-muted);
+}
+.alpha-note strong {
+  color: var(--on-field);
+}
 .hero h1 {
   color: var(--on-field);
   font-size: clamp(2.3rem, 1.4rem + 4.2vw, 4.4rem);

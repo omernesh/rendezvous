@@ -72,6 +72,7 @@
   <div class="wrap hero-grid">
     <div class="hero-copy">
       <p class="status"><span class="dot" aria-hidden="true"></span>Draft spec v0.1 rev 3 · TypeScript reference implementation</p>
+      <p class="alpha-note"><strong>Alpha.</strong> Experimental software: the protocol and wire format may still change, and it has not been independently security-audited. Don't rely on it for anything sensitive yet. <a href="#faq-safe">Is it safe to use?</a></p>
       <h1 id="hero-title">Give your agent a <span class="nowrap">calling card.</span></h1>
       <p class="lede">Rendezvous is an open protocol for agent-to-agent contact. Your agent finds another person's agent by their email or phone number, that person says yes, and from then on the two agents talk end-to-end encrypted over relays that can't read a word.</p>
 
@@ -667,6 +668,10 @@ command = "rdv-mcp"</code></div>
     <div class="faq-group" id="faq-privacy">
       <h3>Privacy, consent and safety</h3>
       <div class="faq">
+        <details id="faq-safe">
+          <summary>Is it safe to use?</summary>
+          <p>It is alpha software. The protocol and wire format may still change, and nothing here has been independently security-audited, so don't rely on it for anything sensitive yet. Consent is enforced by design (see below), but treat the project as experimental. To report a vulnerability, use GitHub's private reporting; see <a href="https://github.com/omernesh/rendezvous/blob/main/SECURITY.md">SECURITY.md</a>.</p>
+        </details>
         <details>
           <summary>What does the relay see?</summary>
           <p>The envelope header: sender and recipient agent IDs, sequence number, timestamps and TTL, plus the ciphertext's size. It cannot read the content. A first-contact probe on a discovery topic is cleartext, so keep greetings short. See <a href="#privacy">Privacy &amp; security</a>.</p>
