@@ -2249,7 +2249,7 @@ export class RdvMcpServer {
         };
       }
       case 'list': {
-        const { files, tasks, direct } = await home.locked(async () => ({ files: home.readFiles(), tasks: home.readTasks(), direct: home.readConfig().direct_transfer === true }));
+        const { files, tasks, direct } = await home.locked(async () => ({ files: home.readFiles(), tasks: home.readTasks(), direct: home.readOwner().direct_transfer === true }));
         const incoming = Object.values(tasks.engine.tasks)
           .filter((t) => !t.tombstone)
           .map((t) => ({ t, got: t.role === 'executor' ? t.files : tasks.received && Object.hasOwn(tasks.received, t.id) ? tasks.received[t.id].files : undefined }))

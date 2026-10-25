@@ -1226,7 +1226,7 @@ export async function filePrepare({ home, out, values, positionals }: Ctx): Prom
 /** `rdv file list`: prepared files, files peers sent for your tasks, direct-transfer requests, and the setting. */
 export async function fileList({ home, out }: Ctx): Promise<void> {
   home.requireInit();
-  const { files, tasks, direct } = await home.locked(async () => ({ files: home.readFiles(), tasks: home.readTasks(), direct: home.readConfig().direct_transfer === true }));
+  const { files, tasks, direct } = await home.locked(async () => ({ files: home.readFiles(), tasks: home.readTasks(), direct: home.readOwner().direct_transfer === true }));
   out.emit({ event: 'direct-transfer', enabled: direct }, `direct transfer: ${direct ? 'on (requests are shown to you; this agent implements no transfer protocol, so nothing connects)' : 'off (requests are declined)'}`);
   for (const f of Object.values(files.outgoing).sort((a, b) => a.created.localeCompare(b.created))) {
     out.emit({ event: 'file-prepared', ...outgoingView(f) }, `prepared ${f.sha256}  ${clean(JSON.stringify(f.name ?? 'unnamed'))}  ${f.size} bytes  ${f.enc ? 'encrypted' : 'plain'}  from ${clean(f.source)}  upload ${clean(f.upload)}`);
@@ -1276,10 +1276,10 @@ export async function fileDirectTransfer({ home, out, positionals }: Ctx): Promi
   if (v !== 'on' && v !== 'off') throw new CliError('rdv file direct-transfer takes on or off', 2);
   home.requireInit();
   await home.locked(async () => {
-    const config = home.readConfig();
-    if (v === 'on') config.direct_transfer = true;
-    else delete config.direct_transfer;
-    home.writeConfig(config);
+    const owner = home.readOwner();
+    if (v === 'on') owner.direct_transfer = true;
+    else delete owner.direct_transfer;
+    home.writeOwner(owner);
   });
   out.emit(
     { event: 'direct-transfer', enabled: v === 'on' },

@@ -22,7 +22,7 @@
 // protocol. A peer's request is declined at once while the owner's
 // `direct_transfer` setting is off (the default); with it on, the request is
 // shown to the owner, who can decline it. Nothing connects on its own.
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, writeSync } from 'node:fs';
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync, writeSync } from 'node:fs';
 import { basename, dirname, join, resolve, sep } from 'node:path';
 import { type FilePart, isFinished, type TaskPart, type TaskRecord } from '@rendezvous/a2a';
 import {
@@ -206,15 +206,57 @@ function checkMime(m: string | undefined): string | undefined {
   return v;
 }
 
-function readOwnerFile(path: string, max: number, what: string): { abs: string; bytes: Uint8Array } {
+/** Files that hold a Rendezvous key or consent state: never sent, wherever they are. */
+export const SECRET_FILE_NAMES = ['agent.json', 'agent.json.bak', 'consent.json'];
+
+const samePath = (a: string, b: string) => (process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b);
+const realOr = (p: string) => {
+  try {
+    return realpathSync(p);
+  } catch {
+    return resolve(p);
+  }
+};
+
+/**
+ * Is `p` (an absolute path) a secret file by name, or inside a Rendezvous
+ * home: this one, $RDV_HOME, anything under a `.rendezvous` folder (but its
+ * installed source, `src`), or any folder that looks like a home
+ * (config.json beside agent.json or consent.json)?
+ */
+function inAnyHome(home: Home, p: string): boolean {
+  if (SECRET_FILE_NAMES.includes(basename(p).toLowerCase())) return true;
+  const comps = p.split(/[\\/]+/).filter(Boolean).map((c) => c.toLowerCase());
+  const at = comps.lastIndexOf('.rendezvous');
+  if (at >= 0 && comps[at + 1] !== 'src') return true;
+  const homes = [home.dir, process.env.RDV_HOME].filter((x): x is string => !!x).flatMap((h) => [resolve(h), realOr(h)]);
+  for (let d = dirname(p); ; d = dirname(d)) {
+    if (homes.some((h) => samePath(d, h))) return true;
+    if (existsSync(join(d, 'config.json')) && (existsSync(join(d, 'agent.json')) || existsSync(join(d, 'consent.json')))) return true;
+    if (dirname(d) === d) return false;
+  }
+}
+
+/**
+ * Read one of the owner's files to send. Never a secret file by name, nor
+ * anything inside a Rendezvous home (the secret key, consent state, other
+ * peers' files): both the given path and the real one (symlinks and
+ * junctions followed) are checked, so a link or a `..` cannot reach them.
+ */
+function readOwnerFile(home: Home, path: string, max: number, what: string): { abs: string; bytes: Uint8Array } {
   const abs = resolve(path);
   let st;
+  let real: string;
   try {
-    st = statSync(abs);
+    real = realpathSync(abs);
+    st = statSync(real);
   } catch {
     throw new CliError(`no such file: ${abs}`);
   }
   if (!st.isFile()) throw new CliError(`not a regular file: ${abs}`);
+  if (inAnyHome(home, abs) || inAnyHome(home, real)) {
+    throw new CliError(`refused: ${abs} is a Rendezvous file or inside a Rendezvous home (secret key, consent state, peers' files); nothing there is sent`);
+  }
   if (st.size > max) throw new CliError(`${abs} is ${st.size} bytes; ${what} at most ${max}`);
   return { abs, bytes: new Uint8Array(readFileSync(abs)) };
 }
@@ -231,7 +273,7 @@ export function outgoingView(f: OutgoingFile) {
  * in a draft the human releases, and the key only inside that envelope.
  */
 export function prepareFile(home: Home, path: string, opts: { name?: string; mimeType?: string; plain?: boolean } = {}): OutgoingFile {
-  const { abs, bytes } = readOwnerFile(path, DEFAULT_MAX_FILE_BYTES, 'a file sent by reference is');
+  const { abs, bytes } = readOwnerFile(home, path, DEFAULT_MAX_FILE_BYTES, 'a file sent by reference is');
   const mimeType = checkMime(opts.mimeType);
   const name = sanitizeFileName(opts.name ?? basename(abs));
   const { upload, meta } = opts.plain ? { upload: bytes, meta: plainFileRef(bytes) } : (({ ciphertext, ref }) => ({ upload: ciphertext, meta: ref }))(encryptFile(bytes));
@@ -292,7 +334,7 @@ export function attachFiles(home: Home, refs: readonly Attachment[], inline: rea
     notes.push({ sha256: f.sha256, size: f.size, ...(f.name ? { name: f.name } : {}), ...(f.mimeType ? { mimeType: f.mimeType } : {}), source: f.source, uri: a.uri, encrypted: f.enc !== undefined });
   }
   for (const path of inline) {
-    const { abs, bytes } = readOwnerFile(path, MAX_INLINE_FILE_BYTES, 'an inline file is');
+    const { abs, bytes } = readOwnerFile(home, path, MAX_INLINE_FILE_BYTES, 'an inline file is');
     const name = sanitizeFileName(basename(abs));
     parts.push(inlineFilePart(bytes, name ? { name } : {}) as FilePart);
     notes.push({ sha256: sha256Hex(bytes), size: bytes.length, ...(name ? { name } : {}), source: abs, encrypted: false, inline: true });

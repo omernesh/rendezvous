@@ -173,6 +173,17 @@ describe('a doc review with a file: release gate, then fetch, verify, decrypt (S
   it('a tampered file is refused: nothing saved', async () => {
     const { omer, john, johnId } = await connected();
     const id = await startedReview(omer, john, johnId);
+    // The model cannot send the secret key or consent state, by inline_files or prepare, however it names them (security review).
+    for (const p of [join(john.home.dir, 'agent.json'), join(john.home.dir, '..', 'john', 'consent.json'), join(john.home.dir, 'config.json'), join(omer.home.dir, 'agent.json')]) {
+      const inl = await john.call('rdv_task', { action: 'submit', task_id: id, inline_files: [p] });
+      expect(inl.isError, p).toBe(true);
+      expect(inl.text).toContain('Rendezvous home');
+      const prep = await john.call('rdv_file', { action: 'prepare', path: p });
+      expect(prep.isError, p).toBe(true);
+      expect(prep.text).toContain('Rendezvous home');
+    }
+    expect(john.home.readTasks().releases[id]).toBeUndefined();
+    expect(existsSync(join(john.home.dir, 'files.json'))).toBe(false);
     const { sha256, url, cipher } = await prepareAndUpload(john);
     await ok(john, 'rdv_task', { action: 'submit', task_id: id, files: [{ sha256, url }] });
     await ok(john, 'rdv_task', { action: 'approve-release', task_id: id });

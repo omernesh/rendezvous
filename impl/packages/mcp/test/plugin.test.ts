@@ -780,4 +780,28 @@ describe('the direct-transfer setting is the human’s (issue #26)', () => {
   it('the skill names it as the human’s only', () => {
     expect(consentViolations('Turn it on: `rdv file direct-transfer on`.')).toHaveLength(1);
   });
+
+  it('the setting, file keys and drafts in a home are refused to every tool, and inline_files paths are checked (security review)', () => {
+    const root = mkdtempSync(join(tmpdir(), 'rdv-guard-owner-'));
+    try {
+      const h = join(root, 'omer');
+      mkdirSync(h);
+      for (const f of ['agent.json', 'config.json']) writeFileSync(join(h, f), '{}');
+      for (const f of ['owner.json', 'files.json', 'tasks.json']) {
+        expect(checkToolInput('Write', { file_path: join(h, f), content: '{"direct_transfer":true}' }), f).toBeTruthy();
+        expect(checkToolInput('Edit', { file_path: join(h, f) }), f).toBeTruthy();
+        expect(checkToolInput('Read', { file_path: join(h, f) }), f).toBeTruthy();
+        expect(checkCommand(`cat ${join(h, f)}`), f).toBeTruthy();
+        expect(checkCommand(`echo '{"direct_transfer":true}' > ${join(h, f)}`), f).toBeTruthy();
+      }
+      // The same names outside a home are anyone's files.
+      expect(checkToolInput('Read', { file_path: join(root, 'tasks.json') })).toBeUndefined();
+      // rdv_task "submit" inline_files and rdv_file "prepare" path: the key and consent files are refused.
+      expect(checkToolInput('mcp__rendezvous__rdv_task', { action: 'submit', inline_files: [join(h, 'agent.json')] })).toBeTruthy();
+      expect(checkToolInput('mcp__rendezvous__rdv_file', { action: 'prepare', path: join(h, 'agent.json') })).toBeTruthy();
+      expect(checkToolInput('mcp__rendezvous__rdv_task', { action: 'submit', inline_files: [join(root, 'notes.txt')] })).toBeUndefined();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });

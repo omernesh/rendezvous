@@ -321,7 +321,7 @@ async function routeInbound(
       if (m) m.obj.routed = 'files';
     }
     try {
-      const r = await transfersInbound(home, agent, transfers, home.readConfig().direct_transfer === true);
+      const r = await transfersInbound(home, agent, transfers, home.readOwner().direct_transfer === true);
       for (const ev of r.events) events.push({ obj: { ...ev }, human: transferEventText(ev, clean) });
       for (const message of r.errors) events.push({ obj: { event: 'error', message }, human: `error: ${clean(message)}` });
     } catch (err) {
