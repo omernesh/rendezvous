@@ -25,6 +25,43 @@ export interface PublishReport {
   skipped: string[];
 }
 
+/** How to mirror a card (NOTES 81): strictly serial, paced, one try per relay. */
+export interface MirrorOptions {
+  /** Relays to mirror to, besides our own (duplicates of ours are dropped). */
+  relays: readonly string[];
+  /** Pause between two relays. Default 1500 ms. */
+  gapMs?: number;
+  /** Connect timeout and `OK` timeout per relay. Default 6000 ms each. */
+  timeoutMs?: number;
+  /** Read the card back from each relay that took it. Default true. */
+  readBack?: boolean;
+  /** How long a read-back waits for the relay. Default 5000 ms. */
+  readBackWaitMs?: number;
+}
+
+export interface MirrorRelayResult {
+  url: string;
+  /** Ours: a listening relay (envelopes go there too); else a mirror (cards only). */
+  role: 'listen' | 'mirror';
+  /** `skipped`: cooling down after an earlier ban or failure, not contacted. */
+  result: 'accepted' | 'rejected' | 'timeout' | 'skipped';
+  kind?: RelayErrorKind;
+  message?: string;
+  /** Read-back: whether the relay serves every topic's document; null when not checked. */
+  served: boolean | null;
+}
+
+export interface MirrorReport {
+  topics: string[];
+  relays: MirrorRelayResult[];
+  accepted: number;
+  rejected: number;
+  timeout: number;
+  skipped: number;
+  /** Relays whose read-back found the card. */
+  served: number;
+}
+
 export interface Transport {
   /** Deliver to the recipient; `recipientRelays` come from the peer's card. */
   sendEnvelope(e: Envelope, recipientRelays?: string[]): Promise<PublishReport | void>;
@@ -33,6 +70,15 @@ export interface Transport {
   /** Post a signed document on a discovery topic (§4.4). */
   publishTopic(topic: string, doc: object, extraRelays?: string[], opts?: TopicPublishOptions): Promise<PublishReport | void>;
   onTopics(topics: string[], handler: (doc: unknown, topic: string) => void): () => void;
-  fetchTopic(topic: string, maxWaitMs?: number): Promise<unknown[]>;
+  /** Documents stored on a topic; `mirrors: false` asks our own relays only (not the discovery mirrors). */
+  fetchTopic(topic: string, maxWaitMs?: number, opts?: { mirrors?: boolean }): Promise<unknown[]>;
+  /**
+   * Publish replaceable documents (our card on each topic) to our relays and
+   * then to `opts.relays`, one relay at a time (NOTES 81). Optional: a relay
+   * transport implements it.
+   */
+  mirrorTopics?(docs: Array<{ topic: string; doc: object; createdAt?: number }>, opts: MirrorOptions): Promise<MirrorReport>;
+  /** Move to another set of relays at once (`rdv relays`); open subscriptions follow. Optional. */
+  setRelays?(relays: readonly string[], mirrorRelays?: readonly string[]): void;
   close(): void;
 }

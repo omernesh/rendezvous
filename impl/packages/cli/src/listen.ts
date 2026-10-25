@@ -23,6 +23,7 @@ import {
   openEnvelope,
   type Tier,
   TIERS,
+  type MirrorOptions,
   type TopicPublishOptions,
   type Transport,
   verifyContactRequest,
@@ -48,7 +49,7 @@ import {
 import { subjectOf, sweepAutoApprove } from './autoapprove.js';
 import { isTransferPayload, transferEventText, transfersInbound } from './files.js';
 import { cardRefreshText, hostCardCapabilities, hostRegistry, refreshHostCard, taskEventText, taskEventView, tasksExpiring, tasksInbound, tasksRoute } from './tasks.js';
-import { relayTransport } from './transport.js';
+import { relaySets, relayTransport } from './transport.js';
 
 /** How often `listen --negotiate` checks pending negotiations for expiry. */
 export const SWEEP_MS = 30_000;
@@ -102,6 +103,46 @@ export function watchTopics(home: Home, initial: string[], onChange: (c: TopicCh
   return () => clearInterval(timer);
 }
 
+export interface RelaySets {
+  relays: string[];
+  mirror: string[];
+}
+
+/**
+ * Follow config.json: when `rdv relays` (or rdv-mcp) changes the listening or
+ * mirror relays, call `onChange` with the new sets, so a running listener
+ * moves its transport there (`setRelays`) without a restart. A stat per tick.
+ */
+export function watchRelays(home: Home, initial: RelaySets, onChange: (r: RelaySets) => void, everyMs = ADDRESS_POLL_MS): () => void {
+  let key = JSON.stringify(initial);
+  const stamp = () => {
+    try {
+      const st = statSync(home.configPath);
+      return `${st.mtimeMs}:${st.size}`;
+    } catch {
+      return '';
+    }
+  };
+  let seen = stamp();
+  const timer = setInterval(() => {
+    const now = stamp();
+    if (!now || now === seen) return;
+    seen = now;
+    let next: RelaySets;
+    try {
+      next = relaySets(home.readConfig());
+    } catch {
+      return; // unreadable for a moment: the next change retries
+    }
+    const k = JSON.stringify(next);
+    if (k === key || next.relays.length === 0) return;
+    key = k;
+    onChange(next);
+  }, everyMs);
+  timer.unref?.();
+  return () => clearInterval(timer);
+}
+
 /** Passes sends through to the real transport; inbound items are fed in by hand. */
 export class FeedTransport implements Transport {
   private envHandler?: (e: unknown) => void;
@@ -115,8 +156,15 @@ export class FeedTransport implements Transport {
   publishTopic(topic: string, doc: object, extra?: string[], opts?: TopicPublishOptions) {
     return this.real.publishTopic(topic, doc, extra, opts);
   }
-  fetchTopic(topic: string, maxWaitMs?: number) {
-    return this.real.fetchTopic(topic, maxWaitMs);
+  fetchTopic(topic: string, maxWaitMs?: number, opts?: { mirrors?: boolean }) {
+    return this.real.fetchTopic(topic, maxWaitMs, opts);
+  }
+  mirrorTopics(docs: Array<{ topic: string; doc: object; createdAt?: number }>, opts: MirrorOptions) {
+    if (!this.real.mirrorTopics) throw new Error('this transport cannot mirror cards');
+    return this.real.mirrorTopics(docs, opts);
+  }
+  setRelays(relays: readonly string[], mirrorRelays?: readonly string[]) {
+    this.real.setRelays?.(relays, mirrorRelays);
   }
   onEnvelopes(_me: string, handler: (e: unknown) => void) {
     this.envHandler = handler;
@@ -437,7 +485,8 @@ export function claimListener(home: Home): () => void {
 export async function listen(home: Home, out: Output, opts: ListenOptions): Promise<void> {
   const releaseListener = claimListener(home);
   const config = home.readConfig();
-  const boot = Agent.fromJSON(home.readAgentState(), (key) => relayTransport(key, config.relays, home));
+  const sets = relaySets(config);
+  const boot = Agent.fromJSON(home.readAgentState(), (key) => relayTransport(key, sets.relays, home, sets.mirror));
   const real = boot.transport;
   // Issue #43: a card signed by older code gets the capabilities this version routes.
   const refresh = await refreshHostCard(home, hostCardCapabilities(hostRegistry()), real);
@@ -469,6 +518,11 @@ export async function listen(home: Home, out: Output, opts: ListenOptions): Prom
       if (!isJunk(boot.key, { envelope: raw })) enqueue((t) => t.feedEnvelope(raw));
     }),
     () => topicUnsub(),
+    // Relays changed while we run (rdv relays): move the transport there, subscriptions included.
+    watchRelays(home, sets, (r) => {
+      real.setRelays?.(r.relays, r.mirror);
+      out.emit({ event: 'relays', relays: r.relays, mirror_relays: r.mirror }, `relays changed: now listening on ${r.relays.join(', ')}`);
+    }),
     // An address added or removed while we run: move to the card's new topics (live re-subscribe).
     watchTopics(home, topics, (c) => {
       topicUnsub();

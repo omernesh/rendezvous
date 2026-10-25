@@ -148,14 +148,19 @@ the human reads in their own terminal (<code>rdv contact pending</code>), below.
 <td>ID, our addresses (<code>addresses</code>, and <code>our_addresses</code> with public or private), relays, <code>relay_health</code> (per relay: <code>last_ok</code>, <code>last_error</code> with <code>kind</code> and the relay's message as <code>untrusted_peer_text</code>, <code>cooldown_until</code>), contacts (<code>local_label</code>: what your user called them; <code>unverified_claims</code>: the addresses their cards claim; <code>label_conflict</code> when two share a label), pending count, negotiation settings, approval mode</td>
 </tr>
 <tr>
+<td><code>rdv_relays</code></td>
+<td>action <code>list</code> / <code>add</code> / <code>remove</code>, url (add, remove), mirror (add / remove a discovery mirror instead)</td>
+<td>the listening relays (envelopes and the card) and the discovery mirrors (the card only); <code>add</code> / <code>remove</code> of a listening relay re-signs and (pointer on) republishes the card, and the server moves its subscriptions at once, like <code>rdv relays</code>. <code>wss://</code> only (<code>ws://</code> on localhost); the last listening relay cannot be removed. The owner's own setup</td>
+</tr>
+<tr>
 <td><code>rdv_publish_card</code></td>
-<td>—</td>
-<td>topics published, and <code>on_relays</code>: per public address, whether the relays now serve this card (read back)</td>
+<td>mirror (optional)</td>
+<td>topics published, and <code>on_relays</code>: per public address, whether the relays now serve this card (read back). With <code>mirror: true</code>: the card goes to our relays and each discovery mirror one at a time (paced, one try each), and <code>relays</code> lists per relay <code>accepted</code> / <code>rejected</code> / <code>timeout</code> / <code>skipped</code>, the relay's reason as <code>untrusted_peer_text</code>, and <code>served</code> (read back) (NOTES 81)</td>
 </tr>
 <tr>
 <td><code>rdv_discover</code></td>
 <td>address</td>
-<td>cards found (agent ID, fingerprint, claimed addresses, relays); never a label (anyone can publish a card for any address), never our own card (for our own address: <code>own_card_on_relays</code>)</td>
+<td>cards found (agent ID, fingerprint, claimed addresses, relays), from our relays and the discovery mirrors; never a label (anyone can publish a card for any address), never our own card (for our own address: <code>own_card_on_relays</code>)</td>
 </tr>
 <tr>
 <td><code>rdv_request_contact</code></td>

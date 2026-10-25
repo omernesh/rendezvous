@@ -40,7 +40,14 @@ export interface ConfigAddress extends DiscoveryAddress {
 
 export interface Config {
   profile: string;
+  /** The relays we listen on: envelopes and our card go there (keep it small). */
   relays: string[];
+  /**
+   * Discovery mirrors (NOTES 81): our card only, for lookups and `rdv card
+   * publish --mirror`. Absent until the owner changes it: then the default
+   * set applies (mirrorRelaysOf).
+   */
+  mirror_relays?: string[];
   /** All our addresses; the card lists the public ones, in this order. */
   addresses: ConfigAddress[];
   policy: { inbound: InboundPolicy; public: boolean };

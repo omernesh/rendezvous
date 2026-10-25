@@ -1,7 +1,23 @@
 // Library entry (`@rendezvous/cli/lib`) for the MCP server: the same home-dir
 // format, lock, crash-safe send path and inbound loop as `rdv`, so `rdv` and
 // `rdv-mcp` can share a profile.
-export { type AddressChange, type AddressView, addressViews, changeAddress, initHome, type InitOptions, relayHealth, requestContactTo, TIERS, withAgent } from './commands.js';
+export {
+  type AddressChange,
+  type AddressView,
+  addressViews,
+  changeAddress,
+  changeRelays,
+  initHome,
+  type InitOptions,
+  mirrorCard,
+  mirrorSummary,
+  type RelayChange,
+  type RelaySet,
+  relayHealth,
+  requestContactTo,
+  TIERS,
+  withAgent,
+} from './commands.js';
 export { ownerSecretInfo } from './ownersecret.js';
 export { appendEvents, EVENTS_FILE_KEPT, eventsStamp, isNoise, type LoggedEvent, readEvents, STRANGER_DROPS } from './events.js';
 export { acquireLock, LockTimeoutError, type LongLock, tryLongLock, writeAtomic } from './fsutil.js';
@@ -45,7 +61,7 @@ export {
   type InboxEntry,
   parseJsonLines,
 } from './home.js';
-export { ADDRESS_POLL_MS, type Emitted, FeedTransport, handleInbound, hasExpiring, isJunk, type ListenOptions, SWEEP_MS, type TopicChange, watchTopics } from './listen.js';
+export { ADDRESS_POLL_MS, type Emitted, FeedTransport, handleInbound, hasExpiring, isJunk, type ListenOptions, SWEEP_MS, type RelaySets, type TopicChange, watchRelays, watchTopics } from './listen.js';
 export {
   agreedDigest,
   buildCtx,
@@ -123,7 +139,7 @@ export {
   transferView,
 } from './files.js';
 export { type FileNote, type FilesState, type OutgoingFile, type TransferRecord } from './home.js';
-export { relayTransport } from './transport.js';
+export { checkRelayUrl, mirrorRelaysOf, relaySets, relayTransport } from './transport.js';
 export {
   type AutoApproveSubject,
   autoApproveStatus,

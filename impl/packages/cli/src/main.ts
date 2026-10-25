@@ -56,10 +56,32 @@ const COMMANDS: Record<string, Command> = {
     run: cmd.addressRemove,
   },
   'card publish': {
-    usage: 'rdv card publish',
-    summary: 'Publish public pointers (if enabled)',
+    usage: 'rdv card publish [--mirror]',
+    summary:
+      'Publish public pointers (if enabled). --mirror: also to the discovery mirrors, one relay at a time, with a per-relay result and a read-back',
     args: 0,
+    options: { mirror: { type: 'boolean' } },
     run: cmd.cardPublish,
+  },
+  'relays list': {
+    usage: 'rdv relays list',
+    summary: 'List the relays this agent listens on (envelopes and the card) and its discovery mirrors (the card only)',
+    args: 0,
+    run: cmd.relaysList,
+  },
+  'relays add': {
+    usage: 'rdv relays add <wss://…> [--mirror]',
+    summary: 'Listen on another relay (re-signs and republishes the card); --mirror: add a discovery mirror instead (cards only)',
+    args: 1,
+    options: { mirror: { type: 'boolean' } },
+    run: cmd.relaysAdd,
+  },
+  'relays remove': {
+    usage: 'rdv relays remove <wss://…> [--mirror]',
+    summary: 'Stop listening on a relay (not the last one; re-signs and republishes the card); --mirror: remove a discovery mirror',
+    args: 1,
+    options: { mirror: { type: 'boolean' } },
+    run: cmd.relaysRemove,
   },
   lookup: {
     usage: 'rdv lookup <address>',

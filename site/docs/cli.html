@@ -155,7 +155,7 @@ inbound loop), so <code>rdv</code> and <code>rdv-mcp</code> share profiles.</p>
 <tr>
 <td><code>transport/nostr</code></td>
 <td>§6.2</td>
-<td>Nostr relay transport (kind 30417): re-subscribes when a relay drops; publishes with retries, per-relay pacing and cooldowns, and per-relay status (<code>relayStatus()</code>); <code>DEFAULT_RELAYS</code></td>
+<td>Nostr relay transport (kind 30417): re-subscribes when a relay drops; publishes with retries, per-relay pacing and cooldowns, and per-relay status (<code>relayStatus()</code>); <code>setRelays()</code> moves a live transport; discovery mirrors (<code>mirrorRelays</code>, <code>mirrorTopics()</code>); <code>DEFAULT_RELAYS</code>, <code>DEFAULT_MIRROR_RELAYS</code></td>
 </tr>
 <tr>
 <td><code>agent</code></td>
@@ -192,6 +192,19 @@ twice with jittered backoff. A relay that answers <code>blocked</code>, <code>re
 <code>banned</code> is skipped for 30 minutes. Events are paced per relay (a burst of 6,
 then 3 per second). Each tunable is a <code>NostrTransportOptions</code> field (NOTES 69).
 An envelope's plaintext is at most 32 KiB (<code>MAX_PLAINTEXT_BYTES</code>, SPEC §6.4).</p>
+<p><strong>Discovery mirrors</strong> (NOTES 81). An agent listens on a few relays, and its
+envelopes go only there. Its card can also be mirrored to more relays, so a
+peer that asks other relays still finds it: <code>NostrTransportOptions.mirrorRelays</code>.
+<code>fetchTopic</code> (so <code>Agent.lookup</code>) asks the mirrors too, at most
+<code>lookupConcurrency</code> (4) at a time, each within the lookup timeout.
+<code>mirrorTopics()</code> (<code>Agent.mirrorPointers()</code>) publishes the card to our relays
+and then each mirror strictly one at a time: a pause between relays (1.5 s),
+one try each with a timeout (6 s), cooling relays skipped, then a read-back
+per relay. It returns accepted / rejected (with the relay's reason) / timeout /
+skipped and <code>served</code> per relay. <code>DEFAULT_MIRROR_RELAYS</code> is the vetted public
+set (13 relays, from <code>deploy/mirror-survey.mjs</code>; never relay.damus.io).
+<code>Agent.setRelays()</code> re-signs the card with other relays and moves the
+transport (<code>setRelays()</code>), subscriptions included.</p>
 <p>Agent state serializes with <code>agent.toJSON()</code> and loads with <code>Agent.fromJSON()</code>.
 <code>packages/core/vectors/v1.json</code> holds interop test vectors: fixed keys, IDs,
 discovery topics, a signed card and contact request, and a sample envelope
@@ -317,7 +330,7 @@ npm run rdv -- --help                     # or: node packages/cli/dist/src/bin.j
 </tr>
 <tr>
 <td><code>config.json</code></td>
-<td>profile, relays, addresses (public ones are on the card; <code>private: true</code> ones are kept here only), policy</td>
+<td>profile, relays (listening), <code>mirror_relays</code> (discovery mirrors, once changed; absent: the default set for an all-<code>wss://</code> agent, none otherwise), addresses (public ones are on the card; <code>private: true</code> ones are kept here only), policy</td>
 </tr>
 <tr>
 <td><code>relays.json</code></td>
@@ -412,12 +425,24 @@ npm run rdv -- --help                     # or: node packages/cli/dist/src/bin.j
 <td>Remove one: probes on it are refused at once and its topic is dropped; with the public pointer on, the new card is also published on the removed topic, replacing the old one there. Contacts are kept (NOTES 63)</td>
 </tr>
 <tr>
-<td><code>rdv card publish</code></td>
-<td>Publish public pointers (if enabled at init)</td>
+<td><code>rdv relays list</code></td>
+<td>The relays the agent listens on (envelopes and the card go there; keep it small), with their health, and its discovery mirrors (the card only)</td>
+</tr>
+<tr>
+<td><code>rdv relays add &lt;wss://…&gt; [--mirror]</code></td>
+<td>Listen on another relay (at most 8): re-signs the card with it, republishes it if the public pointer is on, and a running <code>listen</code> / <code>rdv-mcp</code> subscribes there within a second. <code>wss://</code> only; <code>ws://</code> only for a relay on this machine. <code>--mirror</code>: add a discovery mirror instead (config only)</td>
+</tr>
+<tr>
+<td><code>rdv relays remove &lt;wss://…&gt; [--mirror]</code></td>
+<td>Stop listening on a relay (never the last one): re-signs and republishes the card, there too, so it serves the newer card. Contacts keep the card they hold until they get a newer one, so some may still send to the removed relay. <code>--mirror</code>: remove a discovery mirror</td>
+</tr>
+<tr>
+<td><code>rdv card publish [--mirror]</code></td>
+<td>Publish public pointers (if enabled at init). <code>--mirror</code>: to our relays and then each discovery mirror, one relay at a time and paced, one try each, then a read-back; one line per relay (<code>accepted</code> / <code>rejected</code> with the relay's reason / <code>timeout</code> / <code>skipped</code> when cooling down, and <code>served</code>) and a summary (NOTES 81)</td>
 </tr>
 <tr>
 <td><code>rdv lookup john@doe.com</code></td>
-<td>Fetch public-pointer cards for an address</td>
+<td>Fetch public-pointer cards for an address, from our relays and the discovery mirrors</td>
 </tr>
 <tr>
 <td><code>rdv contact request &lt;email\|card-file\|agent-id&gt; [--greeting "…"] [--in-person] [--label john@doe.com]</code></td>
@@ -626,7 +651,7 @@ inbox shows it, each step asserted with a timeout. It runs:</p>
 <p>Crash safety: state is saved right before each envelope leaves (<code>Agent.beforeSend</code>),
 so a crash after a send never reuses a <code>seq</code> (issue #4).</p>
 <h2 id="rdv-mcp-the-mcp-server">rdv-mcp (the MCP server)<a class="anchor" href="#rdv-mcp-the-mcp-server" title="Link to this section" aria-label="Link to this section">#</a></h2>
-<p>PLAN §6.1. Tools <code>rdv_init</code>, <code>rdv_status</code>, <code>rdv_publish_card</code>, <code>rdv_discover</code>,
+<p>PLAN §6.1. Tools <code>rdv_init</code>, <code>rdv_status</code>, <code>rdv_addresses</code>, <code>rdv_relays</code>, <code>rdv_publish_card</code>, <code>rdv_discover</code>,
 <code>rdv_request_contact</code>, <code>rdv_pending_requests</code>, <code>rdv_grant</code>, <code>rdv_revoke</code>,
 <code>rdv_send</code>, <code>rdv_inbox</code>, <code>rdv_negotiate</code>, and the <code>rdv://inbox</code> resource
 (subscribable). <code>rdv_grant</code> needs the human: an MCP elicitation form, or a

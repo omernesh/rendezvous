@@ -101,7 +101,20 @@ export function reissueCardCapabilities(key: AgentKey, card: AddressCard, capabi
   return resignCard(key, card, { capabilities: [...capabilities] }, now);
 }
 
-function resignCard(key: AgentKey, card: AddressCard, change: Partial<Pick<CardBody, 'discovery' | 'capabilities'>>, now: Date): AddressCard {
+/**
+ * A newer card with the same key, addresses and capabilities but other Nostr
+ * relays (`rdv relays`): the relays become the card's `nostr` hints in this
+ * order (`pref` 1, 2, ...); other hints are kept after them. Dated like
+ * reissueCard.
+ */
+export function reissueCardRelays(key: AgentKey, card: AddressCard, relays: readonly string[], now: Date = new Date()): AddressCard {
+  if (relays.length === 0) throw new Error('card: at least one relay');
+  const nostr: RendezvousHint[] = [...new Set(relays)].map((relay, i) => ({ type: 'nostr', relay, pref: i + 1 }));
+  const others = card.rendezvous.filter((h) => h.type !== 'nostr').map((h) => (h.pref > 0 ? { ...h, pref: h.pref + nostr.length } : { ...h }));
+  return resignCard(key, card, { rendezvous: [...nostr, ...others] as RendezvousHint[] }, now);
+}
+
+function resignCard(key: AgentKey, card: AddressCard, change: Partial<Pick<CardBody, 'discovery' | 'capabilities' | 'rendezvous'>>, now: Date): AddressCard {
   if (card.id !== key.id) throw new Error('card belongs to another key');
   const prev = parseTimestamp(card.created) ?? 0;
   const created = new Date(Math.max(now.getTime(), prev) + 1000);
