@@ -56,6 +56,14 @@ export class Agent extends EventEmitter<AgentEvents> {
   private unsubscribers: Array<() => void> = [];
   private queue: Promise<void> = Promise.resolve();
 
+  /**
+   * Called after an outbound envelope is committed to the channel state and
+   * the outbox, and before it leaves the process. Save `toJSON()` here: if the
+   * process dies right after the send, the next start must not reuse the
+   * envelope's `seq` (the peer would see a fork). If it throws, nothing is sent.
+   */
+  beforeSend?: (agent: Agent) => void | Promise<void>;
+
   constructor(
     readonly key: AgentKey,
     public card: AddressCard,
@@ -218,6 +226,7 @@ export class Agent extends EventEmitter<AgentEvents> {
     const box = (this.outbox[peer] ??= []);
     box.push(env);
     if (box.length > OUTBOX_LIMIT) box.splice(0, box.length - OUTBOX_LIMIT);
+    await this.beforeSend?.(this);
     await this.transport.sendEnvelope(env, relays);
     return env;
   }

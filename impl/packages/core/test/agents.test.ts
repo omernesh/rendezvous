@@ -135,6 +135,81 @@ describe('two agents over a Nostr relay', () => {
     await restored.send(john.id, { type: 'a2a/message', text: 'still me' });
     expect((await got)[1].text).toBe('still me');
   });
+
+  it('persists seq before an envelope leaves, so a crash after send cannot fork the chain (issue #4)', async () => {
+    const omer = make('omer@example.com');
+    const john = make('john@doe.com');
+    await new Promise((r) => setTimeout(r, 200));
+    const pending = waitFor<{ request: { id: string } }>(john, 'request');
+    await omer.requestContact('john@doe.com', 'hi');
+    const contact = waitFor(omer, 'contact');
+    await john.grant((await pending).request.id);
+    await contact;
+    const beforeCrash = JSON.parse(JSON.stringify(omer.toJSON())); // what a save-after-send caller had on disk
+    omer.close();
+    agents = agents.filter((a) => a !== omer);
+
+    // The process "dies" right after the envelope goes out: the caller never
+    // gets to save. Only what beforeSend persisted survives.
+    let disk = beforeCrash;
+    const crashing = Agent.fromJSON(structuredClone(beforeCrash), (key) => {
+      const real = new NostrTransport({ key, relays: [relay.url] });
+      const t: Transport = {
+        sendEnvelope: async (e, r) => {
+          await real.sendEnvelope(e, r);
+          throw new Error('crash after send');
+        },
+        onEnvelopes: (me, h) => real.onEnvelopes(me, h),
+        publishTopic: (topic, doc, extra) => real.publishTopic(topic, doc, extra),
+        onTopics: (topics, h) => real.onTopics(topics, h),
+        fetchTopic: (topic, ms) => real.fetchTopic(topic, ms),
+        close: () => real.close(),
+      };
+      return t;
+    });
+    crashing.beforeSend = (a) => {
+      disk = JSON.parse(JSON.stringify(a.toJSON()));
+    };
+    const drops: string[] = [];
+    john.on('dropped', (reason) => drops.push(reason));
+    const got: Payload[] = [];
+    john.on('message', (_from, p) => got.push(p));
+    await expect(crashing.send(john.id, { type: 'a2a/message', text: 'first' })).rejects.toThrow('crash after send');
+    crashing.close();
+
+    // Without the fix the restart would reuse seq 1 from the stale state.
+    expect(beforeCrash.channels[john.id].outSeq).toBe(0);
+    expect(disk.channels[john.id].outSeq).toBe(1);
+
+    const restarted = Agent.fromJSON(disk, (key) => new NostrTransport({ key, relays: [relay.url] }));
+    agents.push(restarted);
+    const env = await restarted.send(john.id, { type: 'a2a/message', text: 'second' });
+    expect(env.seq).toBe(2);
+    const deadline = Date.now() + 5000;
+    while (got.length < 2 && Date.now() < deadline) await new Promise((r) => setTimeout(r, 50));
+    expect(got.map((p) => p.text)).toEqual(['first', 'second']);
+    expect(drops).toEqual([]);
+  });
+
+  it('sends nothing when beforeSend fails', async () => {
+    const sent: Envelope[] = [];
+    const t: Transport = {
+      sendEnvelope: async (e) => void sent.push(e),
+      onEnvelopes: () => () => {},
+      publishTopic: async () => {},
+      onTopics: () => () => {},
+      fetchTopic: async () => [],
+      close: () => {},
+    };
+    const a = Agent.create(() => t, { rendezvous: [{ type: 'nostr', relay: 'ws://x', pref: 1 }] });
+    const peer = generateKey();
+    const peerCard = createCard(peer, { rendezvous: [{ type: 'nostr', relay: 'ws://x', pref: 1 }] });
+    a.beforeSend = () => {
+      throw new Error('disk full');
+    };
+    await expect(a.requestContact(peerCard, 'hi')).rejects.toThrow('disk full');
+    expect(sent).toHaveLength(0);
+  });
 });
 
 describe('ordering over a lossy pipe', () => {

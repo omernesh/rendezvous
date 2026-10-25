@@ -11,7 +11,6 @@ import {
   fingerprint,
   type GrantScope,
   isAgentId,
-  NostrTransport,
   type Payload,
   type Tier,
   topicForHint,
@@ -20,6 +19,7 @@ import {
 import { cancel, NegotiationError, parseInstant, propose } from '@rendezvous/a2a';
 import { CliError, type Config, Home, type InboxEntry, parseJsonLines } from './home.js';
 import { listen } from './listen.js';
+import { relayTransport } from './transport.js';
 import {
   buildCtx,
   DEFAULT_LISTEN_WINDOW,
@@ -60,8 +60,12 @@ function readJsonFile(path: string, what: string): unknown {
   }
 }
 
-/** Load the agent under the lock, run `fn`, save (unless `save: false`), close. */
-async function withAgent<T>(
+/**
+ * Load the agent under the lock, run `fn`, save (unless `save: false`), close.
+ * State is also saved right before each envelope leaves (issue #4), so a crash
+ * after a send can't reuse its `seq`.
+ */
+export async function withAgent<T>(
   home: Home,
   fn: (agent: Agent, config: Config) => Promise<T>,
   opts: { save?: boolean } = {},
@@ -69,8 +73,9 @@ async function withAgent<T>(
   home.requireInit();
   return home.locked(async () => {
     const config = home.readConfig();
-    const agent = Agent.fromJSON(home.readAgentState(), (key) => new NostrTransport({ key, relays: config.relays }));
+    const agent = Agent.fromJSON(home.readAgentState(), (key) => relayTransport(key, config.relays));
     agent.on('error', () => {}); // never started, but don't let a stray error crash us
+    agent.beforeSend = (a) => home.writeAgentState(a.toJSON());
     try {
       const result = await fn(agent, config);
       if (opts.save !== false) home.writeAgentState(agent.toJSON());
@@ -108,7 +113,7 @@ export async function init({ home, out, values }: Ctx): Promise<void> {
   };
   const agent = await home.locked(async () => {
     home.reset();
-    const a = Agent.create((key) => new NostrTransport({ key, relays }), {
+    const a = Agent.create((key) => relayTransport(key, relays), {
       rendezvous: relays.map((relay, i) => ({ type: 'nostr' as const, relay, pref: i + 1 })),
       discovery: addresses.length ? { addresses, public_pointer: publicPointer } : undefined,
       policy: config.policy,
@@ -362,8 +367,9 @@ export async function dinnerPropose({ home, out, values, positionals }: Ctx): Pr
       if (err instanceof NegotiationError) throw new CliError(err.message);
       throw err;
     }
-    for (const o of s.outgoing) await agent.send(o.to, o.payload as unknown as Payload);
+    // Task state first: a crash mid-send leaves a task that expires, not a reply to an unknown task.
     home.writeNegotiations(s.state);
+    for (const o of s.outgoing) await agent.send(o.to, o.payload as unknown as Payload);
     return s;
   });
   for (const e of step.events) out.emit(dinnerView(e), dinnerText(e));
@@ -378,8 +384,9 @@ export async function dinnerCancel({ home, out, values, positionals }: Ctx): Pro
       if (err instanceof NegotiationError) throw new CliError(err.message);
       throw err;
     }
-    for (const o of s.outgoing) await agent.send(o.to, o.payload as unknown as Payload);
+    // Task state first: a crash mid-send leaves a task that expires, not a reply to an unknown task.
     home.writeNegotiations(s.state);
+    for (const o of s.outgoing) await agent.send(o.to, o.payload as unknown as Payload);
     return s;
   });
   for (const e of step.events) out.emit(dinnerView(e), dinnerText(e));

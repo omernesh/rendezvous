@@ -214,9 +214,13 @@ into SPEC.md before v0.2.
     (`peerState`) and keeps its hold. Concurrent negotiations can also
     double-book a slot (offers are not held). Both need a hold/confirm step
     for v0.2.
-37. **Crash window** (open, CLI). `listen --negotiate` sends replies before
-    it saves agent state; a crash in between would reuse `seq` on the next
-    send (a fork for the peer). Same window as the existing grant path.
+37. **Crash window** (fixed, issue #4). `Agent.beforeSend` runs after an
+    envelope is committed to the channel state and outbox and before it
+    leaves; the CLI and the MCP server save agent state there (and, in
+    `listen`, the inbox entries first). Negotiation state is saved before its
+    replies go out. A crash right after a send can no longer reuse `seq`; the
+    worst case is an inbox entry delivered twice. Regression tests: core
+    `agents.test.ts` and CLI `crash.test.ts` (`RDV_TEST_EXIT_AFTER_SEND`).
 38. **Live run (2026-10-25).** `ws://<relay-host>:7777` (relay-host strfry):
     overlap scenario via `npm run test:live` passed in about 5 s (agreed
     Tue 27 Oct 19:00+02:00); all four variants by hand
