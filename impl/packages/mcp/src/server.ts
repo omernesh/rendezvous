@@ -782,19 +782,26 @@ export class RdvMcpServer {
   private announceTaskPhrase(t: TaskRecord, phrase: string, digest: string, rel?: PendingRelease, changed = false): void {
     const code = gateCode(digest);
     const again = changed ? ' (it CHANGED since its last confirm phrase, which no longer works)' : '';
+    const content = rel ? releaseContent(rel) : startContent(t);
+    const what = rel ? `your agent wants to send ${fingerprint(t.peer)} this for task ${t.id}` : `task ${t.id} from ${fingerprint(t.peer)} asks ${t.capability} (class ${t.approval ?? '?'})`;
+    if (!shownInFull(content)) {
+      // The phrase approves the whole content: never shown next to a part of it. The terminal shows all of it, with a phrase.
+      this.humanLog(
+        `${what}${again}: ${content.length} characters, too long to show here. Your agent does nothing with it until you approve. ` +
+          `Read it in full in your own terminal: rdv task list --home "${this.home.dir}" (it shows a confirm phrase with it)`,
+      );
+      return;
+    }
     if (rel) {
       this.humanLog(
-        `your agent wants to send ${fingerprint(t.peer)} this for task ${t.id}${again}: ${excerpt(describeDraft(rel.content))}. ` +
+        `${what}${again}: ${content}. ` +
           `To send it, tell your assistant this confirm phrase: ${phrase}  ` +
           `(or send it yourself: rdv task release ${t.id} --code ${code} --home "${this.home.dir}"; otherwise nothing is sent)`,
       );
       return;
     }
-    const text = (t.text ?? []).join(' ');
     this.humanLog(
-      `task ${t.id} from ${fingerprint(t.peer)} asks ${t.capability} (class ${t.approval ?? '?'})${again}` +
-        `${text ? `; their request (untrusted, written by the peer): ${JSON.stringify(excerpt(text))}` : ''}` +
-        `${t.input !== undefined ? `; input (untrusted): ${excerpt(JSON.stringify(t.input))}` : ''}. ` +
+      `${what}${again}${content ? `: ${content}` : ''}. ` +
         `Your agent does nothing until you approve. To let it start, tell your assistant this confirm phrase: ${phrase}  ` +
         `(or approve it yourself: rdv task approve ${t.id} --code ${code} --home "${this.home.dir}"; to refuse: rdv task decline ${t.id})`,
     );
@@ -2222,6 +2229,15 @@ export class RdvMcpServer {
     }
     const target: PhraseTarget = { action: gate === 'start' ? 'task-start' : 'task-release', id: taskId, digest: view.digest };
     await this.refreshPhrases();
+    // An approval covers the whole content. Too long for a form, which would show only part of it: the form is never
+    // opened, and the human reads all of it in their own terminal, where the phrase is shown with it.
+    if (phrase === undefined && !shownInFull(gate === 'start' ? startContent(view.task) : releaseContent(view.release!))) {
+      throw new ToolError(
+        `${notDone} ${gate === 'start' ? 'This task' : 'This result'} is too long to show your user in an approval form (over ${SHOW_MAX} characters), and they must see all of it. ` +
+          `Ask them to read it in full in their own terminal with "rdv task list --home \\"${home.dir}\\"": it shows a confirm phrase with it. Then call rdv_task again with confirm_phrase, ` +
+          `or they run the "rdv task ${gate === 'start' ? 'approve' : 'release'}" command it shows.`,
+      );
+    }
     if (phrase !== undefined) {
       const check = await home.locked(async () => checkPhrase(home, target, phrase));
       if (!check.ok) {
@@ -2317,10 +2333,27 @@ export class RdvMcpServer {
 
 const TERMINAL: ReadonlySet<string> = new Set(['completed', 'failed', 'rejected', 'canceled']);
 
-/** Human-facing text, capped (the full draft is in `rdv task list`). */
-function excerpt(text: string, max = 2000): string {
-  return text.length > max ? `${text.slice(0, max)}… [${text.length} characters; all of it in "rdv task list"]` : text;
+/**
+ * The most a form or the server's log shows of a task or a draft. An
+ * approval covers the whole content, so longer content is never offered for
+ * approval there: the human reads all of it in `rdv task list`, which shows
+ * the phrase with it (security review).
+ */
+export const SHOW_MAX = 2000;
+const shownInFull = (content: string) => content.length <= SHOW_MAX;
+
+/** Everything from the peer that a start digest covers, as the human is shown it (untrusted). */
+function startContent(t: TaskRecord): string {
+  return [
+    ...(t.text?.length ? [`request (untrusted, written by the peer): ${JSON.stringify(t.text.join('\n'))}`] : []),
+    ...(t.input !== undefined ? [`input (untrusted): ${JSON.stringify(t.input)}`] : []),
+    ...(t.gate?.step === 'input' && t.answer !== undefined ? [`their answer (untrusted): ${JSON.stringify(t.answer)}`] : []),
+    ...(t.files?.length ? [`files (untrusted, not fetched): ${JSON.stringify(t.files)}`] : []),
+  ].join('; ');
 }
+
+/** Exactly what a release would send. */
+const releaseContent = (r: PendingRelease): string => describeDraft(r.content);
 
 /** Does this task wait for our user (a start gate, or a draft to release)? */
 function waitingForUser(t: TaskRecord, s: TaskHostState): boolean {
@@ -2378,10 +2411,7 @@ function describeTaskStart(t: TaskRecord): string {
     `From agent: ${safe(t.peer)}`,
     `Fingerprint: ${safe(fingerprint(t.peer))}`,
     `Asks for: ${safe(t.capability)} (class ${safe(t.approval ?? '?')})`,
-    ...(t.text?.length ? [`Request (untrusted, written by the peer): ${JSON.stringify(clean(excerpt(t.text.join('\n'))))}`] : []),
-    ...(t.input !== undefined ? [`Input (untrusted): ${clean(excerpt(JSON.stringify(t.input)))}`] : []),
-    ...(t.gate?.step === 'input' && t.answer !== undefined ? [`Their answer (untrusted): ${clean(excerpt(JSON.stringify(t.answer)))}`] : []),
-    ...(t.files?.length ? [`Files (not fetched): ${t.files.map((f) => JSON.stringify(clean(f.file.name ?? 'unnamed'))).join(', ')}`] : []),
+    ...(startContent(t) ? [`It says: ${clean(startContent(t))}`] : []),
     'If you approve, your agent works on it. Anything it sends back needs your approval again.',
   ].join('\n');
 }
@@ -2392,6 +2422,6 @@ function describeTaskRelease(t: TaskRecord, r: PendingRelease): string {
     `To agent: ${safe(t.peer)}`,
     `Fingerprint: ${safe(fingerprint(t.peer))}`,
     `Task: ${safe(t.id)} (${safe(t.capability)})`,
-    `Would send: ${clean(excerpt(describeDraft(r.content)))}`,
+    `Would send: ${clean(releaseContent(r))}`,
   ].join('\n');
 }
