@@ -43,6 +43,13 @@ describe('dinner scenarios (in-memory relay)', () => {
     expect(r.steps.map((s) => s.step)).toContain('john cannot propose yet: omer has not granted him meetings');
   });
 
+  it('cancel an agreed meeting: both calendars free it and both end canceled (issue #20)', async () => {
+    const r = await runDinnerScenario({ relays: [relay.url], variant: 'cancel-agreed' });
+    expect([r.omer.state, r.john.state]).toEqual(['canceled', 'canceled']);
+    expect(r.john.agreed).toEqual(r.omer.agreed);
+    expect(relay.events.map((e) => e.content).join('')).not.toContain('meeting/cancel');
+  });
+
   it('duplicate deliveries change nothing', async () => {
     const r = await runDinnerScenario({ relays: [relay.url], variant: 'duplicate', settleMs: 1_500 });
     expect(r.steps.map((s) => s.step)).toContain('re-send a negotiation message in a new envelope');

@@ -1,6 +1,7 @@
 // Confirm phrases: the fallback consent channel when an MCP client can't
 // elicit (PLAN §6.1). `rdv-mcp` issues a random phrase per thing waiting for
-// the human (a pending request, a probe answer, a held dinner) and shows it
+// the human (a pending request, a probe answer, a held dinner, canceling an
+// agreed one) and shows it
 // only on human-facing channels: its stderr, and `rdv contact pending` /
 // `rdv dinner list` in text mode. It is never part of a tool result, so the
 // model can only learn it from its human.
@@ -15,7 +16,8 @@
 // an ID: request IDs, grant IDs and task IDs are all peer-chosen.
 // - Scoped by action: stored under `<action>:<id>` with its action, checked
 //   only for that action (security review of issue #8).
-// - A meeting phrase is bound to meetingDigest of the held meeting (NOTES 59).
+// - A meeting phrase is bound to meetingDigest of the held meeting (NOTES 59),
+//   a cancel phrase to that of the agreed one (NOTES 61).
 // - A request phrase is bound to the request (id, sender, binding, how and
 //   when it arrived: `subject`) and to the terms shown with it, tier and
 //   scope (`terms`). A model that presents it with another tier or scope is
@@ -115,7 +117,7 @@ export function candidateTarget(c: GrantCandidate): PhraseTarget {
   return { action: 'candidate', id: c.grant.id, digest: candidateDigest(c) };
 }
 
-const ACTIONS: readonly string[] = ['request', 'candidate', 'meeting'];
+const ACTIONS: readonly string[] = ['request', 'candidate', 'meeting', 'cancel'];
 const isStr = (v: unknown): v is string => typeof v === 'string' && v.length > 0;
 const isHash = (h: unknown): h is ConsentHash =>
   !!h && typeof h === 'object' && isStr((h as ConsentHash).salt) && isStr((h as ConsentHash).hash) && ((h as ConsentHash).digest === undefined || isStr((h as ConsentHash).digest));

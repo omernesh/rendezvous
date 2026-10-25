@@ -18,6 +18,7 @@ const KINDS = [
   'accepted',
   'confirm-needed',
   'completed',
+  'meeting-canceled',
   'released',
   'rejected',
   'canceled',
@@ -69,6 +70,8 @@ function dinnerSummary(e: Raw): string {
       return `Released the tentative hold on ${slot}: the dinner with ${peer} did not go ahead.`;
     case 'completed':
       return `Agreed with ${peer}: dinner ${slot}. It is held in your calendar.`;
+    case 'meeting-canceled':
+      return `The agreed dinner with ${peer} on ${slot} is off; it was removed from your calendar.`;
     case 'rejected':
       return `No agreement with ${peer}; the negotiation ended (rejected).`;
     case 'canceled':
@@ -195,7 +198,9 @@ export function toModelEvent(e: Raw, negotiating: boolean): Omit<McpEvent, 'n' |
           e.kind === 'confirm-needed'
             ? 'Ask your user whether this dinner works for them. If yes, call rdv_negotiate with action "confirm" and this task_id: it succeeds only with their confirmation ' +
               '(an approval form, or the confirm phrase they read in their own terminal). If not, use action "cancel".'
-            : undefined,
+            : e.kind === 'meeting-canceled'
+              ? 'Tell your user that this agreed dinner was called off and is no longer in their calendar.'
+              : undefined,
 
         reason: e.reason === undefined ? undefined : untrusted(e.reason),
         peer_text: peerText?.length ? peerText : undefined,

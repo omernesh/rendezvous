@@ -24,6 +24,10 @@
 //                 sends John a reverse grant; then John offers, Omer's agent
 //                 holds Tuesday 19:00 for Omer, each human confirms, and both
 //                 end `completed` holding that slot.
+//     cancel-agreed  overlap with `--auto-confirm`; once both are `completed`,
+//                 John runs `rdv dinner cancel`: meeting/cancel frees the
+//                 evening in both calendars, Omer's agent tells him
+//                 (`meeting-canceled`), both end `canceled` (issue #20).
 //
 //   node packages/cli/dist/scenarios/dinner.js --relay ws://… [--variant overlap] [--timeout ms] [--keep]
 import { randomBytes } from 'node:crypto';
@@ -38,8 +42,8 @@ import { Home } from '../src/home.js';
 import { relaysFromEnv } from './contact.js';
 import { assert, type Line, Listener, rdv } from './harness.js';
 
-export type DinnerVariant = 'overlap' | 'no-overlap' | 'cancel' | 'cancel-hold' | 'duplicate' | 'reverse';
-export const DINNER_VARIANTS: DinnerVariant[] = ['overlap', 'no-overlap', 'cancel', 'cancel-hold', 'duplicate', 'reverse'];
+export type DinnerVariant = 'overlap' | 'no-overlap' | 'cancel' | 'cancel-hold' | 'duplicate' | 'reverse' | 'cancel-agreed';
+export const DINNER_VARIANTS: DinnerVariant[] = ['overlap', 'no-overlap', 'cancel', 'cancel-hold', 'duplicate', 'reverse', 'cancel-agreed'];
 
 export interface DinnerScenarioOptions {
   relays: string[];
@@ -73,7 +77,7 @@ export async function runDinnerScenario(opts: DinnerScenarioOptions): Promise<Di
   const dirs = { omer: join(root, 'omer'), john: join(root, 'john') };
   const cal = { omer: join(root, 'omer-cal.json'), john: join(root, 'john-cal.json') };
   const relayArgs = opts.relays.flatMap((r) => ['--relay', r]);
-  // Only the duplicate variant lets the bots confirm on their own; elsewhere each human confirms.
+  // Only duplicate and cancel-agreed let the bots confirm on their own; elsewhere each human confirms.
   const negotiate = (calendar: string) => [
     '--negotiate',
     '--calendar',
@@ -82,7 +86,7 @@ export async function runDinnerScenario(opts: DinnerScenarioOptions): Promise<Di
     WINDOW,
     '--tz',
     TZ,
-    ...(v === 'duplicate' ? ['--auto-confirm'] : []),
+    ...(v === 'duplicate' || v === 'cancel-agreed' ? ['--auto-confirm'] : []),
   ];
   const listeners: Listener[] = [];
   const steps: DinnerScenarioResult['steps'] = [];
@@ -134,7 +138,7 @@ export async function runDinnerScenario(opts: DinnerScenarioOptions): Promise<Di
       await rdv(['init', '--profile', 'john', '--email', `john+${tag}@doe.com`, ...relayArgs], dirs.john);
       const o = (await rdv(['whoami'], dirs.omer)).lines[0].id as string;
       const j = (await rdv(['whoami'], dirs.john)).lines[0].id as string;
-      if (v === 'overlap' || v === 'duplicate' || v === 'cancel-hold' || v === 'reverse') {
+      if (v === 'overlap' || v === 'duplicate' || v === 'cancel-hold' || v === 'reverse' || v === 'cancel-agreed') {
         writeCal(cal.omer, [{ start: evening(0, 8, 9).start, end: evening(0, 8, 9).end, title: 'Omer private dentist' }]);
         writeCal(cal.john, [{ ...evening(0), title: 'John private thing' }]);
       } else {
@@ -305,7 +309,7 @@ export async function runDinnerScenario(opts: DinnerScenarioOptions): Promise<Di
       if (v === 'no-overlap') {
         await omerL.waitFor(dinner(taskId, 'rejected'), 'omer sees the decline', timeout);
       } else {
-        if (v === 'duplicate') await omerL.waitFor(dinner(taskId, 'completed'), 'omer confirms the accept', timeout);
+        if (v === 'duplicate' || v === 'cancel-agreed') await omerL.waitFor(dinner(taskId, 'completed'), 'omer confirms the accept', timeout);
         await johnL.waitFor(dinner(taskId, 'completed'), 'john gets the confirm', timeout);
         await omerL.waitFor((l) => dinner(taskId, 'status')(l) && String(l.reason).includes('completed'), 'omer gets the acknowledgement', timeout);
       }
@@ -322,6 +326,29 @@ export async function runDinnerScenario(opts: DinnerScenarioOptions): Promise<Di
       }
       checkAgreed(o, j, taskId);
     });
+
+    if (v === 'cancel-agreed') {
+      const held = (path: string) => JSON.parse(readFileSync(path, 'utf8')).busy.filter((b: { title?: string }) => b.title?.includes(taskId));
+      await step('john cancels the agreed dinner: both calendars free it, and omer is told', async () => {
+        const c = await rdv(['dinner', 'cancel', taskId, '--reason', 'sick'], dirs.john, { timeoutMs: timeout });
+        assert(c.lines.some((l) => l.kind === 'meeting-canceled' && l.task === taskId), 'cancel prints meeting-canceled');
+        assert(held(cal.john).length === 0, 'john’s calendar entry is gone');
+        await omerL.waitFor(dinner(taskId, 'meeting-canceled'), 'omer is told', timeout);
+        await johnL.waitFor((l) => dinner(taskId, 'status')(l) && String(l.reason).includes('canceled'), 'john gets the ack', timeout);
+        assert(held(cal.omer).length === 0, 'omer’s calendar entry is gone');
+        const priv = JSON.parse(readFileSync(cal.john, 'utf8')).busy.filter((b: { title?: string }) => b.title === 'John private thing');
+        assert(priv.length === 1, 'other calendar entries stay');
+        const again = await rdv(['dinner', 'cancel', taskId], dirs.john, { check: false });
+        assert(again.code === 1 && again.stderr.includes('already canceled'), `a second cancel is refused (${again.stderr})`);
+      });
+      return await step('both sides end canceled, keeping the agreed slot as the record', async () => {
+        const ot = (await tasks('omer')).find((t) => t.id === taskId)!;
+        const jt = (await tasks('john')).find((t) => t.id === taskId)!;
+        assert(ot?.state === 'canceled' && jt?.state === 'canceled', `both canceled (omer ${ot?.state}, john ${jt?.state})`);
+        assert(ot.reason === 'sick' && !!ot.agreed && !!jt.agreed, 'omer recorded the reason; the agreement stays as the record');
+        return { variant: v, taskId, omer: ot, john: jt, steps };
+      });
+    }
 
     if (v === 'duplicate') {
       const snapshot = () => {

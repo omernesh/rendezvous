@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
   type A2APayload,
+  agreedSnapshot,
   awaitingHuman,
   cancel,
+  cancelMeeting,
   CONFIRM_GRACE_MS,
   confirmMeeting,
   type Effect,
@@ -747,6 +749,166 @@ describe('negotiation', () => {
 
     const omer = side(OMER, 1, { busy: [{ start: '2026-10-26T00:00:00+02:00', end: '2026-11-02T00:00:00+02:00' }] });
     expect(() => propose(omer.state, JOHN, ctxOf(omer))).toThrow(/no free slot/);
+  });
+});
+
+describe('canceling an agreed meeting (issue #20)', () => {
+  type Msg = Extract<A2APayload, { type: 'a2a/message' }>;
+  const agreed = () => {
+    const omer = side(OMER, 1);
+    const john = side(JOHN, 2, { busy: [evening(0)] });
+    const { taskId } = start(omer, john);
+    expect([task(omer, taskId).state, task(john, taskId).state]).toEqual(['completed', 'completed']);
+    return { omer, john, taskId, slot: evening(1, 19, 21) };
+  };
+
+  it('either human cancels: both release the final hold, the peer gets a distinct event, both end canceled', () => {
+    const { omer, john, taskId, slot } = agreed();
+    const c = cancelMeeting(omer.state, taskId, ctxOf(omer), { reason: 'I am sick' });
+    expect(verbs(c.outgoing)).toEqual(['meeting/cancel']);
+    expect((c.outgoing[0].payload as Msg).message.parts).toContainEqual({ kind: 'data', data: { rdv: 'meeting/cancel', slot, reason: 'I am sick' } });
+    expect(c.effects).toEqual([{ kind: 'release', taskId, peer: JOHN, slot, tentative: false }]);
+    expect(c.events).toEqual([expect.objectContaining({ kind: 'meeting-canceled', taskId, slot, state: 'canceled' })]);
+    apply(omer, c);
+    expect(task(omer, taskId)).toMatchObject({ state: 'canceled', agreed: slot, reason: 'I am sick' });
+    expect(omer.holds).toEqual([]);
+
+    const wire = run(omer, john, c.outgoing);
+    expect(verbs(wire)).toEqual(['meeting/cancel', 'update:canceled']);
+    expect(task(john, taskId)).toMatchObject({ state: 'canceled', agreed: slot, reason: 'I am sick' });
+    expect(john.holds).toEqual([]);
+    expect(john.events.at(-1)).toMatchObject({ kind: 'meeting-canceled', taskId, peer: OMER, slot, reason: 'I am sick' });
+    expect(task(omer, taskId).peerState).toBe('canceled');
+
+    // The responder's human can cancel too.
+    const b = agreed();
+    const jc = cancelMeeting(b.john.state, b.taskId, ctxOf(b.john));
+    apply(b.john, jc);
+    run(b.john, b.omer, jc.outgoing);
+    expect([task(b.omer, b.taskId).state, task(b.john, b.taskId).state]).toEqual(['canceled', 'canceled']);
+    expect([b.omer.holds, b.john.holds]).toEqual([[], []]);
+    expect(task(b.omer, b.taskId).reason).toBe('canceled by peer');
+  });
+
+  it('drops a cancel from a stranger, for another task, context or slot, or for a meeting not agreed', () => {
+    const { omer, john, taskId } = agreed();
+    const good = cancelMeeting(omer.state, taskId, ctxOf(omer)).outgoing[0].payload as Msg;
+    const forge = (f: (m: Msg) => void): Msg => {
+      const x = structuredClone(good);
+      x.message.messageId = john.newId();
+      f(x);
+      return x;
+    };
+    const setSlot = (s: Slot) => (m: Msg) => {
+      (m.message.parts[1] as { data: { slot: Slot } }).data.slot = s;
+    };
+    const cases: Array<[string, unknown, string]> = [
+      [MALLORY, good, 'task belongs to another peer'],
+      [OMER, forge((m) => (m.message.taskId = '00000000-0000-4000-8fff-000000000001')), 'meeting/cancel for an unknown task'],
+      [OMER, forge((m) => (m.message.contextId = '00000000-0000-4000-8fff-000000000002')), 'contextId does not match the task'],
+      [OMER, forge(setSlot(evening(2, 19, 21))), 'meeting/cancel of a slot we did not agree'],
+      [OMER, forge(setSlot({ start: '2026-10-27T17:00:00Z', end: '2026-10-27T20:00:00Z' })), 'meeting/cancel of a slot we did not agree'],
+    ];
+    for (const [from, payload, why] of cases) {
+      const r = receive(deepFreeze(john.state), from, payload, ctxOf(john));
+      expect(r.events).toEqual([expect.objectContaining({ kind: 'invalid', reason: why })]);
+      expect([r.outgoing, r.effects]).toEqual([[], []]);
+      expect(r.state.tasks[taskId].state).toBe('completed');
+    }
+    // The same slot in another offset is the same instant: honored.
+    const shifted = forge(setSlot({ start: '2026-10-27T17:00:00Z', end: '2026-10-27T19:00:00Z' }));
+    expect(receive(john.state, OMER, shifted, ctxOf(john)).state.tasks[taskId].state).toBe('canceled');
+
+    // A pending task is not an agreed meeting: meeting/cancel is refused (rdv/cancel is the verb there).
+    const pend = side(OMER, 3);
+    const jp = side(JOHN, 4, { autoConfirm: false });
+    const p = propose(pend.state, JOHN, ctxOf(pend));
+    apply(jp, receive(jp.state, OMER, p.outgoing[0].payload, ctxOf(jp)));
+    expect(task(jp, p.taskId).hold?.stage).toBe('human-accept');
+    const early = structuredClone(good);
+    early.message = { ...early.message, taskId: p.taskId, contextId: (p.outgoing[0].payload as Msg).message.contextId };
+    const r = receive(jp.state, OMER, early, ctxOf(jp));
+    expect(r.events).toEqual([expect.objectContaining({ kind: 'invalid', reason: 'meeting/cancel for a meeting that is not agreed (use rdv/cancel)' })]);
+    expect(r.state.tasks[p.taskId].hold?.stage).toBe('human-accept');
+  });
+
+  it('is idempotent and replay-safe: a duplicate is a no-op, and an old cancel never touches a later meeting in the same slot', () => {
+    const { omer, john, taskId, slot } = agreed();
+    const c = cancelMeeting(omer.state, taskId, ctxOf(omer));
+    apply(omer, c);
+    run(omer, john, c.outgoing);
+    expect(john.holds).toEqual([]);
+
+    // Renegotiated: a new task agrees on the same evening.
+    const again = start(omer, john);
+    expect(again.taskId).not.toBe(taskId);
+    expect(task(john, again.taskId)).toMatchObject({ state: 'completed', agreed: slot });
+    expect(john.holds).toEqual([slot]);
+
+    // The old cancel re-sent as is (same messageId): a duplicate.
+    const dup = receive(deepFreeze(john.state), OMER, c.outgoing[0].payload, ctxOf(john));
+    expect(dup.events.map((e) => e.kind)).toEqual(['duplicate']);
+    expect([dup.outgoing, dup.effects]).toEqual([[], []]);
+    // ...and with a fresh messageId: the old task is already canceled, so nothing to undo; it says so once.
+    const fresh = structuredClone(c.outgoing[0].payload) as Msg;
+    fresh.message.messageId = '00000000-0000-4000-9999-000000000003';
+    const re = receive(deepFreeze(john.state), OMER, fresh, ctxOf(john));
+    expect(re.events).toEqual([expect.objectContaining({ kind: 'ignored', reason: 'meeting/cancel after canceled' })]);
+    expect(re.effects).toEqual([]);
+    expect(verbs(re.outgoing)).toEqual(['update:canceled']);
+    expect(re.state.tasks[again.taskId]).toEqual(john.state.tasks[again.taskId]);
+    // Our own second cancel is refused before anything is sent.
+    expect(() => cancelMeeting(omer.state, taskId, ctxOf(omer))).toThrow(/already canceled/);
+  });
+
+  it('cancel before completion still goes through rdv/cancel; meeting/cancel needs an agreement', () => {
+    const omer = side(OMER, 1);
+    const john = side(JOHN, 2, { autoConfirm: false, busy: [evening(0)] });
+    const p = propose(omer.state, JOHN, ctxOf(omer));
+    apply(omer, p);
+    apply(john, receive(john.state, OMER, p.outgoing[0].payload, ctxOf(john)));
+    expect(() => cancelMeeting(omer.state, p.taskId, ctxOf(omer))).toThrow(/no agreed meeting to cancel/);
+    expect(() => cancelMeeting(john.state, p.taskId, ctxOf(john))).toThrow(/no agreed meeting to cancel/);
+    expect(() => cancelMeeting(omer.state, '00000000-0000-4000-8fff-000000000009', ctxOf(omer))).toThrow(/no negotiation/);
+    const c = cancel(john.state, p.taskId, ctxOf(john));
+    expect(verbs(c.outgoing)).toEqual(['rdv/cancel']);
+    expect(c.effects).toEqual([expect.objectContaining({ kind: 'release', tentative: true })]);
+    // And rdv/cancel still does not end an agreed meeting.
+    const { omer: o2, taskId } = agreed();
+    expect(() => cancel(o2.state, taskId, ctxOf(o2))).toThrow(/already completed/);
+  });
+
+  it('is honored after the grant lost meetings (it only frees time), and binds to the agreement the human reviewed', () => {
+    const { omer, john, taskId } = agreed();
+    const reviewed = agreedSnapshot(task(omer, taskId))!;
+    expect(reviewed).toMatchObject({ taskId, peer: JOHN, stage: 'agreed', start: evening(1, 19, 21).start });
+    expect(meetingSnapshot(task(omer, taskId))).toBeUndefined(); // nothing to confirm
+    expect(() => cancelMeeting(omer.state, taskId, ctxOf(omer), { expected: { ...reviewed, start: evening(2, 19, 21).start } })).toThrow(MeetingChangedError);
+    expect(() => cancelMeeting(omer.state, taskId, ctxOf(omer), { expected: { ...reviewed, stage: 'human-confirm' } })).toThrow(MeetingChangedError);
+    const c = cancelMeeting(omer.state, taskId, ctxOf(omer), { expected: reviewed });
+    apply(omer, c);
+    expect(agreedSnapshot(task(omer, taskId))).toBeUndefined();
+    const r = receive(john.state, OMER, c.outgoing[0].payload, { ...ctxOf(john), scope: { may_propose_meetings: false } });
+    expect(r.state.tasks[taskId].state).toBe('canceled');
+  });
+
+  it('a peer reporting canceled for a meeting we completed releases it (the confirm crossed its owner’s cancel)', () => {
+    const omer = side(OMER, 1, { autoConfirm: false });
+    const john = side(JOHN, 2, { busy: [evening(0)] });
+    const p = propose(omer.state, JOHN, ctxOf(omer));
+    apply(omer, p);
+    const j = receive(john.state, OMER, p.outgoing[0].payload, ctxOf(john)); // accept: John holds, waits for the confirm
+    apply(john, j);
+    apply(omer, receive(omer.state, JOHN, j.outgoing[0].payload, ctxOf(omer)));
+    const cm = confirmMeeting(omer.state, p.taskId, ctxOf(omer)); // Omer's human confirms...
+    apply(omer, cm);
+    const jc = cancel(john.state, p.taskId, ctxOf(john)); // ...while John's cancels
+    apply(john, jc);
+    const wire = run(omer, john, [...cm.outgoing, ...jc.outgoing]);
+    expect(verbs(wire)).toEqual(['meeting/confirm', 'rdv/cancel', 'update:canceled', 'update:completed']);
+    expect([task(omer, p.taskId).state, task(john, p.taskId).state]).toEqual(['canceled', 'canceled']);
+    expect([omer.holds, john.holds]).toEqual([[], []]);
+    expect(omer.events.find((e) => e.kind === 'meeting-canceled')).toMatchObject({ reason: 'peer reports canceled' });
   });
 });
 

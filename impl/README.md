@@ -60,12 +60,12 @@ that another implementation should be able to open.
 PLAN.md §5.1–5.2, SPEC.md §7. Payloads `a2a/message` (an A2A v0.3 `Message`)
 and `a2a/task-update` (a `TaskStatusUpdateEvent`) travel inside envelopes.
 The verb sits in the message's `data` part (`data.rdv`): `meeting/propose`,
-`meeting/counter`, `meeting/accept`, `meeting/confirm`, `meeting/decline`, `rdv/cancel`.
+`meeting/counter`, `meeting/accept`, `meeting/confirm`, `meeting/decline`, `meeting/cancel`, `rdv/cancel`.
 
 | Module | What it does |
 |---|---|
 | `model` | Types and `parsePayload`: strict validation of peer input (known keys only, UUIDs, 1–3 RFC 3339 slots with offsets, bounded text) |
-| `engine` | Pure state machine: `propose`, `receive`, `confirmMeeting`, `cancel`, `expire` return `{ state, outgoing, effects, events }`; no I/O, no clock |
+| `engine` | Pure state machine: `propose`, `receive`, `confirmMeeting`, `cancel`, `cancelMeeting`, `expire` return `{ state, outgoing, effects, events }`; no I/O, no clock |
 | `calendar` | `CalendarAdapter` (`freeBusy(range)`, `hold(slot)`, `release(slot, note)`), `MemoryCalendar`, `JsonFileCalendar` (titles never leave the file) |
 | `window` | `parseWindow`: RFC 3339 ranges and a few phrases, with `now` and the UTC offset passed in |
 | `time` | Instants, fixed offsets, slot formatting |
@@ -81,9 +81,11 @@ tentative hold is released when the task is canceled, declined or expires,
 and every hold is busy for all other tasks. Unless `ctx.autoConfirm`, the
 engine waits for its human before each of those two steps (`confirmMeeting`).
 Messages are deduplicated by `messageId`; `rdv/cancel` is honored
-while pending; meeting verbs need `may_propose_meetings` in the grant, and
+while pending; an agreed meeting is called off with `meeting/cancel`
+(`cancelMeeting`, our human only), which the peer honors only for that
+completed task and slot, freeing it in both calendars; meeting verbs need `may_propose_meetings` in the grant, and
 `may_access_calendar: none` blocks them. A peer can hold at most 32 tasks
-with us. Details and open questions: [NOTES.md](NOTES.md) items 28–37, 58.
+with us. Details and open questions: [NOTES.md](NOTES.md) items 28–37, 58, 61.
 
 **`--window`** (local time = a fixed offset; weeks run Monday–Sunday; an
 evening is 19:00–23:00; everything is clipped to start no earlier than now):
@@ -147,7 +149,7 @@ State lives in a directory: `--home <dir>`, else `$RDV_HOME`, else
 | `rdv listen [--auto-grant <tier> [--auto-grant-any-tier]] [--exec <script>] [--negotiate --calendar cal.json [--window "…"] [--tz +02:00]]` | Long-running: print events; auto-grant is for demos only and stops at `stranger` unless `--auto-grant-any-tier`; `--exec` gets each event as a JSON line on stdin (`RDV_EVENT`, `RDV_HOME` set); `--negotiate` answers dinner proposals from the calendar (window default `next week evenings`) and holds a slot for you to confirm; `--auto-confirm` skips the human (bots, demos) |
 | `rdv dinner propose <agent-id> --calendar cal.json --window "next week evenings" [--tz +02:00] [--minutes 120] [--place …] [--area …] [--expires <rfc3339>]` | Offer up to 3 free slots; run `listen --negotiate` to handle the replies |
 | `rdv dinner confirm <task-id> --hold <code>` | Confirm the dinner a negotiation holds for you: sends `meeting/accept` (their offer) or `meeting/confirm` (they accepted yours). `--hold` is the code `rdv dinner list` shows; it is refused if the meeting changed since |
-| `rdv dinner cancel <task-id> [--reason …]` | Send `rdv/cancel` for a pending negotiation and release its hold |
+| `rdv dinner cancel <task-id> [--reason …]` | Send `rdv/cancel` for a pending negotiation and release its hold; for an agreed (completed) dinner, send `meeting/cancel`: it leaves your calendar and the peer's agent removes it from theirs |
 | `rdv dinner list` | Negotiations with state, round, agreed or held slot (and what it waits for) |
 | `rdv inbox [--follow]` | Show received payloads |
 
@@ -176,8 +178,8 @@ an attached server should get answers to its dinner proposals.
 
 With `--json`, negotiation steps print as `{"event":"dinner","kind":…,"task":…,"peer":…,"state":…}`
 (kinds: proposed, offer-received, countered, confirm-needed, accepted,
-completed, released, rejected, canceled, expired, status, duplicate, ignored,
-invalid). In text mode the
+completed, meeting-canceled, released, rejected, canceled, expired, status,
+duplicate, ignored, invalid). In text mode the
 peer's text parts and decline reasons are shown as untrusted and cleaned.
 
 PowerShell quoting for `send`: `rdv send <id> --json '{\"type\":\"a2a/message\",\"text\":\"hi\"}'`
@@ -195,7 +197,9 @@ John's agent holds a slot for John; the hold is released), `duplicate`
 (`--auto-confirm` bots, then every envelope replayed and a message re-sent;
 nothing changes), `reverse` (John, who granted the contact, proposes: refused
 until Omer runs `rdv contact grant <john-id>`, which sends John a reverse
-grant; then both confirm and complete). All six run in `npm test`; `overlap` runs in
+grant; then both confirm and complete), `cancel-agreed` (`--auto-confirm`
+bots agree, then John runs `rdv dinner cancel`; both calendars free the
+evening and both end `canceled`). All seven run in `npm test`; `overlap` runs in
 `npm run test:live`; by hand:
 
 `node packages/cli/dist/scenarios/dinner.js --relay ws://… [--variant overlap] [--variant …]`.

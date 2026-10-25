@@ -31,8 +31,17 @@
 //   working         the proposer countered back (the responder must answer)
 //   completed       a slot was accepted and confirmed → both sides hold it
 //   rejected        declined, rounds used up, or expired
-//   canceled        rdv/cancel while pending (or before the proposal arrived)
+//   canceled        rdv/cancel while pending (or before the proposal arrived),
+//                   or meeting/cancel of an agreed meeting (`agreed` is kept)
 // `task.hold` and its stage refine a pending state while a slot is held.
+//
+// Calling off an agreed meeting (issue #20): our human runs cancelMeeting,
+// which releases our final hold and sends meeting/cancel naming the agreed
+// slot. The peer honors it only for a `completed` task with that peer and
+// slot, releases its own hold and acknowledges with a `canceled` status
+// update. It needs no approval there: it only frees time. A peer that reports
+// `canceled` or `rejected` for a task we completed (the confirm crossed its
+// owner's cancel, or arrived past its grace) is taken at its word the same way.
 import {
   type A2AMessage,
   type A2APayload,
@@ -135,6 +144,7 @@ export type EventKind =
   | 'accepted'
   | 'confirm-needed'
   | 'completed'
+  | 'meeting-canceled'
   | 'released'
   | 'rejected'
   | 'canceled'
@@ -167,12 +177,13 @@ export interface HoldEffect {
   tentative: boolean;
 }
 
-/** Remove this task's tentative hold of `slot` from the calendar. */
+/** Remove this task's hold of `slot` from the calendar: the tentative one, or the final one of a canceled agreement. */
 export interface ReleaseEffect {
   kind: 'release';
   taskId: string;
   peer: string;
   slot: Slot;
+  tentative: boolean;
 }
 
 export type Effect = HoldEffect | ReleaseEffect;
@@ -397,8 +408,16 @@ class Run {
     if (!task.hold) return;
     const { slot } = task.hold;
     delete task.hold;
-    this.effects.push({ kind: 'release', taskId: task.id, peer: task.peer, slot });
+    this.effects.push({ kind: 'release', taskId: task.id, peer: task.peer, slot, tentative: true });
     this.event({ kind: 'released', taskId: task.id, peer: task.peer, slot });
+  }
+
+  /** Call off a completed meeting on our side: drop its final hold. `agreed` stays as the record. */
+  cancelAgreed(task: NegotiationTask, state: 'canceled' | 'rejected', reason: string, peerText?: string[]): void {
+    const slot = task.agreed!;
+    this.setState(task, state, reason);
+    this.effects.push({ kind: 'release', taskId: task.id, peer: task.peer, slot, tentative: false });
+    this.event({ kind: 'meeting-canceled', taskId: task.id, peer: task.peer, state: task.state, slot, reason, peerText });
   }
 
   /** The meeting is final on our side: the hold stays, for good. */
@@ -562,6 +581,11 @@ function handle(run: Run, from: string, payload: unknown, ctx: Ctx): void {
       run.setState(task, ended, `peer reports ${ended}`);
       run.event({ kind: ended, taskId: task.id, peer: from, state: task.state, reason: task.reason });
     }
+    // The same for a meeting we completed: the peer does not hold it, so it
+    // will not come (residual race of NOTES item 58, issue #20). Only ever frees time.
+    if ((ended === 'canceled' || ended === 'rejected') && task.state === 'completed' && task.agreed) {
+      run.cancelAgreed(task, ended, `peer reports ${ended}`);
+    }
     return;
   }
 
@@ -578,7 +602,7 @@ function handle(run: Run, from: string, payload: unknown, ctx: Ctx): void {
   }
   // Only a meeting-capable grant may create or advance tasks. A cancel of an
   // existing task only reduces what happens, so it is honored regardless.
-  if (!(data.rdv === 'rdv/cancel' && existing)) {
+  if (!((data.rdv === 'rdv/cancel' || data.rdv === 'meeting/cancel') && existing)) {
     const allowed = checkScope(ctx.scope);
     if (!allowed.ok) return invalid(allowed.reason);
   }
@@ -620,6 +644,24 @@ function handle(run: Run, from: string, payload: unknown, ctx: Ctx): void {
     run.setState(existing, 'canceled', data.reason ?? 'canceled by peer');
     run.statusUpdate(existing);
     run.event({ kind: 'canceled', taskId: existing.id, peer: from, state: existing.state, reason: existing.reason, peerText: text });
+    return;
+  }
+
+  if (data.rdv === 'meeting/cancel') {
+    // Only for a meeting we agreed with this peer (checked above), in exactly this slot.
+    if (!existing) return invalid('meeting/cancel for an unknown task');
+    if (existing.state !== 'completed') {
+      if (!isTerminal(existing.state)) return invalid('meeting/cancel for a meeting that is not agreed (use rdv/cancel)');
+      // Already ended (a second cancel, or ours crossed theirs): nothing to undo. Tell the peer how it ended.
+      run.replyFinished(existing, m.messageId);
+      run.event({ kind: 'ignored', taskId: existing.id, peer: from, state: existing.state, reason: `meeting/cancel after ${existing.state}` });
+      return;
+    }
+    if (!existing.agreed || !sameSpan(toSpan(data.slot), toSpan(existing.agreed))) return invalid('meeting/cancel of a slot we did not agree');
+    existing.seen.push(m.messageId);
+    if (existing.seen.length > SEEN_PER_TASK) existing.seen.splice(0, existing.seen.length - SEEN_PER_TASK);
+    run.cancelAgreed(existing, 'canceled', data.reason ?? 'canceled by peer', text);
+    run.statusUpdate(existing);
     return;
   }
 
@@ -725,6 +767,37 @@ export function cancel(state: NegotiationState, taskId: string, ctx: Pick<Ctx, '
 }
 
 /**
+ * Our human calls off an agreed meeting (issue #20): release our final hold
+ * and send meeting/cancel with the agreed slot. Only for a `completed` task;
+ * a pending one goes through `cancel` (rdv/cancel). Throws NegotiationError
+ * otherwise, and MeetingChangedError when `expected` (what the human
+ * reviewed, from agreedSnapshot) no longer matches. Callers that asked a
+ * human must pass `expected`.
+ */
+export function cancelMeeting(
+  state: NegotiationState,
+  taskId: string,
+  ctx: Pick<Ctx, 'now' | 'newId'>,
+  opts: { reason?: string; expected?: MeetingSnapshot } = {},
+): Step {
+  const run = new Run(state, ctx as Ctx);
+  const task = Object.hasOwn(run.state.tasks, taskId) ? run.state.tasks[taskId] : undefined;
+  if (!task) throw new NegotiationError(`no negotiation ${taskId}`);
+  if (task.state !== 'completed' || !task.agreed) {
+    throw new NegotiationError(
+      task.agreed ? `dinner ${taskId} is already ${task.state}` : `negotiation ${taskId} has no agreed meeting to cancel (state ${task.state})`,
+    );
+  }
+  if (opts.expected && !sameMeeting(agreedSnapshot(task), opts.expected)) {
+    throw new MeetingChangedError(`the meeting in negotiation ${taskId} changed since your user reviewed it; nothing was canceled`);
+  }
+  const slot = task.agreed;
+  run.cancelAgreed(task, 'canceled', opts.reason ?? 'canceled by us');
+  run.message(task, { rdv: 'meeting/cancel', slot, ...(opts.reason ? { reason: opts.reason } : {}) }, `Sorry, I need to call off our dinner on ${describeSlot(slot)}.`);
+  return run.result();
+}
+
+/**
  * Our human confirms the meeting a task is waiting on (issue #8): in
  * `human-accept` this sends meeting/accept, in `human-confirm` it sends
  * meeting/confirm and completes the task. A task past `expires` expires
@@ -762,7 +835,8 @@ export interface MeetingSnapshot {
   contextId: string;
   /** When we created the task: a re-proposal under the same ID gets a new one. */
   created: string;
-  stage: Hold['stage'];
+  /** The hold stage being confirmed, or `agreed` for a completed meeting the human may cancel. */
+  stage: Hold['stage'] | 'agreed';
   start: string;
   end: string;
   /** The place as stored (canonical JSON of the task's place), or null. */
@@ -781,6 +855,21 @@ export function meetingSnapshot(t: NegotiationTask): MeetingSnapshot | undefined
     stage: hold.stage,
     start: hold.slot.start,
     end: hold.slot.end,
+    place: t.place ? JSON.stringify(t.place) : null,
+  };
+}
+
+/** The snapshot of a completed meeting, what the human reviews before canceling it (issue #20); undefined otherwise. */
+export function agreedSnapshot(t: NegotiationTask): MeetingSnapshot | undefined {
+  if (t.state !== 'completed' || !t.agreed) return undefined;
+  return {
+    taskId: t.id,
+    peer: t.peer,
+    contextId: t.contextId,
+    created: t.created,
+    stage: 'agreed',
+    start: t.agreed.start,
+    end: t.agreed.end,
     place: t.place ? JSON.stringify(t.place) : null,
   };
 }

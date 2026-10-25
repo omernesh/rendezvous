@@ -37,6 +37,7 @@ export {
 } from './home.js';
 export { type Emitted, FeedTransport, handleInbound, hasExpiring, isJunk, type ListenOptions, SWEEP_MS } from './listen.js';
 export {
+  agreedDigest,
   buildCtx,
   carryOut,
   DEFAULT_LISTEN_WINDOW,

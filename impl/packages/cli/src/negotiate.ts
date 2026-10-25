@@ -2,6 +2,7 @@
 // build the engine context from a calendar file, a window and the grant,
 // then carry out a step (send messages, hold slots) and render its events.
 import {
+  agreedSnapshot,
   type Ctx,
   describeSlot,
   isTerminal,
@@ -112,9 +113,10 @@ export const holdNote = (taskId: string, tentative: boolean) => (tentative ? `Di
 
 /**
  * Carry out a step: calendar holds and releases, then send messages. Returns
- * errors (the step is still applied). A tentative hold is released or
- * finalized in the calendar it was placed in (`holds.json`), so `dinner
- * confirm` and `dinner cancel` need no --calendar.
+ * errors (the step is still applied). A hold is released or finalized in the
+ * calendar it was placed in (`holds.json`, kept while the meeting stands so
+ * an agreed one can be canceled, issue #20), so `dinner confirm` and `dinner
+ * cancel` need no --calendar.
  */
 export async function carryOut(agent: Agent, home: Home, calendarPath: string | undefined, step: Step): Promise<string[]> {
   const errors: string[] = [];
@@ -130,9 +132,12 @@ export async function carryOut(agent: Agent, home: Home, calendarPath: string | 
       if (e.kind === 'hold' && e.tentative) {
         await cal.hold(e.slot, holdNote(e.taskId, true));
         holds[e.taskId] = path;
-      } else {
+      } else if (e.kind === 'hold') {
         await cal.release(e.slot, holdNote(e.taskId, true));
-        if (e.kind === 'hold') await cal.hold(e.slot, holdNote(e.taskId, false));
+        await cal.hold(e.slot, holdNote(e.taskId, false));
+        holds[e.taskId] = path;
+      } else {
+        await cal.release(e.slot, holdNote(e.taskId, e.tentative));
         delete holds[e.taskId];
       }
     }
@@ -191,6 +196,12 @@ export function meetingDigest(s: MeetingSnapshot): string {
 
 /** The short form `rdv dinner list` shows and `rdv dinner confirm --hold` takes (48 bits). */
 export const meetingCode = (s: MeetingSnapshot): string => meetingDigest(s).slice(0, 12);
+
+/** The digest of an agreed meeting, which a cancel phrase is bound to (issue #20). */
+export function agreedDigest(t: NegotiationTask): string | undefined {
+  const s = agreedSnapshot(t);
+  return s ? meetingDigest(s) : undefined;
+}
 
 /** The hold code of a task waiting for its human, if it is. */
 export function holdCode(t: NegotiationTask): string | undefined {

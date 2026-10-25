@@ -6,7 +6,7 @@
 //   cards.json   cards found by `rdv lookup` (so `contact request <agent-id>` works)
 //   negotiations.json  dinner negotiations (@rendezvous/a2a engine state)
 //   consent.json  confirm phrases for pending requests and meetings (written by the MCP server)
-//   holds.json   which calendar file holds each tentative dinner hold (to release or finalize it)
+//   holds.json   which calendar file holds each dinner hold, tentative or agreed (to release or finalize it)
 //   events.jsonl  inbound events written by the home's one listener, plus rdv-mcp's own (behind rdv_inbox)
 //   events.lock  held while appending to events.jsonl
 //   lock         held while a command reads and writes state
@@ -33,8 +33,8 @@ export interface InboxEntry {
   payload: Payload;
 }
 
-/** What a confirm phrase approves: a contact request, a probe answer, or a held dinner. */
-export type ConsentAction = 'request' | 'candidate' | 'meeting';
+/** What a confirm phrase approves: a contact request, a probe answer, a held dinner, or canceling an agreed one. */
+export type ConsentAction = 'request' | 'candidate' | 'meeting' | 'cancel';
 
 /**
  * `consent.json` key: IDs are peer-chosen and may collide across actions, so
@@ -227,7 +227,7 @@ export class Home {
     writeAtomic(this.consentPath, JSON.stringify(consent, null, 2) + '\n', 0o600);
   }
 
-  /** Task ID → calendar file of its tentative hold. */
+  /** Task ID → calendar file of its hold (tentative or agreed). */
   readHolds(): Record<string, string> {
     return existsSync(this.holdsPath) ? readJson(this.holdsPath) : {};
   }

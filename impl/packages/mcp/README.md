@@ -103,6 +103,14 @@ if the held meeting changes before the confirm runs (another slot, peer or
 stage, or a new negotiation under the same ID), nothing is confirmed, the tool
 says it changed, and a new phrase is issued (NOTES 59).
 
+**Canceling an agreed dinner (issue #20).** `rdv_negotiate` action `cancel`
+on a completed dinner passes the same gate, bound to the agreement shown
+(NOTES 61): a form if the client can elicit (only an explicit yes cancels),
+otherwise the first call issues a cancel phrase to the human (stderr and
+`rdv dinner list`) and fails; the human can also run `rdv dinner cancel`.
+The peer's agent frees the evening without asking (it only frees time) and
+reports a `meeting-canceled` event.
+
 No tool result ever contains a phrase (tests scan every result and the inbox
 resource). Limits (NOTES 57): phrases are not on disk, but a model that can
 read files or run commands as the same user can still catch one while it is

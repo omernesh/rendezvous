@@ -831,7 +831,8 @@ verbs and non-UUID IDs.
 | `meeting/accept` | one `slot` | accept a slot from the latest offer |
 | `meeting/confirm` | one `slot` | the offerer makes an accepted slot final |
 | `meeting/decline` | `reason` | refuse; nothing fits |
-| `rdv/cancel` | optional `reason` | withdraw, by the message's `taskId` |
+| `meeting/cancel` | one `slot`, optional `reason` | call off an agreed (`completed`) meeting |
+| `rdv/cancel` | optional `reason` | withdraw a pending task, by the message's `taskId` |
 
 A slot is `{"start", "end"}`, RFC 3339 date-times with an explicit offset
 (`Z` or `±HH:MM`), compared as instants, so an accept may write the slot in
@@ -861,10 +862,25 @@ for a grace period past `expires` (reference: 24 hours), since the offerer
 may have confirmed in time. Either side MAY wait for its human before its
 step (§5.5).
 
-A cancel is honored while the task is not terminal. A cancel that arrives
-before its proposal leaves a tombstone so the proposal is refused when it
-lands. A cancel, or any verb, for a finished task is answered with a status
-update giving its real end state.
+A `rdv/cancel` is honored while the task is not terminal. A cancel that
+arrives before its proposal leaves a tombstone so the proposal is refused
+when it lands. A cancel, or any verb, for a finished task is answered with a
+status update giving its real end state.
+
+An agreed meeting is called off with `meeting/cancel`, which names the agreed
+slot. Only a human may send it (§5.5), and the host binds that approval to
+the agreement it showed (peer, `contextId`, task ID, slot). The sender
+releases its hold and ends the task `canceled`, keeping the agreed slot as a
+record. The receiver honors it only for a `completed` task with that sender,
+`contextId` and slot (compared as instants) and drops anything else; it
+releases its hold, ends `canceled`, acknowledges with a `canceled` status
+update and tells its human. It needs no approval from the receiving human: a
+peer can only free time this way, never commit it. A `meeting/cancel` for a
+task that already ended is answered with its status and changes nothing, and
+a later negotiation of the same slot is a new task that it never touches.
+Likewise, a peer reporting `canceled` or `rejected` for a task the receiver
+completed releases it (the confirm crossed a cancel or arrived too late). An
+agent that predates the verb drops it as unknown and keeps the meeting.
 
 ### 7.4 Scope and defaults
 
@@ -977,13 +993,13 @@ prune finished tasks (reference: after 30 days).
    they are swappable, but a listed agent still trusts its chosen directory
    to stay available and honest about exact matches. Running one is trivial;
    none is required.
-8. **Ending an agreed meeting.** Accept → confirm with tentative holds
-   (§7.3) closes most races, but not all: a confirm delayed past the
-   accepter's grace period, or the accepter's owner canceling while the
-   confirm is in flight, leaves the offerer `completed` and the accepter not.
-   The accepter answers the late confirm with its real state; the offerer
-   keeps its hold because a cancel after completion is not honored. A verb to
-   cancel an agreed meeting is future work.
+8. **Ending an agreed meeting.** `meeting/cancel` (§7.3) lets either human
+   call off an agreed meeting, and a peer's `canceled` or `rejected` status
+   now releases a meeting the receiver completed, which closes the race where
+   a confirm is delayed past the accepter's grace period or crosses the
+   accepter's owner's cancel. Still open: an agent that predates the verb
+   ignores it and keeps the meeting, and nothing tells the canceling side;
+   the humans have to sort that out.
 
 9. **No forward secrecy.** Envelopes are encrypted to a static recipient key
    (§6.4). Conversation-scoped keys from the handshake are future work.

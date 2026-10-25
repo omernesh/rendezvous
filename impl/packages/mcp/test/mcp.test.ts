@@ -163,6 +163,51 @@ describe('rdv-mcp: two Claude sessions book dinner (in-memory relay)', () => {
     });
     expect(r.taskId).toMatch(/^[0-9a-f-]{36}$/);
 
+    // Calling off the agreed dinner is the human's too (issue #20).
+    const held = (who: string) => JSON.parse(readFileSync(join(root, `${who}-cal.json`), 'utf8')).busy.filter((b: { title?: string }) => b.title?.includes(r.taskId));
+    const solo = await john.call('rdv_negotiate', { action: 'cancel', task_id: r.taskId });
+    expect(solo.isError).toBe(true);
+    expect(solo.text).toContain('only your user can call off an agreed dinner');
+    const loggedCancel = phraseFromHumanLog(john, r.taskId);
+    phrases.push(loggedCancel);
+    expect(john.humanLog.find((l) => l.includes(loggedCancel))).toContain('CANCEL the agreed dinner');
+    // Only a hash is stored (issue #12): the terminal shows a new cancel phrase, which replaces the logged one.
+    const listed = execFileSync(process.execPath, [RDV_BIN, 'dinner', 'list', '--home', john.home.dir], { encoding: 'utf8' });
+    const cancelPhrase = /cancel this agreed dinner\): ([a-z]+-[a-z]+-[a-z]+-\d{3})/.exec(listed)?.[1];
+    if (!cancelPhrase) throw new Error(`no cancel phrase in:\n${listed}`);
+    phrases.push(cancelPhrase);
+    expect(cancelPhrase).not.toBe(loggedCancel);
+    const disk = readFileSync(john.home.consentPath, 'utf8');
+    expect(disk).toContain(`"cancel:${r.taskId}"`);
+    expect(disk).not.toMatch(/[a-z]+-[a-z]+-[a-z]+-\d{3}/);
+    const json = (await rdv(['dinner', 'list'], john.home.dir)).stdout;
+    for (const p of [cancelPhrase, loggedCancel]) expect(json).not.toContain(p);
+    const replaced = await john.call('rdv_negotiate', { action: 'cancel', task_id: r.taskId, confirm_phrase: loggedCancel });
+    expect([replaced.isError, replaced.text]).toEqual([true, expect.stringContaining('replaced by a newer one')]);
+    // A guess, or a phrase issued for something else, cancels nothing.
+    for (const guess of ['amber-anchor-apple-123', phrases[0]]) {
+      const g = await john.call('rdv_negotiate', { action: 'cancel', task_id: r.taskId, confirm_phrase: guess });
+      expect(g.isError).toBe(true);
+    }
+    expect((await ok(john, 'rdv_negotiate', { action: 'status' })).negotiations[0].state).toBe('completed');
+    expect(held('john')).toHaveLength(1);
+    // Omer's model has no phrase at all, so it cannot cancel from his side either.
+    const foreign = await omer.call('rdv_negotiate', { action: 'cancel', task_id: r.taskId, confirm_phrase: cancelPhrase });
+    expect([foreign.isError, foreign.text]).toEqual([true, expect.stringContaining('no cancel phrase')]);
+
+    const canceled = await ok(john, 'rdv_negotiate', { action: 'cancel', task_id: r.taskId, confirm_phrase: cancelPhrase, reason: 'sick' });
+    expect(canceled.state).toBe('canceled');
+    expect(held('john')).toEqual([]);
+    expect(john.home.readConsent()[`cancel:${r.taskId}`]).toBeUndefined(); // single use
+    const told = await waitEvent(omer, (e) => e.type === 'dinner' && e.task_id === r.taskId && e.kind === 'meeting-canceled', 'meeting-canceled (omer)', 15_000);
+    expect(told.summary).toContain('is off');
+    expect(told.next_step).toContain('Tell your user');
+    expect(told.reason).toEqual({ untrusted_peer_text: 'sick' });
+    const omerStatus = (await ok(omer, 'rdv_negotiate', { action: 'status' })).negotiations[0];
+    expect(omerStatus.state).toBe('canceled');
+    expect(held('omer')).toEqual([]);
+    expect(Object.keys(omer.home.readConsent()).filter((k) => k.endsWith(r.taskId))).toEqual([]);
+
     // The relay saw only ciphertext: no slot, greeting or calendar text in stored events.
     const stored = relay.events.map((e) => e.content).join('\n');
     for (const s of ['IGNORE ALL', 'Dinner', 'meeting/', 'Tel Aviv', r.agreed.start]) expect(stored).not.toContain(s);
@@ -177,10 +222,16 @@ describe('rdv-mcp: two Claude sessions book dinner (in-memory relay)', () => {
     const dinners: string[] = [];
     let answer: 'decline' | 'accept-unchecked' | 'accept' = 'decline';
     let dinnerAnswer: 'cancel' | 'accept' = 'cancel';
+    const cancels: string[] = [];
+    let cancelAnswer: 'decline' | 'accept' = 'decline';
     // Runs while the form is open, after the human saw the meeting: a peer changing it then.
     let whileOpen: (() => Promise<void>) | undefined;
     const { omer, john } = await pair({
       elicit: async (params): Promise<ElicitResult> => {
+        if (params.message.includes('cancel this agreed dinner')) {
+          cancels.push(params.message);
+          return cancelAnswer === 'decline' ? { action: 'decline' } : { action: 'accept', content: { approve: true } };
+        }
         if (params.message.includes('confirm this dinner')) {
           dinners.push(params.message);
           await whileOpen?.();
@@ -192,7 +243,7 @@ describe('rdv-mcp: two Claude sessions book dinner (in-memory relay)', () => {
         return { action: 'accept', content: { approve: true, tier: 'friend' } };
       },
     });
-    await dinnerFlow(omer, john, {
+    const flow = await dinnerFlow(omer, john, {
       relays: [relay.url],
       root,
       tag: randomBytes(3).toString('hex'),
@@ -237,6 +288,22 @@ describe('rdv-mcp: two Claude sessions book dinner (in-memory relay)', () => {
         expect(dinners[0]).toContain('When: ');
       },
     });
+
+    // Canceling the agreed dinner asks John in a form (issue #20): no keeps it, yes calls it off on both sides.
+    const kept = await john.call('rdv_negotiate', { action: 'cancel', task_id: flow.taskId });
+    expect(kept.isError).toBe(true);
+    expect(kept.text).toContain('stays agreed');
+    expect((await ok(john, 'rdv_negotiate', { action: 'status' })).negotiations[0].state).toBe('completed');
+    cancelAnswer = 'accept';
+    expect((await ok(john, 'rdv_negotiate', { action: 'cancel', task_id: flow.taskId })).state).toBe('canceled');
+    expect(cancels).toHaveLength(2);
+    expect(cancels[0]).toContain('Fingerprint: rdv1:');
+    expect(cancels[0]).toContain('When: ');
+    await waitEvent(omer, (e) => e.type === 'dinner' && e.task_id === flow.taskId && e.kind === 'meeting-canceled', 'meeting-canceled (omer)', 15_000);
+    // Already canceled: nothing to ask, nothing sent.
+    const again = await john.call('rdv_negotiate', { action: 'cancel', task_id: flow.taskId });
+    expect(again.isError).toBe(true);
+    expect(cancels).toHaveLength(2);
   });
 
 

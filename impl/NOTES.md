@@ -518,7 +518,7 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
     `rejected` on the accepter. The accepter answers the late confirm with
     its real state, so the offerer sees it as `peerState` (and a `status`
     event) but keeps its hold, because a cancel after completion is not
-    honored (§7.3). Cancelling an agreed meeting is a v0.2 verb.
+    honored (§7.3). Cancelling an agreed meeting: item 61.
 59. **Meeting consent is bound to the meeting, not the task ID**
     (**spec change**, §5.5; security fix on top of item 42). The human's
     approval used to land on whatever the peer-chosen task ID pointed at
@@ -544,7 +544,6 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
     `--hold <code>`, the first 12 hex digits of the digest, shown by
     `rdv dinner list` (text and `hold_code` in JSON) and in the server's
     phrase notice; a code that no longer matches is refused.
-
 ## Contact flow, continued
 
 60. **Reverse grant** (**spec change**, §5.3, §5.5, §7.4, issue #14; closes
@@ -597,6 +596,44 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
     terminal. Test vectors gained `contact_grant` and `reverse_grant`
     (deterministic ids, no other vector changed; regenerating now keeps the
     saved sample envelope unless `UPDATE_VECTORS=envelope`).
+
+## Meetings, continued
+
+61. **Canceling an agreed meeting** (**spec change**, §7.2, §7.3, §11.8;
+    issue #20). New verb `meeting/cancel` (`slot`, optional `reason`).
+    `rdv/cancel` stays for pending tasks; one after completion is still not
+    honored. Only the owner sends it: `cancelMeeting` in the engine; `rdv
+    dinner cancel <task>` sends it for a completed task (and `rdv/cancel`
+    otherwise); in `rdv-mcp`, `rdv_negotiate` "cancel" on a completed task
+    passes the confirm gate: elicitation, or a cancel phrase (consent action
+    `cancel`) bound to the digest of `agreedSnapshot` (a `MeetingSnapshot`
+    with stage `agreed`), issued to the human on the first call and shown in
+    `rdv dinner list`; like every phrase it is stored only as a hash, so the
+    list shows a new one that replaces it (item 57). The model may still cancel a pending negotiation alone,
+    as before. **State:** `canceled`, with `agreed` kept as the record; no new
+    task state or sub-state on the wire, so old peers fail only on the verb
+    (unknown verb, dropped; their side stays `completed` and nothing reports
+    it, open). **Receiving** needs no approval,
+    since it only frees time and a peer still can't create commitments: honored
+    only for a `completed` task with that peer, `contextId` and slot (as
+    instants), regardless of grant scope like `rdv/cancel`; an unknown task,
+    another peer, `contextId` or slot, or a pending task is `invalid` and
+    changes nothing. The human is told through a new event `meeting-canceled`
+    (CLI line; `rdv_inbox` with a next step to tell the user). **Idempotent:**
+    the same `messageId` is a duplicate; a new one after the task ended is
+    `ignored` and answered with its status (capped by `FINISHED_REPLIES`). Binding to task
+    ID and `contextId` means a renegotiated meeting in the same slot (a new
+    task) is never touched; only the peer itself can name a reused task ID
+    (envelopes are signed and seq-deduped), and it could cancel anyway. **Race
+    of item 58 closed:** a peer status `canceled`/`rejected` for a task we
+    completed releases it too (`meeting-canceled`, reason "peer reports …"),
+    the same reduce-only rule. **Calendar:** the release effect has
+    `tentative`; `holds.json` keeps the calendar of a final hold until it is
+    released, so the owner's cancel needs no `--calendar`. Agreements made
+    before this change have no entry: pass `--calendar` (or give `listen`/
+    `rdv-mcp` one). Open: a completed task evicted by the per-peer cap (item
+    35) can no longer be canceled in-protocol. a2a only: no core wire change,
+    vectors unchanged.
 
 ## Not implemented yet
 

@@ -61,8 +61,16 @@ export interface Place {
   area?: string;
 }
 
-export type Verb = 'meeting/propose' | 'meeting/counter' | 'meeting/accept' | 'meeting/confirm' | 'meeting/decline' | 'rdv/cancel';
-export const VERBS: readonly Verb[] = ['meeting/propose', 'meeting/counter', 'meeting/accept', 'meeting/confirm', 'meeting/decline', 'rdv/cancel'];
+export type Verb = 'meeting/propose' | 'meeting/counter' | 'meeting/accept' | 'meeting/confirm' | 'meeting/decline' | 'meeting/cancel' | 'rdv/cancel';
+export const VERBS: readonly Verb[] = [
+  'meeting/propose',
+  'meeting/counter',
+  'meeting/accept',
+  'meeting/confirm',
+  'meeting/decline',
+  'meeting/cancel',
+  'rdv/cancel',
+];
 
 export type ProposeData = { rdv: 'meeting/propose'; slots: Slot[]; place?: Place; expires?: string };
 export type CounterData = { rdv: 'meeting/counter'; slots: Slot[]; place?: Place; expires?: string };
@@ -72,7 +80,9 @@ export type AcceptData = { rdv: 'meeting/accept'; slot: Slot; place?: Place };
 export type ConfirmData = { rdv: 'meeting/confirm'; slot: Slot };
 export type DeclineData = { rdv: 'meeting/decline'; reason: string };
 export type CancelData = { rdv: 'rdv/cancel'; reason?: string };
-export type MeetingData = ProposeData | CounterData | AcceptData | ConfirmData | DeclineData | CancelData;
+/** Call off an agreed (completed) meeting: names its slot (issue #20). `rdv/cancel` is for pending tasks only. */
+export type MeetingCancelData = { rdv: 'meeting/cancel'; slot: Slot; reason?: string };
+export type MeetingData = ProposeData | CounterData | AcceptData | ConfirmData | DeclineData | MeetingCancelData | CancelData;
 
 export type ParsedPayload =
   | { kind: 'message'; message: A2AMessage; data: MeetingData; text: string[] }
@@ -187,6 +197,12 @@ function parseData(v: unknown): MeetingData {
     case 'meeting/decline':
       keys(v, ['rdv', 'reason'], [], verb);
       return { rdv: 'meeting/decline', reason: shortString(v.reason, 'reason') };
+    case 'meeting/cancel': {
+      keys(v, ['rdv', 'slot'], ['reason'], verb);
+      const out: MeetingCancelData = { rdv: 'meeting/cancel', slot: parseSlot(v.slot) };
+      if (v.reason !== undefined) out.reason = shortString(v.reason, 'reason');
+      return out;
+    }
     case 'rdv/cancel': {
       keys(v, ['rdv'], ['reason'], verb);
       const out: CancelData = { rdv: 'rdv/cancel' };

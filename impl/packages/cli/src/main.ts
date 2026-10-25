@@ -126,7 +126,8 @@ const COMMANDS: Record<string, Command> = {
   },
   'dinner cancel': {
     usage: 'rdv dinner cancel <task-id> [--reason "…"] [--calendar cal.json]',
-    summary: 'Cancel a pending dinner negotiation (rdv/cancel); releases its tentative hold',
+    summary:
+      "Cancel a dinner: a pending negotiation (rdv/cancel, releases its tentative hold) or an agreed one (meeting/cancel: releases it in your calendar, and the peer's agent releases its own)",
     args: 1,
     options: { reason: { type: 'string' }, calendar: { type: 'string' } },
     run: cmd.dinnerCancel,

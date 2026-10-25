@@ -17,7 +17,7 @@ import {
   topicForHint,
   verifyCard,
 } from '@rendezvous/core';
-import { cancel, confirmMeeting, describeSlot, meetingSnapshot, NegotiationError, type NegotiationTask, parseInstant, propose, type Step } from '@rendezvous/a2a';
+import { cancel, cancelMeeting, confirmMeeting, describeSlot, meetingSnapshot, NegotiationError, type NegotiationTask, parseInstant, propose, type Step } from '@rendezvous/a2a';
 import { candidateTarget, describeTerms, reissueForDisplay, requestSubject } from './consent.js';
 import { CliError, type Config, type ConsentAction, type ConsentTerms, consentKey, Home, type InboxEntry, parseJsonLines } from './home.js';
 
@@ -30,6 +30,7 @@ import {
   dinnerText,
   dinnerView,
   meetingCode,
+  agreedDigest,
   meetingDigest,
   meetingScope,
   type NegotiateOptions,
@@ -544,8 +545,19 @@ async function ownerStep(home: Home, out: Ctx['out'], calendar: string | undefin
   for (const message of errors) out.emit({ event: 'error', message }, `error: ${clean(message)}`);
 }
 
+/**
+ * The human cancels a dinner: a pending negotiation (rdv/cancel, releases its
+ * tentative hold) or an agreed meeting (meeting/cancel, issue #20: releases
+ * the final hold and tells the peer, whose agent releases its own).
+ */
 export async function dinnerCancel({ home, out, values, positionals }: Ctx): Promise<void> {
-  await ownerStep(home, out, str(values.calendar), () => cancel(home.readNegotiations(), positionals[0], { now: new Date() }, str(values.reason)));
+  const taskId = positionals[0];
+  const reason = str(values.reason);
+  await ownerStep(home, out, str(values.calendar), () => {
+    const state = home.readNegotiations();
+    const task = Object.hasOwn(state.tasks, taskId) ? state.tasks[taskId] : undefined;
+    return task?.state === 'completed' ? cancelMeeting(state, taskId, { now: new Date() }, { reason }) : cancel(state, taskId, { now: new Date() }, reason);
+  });
 }
 
 /**
@@ -575,14 +587,19 @@ export async function dinnerConfirm({ home, out, values, positionals }: Ctx): Pr
 export async function dinnerList({ home, out }: Ctx): Promise<void> {
   home.requireInit();
   // The MCP server's confirm phrase for a meeting, like `contact pending`: text mode only, for the human.
-  // Only a phrase issued for the meeting as it is now is re-issued and shown: a stale one approves nothing.
+  // Only a phrase issued for the meeting (or the agreement, for a cancel phrase) as it is now is re-issued
+  // and shown: a stale one approves nothing.
   const { tasks, shown } = await home.locked(async () => {
     const tasks = Object.values(home.readNegotiations().tasks);
     const targets = out.json
       ? []
       : tasks.flatMap((t) => {
           const snap = meetingSnapshot(t);
-          return snap ? [{ action: 'meeting' as const, id: t.id, digest: meetingDigest(snap) }] : [];
+          const agreed = agreedDigest(t);
+          return [
+            ...(snap ? [{ action: 'meeting' as const, id: t.id, digest: meetingDigest(snap) }] : []),
+            ...(agreed ? [{ action: 'cancel' as const, id: t.id, digest: agreed }] : []),
+          ];
         });
     return { tasks, shown: targets.length ? reissueForDisplay(home, targets) : new Map<string, { phrase: string }>() };
   });
@@ -590,7 +607,10 @@ export async function dinnerList({ home, out }: Ctx): Promise<void> {
   if (tasks.length === 0 && !out.json) out.emit({}, 'no negotiations');
   const phraseLine = (t: NegotiationTask) => {
     const s = shown.get(consentKey('meeting', t.id));
-    return s ? `\n  confirm phrase (tell it to your MCP client to confirm this dinner): ${clean(s.phrase)}  (replaces any phrase shown before)` : '';
+    if (s) return `\n  confirm phrase (tell it to your MCP client to confirm this dinner): ${clean(s.phrase)}  (replaces any phrase shown before)`;
+    // A phrase to cancel an agreed dinner, once the MCP client asked for one (issue #20).
+    const c = shown.get(consentKey('cancel', t.id));
+    return c ? `\n  cancel phrase (tell it to your MCP client to cancel this agreed dinner): ${clean(c.phrase)}  (replaces any phrase shown before)` : '';
   };
   for (const t of tasks) out.emit(taskView(t), taskText(t) + phraseLine(t));
 }
