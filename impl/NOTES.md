@@ -302,7 +302,10 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
     4 per sender (more are dropped as `rate-limited`). A full list evicts the
     weakest request, the newcomer included: lowest binding first, then topic
     probes before requests sent to our card (today every inbound binding is
-    `claimed`, so this is the split that matters), then the oldest. The
+    `claimed`, so this is the split that matters), then the oldest. "Sent to
+    our card" (`PendingRequest.direct`) is recorded at receipt: it arrived in
+    an envelope to our key *and* its `to_hint` is our own id; a to_hint alone
+    is sender-chosen and counts for nothing. The
     evicted id leaves `seenIds` so the requester's retry is accepted, and
     `book.pendingEvicted` counts drops for the human (`pending-evicted` in
     `listen` and `rdv contact pending`; `pending_flooded` in the MCP server,

@@ -178,6 +178,12 @@ export interface PendingRequest {
   request: ContactRequest;
   binding: Binding;
   received: string;
+  /**
+   * Recorded at receipt, never taken from the request: it came in an
+   * envelope addressed to our key with `to_hint` = our own id (someone held
+   * our card), rather than from a public discovery topic.
+   */
+  direct?: boolean;
 }
 
 /**
@@ -242,8 +248,8 @@ export interface ContactBookState {
 
 /** Eviction order for a full pending list: smaller goes first. */
 function pendingRank(p: PendingRequest): [number, number, string] {
-  const direct = isAgentId(p.request.to_hint) ? 1 : 0; // sent to our card, not posted on a public topic
-  return [BINDING_STRENGTH[p.binding] ?? 0, direct, p.received];
+  // Recorded at receipt (receiveRequest `arrival`), not read from the sender-chosen to_hint.
+  return [BINDING_STRENGTH[p.binding] ?? 0, p.direct === true ? 1 : 0, p.received];
 }
 
 function rankLess(a: [number, number, string], b: [number, number, string]): boolean {
@@ -326,7 +332,13 @@ export class ContactBook {
   }
 
   /** Inbound contact request: verify, dedupe, apply policy (§5.4). */
-  receiveRequest(input: unknown, binding: Binding, now = new Date()): RequestOutcome {
+  /**
+   * `arrival` says how the request reached us (the caller knows; the request
+   * can't vouch for itself). Only `via: 'envelope'` with `to_hint` equal to
+   * `me` counts as direct, which ranks it above topic probes when the
+   * pending list is full.
+   */
+  receiveRequest(input: unknown, binding: Binding, now = new Date(), arrival?: { via: 'envelope' | 'topic'; me: string }): RequestOutcome {
     if (!verifyContactRequest(input, now)) return { status: 'invalid' };
     const req = input;
     if (this.state.declined.includes(req.id) || !this.markSeen(req.id)) return { status: 'duplicate' };
@@ -341,7 +353,8 @@ export class ContactBook {
       this.unmarkSeen(req.id); // a later retry from this sender is welcome
       return { status: 'rate-limited' };
     }
-    const pending: PendingRequest = { request: req, binding, received: now.toISOString() };
+    const direct = arrival?.via === 'envelope' && req.to_hint === arrival.me;
+    const pending: PendingRequest = { request: req, binding, received: now.toISOString(), ...(direct ? { direct: true } : {}) };
     if (all.length >= PENDING_LIMIT) {
       // Evict the weakest: lowest binding, then topic probes before requests
       // sent to our card, then the oldest. The newcomer competes too.

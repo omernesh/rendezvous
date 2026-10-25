@@ -283,11 +283,11 @@ export class Agent extends EventEmitter<AgentEvents> {
   private async handleTopicDoc(doc: unknown): Promise<void> {
     if (!verifyContactRequest(doc)) return this.drop('topic doc is not a valid contact request');
     if (doc.from === this.id) return;
-    await this.handleContactRequest(doc, 'claimed');
+    await this.handleContactRequest(doc, 'claimed', 'topic');
   }
 
-  private async handleContactRequest(req: ContactRequest, binding: Binding): Promise<void> {
-    const outcome = this.book.receiveRequest(req, binding);
+  private async handleContactRequest(req: ContactRequest, binding: Binding, via: 'envelope' | 'topic'): Promise<void> {
+    const outcome = this.book.receiveRequest(req, binding, new Date(), { via, me: this.id });
     switch (outcome.status) {
       case 'pending':
         if (outcome.evicted) this.emit('pending-evicted', outcome.evicted.total);
@@ -373,7 +373,7 @@ export class Agent extends EventEmitter<AgentEvents> {
       case 'rdv/contact-request': {
         const req = payload as unknown as ContactRequest;
         if (req.from !== from) return this.drop('request signer differs from envelope sender');
-        return this.handleContactRequest(req, 'claimed');
+        return this.handleContactRequest(req, 'claimed', 'envelope');
       }
       case 'rdv/contact-grant': {
         if ((payload as { from?: unknown }).from !== from) return this.drop('grant signer differs from envelope sender');
