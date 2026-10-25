@@ -30,7 +30,9 @@
   encryption (ephemeral key `epk`, HKDF, AES-GCM) is now described. A peer
   that forks or rolls back its chain is refused until the receiving human
   re-syncs it. Amended: channel state is kept only for admitted senders, so
-  fresh keys cannot fill a receiver's memory (was §11.10).
+  fresh keys cannot fill a receiver's memory (was §11.10). Amended: the
+  envelope plaintext is capped at 32 KiB, and receivers drop a bigger one
+  before decrypting it.
 - **Wire format, new §4.6:** canonical JSON (RFC 8785 subset), base32 alphabet
   and case, `sig` encoding and domain separation, `canon(address)`. §4.2 and
   §4.4 point to it.
@@ -715,6 +717,14 @@ where hole-punching fails (TURN relays carry the ciphertext).
   therefore semantic, not empirical; it is a wire change to revisit with the
   test vectors if a relay starts to differ. Not tested: same-`d` overwrite and
   long-term retention.
+- **Relay policy differs (2026-10-25 survey of 28 relays).** The relays that
+  pass are the same for both kinds. Others filter kind 30417 out, accept only
+  a few events from a pubkey outside their web of trust, require NIP-05 or
+  payment, or rate-limit and then ban a pubkey that bursts. A client SHOULD
+  publish to several relays and count one `OK true` as delivered. It SHOULD
+  retry transient failures with backoff, pace its own events per relay, and
+  stop publishing to a relay that answers `blocked`, `restricted` or `banned`
+  for a while.
 - **Carrier key.** Nostr events are signed with secp256k1, not Ed25519. Each
   agent derives a stable carrier key: HKDF-SHA256 over its Ed25519 seed, no
   salt, info `"rdv1/nostr-carrier"`, 32 bytes. It signs the Nostr event only;
@@ -809,6 +819,14 @@ where hole-punching fails (TURN relays carry the ciphertext).
   windows, so receivers MUST reject a `ttl` over 7 days and a `created` more
   than 5 minutes ahead of their clock; otherwise a sender could make an
   envelope replayable for years.
+- **Size.** The plaintext (the payload's canonical JSON, UTF-8) MUST NOT
+  exceed 32 KiB (32,768 bytes). A sender refuses a bigger payload. A receiver
+  MUST drop an envelope whose ciphertext is longer than the plaintext limit
+  plus the 16-byte GCM tag, and SHOULD check that from the base64 length,
+  before it verifies the signature or decrypts. Sealed, the largest envelope
+  is about 45 KB as a Nostr event, under the 128 KB message limit of the
+  smallest relay surveyed (§6.2). Bulk data (files, attachments) belongs out
+  of band.
 - **No forward secrecy yet.** The recipient key is static, so a later key
   compromise exposes recorded envelopes (§11).
 

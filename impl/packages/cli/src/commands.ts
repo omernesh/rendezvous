@@ -6,6 +6,7 @@ import {
   type AddressCard,
   Agent,
   cleanLabel,
+  DEFAULT_RELAYS,
   type DiscoveryAddress,
   dtopic,
   fingerprint,
@@ -15,6 +16,7 @@ import {
   normalizeAddresses,
   parseAddress,
   type Payload,
+  type RelayStatus,
   type Tier,
   TIERS as CORE_TIERS,
   topicForHint,
@@ -96,7 +98,7 @@ export async function withAgent<T>(
   home.requireInit();
   return home.locked(async () => {
     const config = home.readConfig();
-    const agent = Agent.fromJSON(home.readAgentState(), (key) => relayTransport(key, config.relays));
+    const agent = Agent.fromJSON(home.readAgentState(), (key) => relayTransport(key, config.relays, home));
     agent.on('error', () => {}); // never started, but don't let a stray error crash us
     agent.beforeSend = (a) => home.writeAgentState(a.toJSON());
     try {
@@ -113,7 +115,8 @@ export async function withAgent<T>(
 
 export interface InitOptions {
   profile: string;
-  relays: string[];
+  /** None: DEFAULT_RELAYS (the public set, NOTES 69). */
+  relays?: string[];
   emails?: string[];
   phones?: string[];
   publicPointer?: boolean;
@@ -122,8 +125,9 @@ export interface InitOptions {
 
 /** `rdv init` without the output: validate, generate key and card, write state. Shared with the MCP server. */
 export async function initHome(home: Home, opts: InitOptions): Promise<{ id: string; fingerprint: string; config: Config }> {
-  const { relays, profile } = opts;
-  if (relays.length === 0) throw new CliError('at least one --relay is required', 2);
+  const { profile } = opts;
+  // Copied, so the frozen default never ends up shared with config or card.
+  const relays = opts.relays?.length ? [...new Set(opts.relays)] : [...DEFAULT_RELAYS];
   for (const r of relays) if (!/^wss?:\/\/\S+$/.test(r)) throw new CliError(`not a ws:// or wss:// relay URL: ${r}`, 2);
   let addresses: DiscoveryAddress[];
   try {
@@ -179,17 +183,52 @@ export async function init({ home, out, values }: Ctx): Promise<void> {
   );
 }
 
+/**
+ * Our relays' diagnostics from relays.json, in configured order: the last OK,
+ * the last error (relay text, never peer text) and any cooldown. A relay we
+ * never published to has nulls.
+ */
+export function relayHealth(home: Home, config: Config): RelayStatus[] {
+  const saved = new Map(home.readRelayStatus().map((r) => [r.url, r]));
+  return config.relays.map((url) => {
+    const r = saved.get(url);
+    return {
+      url,
+      last_ok: typeof r?.last_ok === 'string' ? r.last_ok : null,
+      last_error: r?.last_error && typeof r.last_error === 'object' ? r.last_error : null,
+      cooldown_until: typeof r?.cooldown_until === 'string' && Date.parse(r.cooldown_until) > Date.now() ? r.cooldown_until : null,
+    };
+  });
+}
+
+function relayHealthLine(r: RelayStatus): string {
+  const parts = [r.last_ok ? `last ok ${r.last_ok}` : 'no ok yet'];
+  if (r.last_error) parts.push(`last error ${r.last_error.at} (${r.last_error.kind}): ${clean(r.last_error.message)}`);
+  if (r.cooldown_until) parts.push(`cooling down until ${r.cooldown_until}`);
+  return `  ${r.url}: ${parts.join('; ')}`;
+}
+
 export async function whoami({ home, out }: Ctx): Promise<void> {
   const { agent, config } = await withAgent(home, async (agent, config) => ({ agent, config }), { save: false });
   const fp = fingerprint(agent.id);
+  const health = relayHealth(home, config);
   out.emit(
-    { id: agent.id, fingerprint: fp, profile: config.profile, home: home.dir, addresses: addressViews(config), card: agent.card },
+    {
+      id: agent.id,
+      fingerprint: fp,
+      profile: config.profile,
+      home: home.dir,
+      addresses: addressViews(config),
+      relay_health: health,
+      card: agent.card,
+    },
     [
       `id:          ${agent.id}`,
       `fingerprint: ${fp}`,
       `profile:     ${config.profile} (${home.dir})`,
       `addresses:   ${config.addresses.map((a) => (a.private ? `${a.value} (private)` : a.value)).join(', ') || '(none)'}`,
       `relays:      ${config.relays.join(', ')}`,
+      ...health.map(relayHealthLine),
       `public pointer: ${config.public_pointer ? 'on' : 'off'}`,
       'card:',
       JSON.stringify(agent.card, null, 2),

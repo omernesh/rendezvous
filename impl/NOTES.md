@@ -84,6 +84,41 @@ the marker (CLI behavior, live-run logs, calendar settings) stay here only.
     (`packages/cli/scenarios/two-machine.md`). Raw survey data and script were
     kept outside the repo.
 
+    **Second survey (2026-10-25, 28 relays, issue #20).** On each relay: the
+    contact and dinner scenarios, then a 10-minute retention check (the
+    events are still served on a new connection).
+
+    | relay | result | reason |
+    |---|---|---|
+    | nos.lol | pass | default |
+    | relay.primal.net | pass | default |
+    | relay.nostr.net | pass | default |
+    | nostr.oxtr.dev | pass | default |
+    | nostr.mom | pass | spare |
+    | nostr.data.haus | pass | spare |
+    | nostr-01.yakihonne.com | pass | spare |
+    | nostr-pub.wellorder.net | pass | spare (nostr-rs-relay) |
+    | relay.damus.io | fail | rate-limited, then banned the pubkey after about 3 runs |
+    | offchain.pub | fail | web of trust: takes a few events from an unknown pubkey, then rejects |
+    | nostr.bitcoiner.social | fail | web of trust, as offchain.pub |
+    | purplepag.es | fail | blocks kind 30417 (profile and relay-list kinds only) |
+    | relay.coinos.io | fail | blocks kind 30417 |
+    | relay.snort.social | fail | times out |
+    | NIP-05-only relays | fail | need a verified NIP-05 name |
+    | paid relays | fail | need payment |
+    | several others | fail | dead (no connection) |
+
+    Redundancy: one dead relay plus two good ones passed. The smallest
+    `max_message_length` on a passing relay is 128 KB. The first survey's
+    "no relay-side difference" still holds for the relays that pass: they
+    treat 30417 like any other kind. But relay policy does differ: kind
+    filtering, web of trust and rate bans exist. A relay set therefore has to
+    be checked live, and the transport has to expect rejections (item 69).
+    `npm run test:live` once failed on nos.lol and nostr.mom with
+    "connection failure" when its three test files ran in parallel, though
+    each scenario passed alone: per-IP connection limits. The live runs are
+    serial now.
+
 ## Contact flow
 
 12. **Listen-mode probe = a contact request posted on the target's `dtopic`**,
@@ -990,6 +1025,91 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
     addresses adds `own_card_on_relays`. Per-relay OK results were not used:
     the transport accepts a publish once any relay does, and reading back
     is what the user actually needs to know.
+
+## Public relays by default (plugin 0.1.6, issue #20)
+
+69. **Default relays, publish retries, pacing and cooldown.**
+    - **Defaults.** `DEFAULT_RELAYS` in core (`transport/nostr.ts`):
+      `wss://nos.lol`, `wss://relay.primal.net`, `wss://relay.nostr.net`,
+      `wss://nostr.oxtr.dev` (item 11a). It sits in core, next to the Nostr
+      transport, because which relays take kind 30417 is Nostr knowledge
+      that every client of the library needs, not CLI policy. Core never
+      applies it: a `NostrTransport` still takes explicit relays. `rdv init`
+      without `--relay` and `rdv_init` without `relays` use it
+      (`initHome`; `RdvMcpOptions.defaultRelays` overrides it, which keeps
+      `npm test` off the network). The relays are written to `config.json`
+      and the card at init, so existing agents keep what they have; nothing
+      migrates them. `wss://relay.nesher.co` stays an option (onboarding
+      offers it alone or added).
+    - **Retries.** `publish` sends to every relay that is not cooling down,
+      in parallel. A relay gets 2 more tries after a transient failure
+      (connection refused or dropped, connect or `OK` timeout,
+      `rate-limited:`, `error:`), with jittered exponential backoff (400 ms ×
+      2^n × 0.5 to 1.5, four times longer after a rate limit). It gets none
+      for a permanent rejection (`invalid:`, `pow:`, `auth-required:`). A
+      `duplicate:` answer counts as accepted. Success means at least one
+      relay answered `OK true`. Otherwise the error lists each relay's kind
+      and message.
+    - **Cooldown.** `blocked:`, `restricted:` or a message with "banned"
+      cools the relay down for 30 minutes after one try. A relay that failed
+      every try cools down for 60 s. Publishes skip a cooling relay, unless
+      every relay is cooling; then each is tried once, so an agent whose
+      network came back is not stuck. An `OK true` clears the cooldown.
+    - **Pacing.** A token bucket per relay: a burst of 6 (one card republish
+      to several topics), then 3 events per second. Damus banned the test
+      pubkey for bursts, and none of our flows needs more.
+    - **Connections.** The nostr-tools pool already keeps one connection
+      per relay URL, which publishes and subscriptions share. `publish` now
+      goes through `pool.ensureRelay` itself, so it can set the connect and
+      `OK` timeouts per try. A test checks that 5 publishes, a subscription
+      and a fetch use one connection.
+    - **Diagnostics.** `NostrTransport.relayStatus()` returns, for our own
+      relays only, `{url, last_ok, last_error: {at, kind, message},
+      cooldown_until}`. Relays from a peer's card are used and cooled down,
+      but never listed, because their URLs are peer text. The message is the
+      relay's `OK false` text or the connection error, with control and bidi
+      characters replaced, at most 200 chars. The CLI saves it to
+      `relays.json` in the home after each publish (merged per relay, newer
+      wins, never fails a send) and seeds the next process's cooldowns from
+      it. `rdv init --force` drops it, because bans belong to the old key's
+      carrier pubkey. `rdv whoami` shows it (`relay_health` in `--json`).
+      `rdv_status` shows it with the relay's message as
+      `untrusted_peer_text`: a relay is a party we do not trust either.
+    - **Crash fix found on the way.** On a connect timeout, nostr-tools
+      closes a socket that is still connecting after removing its own
+      handlers, and `ws` then throws an unhandled 'error'. Every socket now
+      has a no-op error listener (`QuietWebSocket`). A regression test
+      covers a relay that never answers the handshake.
+    - Tests (`core/test/transport.test.ts`, in-memory relay with failure
+      modes `okFalse`, `dropOnEvent`, `ackDelayMs`): retry after a drop, a
+      transient `OK false`, giving up and cooling down, no retry for
+      `invalid:`, a blocking relay tried once and then skipped, everything
+      cooling, slow acks, an unreachable relay next to a good one, saved
+      cooldowns, message sanitizing, connection reuse, close() during
+      backoff, pacing, the default burst. CLI: init defaults and whoami
+      health across processes. MCP: `rdv_init` defaults and `relay_health`.
+    - **Live (2026-10-25, serial).** `npm run test:live` on the four
+      defaults: CLI 7/7 (contact on all four together and on each alone,
+      dinner, addresses) and MCP 2/2 (dinner, onboarding). Then on
+      `wss://nos.lol` alone and on `wss://relay.primal.net` alone: CLI 3/3
+      and MCP 2/2 each.
+
+70. **Envelope plaintext is capped at 32 KiB** (**spec change**, §6.4;
+    design review). Core had no size cap. `sealEnvelope` throws
+    `EnvelopeTooLargeError` when the payload's canonical JSON is over
+    `MAX_PLAINTEXT_BYTES` (32,768 bytes, UTF-8). It throws before the
+    channel moves, so a refused send leaves `seq` alone. `rdv_send` passes
+    the message to the model, since it holds no payload text.
+    `openEnvelope` drops (`too large`) an envelope whose base64 ciphertext is
+    longer than the cap plus the GCM tag, before it verifies the signature
+    or decrypts. After decryption it checks the plaintext length again. The
+    transport does not even parse event content over 128 KiB. At the cap a
+    sealed event is about 45 KB on the wire, under the 128 KB smallest relay
+    limit (item 11a). A test checks under 50,000 bytes. Tests: exactly the
+    cap opens; one byte over and a multi-byte string over are refused; an
+    oversized but validly signed envelope is dropped; oversized event
+    content is not parsed; MCP refuses over the cap and the next send is
+    `seq` 1.
 
 ## Not implemented yet
 

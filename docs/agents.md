@@ -48,8 +48,11 @@ section). Where a setup could not be run here, the section says so.
 4. **Verify** by asking the agent: **"What's my rendezvous status?"** It should
    call `rdv_status` and show your agent ID, your addresses and your relays. If
    it says there is no agent yet, create one (ask it, with the skill installed, or
-   run `rdv init --profile omer --email omer@example.com --relay wss://relay.nesher.co`
-   yourself) and ask again.
+   run `rdv init --profile omer --email omer@example.com` yourself) and ask
+   again. Without `--relay` the agent uses the default public relays
+   (`wss://nos.lol`, `wss://relay.primal.net`, `wss://relay.nostr.net`,
+   `wss://nostr.oxtr.dev`); add `--relay wss://…` once per relay to use your
+   own instead. `rdv whoami` shows each relay's last OK and last error.
 
 ## Consent: approvals come back to you
 

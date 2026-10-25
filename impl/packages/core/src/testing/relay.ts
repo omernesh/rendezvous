@@ -28,22 +28,88 @@ export function matches(ev: Event, f: Filter): boolean {
   return true;
 }
 
+/** Failure modes for transport tests; change them on a running relay. */
+export interface RelayFaults {
+  /** Answer `OK false` with this message instead of storing the event. */
+  okFalse?: string;
+  /** Only for this many more EVENTs, then accept again; unset: every EVENT. */
+  okFalseTimes?: number;
+  /** Drop the connection on this many more EVENTs, without an OK. */
+  dropOnEvent?: number;
+  /** Wait this long before answering an EVENT. */
+  ackDelayMs?: number;
+}
+
 export interface TestRelay {
   url: string;
   events: Event[];
   /** Every REQ filter received, in order (tests check `since`). */
   requests: Filter[];
+  /** Arrival time (ms) of every EVENT message, accepted or not. */
+  received: number[];
+  /** WebSocket connections accepted so far. */
+  readonly connections: number;
+  faults: RelayFaults;
   close(): Promise<void>;
 }
 
-export async function startTestRelay(port = 0): Promise<TestRelay> {
+export async function startTestRelay(port = 0, faults: RelayFaults = {}): Promise<TestRelay> {
   const wss = new WebSocketServer({ port, host: '127.0.0.1' });
   await new Promise<void>((resolve) => wss.once('listening', () => resolve()));
   const events: Event[] = [];
   const requests: Filter[] = [];
+  const received: number[] = [];
   const subs = new Map<WebSocket, Map<string, Filter[]>>();
+  let connections = 0;
+
+  const store = (ws: WebSocket, ev: Event) => {
+    if (!verifyEvent(ev)) {
+      ws.send(JSON.stringify(['OK', ev?.id, false, 'invalid: bad signature']));
+      return;
+    }
+    // NIP-01 addressable kinds: keep only the newest per (pubkey, kind, d); a tie keeps the lower id.
+    const d = (e: Event) => e.tags.find((t) => t[0] === 'd')?.[1] ?? '';
+    const addressable = ev.kind >= 30000 && ev.kind < 40000;
+    const older = addressable ? events.findIndex((e) => e.kind === ev.kind && e.pubkey === ev.pubkey && d(e) === d(ev)) : -1;
+    const superseded =
+      older >= 0 &&
+      (events[older].created_at > ev.created_at || (events[older].created_at === ev.created_at && events[older].id <= ev.id));
+    if (!events.some((e) => e.id === ev.id) && !superseded) {
+      if (older >= 0) events.splice(older, 1);
+      events.push(ev);
+      for (const [client, clientSubs] of subs) {
+        for (const [id, filters] of clientSubs) {
+          if (filters.some((f) => matches(ev, f))) client.send(JSON.stringify(['EVENT', id, ev]));
+        }
+      }
+    }
+    ws.send(JSON.stringify(['OK', ev.id, true, '']));
+  };
+
+  const onEvent = (ws: WebSocket, ev: Event) => {
+    received.push(Date.now());
+    if (faults.dropOnEvent) {
+      faults.dropOnEvent--;
+      ws.terminate();
+      return;
+    }
+    let answer: () => void;
+    if (faults.okFalse !== undefined && (faults.okFalseTimes === undefined || faults.okFalseTimes > 0)) {
+      if (faults.okFalseTimes !== undefined) faults.okFalseTimes--;
+      const reason = faults.okFalse;
+      answer = () => ws.send(JSON.stringify(['OK', ev?.id, false, reason]));
+    } else {
+      answer = () => store(ws, ev);
+    }
+    if (faults.ackDelayMs) {
+      setTimeout(() => {
+        if (ws.readyState === ws.OPEN) answer();
+      }, faults.ackDelayMs);
+    } else answer();
+  };
 
   wss.on('connection', (ws) => {
+    connections++;
     subs.set(ws, new Map());
     ws.on('close', () => subs.delete(ws));
     ws.on('message', (data) => {
@@ -55,28 +121,7 @@ export async function startTestRelay(port = 0): Promise<TestRelay> {
       }
       const [type, ...rest] = msg as [string, ...unknown[]];
       if (type === 'EVENT') {
-        const ev = rest[0] as Event;
-        if (!verifyEvent(ev)) {
-          ws.send(JSON.stringify(['OK', ev?.id, false, 'invalid: bad signature']));
-          return;
-        }
-        // NIP-01 addressable kinds: keep only the newest per (pubkey, kind, d); a tie keeps the lower id.
-        const d = (e: Event) => e.tags.find((t) => t[0] === 'd')?.[1] ?? '';
-        const addressable = ev.kind >= 30000 && ev.kind < 40000;
-        const older = addressable ? events.findIndex((e) => e.kind === ev.kind && e.pubkey === ev.pubkey && d(e) === d(ev)) : -1;
-        const superseded =
-          older >= 0 &&
-          (events[older].created_at > ev.created_at || (events[older].created_at === ev.created_at && events[older].id <= ev.id));
-        if (!events.some((e) => e.id === ev.id) && !superseded) {
-          if (older >= 0) events.splice(older, 1);
-          events.push(ev);
-          for (const [client, clientSubs] of subs) {
-            for (const [id, filters] of clientSubs) {
-              if (filters.some((f) => matches(ev, f))) client.send(JSON.stringify(['EVENT', id, ev]));
-            }
-          }
-        }
-        ws.send(JSON.stringify(['OK', ev.id, true, '']));
+        onEvent(ws, rest[0] as Event);
       } else if (type === 'REQ') {
         const [id, ...filters] = rest as [string, ...Filter[]];
         subs.get(ws)?.set(id, filters);
@@ -99,6 +144,11 @@ export async function startTestRelay(port = 0): Promise<TestRelay> {
     url: `ws://127.0.0.1:${actualPort}`,
     events,
     requests,
+    received,
+    get connections() {
+      return connections;
+    },
+    faults,
     close: () =>
       new Promise<void>((resolve) => {
         for (const client of wss.clients) client.terminate();

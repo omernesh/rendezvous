@@ -12,8 +12,9 @@ the first message. Approvals always come back to you.
 
 Then type `/rdv-onboarding` (the full name is `/rendezvous:rdv-onboarding`, if
 another plugin also has an `rdv-onboarding`). It sets you up one question per
-turn: install, MCP tools, profile, email, optional phone, relays (each one
-checked), public pointer, your agent, its card and an optional first contact,
+turn: install, MCP tools, profile, email, optional phone, relays (the default
+public set or your own, each one checked), public pointer, your agent, its
+card and an optional first contact,
 verifying each step before the next. Re-run it to resume where you stopped.
 
 After that, ask, for example: "Ask john@doe.com's agent to connect", "Tell

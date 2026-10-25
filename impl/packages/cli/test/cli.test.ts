@@ -3,10 +3,11 @@ import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startTestRelay, type TestRelay } from '@rendezvous/core/testing';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { Listener, rdv, until } from '../scenarios/harness.js';
+import { execFileSync } from 'node:child_process';
+import { Listener, RDV_BIN, rdv, until } from '../scenarios/harness.js';
 import { acquireLock, LockTimeoutError, writeAtomic } from '../src/fsutil.js';
 import { clean, contactText, inboxText, requestText } from '../src/output.js';
-import { DEFAULT_INBOUND_SCOPE, type Contact, type PendingRequest } from '@rendezvous/core';
+import { DEFAULT_INBOUND_SCOPE, DEFAULT_RELAYS, type Contact, type PendingRequest } from '@rendezvous/core';
 import { type Ctx, emptyState, type MeetingScope, parseWindow, propose, receive } from '@rendezvous/a2a';
 import { inboundMeetingScope, meetingScope } from '../src/negotiate.js';
 
@@ -125,6 +126,49 @@ describe('rdv commands', () => {
     expect(again.code).toBe(1);
     const usage = await rdv(['contact', 'grant'], home, { check: false });
     expect(usage.code).toBe(2);
+  });
+
+  it('init without --relay uses the default public relays; an agent made with --relay keeps its own (NOTES 69)', async () => {
+    const home = join(root, 'defaults');
+    await rdv(['init', '--email', 'omer@example.com'], home);
+    const config = JSON.parse(readFileSync(join(home, 'config.json'), 'utf8'));
+    expect(config.relays).toEqual([...DEFAULT_RELAYS]);
+    const state = JSON.parse(readFileSync(join(home, 'agent.json'), 'utf8'));
+    expect(state.card.rendezvous).toEqual(DEFAULT_RELAYS.map((relay, i) => ({ type: 'nostr', relay, pref: i + 1 })));
+    const who = await rdv(['whoami'], home);
+    expect(who.lines[0].relay_health).toEqual(DEFAULT_RELAYS.map((url) => ({ url, last_ok: null, last_error: null, cooldown_until: null })));
+
+    const own = join(root, 'own-relay');
+    await rdv(['init', '--email', 'john@doe.com', '--relay', relay.url], own);
+    expect(JSON.parse(readFileSync(join(own, 'config.json'), 'utf8')).relays).toEqual([relay.url]);
+    expect((await rdv(['whoami'], own)).lines[0].relay_health.map((r: { url: string }) => r.url)).toEqual([relay.url]);
+  });
+
+  it("whoami shows each relay's last OK, a blocking relay's reason and cooldown, and later commands skip it", async () => {
+    const bad = await startTestRelay(0, { okFalse: 'blocked: kind 30417 is not allowed here' });
+    try {
+      const home = join(root, 'health');
+      await rdv(['init', '--email', 'omer@example.com', '--relay', bad.url, '--relay', relay.url, '--public-pointer'], home);
+      await rdv(['card', 'publish'], home);
+      expect(bad.received).toHaveLength(1); // blocked: never retried
+      const who = await rdv(['whoami'], home);
+      const [b, g] = who.lines[0].relay_health;
+      expect(b).toMatchObject({ url: bad.url, last_ok: null, last_error: { kind: 'blocked', message: 'blocked: kind 30417 is not allowed here' } });
+      expect(Date.parse(b.cooldown_until)).toBeGreaterThan(Date.now());
+      expect(g).toMatchObject({ url: relay.url, last_error: null, cooldown_until: null });
+      expect(Date.parse(g.last_ok)).toBeGreaterThan(Date.now() - 60_000);
+      const text = execFileSync(process.execPath, [RDV_BIN, 'whoami', '--home', home], { encoding: 'utf8', windowsHide: true });
+      expect(text).toContain(`${bad.url}: no ok yet; last error`);
+      expect(text).toContain('(blocked): blocked: kind 30417 is not allowed here; cooling down until');
+      // The cooldown is saved in the home, so the next process doesn't hammer the relay either.
+      await rdv(['card', 'publish'], home);
+      expect(bad.received).toHaveLength(1);
+      // init --force starts over: a new key, and the old one's bans are dropped.
+      await rdv(['init', '--force', '--email', 'omer@example.com', '--relay', bad.url], home);
+      expect((await rdv(['whoami'], home)).lines[0].relay_health).toEqual([{ url: bad.url, last_ok: null, last_error: null, cooldown_until: null }]);
+    } finally {
+      await bad.close();
+    }
   });
 
   it('several emails and phones: init dedupes, rdv address adds, removes, caps and canonicalizes', async () => {
