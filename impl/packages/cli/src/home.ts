@@ -12,6 +12,7 @@
 //   files.json   files the owner prepared to send (key, upload copy, source path) and direct-transfer requests (mode 600)
 //   files/       outgoing/: upload copies (ciphertext); incoming/<task>/: fetched peer files, quarantined (mode 600)
 //   autoapprove.json  contacts our human put on auto-approve (issue #25; mode 600, MACed with the agent key, local only)
+//   owner-secret.json  the owner passphrase that turns auto-approve on (issue #47; scrypt hash and failure count, mode 600)
 //   consent.json  confirm phrases for pending requests and meetings (written by the MCP server)
 //   holds.json   which calendar file holds each dinner hold, tentative or agreed (to release or finalize it)
 //   relays.json  per-relay diagnostics and cooldowns (last OK, last error), written after each publish
@@ -171,16 +172,16 @@ export interface AuditEntry {
   /** Gate lines: the task's capability and ID. */
   capability?: string;
   task?: string;
-  /** A gate (start, release, notify), or a change to the contact's auto-approve setting. */
-  gate: 'start' | 'release' | 'notify' | 'auto-approve';
+  /** A gate (start, release, notify), a change to the contact's auto-approve setting, or to the owner passphrase (peer `owner`). */
+  gate: 'start' | 'release' | 'notify' | 'auto-approve' | 'owner-secret';
   /** Who let it pass: the grant (class `auto`/`notify`), the human (form, phrase, terminal), or the human's standing auto-approve. */
   by: 'grant' | 'human' | 'auto-approve';
   approval?: string;
   digest?: string;
   /** Release lines: SHA-256 and size of each payload that left (ours, never the peer's). */
   sent?: Array<{ sha256: string; bytes: number }>;
-  /** gate `auto-approve`: what changed. */
-  action?: 'set' | 'extend' | 'off';
+  /** gate `auto-approve`: what changed (`set`, `extend`, `off`); gate `owner-secret`: `set`, `changed` or `reset`. */
+  action?: 'set' | 'extend' | 'off' | 'changed' | 'reset';
   /** gate `auto-approve`, action `off`: why. */
   reason?: AutoApproveOff;
   /** gate `auto-approve`, set/extend: the expiry (null: until turned off) and the capabilities it covered then. */
@@ -339,6 +340,10 @@ export class Home {
 
   get autoApprovePath() {
     return join(this.dir, 'autoapprove.json');
+  }
+  /** The owner passphrase (issue #47): a scrypt hash and the failure count, mode 600. */
+  get ownerSecretPath() {
+    return join(this.dir, 'owner-secret.json');
   }
   get holdsPath() {
     return join(this.dir, 'holds.json');

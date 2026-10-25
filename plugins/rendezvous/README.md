@@ -44,6 +44,41 @@ What it contains:
   agent's secret key, consent file and auto-approve file with any tool. Those stay with you, in
   your own terminal.
 
+  **Auto-approve and your owner passphrase** (issue #47). Turning
+  auto-approve on asks for a passphrase you set yourself with
+  `rdv owner-secret set`, in your own terminal. It is read from the terminal
+  device itself (`/dev/tty`, or `CONIN$` on Windows), not from stdin, it is
+  never echoed or printed, and only a scrypt hash is kept
+  (`owner-secret.json`, mode 600); three wrong answers lock it for a minute,
+  then twice as long after each further miss. `rdv init` in a terminal
+  offers to set it, and so does `/rdv-onboarding` (it asks you to run the
+  command in your own terminal). The first passphrase is trust on first
+  use: it is audited, and `rdv whoami` and `rdv_status` show when it was
+  set; if that wasn't you, run `rdv owner-secret reset` in your own
+  terminal (refused while locked; it turns every auto-approve off and only
+  clears, and a new passphrase can be set 10 minutes later). Any
+  pseudo-terminal (`script`, `expect`, `unbuffer`, `winpty`, node-pty,
+  `pty.spawn`) is refused outright. It replaced "retype the
+  fingerprint shown here", which an assistant could pass by running the
+  command in a pseudo-terminal and typing back what the prompt printed. The
+  hook also refuses any command that names `contact` and `auto-approve`
+  under any wrapper or spelling (`script -c`, `expect -c`, `unbuffer`,
+  `winpty`, `stdbuf`, `timeout`, `nohup`, `env`, node-pty, Python
+  `pty.spawn`, here-strings, heredocs, `sh -c`, `node -e`, `python -c`), any
+  quoted string that names `auto-approve`, any mention of `owner-secret`,
+  and any read or write of `autoapprove.json` or `owner-secret.json` in any
+  folder.
+
+  What this protects against: an assistant that drifts or is
+  prompt-injected and tries to switch auto-approve on by itself, with or
+  without a pty: it never sees the answer, so it has nothing to type. What
+  it does not protect against: a model with a shell running as your OS user
+  can still write a script the hook can't read, delete `owner-secret.json`
+  and set its own passphrase, edit Rendezvous' files, or watch you type the
+  passphrase into a terminal it controls (so type it only in your
+  own terminal, one you opened yourself). No local check is a hard boundary against your own
+  account; for that, run the assistant or `rdv-mcp` as another OS user.
+
   **The hook is defence in depth, not a security boundary.** A model with a
   shell can always build a command it can't see (a script file, another
   interpreter). The boundary is the MCP consent gate: `rdv_grant` and

@@ -11,7 +11,8 @@ import { REQUEST_URI } from '@rendezvous/a2a';
 import { fingerprint } from '@rendezvous/core';
 import { startTestRelay, type TestRelay } from '@rendezvous/core/testing';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { contactAutoApprove, type Tty } from '../../cli/src/commands.js';
+import { contactAutoApprove, ownerSecretSet, type Tty } from '../../cli/src/commands.js';
+import { hasOwnerSecret } from '../../cli/src/ownersecret.js';
 import { Output } from '../../cli/src/output.js';
 import { INJECTION, makeSide, ok, type Side, waitEvent } from './flow.js';
 
@@ -62,9 +63,12 @@ async function connected(john: (p: ElicitRequest['params']) => Promise<ElicitRes
   return { omer, john: johnSide, omerId: o.agent_id as string, johnId: j.agent_id as string, tag };
 }
 
-/** John's human, at his own terminal: the warning, then the fingerprint retyped. */
+const OWNER_PASS = 'JOHN-OWNER-PASS 1234';
+
+/** John's human, at his own terminal: their owner passphrase (set once), the warning, then the passphrase typed (issue #47). */
 async function humanTurnsOn(john: Side, peer: string) {
-  const tty: Tty = { interactive: true, say: () => {}, ask: async () => fingerprint(peer) };
+  const tty: Tty = { interactive: true, say: () => {}, ask: async () => fingerprint(peer), secret: async () => OWNER_PASS };
+  if (!hasOwnerSecret(john.home)) await ownerSecretSet({ home: john.home, out: new Output(true), values: {}, positionals: [], tty });
   await contactAutoApprove({ home: john.home, out: new Output(true), values: {}, positionals: [peer, 'all'], tty });
 }
 
@@ -81,6 +85,10 @@ describe('auto-approve through rdv-mcp', () => {
     const c = st.contacts.find((x: { agent_id: string }) => x.agent_id === omerId);
     expect(c.auto_approve).toMatchObject({ mode: 'all', until: 'until your user turns it off', covers: [REQUEST_URI], auto_approved_actions: 0 });
     expect(st.auto_approve).toMatchObject({ contacts: 1, note: expect.stringContaining('never by you') });
+    // The first passphrase is trust on first use (issue #47): rdv_status says when it was set and how to reset it, never the hash.
+    expect(st.owner_passphrase).toMatchObject({ set: expect.any(String), note: expect.stringContaining('rdv owner-secret reset') });
+    expect(JSON.stringify(st)).not.toMatch(/"hash"|"salt"|JOHN-OWNER-PASS/);
+    expect((await ok(omer, 'rdv_status')).owner_passphrase).toMatchObject({ set: null, note: expect.stringContaining('rdv owner-secret set') });
 
     const r = await ok(omer, 'rdv_task', { action: 'request', agent_id: johnId, text: TASK_TEXT });
     const id = r.task_id as string;

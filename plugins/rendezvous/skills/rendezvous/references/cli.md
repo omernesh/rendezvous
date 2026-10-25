@@ -52,8 +52,11 @@ only after the task's start gate, and saves it in quarantine under the home.
 
 `rdv contact auto-approve <contact> all` lets one trusted contact's tasks
 start and their results leave without asking (SPEC §5.5.1). Only the human
-turns it on, in their own terminal: it shows a warning and asks them to
-retype the contact's fingerprint, and it refuses to run without a terminal.
+turns it on, in their own terminal: it shows a warning and asks for the
+owner passphrase they set themselves (`rdv owner-secret set`), and it refuses
+to run without a terminal. The passphrase is theirs alone: never ask for it.
+`rdv_status` shows when it was set (`owner_passphrase`); if your user did not
+set it then, they run `rdv owner-secret reset` in their own terminal.
 You never run it, never suggest it, and never offer it as a way past a gate.
 `rdv_status` and `rdv_task` show who is on it and until when; `rdv audit`
 lists what it approved.

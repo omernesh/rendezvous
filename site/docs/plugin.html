@@ -95,6 +95,39 @@ John I'm running late", "check rendezvous".</p>
     <code>bash -c</code>, <code>$(…)</code>), and from reading, editing, searching or globbing the
     agent's secret key, consent file and auto-approve file with any tool. Those stay with you, in
     your own terminal.</p>
+<p><strong>Auto-approve and your owner passphrase</strong> (issue #47). Turning
+auto-approve on asks for a passphrase you set yourself with
+<code>rdv owner-secret set</code>, in your own terminal. It is read from the terminal
+device itself (<code>/dev/tty</code>, or <code>CONIN$</code> on Windows), not from stdin, it is
+never echoed or printed, and only a scrypt hash is kept
+(<code>owner-secret.json</code>, mode 600); three wrong answers lock it for a minute,
+then twice as long after each further miss. <code>rdv init</code> in a terminal
+offers to set it, and so does <code>/rdv-onboarding</code> (it asks you to run the
+command in your own terminal). The first passphrase is trust on first
+use: it is audited, and <code>rdv whoami</code> and <code>rdv_status</code> show when it was
+set; if that wasn't you, run <code>rdv owner-secret reset</code> in your own
+terminal (refused while locked; it turns every auto-approve off and only
+clears, and a new passphrase can be set 10 minutes later). Any
+pseudo-terminal (<code>script</code>, <code>expect</code>, <code>unbuffer</code>, <code>winpty</code>, node-pty,
+<code>pty.spawn</code>) is refused outright. It replaced "retype the
+fingerprint shown here", which an assistant could pass by running the
+command in a pseudo-terminal and typing back what the prompt printed. The
+hook also refuses any command that names <code>contact</code> and <code>auto-approve</code>
+under any wrapper or spelling (<code>script -c</code>, <code>expect -c</code>, <code>unbuffer</code>,
+<code>winpty</code>, <code>stdbuf</code>, <code>timeout</code>, <code>nohup</code>, <code>env</code>, node-pty, Python
+<code>pty.spawn</code>, here-strings, heredocs, <code>sh -c</code>, <code>node -e</code>, <code>python -c</code>), any
+quoted string that names <code>auto-approve</code>, any mention of <code>owner-secret</code>,
+and any read or write of <code>autoapprove.json</code> or <code>owner-secret.json</code> in any
+folder.</p>
+<p>What this protects against: an assistant that drifts or is
+prompt-injected and tries to switch auto-approve on by itself, with or
+without a pty: it never sees the answer, so it has nothing to type. What
+it does not protect against: a model with a shell running as your OS user
+can still write a script the hook can't read, delete <code>owner-secret.json</code>
+and set its own passphrase, edit Rendezvous' files, or watch you type the
+passphrase into a terminal it controls (so type it only in your
+own terminal, one you opened yourself). No local check is a hard boundary against your own
+account; for that, run the assistant or <code>rdv-mcp</code> as another OS user.</p>
 <p><strong>The hook is defence in depth, not a security boundary.</strong> A model with a
 shell can always build a command it can't see (a script file, another
 interpreter). The boundary is the MCP consent gate: <code>rdv_grant</code> and

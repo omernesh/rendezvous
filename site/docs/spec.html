@@ -944,8 +944,10 @@ capability in the grant. The grant's <code>invoke</code> and limits are then the
 boundary, so keep them narrow.</p>
 <p>The reference implementation sets it with <code>rdv contact auto-approve
 &lt;agent-id|label&gt; all [--until &lt;time|duration&gt;]</code>, which needs an interactive
-terminal, shows the warning and has the owner retype the contact's
-fingerprint; <code>... off</code> turns it off from anywhere. The setting lives in
+terminal, shows the warning and asks for the owner's passphrase (set
+beforehand with <code>rdv owner-secret set</code>, stored as a scrypt hash, read from
+the terminal itself and never shown, so the prompt never holds its own
+answer); <code>... off</code> turns it off from anywhere. The setting lives in
 <code>autoapprove.json</code> in the home (mode 600), each entry MACed with the agent's
 secret key and bound to the contact's grant ID, <code>since</code> and a digest of its
 inbound scope; it is checked under the home lock at each gate. The audit log

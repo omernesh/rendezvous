@@ -419,6 +419,41 @@ What it contains:
   agent's secret key, consent file and auto-approve file with any tool. Those stay with you, in
   your own terminal.
 
+  **Auto-approve and your owner passphrase** (issue #47). Turning
+  auto-approve on asks for a passphrase you set yourself with
+  `rdv owner-secret set`, in your own terminal. It is read from the terminal
+  device itself (`/dev/tty`, or `CONIN$` on Windows), not from stdin, it is
+  never echoed or printed, and only a scrypt hash is kept
+  (`owner-secret.json`, mode 600); three wrong answers lock it for a minute,
+  then twice as long after each further miss. `rdv init` in a terminal
+  offers to set it, and so does `/rdv-onboarding` (it asks you to run the
+  command in your own terminal). The first passphrase is trust on first
+  use: it is audited, and `rdv whoami` and `rdv_status` show when it was
+  set; if that wasn't you, run `rdv owner-secret reset` in your own
+  terminal (refused while locked; it turns every auto-approve off and only
+  clears, and a new passphrase can be set 10 minutes later). Any
+  pseudo-terminal (`script`, `expect`, `unbuffer`, `winpty`, node-pty,
+  `pty.spawn`) is refused outright. It replaced "retype the
+  fingerprint shown here", which an assistant could pass by running the
+  command in a pseudo-terminal and typing back what the prompt printed. The
+  hook also refuses any command that names `contact` and `auto-approve`
+  under any wrapper or spelling (`script -c`, `expect -c`, `unbuffer`,
+  `winpty`, `stdbuf`, `timeout`, `nohup`, `env`, node-pty, Python
+  `pty.spawn`, here-strings, heredocs, `sh -c`, `node -e`, `python -c`), any
+  quoted string that names `auto-approve`, any mention of `owner-secret`,
+  and any read or write of `autoapprove.json` or `owner-secret.json` in any
+  folder.
+
+  What this protects against: an assistant that drifts or is
+  prompt-injected and tries to switch auto-approve on by itself, with or
+  without a pty: it never sees the answer, so it has nothing to type. What
+  it does not protect against: a model with a shell running as your OS user
+  can still write a script the hook can't read, delete `owner-secret.json`
+  and set its own passphrase, edit Rendezvous' files, or watch you type the
+  passphrase into a terminal it controls (so type it only in your
+  own terminal, one you opened yourself). No local check is a hard boundary against your own
+  account; for that, run the assistant or `rdv-mcp` as another OS user.
+
   **The hook is defence in depth, not a security boundary.** A model with a
   shell can always build a command it can't see (a script file, another
   interpreter). The boundary is the MCP consent gate: `rdv_grant` and
@@ -622,7 +657,9 @@ State lives in a directory: `--home <dir>`, else `$RDV_HOME`, else
 | `rdv task submit <task-id> --text "…" [--name …] [--complete]` / `rdv task ask <task-id> --text "…"` / `rdv task finish <task-id> [--failed] [--text …]` | Draft a result, a question or the end of a contact's task; a draft leaves only when released |
 | `rdv task release <task-id> --code <code>` | Send the draft you reviewed (release gate). Yours to run |
 | `rdv task cancel <task-id>` / `rdv task input <task-id> --text "…"` | Withdraw a task you requested, or answer its executor's question |
-| `rdv contact auto-approve <agent-id\|label> all [--until 7d]` / `… off` | Let one trusted contact's tasks start and their results leave without asking you (SPEC §5.5.1, "dangerous mode"): needs your own terminal, shows a warning, asks you to retype the fingerprint. Ends on expiry, `off`, a revoke, block or new grant, or a fork (NOTES 77). Yours to run |
+| `rdv contact auto-approve <agent-id\|label> all [--until 7d]` / `… off` | Let one trusted contact's tasks start and their results leave without asking you (SPEC §5.5.1, "dangerous mode"): needs your own terminal, shows a warning, asks for your owner passphrase. Ends on expiry, `off`, a revoke, block or new grant, or a fork (NOTES 77). Yours to run |
+| `rdv owner-secret set` | Set or change the owner passphrase that turning auto-approve on asks for: typed twice, never shown, stored as a scrypt hash; three misses lock it for a minute, doubling; audited, and `rdv whoami` shows when it was set (NOTES 77). `rdv init` in a terminal offers it too. Yours to run, in your own terminal |
+| `rdv owner-secret reset` | Forgot it, or `rdv whoami` shows a time you didn't set it: turns auto-approve off for every contact and forgets the passphrase (audited; refused while locked). Set a new one with `rdv owner-secret set` 10 minutes later; until then `rdv whoami` shows a reset banner. Yours to run, in your own terminal |
 | `rdv audit [--contact <agent-id\|label>] [--since 7d]` | The audit log: gates passed without asking (`auto`, `notify`, auto-approve), your approvals, auto-approve changes; no peer text |
 | `rdv inbox [--follow]` | Show received payloads |
 
@@ -1925,8 +1962,10 @@ boundary, so keep them narrow.
 
 The reference implementation sets it with `rdv contact auto-approve
 <agent-id|label> all [--until <time|duration>]`, which needs an interactive
-terminal, shows the warning and has the owner retype the contact's
-fingerprint; `... off` turns it off from anywhere. The setting lives in
+terminal, shows the warning and asks for the owner's passphrase (set
+beforehand with `rdv owner-secret set`, stored as a scrypt hash, read from
+the terminal itself and never shown, so the prompt never holds its own
+answer); `... off` turns it off from anywhere. The setting lives in
 `autoapprove.json` in the home (mode 600), each entry MACed with the agent's
 secret key and bound to the contact's grant ID, `since` and a digest of its
 inbound scope; it is checked under the home lock at each gate. The audit log

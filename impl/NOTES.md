@@ -1568,19 +1568,103 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       [--until <time|duration>]` needs stdin and stderr to be a TTY, prints
       the warning (what it allows, the capabilities it covers today,
       prompt injection getting the agent's tools, the expiry, how to turn
-      it off), asks for the contact's fingerprint retyped, then re-checks
+      it off), asks for the owner passphrase (below), then re-checks
       under the lock that the grant did not change while the owner read.
       `--until` takes 30m, 12h, 7d, 2w or RFC 3339, at most a year away.
       Meeting capabilities are not listed as covered, and a grant with no
       task capability is refused. `... off` needs nothing (reduce-only) and
       works from any terminal. Tests drive the command in-process with a
       `Tty` stub; spawned `rdv` (no TTY) is refused.
+    - **The owner passphrase** (issue #47). The first version asked the
+      owner to retype the contact's fingerprint and printed that
+      fingerprint in the same prompt, so an assistant could run the command
+      in a pseudo-terminal (`script -c`, `expect`, `unbuffer`, `winpty`,
+      node-pty, Python `pty.spawn`), read the answer from the output and
+      type it back. Now the answer is never in the command's output:
+      `packages/cli/src/ownersecret.ts`. The owner sets a passphrase with
+      `rdv owner-secret set` (interactive terminal only; typed twice; at
+      least 8 characters; changing it asks for the current one; never an
+      argument). `owner-secret.json` (mode 600) keeps a 16-byte salt and
+      scrypt(N 2^15, r 8, p 1) over `rdv1/owner-secret` and the NFC
+      passphrase, compared with `timingSafeEqual`, plus the count of wrong
+      answers in a row. The answer is read from the terminal device itself
+      (`/dev/tty`; `\\.\CONIN$` on Windows, opened read-write because
+      Windows changes a console's mode only through such a handle) in raw
+      mode, so it is not echoed and piping into stdin does nothing; Enter
+      ends it, Ctrl-C or an empty line cancels without counting. Three
+      misses in a row lock it for a minute, and each further miss doubles
+      that (at most a day); while locked even the right answer is refused
+      and not counted; a right answer resets the count. No passphrase set:
+      auto-approve is refused before anything is asked. An unreadable or
+      malformed file fails closed until the owner deletes it by hand.
+      **The first passphrase is trust on first use**, and that is the
+      weak spot: whoever sets it first owns it, and nothing local tells
+      the owner from a same-user process that got a terminal (a pty is
+      one). So the bar is raised and the result made visible instead: every
+      set, change and reset is audited (`gate: "owner-secret"`, peer
+      `owner`, `by: "human"`); `rdv whoami` prints it on its first line and
+      `rdv_status` returns it (`owner_passphrase`: when it was set, a lock if
+      any, and "if you did not set it, run `rdv owner-secret reset` in your
+      own terminal"; never the hash); `rdv init` in a real terminal offers
+      to set it right then, when the owner is surely there (Enter skips;
+      spawned or MCP init never asks), and `/rdv-onboarding` hands it to
+      the owner after creating the identity. Setting it needs both stdin and
+      stderr to be a TTY and the terminal device to open (`processTty`);
+      otherwise it is refused. `rdv owner-secret reset` needs no current
+      passphrase (it is for one the owner forgot or did not set), so it is
+      no way around the passphrase or its lockout: refused while locked,
+      it turns auto-approve off for every contact (audited), and it only
+      clears, leaving `{v, reset}` in `owner-secret.json`; a new passphrase
+      is a separate `rdv owner-secret set` at least 10 minutes later, and
+      until then `rdv whoami` and `rdv_status` show "OWNER PASSPHRASE RESET
+      <time> … if you did not reset it, someone with access to your
+      account did". Auto-approve holds only while a
+      readable passphrase is set: an entry from before it existed, or after
+      `owner-secret.json` was deleted, approves nothing (it is kept, so the
+      owner setting one brings it back). Process-tree checks (is the parent
+      an assistant?) were not added: brittle, and trivially spoofed.
+      Considered and not taken: a one-time code sent out of band (an OS
+      notification or the clipboard: the clipboard is readable by the
+      same user's model, and notifications need a different tool per
+      platform, BurntToast on Windows being a dependency); an MCP
+      elicitation form, which a model can't answer, but the owner ruled out
+      every MCP way to set auto-approve (no tool, argument or phrase).
+      Reading the controlling terminal alone (without the passphrase) stops
+      stdin piping but not a pty, which becomes the controlling terminal.
     - **Human-only, everywhere.** The MCP server has no tool or argument
       that sets it (a test lists every tool's schema and throws extra
       arguments at them), and no confirm phrase is issued for it. The
       plugin's consent guard refuses `rdv contact auto-approve` (on and
       off alike, so no spelling of `all` slips through) and names
-      `autoapprove.json` with the secret files; the skill lint therefore
+      `autoapprove.json` with the secret files. Since issue #47 it also
+      refuses any command whose text, with quotes, escapes (`\`, `` ` ``,
+      `^`), `+` concatenation and whitespace removed, names both `contact`
+      and `auto-approve`, whatever wraps it (`script -c`, `expect -c`,
+      `unbuffer`, `winpty`, `stdbuf`, `timeout`, `nohup`, `env`, node-pty,
+      `pty.spawn`, `sh -c`, `node -e`, `python -c`, here-strings,
+      heredocs); any quoted string that names `auto-approve` at all; any
+      mention of `owner-secret`; and `autoapprove.json` or
+      `owner-secret.json` in any folder for the file tools. Structurally,
+      too: `owner-secret set|reset` is a subcommand pair checked like
+      `contact`, `dinner` and `task` (same `couldBe` and dynamic-word rules);
+      bash ANSI-C quoting (`$'\x63ontact'`) is decoded before matching;
+      `rdv`'s next word must be a literal (no `$`, substitution or
+      wildcard); a string handed to a wrapper (`script`, `expect`,
+      `unbuffer`, `winpty`, `stdbuf`, `timeout`, `nohup`, `env`, `setsid`,
+      `sudo`, …) is checked as a command line by the whole parser, and one
+      that runs `rdv` and holds a `$`, a backtick or a Tcl `[…]` is refused
+      as built at run time. Any pseudo-terminal is refused, whatever it
+      runs: a pty wrapper as the program or under another wrapper
+      (`script`, `expect`, `unbuffer`, `winpty`, `tmux`, `screen`, …), or a
+      script that opens one (node-pty, `pty.spawn`, pexpect, ConPTY), since
+      nothing here needs a pty but answering a human-only prompt, and a
+      name built by string operations (`chr()`, `join`, `+`) can't be
+      followed. That is where the regex work stops: the guard is
+      best-effort against obfuscation, and further findings of that class
+      go to one follow-up issue; the boundary is the MCP gate and the
+      signed owner files. The price is
+      false positives (a commit message naming both words is refused: write
+      it to a file), which is acceptable for a guard. The skill lint therefore
       flags any skill that tells the model to run it. The skill says the
       model can never set it and must not suggest it or any other way
       around a gate; the onboarding never mentions it.
@@ -1594,7 +1678,18 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       a script that does anything the owner's account can. The MAC keeps a
       hand-written file from approving anything without the secret key,
       which the guard keeps from the model; that is defence in depth, not a
-      boundary.
+      boundary. The passphrase protects against an assistant that tries to
+      turn auto-approve on by itself, pty or not: the prompt holds no
+      answer, so there is nothing to read back. It does not protect
+      against a same-user model that gets past the guard (a script file,
+      an encoded command, a tool the guard doesn't see) and then deletes
+      `owner-secret.json` and sets its own passphrase (when none is set
+      yet, it only has to set one), forges `autoapprove.json` with the key
+      from `agent.json`, or edits the CLI itself; nor against a model that
+      watches the owner type into a terminal it controls (a pty it opened
+      and asked the owner to type into: the owner should type the
+      passphrase only in a terminal they opened themselves). The hard
+      boundary is another OS user for the assistant or `rdv-mcp`.
 
 ## Free-form requests and card refresh (v0.3)
 

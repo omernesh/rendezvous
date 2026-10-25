@@ -175,6 +175,8 @@ call `rdv_status` and show `agent_id`, `fingerprint` and `our_addresses`
 Explain that the fingerprint is what the other person compares, through
 another channel, before trusting a contact.
 
+Then hand one thing to the user, which you cannot do for them: an owner passphrase. Ask them to run `rdv owner-secret set` in their own terminal, one they opened themselves, now, and to type a passphrase only they know (it is never shown, and some settings that only they may change ask for it). Never ask for the passphrase, never type it, and never run that command yourself. Verify: call `rdv_status` and show `owner_passphrase.set` (a time). If they skip it, say they can do it later, the same way. If `owner_passphrase.note` ever shows a time they don't recognize, tell them to run `rdv owner-secret reset` in their own terminal.
+
 ## Step 9 of 11: publish the card
 
 Skip this step if the pointer is off, and say so.

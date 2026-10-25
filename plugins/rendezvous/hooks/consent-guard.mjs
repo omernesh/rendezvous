@@ -5,8 +5,10 @@
 // or releasing a result to it, auto-grant/auto-confirm listeners, the direct-transfer setting), naming a contact (`rdv contact label`: a label decides who
 // "tell John" reaches), putting a contact on auto-approve (`rdv contact auto-approve`, SPEC §5.5.1), the commands
 // that show confirm phrases (`rdv contact pending`, `rdv dinner list`, `rdv task list`), re-keying (`rdv init --force`),
+// the owner passphrase that turns auto-approve on (`rdv owner-secret`, issue #47),
 // and the secret key, consent and auto-approve state (`agent.json`, `agent.json.bak`, `consent.json`,
-// `autoapprove.json`) in the Rendezvous home, through any tool.
+// `autoapprove.json`, `owner-secret.json`) in the Rendezvous home, through any tool. A command naming
+// `contact` and `auto-approve` is refused under any wrapper, quoted string or spelling (pty wrappers included).
 //
 // Defence in depth, NOT a security boundary. It parses commands the way a
 // shell would (quotes, escapes, comments, `$(...)`, backticks, `bash -c`,
@@ -21,16 +23,26 @@ import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-export const SECRET_FILES = ['agent.json', 'agent.json.bak', 'consent.json', 'autoapprove.json', 'owner.json'];
+export const SECRET_FILES = ['agent.json', 'agent.json.bak', 'consent.json', 'autoapprove.json', 'owner.json', 'owner-secret.json'];
 /** Files in a home that hold file keys and drafts (files.json, tasks.json): refused by path when they are in a home. */
 export const OWNER_FILES = ['files.json', 'tasks.json'];
-const SECRET_MENTION = /agent\.json|consent\.json|autoapprove\.json|owner\.json/i;
+/** Names distinctive enough to refuse in any folder, not only in a home: writing either one by hand is setting auto-approve. */
+const ANYWHERE_FILES = ['autoapprove.json', 'owner-secret.json'];
+const SECRET_MENTION = /agent\.json|consent\.json|autoapprove\.json|owner\.json|owner-secret\.json/i;
+/**
+ * `src` with quoting, escapes, string concatenation and whitespace removed
+ * (sh, PowerShell, cmd and script-language spellings alike), so that a word
+ * split or quoted to hide it is plain again: `"auto-"+'appr\ove'` -> `auto-approve`.
+ */
+const flatten = (src) => src.replace(/[\s'"`\\^+]/g, '').toLowerCase();
+const AUTO_APPROVE_WORD = /auto[-_]?approve/i;
+const OWNER_SECRET_WORD = /owner[-_]?secret/i;
 /** Stands for the output of a `$(...)` or backtick substitution: unknown when the hook runs. */
 const SUB = '\u0000';
 const MAX_DEPTH = 6;
 
 const SECRET_REFUSAL =
-  'That names the Rendezvous secret key, consent, auto-approve or owner-settings file (agent.json, agent.json.bak, consent.json, autoapprove.json, owner.json). Never read, write, copy or print it; use rdv_status for the agent ID, fingerprint and auto-approve status, and ask your user to change a setting in their own terminal.';
+  'That names the Rendezvous secret key, consent, auto-approve, owner-settings or owner passphrase file (agent.json, agent.json.bak, consent.json, autoapprove.json, owner.json, owner-secret.json). Never read, write, copy or print it; use rdv_status for the agent ID, fingerprint and auto-approve status, and ask your user to change a setting in their own terminal.';
 const OWNER_REFUSAL =
   'That names a Rendezvous file that holds file keys and drafts (files.json, tasks.json). Never read or write it; use rdv_file and rdv_task.';
 const HOME_REFUSAL =
@@ -53,6 +65,10 @@ const AUTO_APPROVE =
   "rdv contact auto-approve is for the human, in their own terminal: it lets a contact's tasks run and their results leave without asking anyone. You may never set, extend or turn it on, and never suggest it to get past a gate; to have it turned off, ask your user (rdv_status shows it).";
 const DIRECT_TRANSFER =
   'rdv file direct-transfer is the human\'s setting, in their own terminal: turning it on shows their network address to contacts who ask for a direct transfer. Tell your user; rdv_file "decline-transfer" can only say no.';
+const OWNER_SECRET =
+  'The owner passphrase (rdv owner-secret, owner-secret.json) is for the human alone: it is what they type to turn auto-approve on. Never set, change, read, write or ask for it.';
+const PTY_RDV =
+  'That opens a pseudo-terminal (script, expect, unbuffer, winpty, node-pty, pty.spawn, pexpect), which nothing here needs but answering a prompt meant for the human. Run the command directly, or use the rdv_* MCP tools.';
 const OPAQUE =
   'That command builds a Rendezvous subcommand or path at run time, so the consent guard cannot check it. Spell it out, or use the rdv_* MCP tools.';
 const NESTED = 'That command nests too deeply for the consent guard to check. Spell it out.';
@@ -74,6 +90,36 @@ function closeParen(src, start, mode) {
     else if (c === ')' && --depth === 0) return i;
   }
   return src.length;
+}
+
+const ANSI_C = { a: '\x07', b: '\b', e: '\x1b', E: '\x1b', f: '\f', n: '\n', r: '\r', t: '\t', v: '\v', '\\': '\\', "'": "'", '"': '"', '?': '?' };
+
+/** The text of a bash `$'…'` string starting at `start` (just past the quote), and the index of its closing quote. */
+function ansiC(src, start) {
+  let out = '';
+  let i = start;
+  for (; i < src.length && src[i] !== "'"; i++) {
+    if (src[i] !== '\\' || i + 1 >= src.length) {
+      out += src[i];
+      continue;
+    }
+    const e = src[++i];
+    let m;
+    if (Object.hasOwn(ANSI_C, e)) out += ANSI_C[e];
+    else if ((m = /^x([0-9a-fA-F]{1,2})/.exec(src.slice(i)))) {
+      out += String.fromCharCode(parseInt(m[1], 16));
+      i += m[0].length - 1;
+    } else if ((m = /^(u[0-9a-fA-F]{1,4}|U[0-9a-fA-F]{1,8})/.exec(src.slice(i)))) {
+      out += String.fromCodePoint(Math.min(parseInt(m[1].slice(1), 16), 0x10ffff));
+      i += m[0].length - 1;
+    } else if ((m = /^[0-7]{1,3}/.exec(src.slice(i)))) {
+      out += String.fromCharCode(parseInt(m[0], 8) & 0xff);
+      i += m[0].length - 1;
+    } else if (e === 'c' && i + 1 < src.length) {
+      out += String.fromCharCode(src.charCodeAt(++i) & 0x1f);
+    } else out += `\\${e}`;
+  }
+  return [out, i];
 }
 
 /**
@@ -138,6 +184,14 @@ export function parseCommands(src, mode = 'sh', depth = 0) {
     if (mode === 'ps' && c === '<' && next === '#') {
       const j = src.indexOf('#>', i + 2);
       i = j < 0 ? src.length : j + 1;
+      continue;
+    }
+    // bash ANSI-C quoting: $'\x63ontact' is "contact" (issue #47). Decoded, so the word is judged as the shell runs it.
+    if (mode === 'sh' && c === '$' && next === "'") {
+      const [text, end] = ansiC(src, i + 2);
+      cur += text;
+      inWord = true;
+      i = end;
       continue;
     }
     if (c === "'") {
@@ -270,6 +324,20 @@ const DINNER_SUBS = { confirm: `rdv dinner confirm: ${HUMAN_ONLY}`, cancel: `rdv
 const TASK_SUBS = { approve: `rdv task approve: ${TASK_GATE}`, release: `rdv task release: ${TASK_GATE}`, list: TASK_LIST };
 // The owner's direct-transfer setting (SPEC §7.7): widening it is the human's.
 const FILE_SUBS = { 'direct-transfer': DIRECT_TRANSFER };
+// The owner passphrase (issue #47): setting or resetting it is what would let a wrapper answer the auto-approve prompt.
+const OWNER_SUBS = { set: OWNER_SECRET, reset: OWNER_SECRET };
+
+/**
+ * Programs that run their arguments as another command, in a pseudo-terminal (`script`, `expect`, `unbuffer`,
+ * `winpty`) or not (`stdbuf`, `timeout`, `nohup`, `env`, …). A string argument to one is a command line of its own.
+ */
+const WRAPPERS = new Set(['script', 'expect', 'unbuffer', 'winpty', 'stdbuf', 'timeout', 'nohup', 'env', 'setsid', 'nice', 'ionice', 'watch', 'sudo', 'doas', 'xvfb-run', 'faketime', 'chronic', 'empty', 'ptyrun', 'conpty']);
+/** Is `rdv` (any of its names) invoked somewhere in this text? `rdv1:` IDs and `rdv-mcp` are not. */
+const mentionsRdv = (s) => /(^|[^\w-])rdv(\.cmd|\.ps1|\.exe)?($|[^\w-])|bin\.js|@rendezvous\/cli/i.test(s);
+/** Programs that run a command in a pseudo-terminal: refused outright (issue #47). */
+const PTY_WRAPPERS = new Set(['script', 'expect', 'unbuffer', 'winpty', 'empty', 'ptyrun', 'conpty', 'socat', 'tmux', 'screen', 'dtach', 'abduco']);
+/** A pseudo-terminal opened from a script: node-pty, Python's pty module, a ConPTY or winpty binding. */
+const PTY_CODE = /node-pty|\bpty\s*\.\s*(spawn|fork|openpty)|\b(openpty|forkpty|ptyprocess|pexpect|conpty|winpty)\b/i;
 
 // --- paths ----------------------------------------------------------------------
 
@@ -345,6 +413,24 @@ const staticPrefix = (w) => {
 
 function checkWords(words, ctx, depth) {
   const lw = words.map((w) => w.toLowerCase());
+  // A quoted string that names auto-approve is a command for some other program to run (`script -c "…"`,
+  // `expect -c 'spawn …'`, `pty.spawn(…)`): refused whatever else it holds (issue #47).
+  if (words.some((w) => /\s/.test(w) && AUTO_APPROVE_WORD.test(flatten(w)))) throw new Refusal(AUTO_APPROVE);
+  // A string handed to a wrapper is run as a command line: check it with the whole parser (subcommands, dynamic
+  // words, paths). One that runs rdv and holds a `$`, a backtick or a Tcl `[…]` (expect) is built at run time: refused.
+  // A pty wrapper as the program, or run by another wrapper (`timeout 60 script …`): refused, whatever it runs.
+  const firstProg = words.findIndex((w) => !/^[A-Za-z_]\w*=/.test(w));
+  if (words.some((w, k) => PTY_WRAPPERS.has(progName(w)) && (k === firstProg || words.slice(0, k).some((x) => WRAPPERS.has(progName(x)))))) {
+    throw new Refusal(PTY_RDV);
+  }
+  const wrapAt = words.findIndex((w) => WRAPPERS.has(progName(w)));
+  if (wrapAt >= 0) {
+    for (const w of words.slice(wrapAt + 1)) {
+      if (!/\s/.test(w)) continue;
+      if (mentionsRdv(w) && /[$`[\u0000]/.test(w)) throw new Refusal(OPAQUE);
+      check(w, { cwd: ctx.cwd }, depth + 1);
+    }
+  }
   // Programs that run a string as a command: check the string too.
   for (let i = 0; i < words.length; i++) {
     const p = progName(words[i]);
@@ -376,6 +462,7 @@ function checkWords(words, ctx, depth) {
       ['dinner', DINNER_SUBS],
       ['task', TASK_SUBS],
       ['file', FILE_SUBS],
+      ['owner-secret', OWNER_SUBS],
     ]) {
       const named = couldBe(a, cmd, ctx.cwd);
       for (const [s, why] of Object.entries(subs)) {
@@ -384,7 +471,8 @@ function checkWords(words, ctx, depth) {
       // `file` is also a common program (`file "$f"`): only after rdv is it a subcommand.
       if (named && dynamic(b) && (i === 0 ? cmd !== 'file' : isRdv(words[i - 1]) || dynamic(words[i - 1]) || words[i - 1] === '--')) throw new Refusal(OPAQUE);
     }
-    if (isRdv(a) && dynamic(b)) throw new Refusal(OPAQUE);
+    // rdv's next word must be a literal: not built at run time, and no wildcard the shell could expand into a subcommand.
+    if (isRdv(a) && (dynamic(b) || GLOB_CHARS.test(b))) throw new Refusal(OPAQUE);
   }
   // `… | xargs rdv contact`: the arguments come from stdin, unseen.
   const feeder = lw.findIndex((w) => ['xargs', 'parallel'].includes(progName(w)));
@@ -452,6 +540,9 @@ function checkWords(words, ctx, depth) {
 
 /** Code for another interpreter (`node -e`, `python -c`): check it as a command, and each string literal in it. */
 function checkCode(code, ctx, depth) {
+  // A pseudo-terminal opened by the script itself (node-pty, pty.spawn): what it runs can be built in any way the
+  // guard can't follow, and nothing but answering a human-only prompt needs one (issue #47). Refused, whatever it names.
+  if (PTY_CODE.test(code)) throw new Refusal(PTY_RDV);
   check(code, ctx, depth);
   for (const mode of ['sh', 'ps']) {
     for (const words of parseCommands(code, mode, depth)) for (const w of words) if (/\s/.test(w)) check(w, ctx, depth + 1);
@@ -463,6 +554,16 @@ function checkCode(code, ctx, depth) {
 function check(src, ctx, depth) {
   if (depth > MAX_DEPTH) throw new Refusal(NESTED);
   if (SECRET_MENTION.test(src)) throw new Refusal(SECRET_REFUSAL);
+  // Auto-approve and the owner passphrase (issue #47), whatever runs them: a pseudo-terminal wrapper (`script -c`,
+  // `expect -c`, `unbuffer`, `winpty`), a prefix (`stdbuf`, `timeout`, `nohup`, `env`), node-pty or Python's pty.spawn,
+  // a here-string or heredoc. Any command that names `contact` and `auto-approve` anywhere, in any spelling, is
+  // refused; so is any mention of `owner-secret`.
+  const flat = flatten(src);
+  if (OWNER_SECRET_WORD.test(flat)) throw new Refusal(OWNER_SECRET);
+  if (AUTO_APPROVE_WORD.test(flat) && flat.includes('contact')) throw new Refusal(AUTO_APPROVE);
+  // A script (inline, or fed by a heredoc) that opens a pseudo-terminal, whatever it names: the guard can't follow
+  // a name built by string operations (concatenation, chr(), join), so it doesn't try.
+  if (PTY_CODE.test(src)) throw new Refusal(PTY_RDV);
   // Parse it both ways: the hook can't be sure which shell runs it, and a word
   // hidden from one parser (a backtick, a backslash) is plain to the other.
   for (const mode of ['sh', 'ps']) {
@@ -508,6 +609,7 @@ export function checkPath(path, opts = {}) {
   const where = classify(p);
   if (SECRET_FILES.includes(basename(p).toLowerCase()) && (where || classify(dirname(p)))) return SECRET_REFUSAL;
   if (OWNER_FILES.includes(basename(p).toLowerCase()) && where === 'inside') return OWNER_REFUSAL;
+  if (ANYWHERE_FILES.includes(basename(p).toLowerCase())) return SECRET_REFUSAL;
   if (where === 'home') return HOME_REFUSAL;
   if (kind === 'search' && (where || containsHome(p))) return HOME_REFUSAL;
   return undefined;
