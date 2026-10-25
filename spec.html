@@ -121,7 +121,8 @@ consent concept changed; see <strong>Changes in rev 3</strong> below.</p>
   format; scope defaults. New §5.5 (consent stays with the human) and §5.6
   (peer text is untrusted data). Amended: the reverse grant (§5.3, a grant
   with <code>grant_ref</code>) tells a contact what its peer's owner allows it, so the
-  grantor side can propose meetings too (§7.4).</li>
+  grantor side can propose meetings too (§7.4). A confirm phrase approves
+  only the tier and scope shown with it, and is stored hashed (§5.5).</li>
 <li><strong>A2A, §7:</strong> which A2A objects are sent, the meeting verbs, task states,
   slots, deduplication by <code>messageId</code>, cancellation, resend bounds, and
   persisting state before send. Amended: agreement is an accept → confirm
@@ -672,8 +673,12 @@ of model output alone. Acceptable approvals are:
   elicitation request);
 - a per-request confirm phrase shown only on human channels (a terminal, a
   local UI) and typed by the human; it never appears in a tool result. The
-  reference implementation accepts a phrase only for tiers less close than
-  <code>family</code> (<code>friend</code> and below);
+  phrase approves the request on the terms shown with it (tier and scope),
+  and nothing else: the host MUST refuse it for any other tier or scope the
+  model asks for, and show the human a new phrase for those terms instead.
+  A host SHOULD store only a salted, slow hash of the phrase, so that it
+  cannot be read back from disk. The reference implementation accepts a
+  phrase only for tiers less close than <code>family</code> (<code>friend</code> and below);
 - the owner's own command in a terminal;
 - a standing pre-approval the owner set as policy (<code>allow</code>, §5.4).</p>
 <p>The same holds on the requester's side. A grant the agent <em>receives</em> is the

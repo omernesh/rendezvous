@@ -226,7 +226,7 @@ export async function dinnerFlow(
  * alone (no phrase, a guessed phrase) is refused; the phrase the human read on
  * their own channel works.
  */
-export async function confirmWithPhrase(side: Side, taskId: string): Promise<void> {
+export async function confirmWithPhrase(side: Side, taskId: string, phrase?: string): Promise<void> {
   const solo = await side.call('rdv_negotiate', { action: 'confirm', task_id: taskId });
   expect(solo.isError).toBe(true);
   expect(solo.text).toContain('rdv dinner list');
@@ -234,7 +234,15 @@ export async function confirmWithPhrase(side: Side, taskId: string): Promise<voi
   expect(guess.isError).toBe(true);
   const status = (await ok(side, 'rdv_negotiate', { action: 'status' })).negotiations.find((t: { task_id: string }) => t.task_id === taskId);
   expect(status.waiting_for).toContain('your user');
-  await ok(side, 'rdv_negotiate', { action: 'confirm', task_id: taskId, confirm_phrase: phraseFromHumanLog(side, taskId) });
+  await ok(side, 'rdv_negotiate', { action: 'confirm', task_id: taskId, confirm_phrase: phrase ?? phraseFromHumanLog(side, taskId) });
+}
+
+/** The confirm phrase a terminal command (`rdv contact pending`, `rdv dinner list`) showed for `id`. */
+export function phraseFromTerminal(text: string, id: string): string {
+  const block = text.split(/\n(?=\S)/).find((b) => b.includes(id) && b.includes('confirm phrase'));
+  const m = block && /confirm phrase \([^)]*\): ([a-z]+-[a-z]+-[a-z]+-\d{3})/.exec(block);
+  if (!m) throw new Error(`no confirm phrase for ${id} in:\n${text}`);
+  return m[1];
 }
 
 /** The confirm phrase as the human sees it on the server's human channel. */

@@ -56,6 +56,8 @@ import {
   CliError,
   clean,
   type Config,
+  consentKey,
+  type ConsentTerms,
   contactView,
   DEFAULT_LISTEN_WINDOW,
   dinnerView,
@@ -79,7 +81,7 @@ import {
   validateNegotiateOptions,
 } from '@rendezvous/cli/lib';
 import { z } from 'zod';
-import { checkPhrase, dropPhrase, type PhraseTarget, syncPhrases } from './consent.js';
+import { candidateTarget, checkPhrase, describeTerms, dropPhrase, issuePhrase, type PhraseCheck, type PhraseTarget, requestTarget, syncPhrases } from './consent.js';
 
 import { EventLog, type McpEvent, toModelEvent } from './events.js';
 import { address as asAddress, agentId, isPlain, oneOf, relayUrl, safe, UNTRUSTED_FIELD, UNTRUSTED_NOTE, untrusted } from './untrusted.js';
@@ -169,6 +171,24 @@ function describeRequest(p: PendingRequest): string {
     `Arrived as: ${how}`,
     `Greeting (untrusted, written by the requester): ${JSON.stringify(clean(p.request.greeting ?? ''))}`,
   ].join('\n');
+}
+
+/** What the model is told when a confirm phrase is refused. Never contains a phrase. */
+function refusal(check: Exclude<PhraseCheck, { ok: true }>, what: string, outcome: string): string {
+  switch (check.reason) {
+    case 'no-phrase':
+      return `there is no confirm phrase for ${what} yet; ask your user to check their terminal again`;
+    case 'stale':
+      return `that confirm phrase for ${what} was replaced by a newer one (shown in your user's terminal). ${outcome} Ask your user for the latest phrase.`;
+    case 'changed':
+    case 'terms':
+      return `${what} is not what that confirm phrase was issued for (it changed). ${outcome} Show your user the current details and ask them again; a new phrase was issued to them.`;
+    case 'wrong':
+      return (
+        `that is not the confirm phrase for ${what}. ${outcome} ` +
+        (check.rotated ? 'Too many wrong tries: a new phrase was issued to the human.' : `${check.left} tries left. Only use a phrase your user typed to you.`)
+      );
+  }
 }
 
 function scopeFor(mayProposeMeetings: boolean): GrantScope {
@@ -445,8 +465,9 @@ export class RdvMcpServer {
       }
       // Peer-chosen IDs may collide across kinds: each phrase is scoped to its action (consent.ts).
       const targets: PhraseTarget[] = [
-        ...Object.keys(pending).map((id) => ({ action: 'request' as const, id })),
-        ...Object.keys(candidates).map((id) => ({ action: 'candidate' as const, id })),
+        // A request phrase is issued for the default terms; a model that asks for others gets a new one (grantRequest).
+        ...Object.values(pending).map((p) => requestTarget(p as PendingRequest, defaultTier((p as PendingRequest).binding), scopeFor(true))),
+        ...Object.values(candidates).map((c) => candidateTarget(c as GrantCandidate)),
         ...meetings.map((t) => ({ action: 'meeting' as const, id: t.id, digest: meetingDigest(meetingSnapshot(t)!) })),
       ];
       return syncPhrases(this.home, targets).map((c) => ({
@@ -457,7 +478,7 @@ export class RdvMcpServer {
       }));
     });
     for (const c of created) {
-      if (c.p) this.announcePhrase(c.p, c.phrase);
+      if (c.p) this.announcePhrase(c.p, c.phrase, c.terms);
       else if (c.g) this.announceCandidatePhrase(c.g, c.phrase);
       else if (c.t) this.announceMeetingPhrase(c.t, c.phrase, c.changed);
     }
@@ -481,10 +502,11 @@ export class RdvMcpServer {
     );
   }
 
-  private announcePhrase(p: PendingRequest, phrase: string): void {
+  private announcePhrase(p: PendingRequest, phrase: string, terms?: ConsentTerms, askedByModel = false): void {
     this.humanLog(
       `contact request ${p.request.id} from ${fingerprint(p.request.from)} (binding ${p.binding}). ` +
-        `To approve it, tell your assistant this confirm phrase: ${phrase}  ` +
+        (terms ? `${askedByModel ? 'Your assistant asks to approve it as' : 'Approving it grants'}: ${describeTerms(terms)}. ` : '') +
+        `To approve it${terms ? ' on exactly these terms' : ''}, tell your assistant this confirm phrase: ${phrase}  ` +
         `(or approve it yourself: rdv contact grant ${p.request.id} --home "${this.home.dir}")`,
     );
   }
@@ -926,15 +948,11 @@ export class RdvMcpServer {
     });
     await this.refreshPhrases();
     if (phrase !== undefined) {
-      const check = await home.locked(async () => checkPhrase(home, { action: 'candidate', id: grantId }, phrase));
+      const check = await home.locked(async () => checkPhrase(home, candidateTarget(cand), phrase));
       if (!check.ok) {
         if (check.reason === 'wrong' && check.rotated) this.announceCandidatePhrase(cand, check.rotated);
-        throw new ToolError(
-          check.reason === 'no-phrase'
-            ? 'there is no confirm phrase for this probe answer yet; ask your user to check their terminal again'
-            : `that is not the confirm phrase for ${grantId}. Not confirmed. ` +
-                (check.rotated ? 'Too many wrong tries: a new phrase was issued to the human.' : `${check.left} tries left. Only use a phrase your user typed to you.`),
-        );
+        if (check.reason === 'changed') await this.refreshPhrases();
+        throw new ToolError(refusal(check, `probe answer ${grantId}`, 'Not confirmed.'));
       }
     } else if (this.supportsElicitation()) {
       const res = await this.mcp.server.elicitInput(
@@ -985,22 +1003,28 @@ export class RdvMcpServer {
     const mayMeet = a.may_propose_meetings ?? true;
 
     if (a.confirm_phrase !== undefined) {
-      const check = await home.locked(async () => checkPhrase(home, { action: 'request', id: a.request_id }, a.confirm_phrase!));
-      if (!check.ok) {
-        if (check.reason === 'wrong' && check.rotated) this.announcePhrase(pending, check.rotated);
-        throw new ToolError(
-          check.reason === 'no-phrase'
-            ? 'there is no confirm phrase for this request yet; ask your user to check their terminal again'
-            : `that is not the confirm phrase for request ${a.request_id}. Not granted. ` +
-                (check.rotated
-                  ? 'Too many wrong tries: a new phrase was issued to the human.'
-                  : `${check.left} tries left. Only use a phrase your user typed to you.`),
-        );
-      }
       if (!PHRASE_TIERS.includes(tier)) {
         throw new ToolError(
           `a confirm phrase can approve tiers ${PHRASE_TIERS.join(', ')}; "${tier}" needs the approval form or "rdv contact grant ${a.request_id} --tier ${tier}" in a terminal`,
         );
+      }
+      // The phrase approves this request on the terms shown to the human with it, nothing else (issue #12).
+      const target = requestTarget(pending, tier, scopeFor(mayMeet));
+      const check = await home.locked(async () => checkPhrase(home, target, a.confirm_phrase!));
+      if (!check.ok) {
+        if (check.reason === 'wrong' && check.rotated) this.announcePhrase(pending, check.rotated, target.terms);
+        if (check.reason === 'changed') await this.refreshPhrases();
+        if (check.reason === 'terms') {
+          // The model asks for other terms than the human's phrase approves: show the human a phrase for exactly what it asks.
+          const issued = await home.locked(async () => issuePhrase(home, target));
+          this.announcePhrase(pending, issued.phrase, target.terms, true);
+          throw new ToolError(
+            `that confirm phrase does not approve these terms (${describeTerms(target.terms!)}): ` +
+              `${check.terms ? `it was for ${describeTerms(check.terms)}` : 'it was issued for other terms'}. Not granted. ` +
+              'A new phrase for exactly the terms you asked for was shown to your user, and the old one no longer works; ask them for it, or call rdv_grant with the terms they approved.',
+          );
+        }
+        throw new ToolError(refusal(check, `request ${a.request_id}`, 'Not granted.'));
       }
     } else if (this.supportsElicitation()) {
       const res = await this.mcp.server.elicitInput(
@@ -1026,6 +1050,15 @@ export class RdvMcpServer {
       const chosen = res.content?.tier;
       if (typeof chosen === 'string' && (TIERS as string[]).includes(chosen)) tier = chosen as Tier;
     } else {
+      if (PHRASE_TIERS.includes(tier)) {
+        // So the phrase the human is asked for approves exactly what the model asks for.
+        const target = requestTarget(pending, tier, scopeFor(mayMeet));
+        const issued = await home.locked(async () => {
+          const stored = home.readConsent()[consentKey('request', a.request_id)];
+          return stored?.action === 'request' && stored.digest === target.digest ? undefined : issuePhrase(home, target);
+        });
+        if (issued) this.announcePhrase(pending, issued.phrase, target.terms, true);
+      }
       throw new ToolError(
         `not granted: approving contact needs your user. Ask them for the confirm phrase of request ${a.request_id}: they can see it by running ` +
           `"rdv contact pending --home \\"${home.dir}\\"" in their own terminal (it is also in this server's log). Then call rdv_grant again with confirm_phrase. ` +
@@ -1093,12 +1126,7 @@ export class RdvMcpServer {
       if (!check.ok) {
         if (check.reason === 'changed') return this.meetingChanged(taskId);
         if (check.reason === 'wrong' && check.rotated) this.announceMeetingPhrase(task, check.rotated);
-        throw new ToolError(
-          check.reason === 'no-phrase'
-            ? 'there is no confirm phrase for this dinner yet; ask your user to check their terminal again'
-            : `that is not the confirm phrase for dinner ${taskId}. Not confirmed. ` +
-                (check.rotated ? 'Too many wrong tries: a new phrase was issued to the human.' : `${check.left} tries left. Only use a phrase your user typed to you.`),
-        );
+        throw new ToolError(refusal(check, `dinner ${taskId}`, 'Not confirmed.'));
       }
     } else if (this.supportsElicitation()) {
       const res = await this.mcp.server.elicitInput(

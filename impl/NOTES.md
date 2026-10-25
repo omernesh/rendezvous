@@ -438,16 +438,53 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
     window whose `created` is also not newer (the peer's clock went back
     further than its last envelope) still reads as a duplicate; detecting
     that needs a hash per seq or a chain-reset message (v0.2).
-57. **Confirm-phrase limits** (L6, open, documented only). `consent.json`
-    (mode 600) holds each phrase in clear text, because `rdv contact
-    pending` must show it to the human again. A client that gives the model
-    file or shell access to the home (Claude Code, for one) can read it and
-    so approve on its own; there, use elicitation or `rdv contact grant` in
-    a terminal, or keep the home outside the files the model can reach.
-    The phrase also does not bind the tier (any tier from `friend` down) or
-    `may_propose_meetings`, which the model picks. Fix options: store only a
-    hash and show the phrase once (stderr at creation), and fold the tier
-    and scope shown to the human into the phrase (HMAC). Not done here.
+57. **Confirm phrases are hashed and bound to the terms** (L6, fixed,
+    issue #12; **spec change**, §5.5). `consent.json` (mode 600) used to
+    hold each phrase in clear text, so a model with file or shell access to
+    the home could read it and approve on its own, and the phrase did not
+    bind the tier (any from `friend` down) or `may_propose_meetings`, which
+    the model picks. Now:
+    - **Stored as a hash.** Each entry keeps `salt` (16 random bytes) and
+      `hash` = scrypt(N 2^14, r 8, p 1) over `rdv1/consent-phrase`, action,
+      ID, digest and the normalized phrase, compared with `timingSafeEqual`.
+      scrypt because the phrase has only ~28 bits: a fast hash would be
+      reversed in seconds; this costs on the order of 2^28 × tens of ms of
+      CPU per entry. `previous` (to report a replaced phrase) is a hash too.
+      The code moved to `packages/cli/src/consent.ts` (re-exported by the
+      MCP server's `consent.ts`) because the terminal re-issues phrases.
+    - **The terminal re-issues.** A stored phrase can't be shown again, so
+      `rdv contact pending` and `rdv dinner list` (text mode only; `--json`
+      changes nothing) replace each current phrase with a new one for the
+      same digest and show that, with the terms it approves. The latest
+      phrase shown wins; an older one is refused as replaced (`stale`, not
+      a counted guess).
+    - **Bound to what the human saw.** A request phrase is bound to
+      `subject` (sha256 of request id, sender, binding, `direct`, receipt
+      time) and to `terms` (tier and full scope), via `digest` = sha256 of
+      both. The server issues it for the default terms and says them on
+      stderr. `rdv_grant` with a phrase checks the tier cap first, then the
+      digest of the terms the model asked for: other terms are refused
+      (`terms`, no try counted) and the human gets a new phrase for exactly
+      those terms ("Your assistant asks to approve it as: …"), which
+      replaces the old one. A phrase-less `rdv_grant` for other terms does
+      the same, once. Another request under the same peer-chosen ID (other
+      sender, or evicted and sent again) is another subject, so a new
+      phrase. Probe answers are bound to grant id, grantor, probe and
+      receipt time (`candidateDigest`); meetings as in item 59.
+    - **Old files fail closed.** An entry with a plaintext `phrase`, no
+      hash, a malformed `previous`, or `terms` that don't hash to its
+      `digest` approves nothing, the terminal shows nothing for it, and the
+      next write (the server syncs at startup) drops it; the server issues
+      and announces a hashed phrase for each target still waiting.
+    Honest limit: a same-user model can still read a phrase **while it is
+    shown** (scrollback, the server's stderr if it can read the client's
+    MCP log, or by running `rdv contact pending` itself, which also issues
+    one) and, with shell access, can simply run `rdv contact grant`. Hashing
+    only stops recovering the phrase from disk later. Where the model has a
+    shell, use elicitation, deny it the home and those commands
+    (`demo/SCRIPT.md`), or run `rdv-mcp` as another OS user. Elicitation
+    is unchanged: the form shows the tier and scope, and the human's tier
+    wins.
 
 58. **Accept → confirm, exclusive holds** (**spec change**, §7.2, §7.3,
     issue #5). New verb `meeting/confirm` (`slot`), sent by the offerer in

@@ -4,7 +4,37 @@
 export { initHome, type InitOptions, requestContactTo, TIERS, withAgent } from './commands.js';
 export { appendEvents, EVENTS_FILE_KEPT, eventsStamp, isNoise, type LoggedEvent, readEvents, STRANGER_DROPS } from './events.js';
 export { acquireLock, LockTimeoutError, type LongLock, tryLongLock, writeAtomic } from './fsutil.js';
-export { CliError, type Config, type ConsentAction, type ConsentEntry, consentKey, Home, type InboxEntry, parseJsonLines } from './home.js';
+export {
+  candidateDigest,
+  candidateTarget,
+  checkPhrase,
+  describeTerms,
+  dropPhrase,
+  type IssuedPhrase,
+  issuePhrase,
+  MAX_ATTEMPTS,
+  newPhrase,
+  normalizePhrase,
+  type PhraseCheck,
+  type PhraseTarget,
+  reissueForDisplay,
+  requestSubject,
+  requestTarget,
+  syncPhrases,
+  termsDigest,
+} from './consent.js';
+export {
+  CliError,
+  type Config,
+  type ConsentAction,
+  type ConsentEntry,
+  type ConsentHash,
+  type ConsentTerms,
+  consentKey,
+  Home,
+  type InboxEntry,
+  parseJsonLines,
+} from './home.js';
 export { type Emitted, FeedTransport, handleInbound, hasExpiring, isJunk, type ListenOptions, SWEEP_MS } from './listen.js';
 export {
   buildCtx,

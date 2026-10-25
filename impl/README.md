@@ -121,7 +121,7 @@ State lives in a directory: `--home <dir>`, else `$RDV_HOME`, else
 | `inbox.jsonl` | received payloads, one JSON object per line |
 | `cards.json` | cards found by `rdv lookup`, so `contact request <agent-id>` can use them |
 | `negotiations.json` | dinner negotiations (the a2a engine state) |
-| `consent.json` | confirm phrases for pending requests and held dinners (written by `rdv-mcp`; `contact pending` and `dinner list` show them in text mode) |
+| `consent.json` | salted scrypt hashes of the confirm phrases for pending requests, probe answers and held dinners, each bound to what the human was shown (written by `rdv-mcp`; `contact pending` and `dinner list` issue and show a fresh phrase in text mode) |
 | `holds.json` | which calendar file holds each tentative dinner hold, so `dinner confirm`/`cancel` can finalize or release it |
 | `events.jsonl` | shared event log: what the home's listener handled, plus `rdv-mcp`'s own events; `rdv_inbox` is a view of it |
 | `events.lock` | held while appending to `events.jsonl` |

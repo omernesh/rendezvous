@@ -15,7 +15,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync } from 'nod
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { emptyState, type NegotiationState } from '@rendezvous/a2a';
-import type { AddressCard, AgentState, DiscoveryAddress, InboundPolicy, Payload } from '@rendezvous/core';
+import type { AddressCard, AgentState, DiscoveryAddress, GrantScope, InboundPolicy, Payload, Tier } from '@rendezvous/core';
 import { acquireLock, writeAtomic } from './fsutil.js';
 
 export interface Config {
@@ -42,19 +42,36 @@ export type ConsentAction = 'request' | 'candidate' | 'meeting';
  */
 export const consentKey = (action: ConsentAction, id: string): string => `${action}:${id}`;
 
-/** A confirm phrase the MCP server issued for one action; only a human should ever see it. */
-export interface ConsentEntry {
+/** A salted scrypt hash of a confirm phrase (consent.ts); the phrase itself is never stored. */
+export interface ConsentHash {
+  salt: string;
+  hash: string;
+  /** What the phrase was issued for; part of the hash input. */
+  digest?: string;
+}
+
+/** The tier and scope a request phrase approves, as shown to the human. */
+export interface ConsentTerms {
+  tier: Tier;
+  scope: GrantScope;
+}
+
+/** A confirm phrase the MCP server issued for one action (hashed); only a human ever sees the phrase. */
+export interface ConsentEntry extends ConsentHash {
   /** The only action this phrase approves. */
   action: ConsentAction;
-  phrase: string;
   /**
-   * meeting: the digest of the meeting the phrase was issued for
-   * (meetingDigest). It approves that meeting only; a changed hold gets a new
-   * phrase.
+   * The digest of what the human was shown: the meeting (meetingDigest), the
+   * probe answer (candidateDigest), or the request with its terms
+   * (termsDigest). The phrase approves that only.
    */
   digest?: string;
-  /** The phrase this one replaced because the meeting changed, so a stale phrase is reported as such. */
-  previous?: string;
+  /** request: the request itself, without the terms (requestSubject). */
+  subject?: string;
+  /** request: the tier and scope this phrase approves. */
+  terms?: ConsentTerms;
+  /** The phrase this one replaced, so a stale phrase is reported as such. */
+  previous?: ConsentHash;
   created: string;
   attempts: number;
 }

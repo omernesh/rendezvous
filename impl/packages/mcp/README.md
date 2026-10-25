@@ -73,13 +73,18 @@ one of these:
    `accept` with `approve: true` grants; the human's tier wins over the model's.
    The model never sees or answers this form.
 2. **Confirm phrase.** Otherwise each pending request gets a random phrase
-   (three words and three digits, about 28 bits), stored in `consent.json`
-   (mode 600) and shown only on human channels: this server's stderr and
-   `rdv contact pending` in text mode (not `--json`). The human reads it and
-   types it to the model, which passes it as `confirm_phrase`. Phrases are per
-   request and single use; 5 wrong tries replace the phrase. A phrase can
-   approve tiers `friend` and below; `family`/`spouse` need the form or
-   `rdv contact grant --tier …` in a terminal.
+   (three words and three digits, about 28 bits), shown only on human
+   channels: this server's stderr and `rdv contact pending` in text mode (not
+   `--json`). `consent.json` (mode 600) keeps only a salted scrypt hash, so
+   the terminal issues a new phrase each time it shows one (the latest shown
+   wins). The human reads it and types it to the model, which passes it as
+   `confirm_phrase`. A phrase approves the request on the terms shown with it
+   (tier and scope, default first): if the model asks for another tier or
+   `may_propose_meetings`, it is refused and the human is shown a new phrase
+   for exactly those terms (issue #12). Phrases are per request and single
+   use; 5 wrong tries replace the phrase. A phrase can approve tiers `friend`
+   and below; `family`/`spouse` need the form or `rdv contact grant --tier …`
+   in a terminal.
 3. **The terminal.** The human runs `rdv contact grant <id>` themselves.
 
 **Each meeting too (issue #8).** The server answers dinner proposals from the
@@ -99,17 +104,18 @@ stage, or a new negotiation under the same ID), nothing is confirmed, the tool
 says it changed, and a new phrase is issued (NOTES 59).
 
 No tool result ever contains a phrase (tests scan every result and the inbox
-resource). Limits (NOTES 57): `consent.json` keeps phrases in clear text so
-the terminal can show them again, so a client that lets the model read files
-in the home can find them; there, prefer elicitation or the terminal. A
-phrase approves any tier from `friend` down and does not bind the scope. Without a phrase or elicitation, `rdv_grant` fails and tells the
+resource). Limits (NOTES 57): phrases are not on disk, but a model that can
+read files or run commands as the same user can still catch one while it is
+shown (or run `rdv contact pending` itself); there, prefer elicitation or the
+terminal. Without a phrase or elicitation, `rdv_grant` fails and tells the
 model to ask its human.
 
 **Threat model.** This stops a model from granting on its own initiative, and
 stops instructions injected through peer text from making it grant. It does
 **not** stop a model that can run arbitrary shell commands or read arbitrary
-files as the same OS user: such a model can read `consent.json` (and also
-`agent.json`, which holds the secret key, a worse problem). In Claude Code,
+files as the same OS user: such a model can catch a phrase while it is shown,
+run `rdv contact grant` itself, or read `agent.json`, which holds the secret
+key, a worse problem. In Claude Code,
 keep the default permission mode (shell commands and reads outside the project
 need approval) and add deny rules for the home dir and `rdv contact pending`
 (example in `demo/SCRIPT.md`). The strongest setup runs `rdv-mcp` as a

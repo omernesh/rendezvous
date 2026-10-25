@@ -18,7 +18,8 @@ import {
   verifyCard,
 } from '@rendezvous/core';
 import { cancel, confirmMeeting, describeSlot, meetingSnapshot, NegotiationError, type NegotiationTask, parseInstant, propose, type Step } from '@rendezvous/a2a';
-import { CliError, type Config, type ConsentAction, consentKey, Home, type InboxEntry, parseJsonLines } from './home.js';
+import { candidateTarget, describeTerms, reissueForDisplay, requestSubject } from './consent.js';
+import { CliError, type Config, type ConsentAction, type ConsentTerms, consentKey, Home, type InboxEntry, parseJsonLines } from './home.js';
 
 import { listen } from './listen.js';
 import { relayTransport } from './transport.js';
@@ -279,28 +280,38 @@ export async function contactRequest({ home, out, values, positionals }: Ctx): P
 }
 
 export async function contactPending({ home, out }: Ctx): Promise<void> {
-  const pending = await withAgent(home, async (agent) => agent.pendingRequests(), { save: false });
-  pending.sort((a, b) => a.received.localeCompare(b.received));
-  if (pending.length === 0 && !out.json) out.emit({}, 'no pending requests');
-  // The MCP server's confirm phrases (see packages/mcp README) are shown in text mode only: they are for the human at a terminal.
-  const consent = home.readConsent();
-  const phraseLine = (action: ConsentAction, id: string) => {
-    const e = consent[consentKey(action, id)];
-    const phrase = e?.action === action ? e.phrase : undefined;
-    return phrase ? `\n  confirm phrase (tell it to your MCP client to approve): ${clean(phrase)}` : '';
-  };
-  for (const p of pending) out.emit(requestView(p), requestText(p) + phraseLine('request', p.request.id));
-  // Answers to our own topic probes: anyone who saw the probe could have sent one.
-  const { candidates, overflows, evicted } = await withAgent(
+  const { pending, candidates, overflows, evicted } = await withAgent(
     home,
     async (agent) => ({
+      pending: agent.pendingRequests(),
       candidates: agent.grantCandidates(),
       overflows: agent.book.probeOverflows(),
       evicted: agent.book.state.pendingEvicted ?? 0,
     }),
     { save: false },
   );
+  pending.sort((a, b) => a.received.localeCompare(b.received));
   candidates.sort((a, b) => a.received.localeCompare(b.received));
+  if (pending.length === 0 && !out.json) out.emit({}, 'no pending requests');
+  // The MCP server's confirm phrases (see packages/mcp README) are shown in text mode only: they are for the human at a terminal.
+  // Only their hashes are stored (issue #12), so showing one issues a new phrase for the same request and terms, which replaces it.
+  const shown =
+    out.json || (pending.length === 0 && candidates.length === 0)
+      ? new Map<string, { phrase: string; terms?: ConsentTerms }>()
+      : await home.locked(async () =>
+          reissueForDisplay(home, [
+            ...pending.map((p) => ({ action: 'request' as const, id: p.request.id, subject: requestSubject(p) })),
+            ...candidates.map(candidateTarget),
+          ]),
+        );
+  const phraseLine = (action: ConsentAction, id: string) => {
+    const s = shown.get(consentKey(action, id));
+    if (!s) return '';
+    const terms = s.terms ? `\n  it approves: ${clean(describeTerms(s.terms))}` : '';
+    return `\n  confirm phrase (tell it to your MCP client to approve): ${clean(s.phrase)}  (replaces any phrase shown before)${terms}`;
+  };
+  for (const p of pending) out.emit(requestView(p), requestText(p) + phraseLine('request', p.request.id));
+  // Answers to our own topic probes: anyone who saw the probe could have sent one.
   for (const c of candidates) out.emit(candidateView(c), candidateText(c) + phraseLine('candidate', c.grant.id));
   for (const o of overflows) out.emit(overflowView(o), overflowText(o));
   if (evicted > 0) {
@@ -563,16 +574,23 @@ export async function dinnerConfirm({ home, out, values, positionals }: Ctx): Pr
 
 export async function dinnerList({ home, out }: Ctx): Promise<void> {
   home.requireInit();
-  const { tasks, consent } = await home.locked(async () => ({ tasks: Object.values(home.readNegotiations().tasks), consent: home.readConsent() }));
+  // The MCP server's confirm phrase for a meeting, like `contact pending`: text mode only, for the human.
+  // Only a phrase issued for the meeting as it is now is re-issued and shown: a stale one approves nothing.
+  const { tasks, shown } = await home.locked(async () => {
+    const tasks = Object.values(home.readNegotiations().tasks);
+    const targets = out.json
+      ? []
+      : tasks.flatMap((t) => {
+          const snap = meetingSnapshot(t);
+          return snap ? [{ action: 'meeting' as const, id: t.id, digest: meetingDigest(snap) }] : [];
+        });
+    return { tasks, shown: targets.length ? reissueForDisplay(home, targets) : new Map<string, { phrase: string }>() };
+  });
   tasks.sort((a, b) => a.created.localeCompare(b.created));
   if (tasks.length === 0 && !out.json) out.emit({}, 'no negotiations');
-  // The MCP server's confirm phrase for a meeting, like `contact pending`: text mode only, for the human.
-  // Only a phrase issued for the meeting as it is now: a stale one approves nothing, so it is not shown.
   const phraseLine = (t: NegotiationTask) => {
-    const snap = meetingSnapshot(t);
-    const e = snap ? consent[consentKey('meeting', t.id)] : undefined;
-    const phrase = snap && e?.action === 'meeting' && e.digest === meetingDigest(snap) ? e.phrase : undefined;
-    return phrase ? `\n  confirm phrase (tell it to your MCP client to confirm this dinner): ${clean(phrase)}` : '';
+    const s = shown.get(consentKey('meeting', t.id));
+    return s ? `\n  confirm phrase (tell it to your MCP client to confirm this dinner): ${clean(s.phrase)}  (replaces any phrase shown before)` : '';
   };
   for (const t of tasks) out.emit(taskView(t), taskText(t) + phraseLine(t));
 }

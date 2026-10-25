@@ -9,8 +9,22 @@ import type { ElicitResult } from '@modelcontextprotocol/sdk/types.js';
 import { startTestRelay, type TestRelay } from '@rendezvous/core/testing';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { Listener, RDV_BIN, rdv } from '../../cli/scenarios/harness.js';
-import { checkPhrase, dropPhrase, EventLog, EVENTS_KEPT, MAX_ATTEMPTS, normalizePhrase, syncPhrases, toModelEvent, UNTRUSTED_NOTE } from '../src/index.js';
-import { confirmWithPhrase, dinnerFlow, type ElicitHandler, INJECTION, makeSide, moveHold, ok, phraseFromHumanLog, type Side, waitEvent } from './flow.js';
+import {
+  checkPhrase,
+  dropPhrase,
+  EventLog,
+  EVENTS_KEPT,
+  issuePhrase,
+  MAX_ATTEMPTS,
+  normalizePhrase,
+  reissueForDisplay,
+  requestTarget,
+  syncPhrases,
+  toModelEvent,
+  UNTRUSTED_NOTE,
+} from '../src/index.js';
+import type { PendingRequest } from '@rendezvous/core';
+import { confirmWithPhrase, dinnerFlow, type ElicitHandler, INJECTION, makeSide, moveHold, ok, phraseFromHumanLog, phraseFromTerminal, type Side, waitEvent } from './flow.js';
 import { appendEvents, Home } from '@rendezvous/cli/lib';
 import { generateKey } from '@rendezvous/core';
 
@@ -76,13 +90,27 @@ describe('rdv-mcp: two Claude sessions book dinner (in-memory relay)', () => {
         expect((await ok(j, 'rdv_status')).contacts).toEqual([]);
 
         // The human reads the phrase in a terminal (`rdv contact pending`, sharing the home while the server runs)...
-        const phrase = phraseFromHumanLog(j, requestId);
-        phrases.push(phrase);
+        const logged = phraseFromHumanLog(j, requestId);
+        phrases.push(logged);
+        expect(j.humanLog.find((l) => l.includes(logged))).toContain('Approving it grants: tier stranger, may propose meetings');
+        const stored = j.home.readConsent()[`request:${requestId}`].hash;
         const cli = await rdv(['contact', 'pending'], j.home.dir);
         expect(cli.lines[0].id).toBe(requestId);
-        expect(cli.stdout).not.toContain(phrase); // --json output carries no phrase
+        expect(cli.stdout).not.toMatch(/[a-z]+-[a-z]+-[a-z]+-\d{3}/); // --json output carries no phrase...
+        expect(j.home.readConsent()[`request:${requestId}`].hash).toBe(stored); // ...and replaces none
         const text = execFileSync(process.execPath, [RDV_BIN, 'contact', 'pending', '--home', j.home.dir], { encoding: 'utf8' });
+        // Only a hash is stored (issue #12): the terminal shows a new phrase, with the terms it approves, which replaces the logged one.
+        const phrase = phraseFromTerminal(text, requestId);
+        phrases.push(phrase);
+        expect(phrase).not.toBe(logged);
         expect(text).toContain(`confirm phrase (tell it to your MCP client to approve): ${phrase}`);
+        expect(text).toContain('it approves: tier stranger, may propose meetings, calendar free_busy');
+        const disk = readFileSync(j.home.consentPath, 'utf8');
+        for (const p of [phrase, logged]) expect(disk).not.toContain(p);
+        expect(disk).not.toMatch(/[a-z]+-[a-z]+-[a-z]+-\d{3}/);
+        const replaced = await j.call('rdv_grant', { request_id: requestId, confirm_phrase: logged });
+        expect(replaced.isError).toBe(true);
+        expect(replaced.text).toContain('replaced by a newer one');
 
         // ...and types it to the model. A closer tier than the cap is still refused.
         const spouse = await j.call('rdv_grant', { request_id: requestId, tier: 'spouse', confirm_phrase: phrase });
@@ -95,12 +123,16 @@ describe('rdv-mcp: two Claude sessions book dinner (in-memory relay)', () => {
         expect(Object.keys(j.home.readConsent()).some((k) => k.endsWith(requestId))).toBe(false);
       },
       confirm: async (side, taskId) => {
-        // The human sees the dinner's phrase in `rdv dinner list` (text mode only) and in the server log.
-        const phrase = phraseFromHumanLog(side, taskId);
-        phrases.push(phrase);
+        // The human sees the dinner's phrase in `rdv dinner list` (text mode only, a new one: only hashes are stored) and in the server log.
+        const logged = phraseFromHumanLog(side, taskId);
+        phrases.push(logged);
         const text = execFileSync(process.execPath, [RDV_BIN, 'dinner', 'list', '--home', side.home.dir], { encoding: 'utf8' });
+        const phrase = phraseFromTerminal(text, taskId);
+        phrases.push(phrase);
+        expect(phrase).not.toBe(logged);
         expect(text).toContain(`confirm this dinner): ${phrase}`);
         expect((await rdv(['dinner', 'list'], side.home.dir)).stdout).not.toContain(phrase);
+        expect(readFileSync(side.home.consentPath, 'utf8')).not.toMatch(/[a-z]+-[a-z]+-[a-z]+-\d{3}/);
         if (side === john) {
           // The meeting changes after the human read the phrase (same task ID, another evening):
           // their phrase confirms nothing, and a new one is issued for what is held now.
@@ -112,16 +144,19 @@ describe('rdv-mcp: two Claude sessions book dinner (in-memory relay)', () => {
           phrases.push(reissued);
           expect(reissued).not.toBe(phrase);
           expect(side.humanLog.some((l) => l.includes(taskId) && l.includes('CHANGED'))).toBe(true);
-          expect(execFileSync(process.execPath, [RDV_BIN, 'dinner', 'list', '--home', side.home.dir], { encoding: 'utf8' })).toContain(reissued);
+          const moved = phraseFromTerminal(execFileSync(process.execPath, [RDV_BIN, 'dinner', 'list', '--home', side.home.dir], { encoding: 'utf8' }), taskId);
+          phrases.push(moved);
           expect((await ok(side, 'rdv_negotiate', { action: 'status' })).negotiations[0].waiting_for).toContain('your user');
           // Back to what the human reviewed: the phrase issued for the moved meeting is stale in turn.
           await undo();
-          const back = await side.call('rdv_negotiate', { action: 'confirm', task_id: taskId, confirm_phrase: reissued });
+          const back = await side.call('rdv_negotiate', { action: 'confirm', task_id: taskId, confirm_phrase: moved });
           expect(back.isError).toBe(true);
           expect(back.text).toContain('changed since your user reviewed it');
           phrases.push(phraseFromHumanLog(side, taskId));
+          await confirmWithPhrase(side, taskId);
+        } else {
+          await confirmWithPhrase(side, taskId, phrase);
         }
-        await confirmWithPhrase(side, taskId);
         expect(side.home.readConsent()[`meeting:${taskId}`]).toBeUndefined(); // single use
 
       },
@@ -246,6 +281,55 @@ describe('rdv-mcp: two Claude sessions book dinner (in-memory relay)', () => {
     expect(msg.payload.untrusted_peer_text).not.toContain(ESC);
     expect(Object.keys(msg).sort()).toEqual(['from', 'n', 'payload', 'payload_type', 'seq', 'ts', 'type']);
   });
+
+  it('a confirm phrase approves only the tier and scope shown to the human (issue #12)', async () => {
+    const { omer, john } = await pair();
+    const john_at = `john+${randomBytes(3).toString('hex')}@doe.com`;
+    await ok(omer, 'rdv_init', { profile: 'omer', email: 'omer@example.com', relays: [relay.url] });
+    await ok(john, 'rdv_init', { profile: 'john', email: john_at, relays: [relay.url] });
+    await new Promise((r) => setTimeout(r, 300));
+    await ok(omer, 'rdv_request_contact', { target: john_at });
+    const req = await waitEvent(john, (e) => e.type === 'contact_request', 'request', 10_000);
+    const id: string = req.request_id;
+    const phrases = [phraseFromHumanLog(john, id)];
+    expect(john.humanLog.find((l) => l.includes(phrases[0]))).toContain('Approving it grants: tier stranger, may propose meetings');
+
+    // The human's phrase, with a closer tier or another scope than they were shown: refused.
+    const closer = await john.call('rdv_grant', { request_id: id, tier: 'friend', confirm_phrase: phrases[0] });
+    expect(closer.isError).toBe(true);
+    expect(closer.text).toContain('does not approve these terms (tier friend');
+    expect(closer.text).toContain('it was for tier stranger');
+    expect((await ok(john, 'rdv_status')).contacts).toEqual([]);
+    // The human is shown a phrase for exactly what the model asked, and the old one stops working.
+    const askedLine = john.humanLog.at(-1)!;
+    expect(askedLine).toContain(id);
+    expect(askedLine).toContain('Your assistant asks to approve it as: tier friend, may propose meetings');
+    phrases.push(phraseFromHumanLog(john, id));
+    expect(phrases[1]).not.toBe(phrases[0]);
+    expect((await john.call('rdv_grant', { request_id: id, confirm_phrase: phrases[0] })).isError).toBe(true);
+    // The friend phrase does not approve the narrower default either, nor friend without meetings.
+    const narrower = await john.call('rdv_grant', { request_id: id, tier: 'friend', may_propose_meetings: false, confirm_phrase: phrases[1] });
+    expect(narrower.isError).toBe(true);
+    expect(narrower.text).toContain('does not approve these terms');
+    expect(john.humanLog.at(-1)).toContain('tier friend, no meetings');
+    phrases.push(phraseFromHumanLog(john, id));
+    // Asking without a phrase for other terms shows the human a phrase for those (once; asking again issues none).
+    const asks = () => john.humanLog.filter((l) => l.includes(id) && l.includes('confirm phrase')).length;
+    const before = asks();
+    expect((await john.call('rdv_grant', { request_id: id, tier: 'business' })).isError).toBe(true);
+    expect(john.humanLog.at(-1)).toContain('Your assistant asks to approve it as: tier business');
+    phrases.push(phraseFromHumanLog(john, id));
+    expect((await john.call('rdv_grant', { request_id: id, tier: 'business' })).isError).toBe(true);
+    expect(asks()).toBe(before + 1);
+    expect(readFileSync(john.home.consentPath, 'utf8')).not.toMatch(/[a-z]+-[a-z]+-[a-z]+-\d{3}/);
+    // The phrase for exactly those terms works, and grants exactly those terms.
+    const granted = await ok(john, 'rdv_grant', { request_id: id, tier: 'business', confirm_phrase: phrases[3] });
+    expect(granted).toMatchObject({ granted: true, tier: 'business', scope: { may_propose_meetings: true } });
+    // Used: gone with the request.
+    expect(Object.keys(john.home.readConsent()).some((k) => k.endsWith(id))).toBe(false);
+    expect((await john.call('rdv_grant', { request_id: id, tier: 'business', confirm_phrase: phrases[3] })).isError).toBe(true);
+    await expectNoPhraseLeak(john, phrases);
+  });
 });
 
 describe('confirm phrases', () => {
@@ -323,6 +407,139 @@ describe('confirm phrases', () => {
     // The task ended: its phrase is dropped.
     syncPhrases(home, []);
     expect(home.readConsent()).toEqual({});
+  });
+
+  /** A pending request as the contact book keeps it (only the fields a phrase is bound to). */
+  const pendingReq = (id: string, from = 'rdv1:omer', received = '2026-10-25T10:00:00Z') =>
+    ({ request: { id, from }, binding: 'claimed', received }) as unknown as PendingRequest;
+  const STRANGER = { may_initiate: true, may_propose_meetings: true, may_access_calendar: 'free_busy', max_frequency: '100/day' } as const;
+
+  it('are stored only as salted scrypt hashes (issue #12)', () => {
+    root = mkdtempSync(join(tmpdir(), 'rdv-phrase-'));
+    const home = new Home(root);
+    home.ensureDir();
+    const issued = syncPhrases(home, [
+      requestTarget(pendingReq('req-a'), 'stranger', STRANGER),
+      requestTarget(pendingReq('req-b'), 'stranger', STRANGER),
+      { action: 'meeting', id: 'task-1', digest: 'c'.repeat(64) },
+    ]);
+    const disk = readFileSync(home.consentPath, 'utf8');
+    for (const { phrase } of issued) {
+      expect(disk).not.toContain(phrase);
+      expect(disk).not.toContain(normalizePhrase(phrase));
+      for (const word of phrase.split('-').slice(0, 3)) expect(disk).not.toMatch(new RegExp(`"${word}`));
+    }
+    const entries = Object.values(home.readConsent());
+    for (const e of entries) {
+      expect(Object.keys(e)).not.toContain('phrase');
+      expect(Buffer.from(e.salt, 'base64url')).toHaveLength(16);
+      expect(Buffer.from(e.hash, 'base64url')).toHaveLength(32);
+    }
+    expect(new Set(entries.map((e) => e.salt)).size).toBe(3); // a fresh salt per entry
+    // Re-issuing for display (the terminal) replaces the hash, still with no phrase on disk.
+    const shown = reissueForDisplay(home, [{ action: 'request', id: 'req-a', subject: requireSubject(home, 'req-a') }]);
+    const again = shown.get('request:req-a')!.phrase;
+    expect(readFileSync(home.consentPath, 'utf8')).not.toContain(again);
+    const target = requestTarget(pendingReq('req-a'), 'stranger', STRANGER);
+    expect(checkPhrase(home, target, issued[0].phrase)).toMatchObject({ ok: false, reason: 'stale', left: MAX_ATTEMPTS });
+    expect(checkPhrase(home, target, again).ok).toBe(true);
+  });
+
+  /** The subject stored for a request entry (what `rdv contact pending` recomputes from the request). */
+  const requireSubject = (home: Home, id: string) => home.readConsent()[`request:${id}`].subject!;
+
+  it('bind a request phrase to the tier and scope shown with it, and to that request', () => {
+    root = mkdtempSync(join(tmpdir(), 'rdv-phrase-'));
+    const home = new Home(root);
+    home.ensureDir();
+    const p = pendingReq('req-t');
+    const shownTerms = requestTarget(p, 'stranger', STRANGER);
+    const [{ phrase }] = syncPhrases(home, [shownTerms]);
+    // The model picks a closer tier, or a wider or narrower scope: the human's phrase approves none of it, and no try is counted.
+    for (const other of [
+      requestTarget(p, 'friend', STRANGER),
+      requestTarget(p, 'stranger', { ...STRANGER, may_propose_meetings: false }),
+      requestTarget(p, 'stranger', { ...STRANGER, max_frequency: '1000/day' }),
+    ]) {
+      expect(checkPhrase(home, other, phrase)).toMatchObject({ ok: false, reason: 'terms', terms: { tier: 'stranger' }, left: MAX_ATTEMPTS });
+    }
+    // Another request under the same peer-chosen ID (another sender, or the same one asking again later): changed.
+    expect(checkPhrase(home, requestTarget(pendingReq('req-t', 'rdv1:mallory'), 'stranger', STRANGER), phrase)).toMatchObject({ ok: false, reason: 'changed' });
+    expect(checkPhrase(home, requestTarget(pendingReq('req-t', 'rdv1:omer', '2026-10-26T10:00:00Z'), 'stranger', STRANGER), phrase)).toMatchObject({
+      ok: false,
+      reason: 'changed',
+    });
+    // A phrase issued for the terms the model asked for replaces the human's; sync keeps it (same request).
+    const friend = requestTarget(p, 'friend', STRANGER);
+    const asked = issuePhrase(home, friend);
+    expect(syncPhrases(home, [shownTerms])).toEqual([]);
+    expect(checkPhrase(home, shownTerms, asked.phrase)).toMatchObject({ ok: false, reason: 'terms', terms: { tier: 'friend' } });
+    expect(checkPhrase(home, friend, phrase)).toMatchObject({ ok: false, reason: 'changed' }); // the old one is gone
+    // Terms edited on disk without the digest (or the reverse) approve nothing.
+    const consent = home.readConsent();
+    consent['request:req-t'].terms = { tier: 'spouse', scope: STRANGER };
+    home.writeConsent(consent);
+    expect(checkPhrase(home, friend, asked.phrase)).toMatchObject({ ok: false, reason: 'no-phrase' });
+    expect(checkPhrase(home, requestTarget(p, 'spouse', STRANGER), asked.phrase)).toMatchObject({ ok: false, reason: 'no-phrase' });
+    // A request whose phrase was issued for other terms is a fresh entry after sync replaces the broken one.
+    const [fresh] = syncPhrases(home, [shownTerms]);
+    expect(checkPhrase(home, shownTerms, fresh.phrase).ok).toBe(true);
+  });
+
+  it('are single use: a used phrase approves nothing again, not even a new request from the same peer', () => {
+    root = mkdtempSync(join(tmpdir(), 'rdv-phrase-'));
+    const home = new Home(root);
+    home.ensureDir();
+    const first = requestTarget(pendingReq('req-1'), 'stranger', STRANGER);
+    const [{ phrase }] = syncPhrases(home, [first]);
+    expect(checkPhrase(home, first, phrase).ok).toBe(true);
+    dropPhrase(home, first); // what a grant does
+    expect(checkPhrase(home, first, phrase)).toMatchObject({ ok: false, reason: 'no-phrase' });
+    // The same request ID again (evicted and retried): a new phrase; the used one is a wrong guess.
+    const retry = requestTarget(pendingReq('req-1', 'rdv1:omer', '2026-10-25T11:00:00Z'), 'stranger', STRANGER);
+    const second = requestTarget(pendingReq('req-2'), 'stranger', STRANGER);
+    syncPhrases(home, [retry, second]);
+    expect(checkPhrase(home, retry, phrase)).toMatchObject({ ok: false, reason: 'wrong', left: MAX_ATTEMPTS - 1 });
+    expect(checkPhrase(home, second, phrase)).toMatchObject({ ok: false, reason: 'wrong', left: MAX_ATTEMPTS - 1 });
+  });
+
+  it('an old consent.json with plaintext phrases approves nothing and is purged, never fails open', () => {
+    root = mkdtempSync(join(tmpdir(), 'rdv-phrase-'));
+    const home = new Home(root);
+    home.ensureDir();
+    const req = requestTarget(pendingReq('req-old'), 'stranger', STRANGER);
+    const meet = { action: 'meeting', id: 'task-old', digest: 'd'.repeat(64) } as const;
+    const created = '2026-10-24T10:00:00Z';
+    // The format before issue #12: the phrase itself, a stale one as `previous`, no hash.
+    writeFileSync(
+      home.consentPath,
+      JSON.stringify({
+        'request:req-old': { action: 'request', phrase: 'amber-anchor-apple-123', created, attempts: 0 },
+        'meeting:task-old': { action: 'meeting', phrase: 'birch-bison-blaze-456', digest: meet.digest, previous: 'cedar-chalk-cliff-789', created, attempts: 0 },
+        'candidate:gone': { action: 'candidate', phrase: 'delta-dune-ember-000', created, attempts: 0 },
+        // Hashed, but carrying a plaintext phrase too: also refused.
+        'request:mixed': { action: 'request', phrase: 'fern-fjord-flint-111', salt: 'AAAA', hash: 'AAAA', created, attempts: 0 },
+      }),
+    );
+    expect(checkPhrase(home, req, 'amber-anchor-apple-123')).toMatchObject({ ok: false, reason: 'no-phrase' });
+    expect(checkPhrase(home, meet, 'birch-bison-blaze-456')).toMatchObject({ ok: false, reason: 'no-phrase' });
+    expect(checkPhrase(home, meet, 'cedar-chalk-cliff-789')).toMatchObject({ ok: false, reason: 'no-phrase' });
+    expect(checkPhrase(home, { action: 'request', id: 'mixed' }, 'fern-fjord-flint-111')).toMatchObject({ ok: false, reason: 'no-phrase' });
+    expect(reissueForDisplay(home, [{ action: 'request', id: 'req-old', subject: req.subject }]).size).toBe(0); // the terminal shows nothing stale
+    // The server's next sync issues hashed phrases (announced as new, not as replacements) and drops every plaintext entry.
+    const issued = syncPhrases(home, [req, meet]);
+    expect(issued.map((i) => [i.id, i.changed])).toEqual([
+      ['req-old', undefined],
+      ['task-old', undefined],
+    ]);
+    const disk = readFileSync(home.consentPath, 'utf8');
+    for (const old of ['amber', 'birch', 'cedar', 'delta', 'fern', '"phrase"']) expect(disk).not.toContain(old);
+    expect(Object.keys(home.readConsent()).sort()).toEqual(['meeting:task-old', 'request:req-old']);
+    expect(checkPhrase(home, req, issued[0].phrase).ok).toBe(true);
+    // Any other write purges them too.
+    writeFileSync(home.consentPath, JSON.stringify({ 'request:x': { action: 'request', phrase: 'amber-anchor-apple-123', created, attempts: 0 } }));
+    dropPhrase(home, { action: 'request', id: 'unrelated' });
+    expect(readFileSync(home.consentPath, 'utf8')).not.toContain('amber');
   });
 });
 
