@@ -257,6 +257,37 @@ describe('floods are shown to the human', () => {
   });
 });
 
+describe('a busy lock does not lose inbound items (security review L8)', () => {
+  it('handleInbound waits out a held lock instead of dropping the item', async () => {
+    const { createCard, createContactRequest, generateKey, dtopic } = await import('@rendezvous/core');
+    const { handleInbound } = await import('../src/listen.js');
+    const { Home } = await import('../src/home.js');
+    const { initHome } = await import('../src/commands.js');
+    const dir = tmp();
+    try {
+      const home = new Home(join(dir, 'h'));
+      await initHome(home, { profile: 'bob', relays: ['ws://127.0.0.1:9'], emails: ['bob@x.com'] });
+      const k = generateKey();
+      const req = createContactRequest(k, createCard(k, { rendezvous: [{ type: 'nostr', relay: 'ws://127.0.0.1:9', pref: 1 }] }), {
+        toHint: 'bob@x.com',
+        greeting: 'hi',
+      });
+      const real = { sendEnvelope: async () => {}, publishTopic: async () => {}, fetchTopic: async () => [], onEnvelopes: () => () => {}, onTopics: () => () => {}, close() {} };
+      const feed = (t: InstanceType<typeof import('../src/listen.js').FeedTransport>) => t.feedTopic(req, dtopic({ type: 'email', value: 'bob@x.com' }));
+      const release = await acquireLock(home.lockPath); // another command is busy
+      // One short attempt times out (the caller sees it)...
+      await expect(handleInbound(home, real, feed, {}, false, { timeoutMs: 150, attempts: 1 })).rejects.toBeInstanceOf(LockTimeoutError);
+      // ...more attempts outlast the holder, and the item is handled.
+      setTimeout(release, 400);
+      const events = await handleInbound(home, real, feed, {}, false, { timeoutMs: 150, attempts: 10 });
+      expect(events.map((e) => e.obj.event)).toEqual(['request']);
+      expect(Object.keys(home.readAgentState().book.pending)).toEqual([req.id]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 10_000); // the old code waited a fixed 60 s, then dropped the item
+});
+
 describe('negotiation scope by direction (security review H2)', () => {
   const NOW = new Date('2026-10-25T10:00:00Z');
   const window = parseWindow('next week evenings', { now: NOW, offsetMinutes: 120 });

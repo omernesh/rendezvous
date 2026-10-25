@@ -367,6 +367,11 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
     a2a engine already validated peer slots and `expires` with
     `parseInstant`; its own `expires` handling now uses it too (an unreadable
     stored `expires` is expired by the sweep).
+55. **A busy lock no longer drops inbound items** (L8). `handleInbound`
+    retries a lock timeout (60 s × 12 attempts, past the 10-minute stale
+    threshold) instead of failing the item after one 60 s wait; only then
+    does the error reach `listen` / the MCP server log. Topic docs were
+    otherwise lost until the next reconnect replay.
 
 ## Not implemented yet
 

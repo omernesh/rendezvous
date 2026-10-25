@@ -21,6 +21,7 @@ import {
   type Transport,
   verifyContactRequest,
 } from '@rendezvous/core';
+import { LockTimeoutError } from './fsutil.js';
 import type { Home, InboxEntry } from './home.js';
 import { buildCtx, carryOut, dinnerText, dinnerView, inboundMeetingScope, type NegotiateOptions } from './negotiate.js';
 import {
@@ -118,8 +119,33 @@ export async function handleInbound(
   feed: (t: FeedTransport) => void,
   opts: Pick<ListenOptions, 'autoGrant' | 'autoGrantAnyTier' | 'negotiate'>,
   sweep = false,
+  lock: { timeoutMs: number; attempts: number } = INBOUND_LOCK,
 ): Promise<Emitted[]> {
   const events: Emitted[] = [];
+  // A busy lock is not a reason to lose the item (security review L8): keep
+  // trying past the 10-minute stale-lock threshold, then give up loudly.
+  for (let attempt = 1; ; attempt++) {
+    try {
+      await handleLocked(home, real, feed, opts, sweep, events, lock.timeoutMs);
+      return events;
+    } catch (err) {
+      if (!(err instanceof LockTimeoutError) || attempt >= lock.attempts) throw err;
+    }
+  }
+}
+
+/** Per attempt 60 s, 12 attempts: longer than acquireLock's 10-minute stale threshold. */
+export const INBOUND_LOCK = { timeoutMs: 60_000, attempts: 12 };
+
+async function handleLocked(
+  home: Home,
+  real: Transport,
+  feed: (t: FeedTransport) => void,
+  opts: Pick<ListenOptions, 'autoGrant' | 'autoGrantAnyTier' | 'negotiate'>,
+  sweep: boolean,
+  events: Emitted[],
+  timeoutMs: number,
+): Promise<void> {
   await home.locked(
     async () => {
       const t = new FeedTransport(real);
@@ -182,9 +208,8 @@ export async function handleInbound(
       // Replays and refused items usually change nothing: skip the rewrite then.
       if (flushed < inbox.length || JSON.stringify(agent.toJSON()) !== loaded) save();
     },
-    { timeoutMs: 60_000 },
+    { timeoutMs },
   );
-  return events;
 }
 
 // Inside the lock: feed this item's a2a payloads to the engine, save its state, then hold and send.
