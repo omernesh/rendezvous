@@ -23,7 +23,7 @@ import {
   toModelEvent,
   UNTRUSTED_NOTE,
 } from '../src/index.js';
-import type { PendingRequest } from '@rendezvous/core';
+import type { AgentState, PendingRequest } from '@rendezvous/core';
 import { confirmWithPhrase, dinnerFlow, type ElicitHandler, INJECTION, makeSide, moveHold, ok, phraseFromHumanLog, phraseFromTerminal, type Side, waitEvent } from './flow.js';
 import { appendEvents, Home } from '@rendezvous/cli/lib';
 import { generateKey } from '@rendezvous/core';
@@ -280,6 +280,46 @@ describe('rdv-mcp: two Claude sessions book dinner (in-memory relay)', () => {
     expect(msg.payload.untrusted_peer_text).toContain('IGNORE ALL');
     expect(msg.payload.untrusted_peer_text).not.toContain(ESC);
     expect(Object.keys(msg).sort()).toEqual(['from', 'n', 'payload', 'payload_type', 'seq', 'ts', 'type']);
+  });
+
+  it('a grant goes only to the request the human reviewed, not another that took its ID before the grant ran', async () => {
+    let whileOpen: (() => Promise<void>) | undefined;
+    const { omer, john } = await pair({
+      elicit: async (): Promise<ElicitResult> => {
+        await whileOpen?.();
+        return { action: 'accept', content: { approve: true } };
+      },
+    });
+    const john_at = `john+${randomBytes(3).toString('hex')}@doe.com`;
+    const o = await ok(omer, 'rdv_init', { profile: 'omer', email: 'omer@example.com', relays: [relay.url] });
+    await ok(john, 'rdv_init', { profile: 'john', email: john_at, relays: [relay.url] });
+    await new Promise((r) => setTimeout(r, 300));
+    await ok(omer, 'rdv_request_contact', { target: john_at });
+    const id: string = (await waitEvent(john, (e) => e.type === 'contact_request', 'request', 10_000)).request_id;
+    // After the human approved what they were shown, and before the grant runs, another request takes the same ID.
+    const swap = (from?: string) => async () => {
+      await john.home.locked(async () => {
+        const state = john.home.readAgentState() as AgentState;
+        const p = state.book.pending[id];
+        state.book.pending[id] = from ? { ...p, request: { ...p.request, from } } : { ...p, received: new Date(Date.parse(p.received) + 1000).toISOString() };
+        john.home.writeAgentState(state);
+      });
+    };
+    for (const change of [swap('rdv1:mallory'), swap()]) {
+      whileOpen = change;
+      const swapped = await john.call('rdv_grant', { request_id: id });
+      expect(swapped.isError).toBe(true);
+      expect(swapped.text).toContain('changed since your user reviewed it');
+      expect((await ok(john, 'rdv_status')).contacts).toEqual([]);
+    }
+    // Put the real requester back; approving what is pending now still works.
+    await john.home.locked(async () => {
+      const state = john.home.readAgentState() as AgentState;
+      state.book.pending[id].request.from = o.agent_id;
+      john.home.writeAgentState(state);
+    });
+    whileOpen = undefined;
+    expect(await ok(john, 'rdv_grant', { request_id: id })).toMatchObject({ granted: true });
   });
 
   it('a confirm phrase approves only the tier and scope shown to the human (issue #12)', async () => {

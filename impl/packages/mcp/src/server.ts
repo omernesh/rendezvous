@@ -81,7 +81,19 @@ import {
   validateNegotiateOptions,
 } from '@rendezvous/cli/lib';
 import { z } from 'zod';
-import { candidateTarget, checkPhrase, describeTerms, dropPhrase, issuePhrase, type PhraseCheck, type PhraseTarget, requestTarget, syncPhrases } from './consent.js';
+import {
+  candidateDigest,
+  candidateTarget,
+  checkPhrase,
+  describeTerms,
+  dropPhrase,
+  issuePhrase,
+  type PhraseCheck,
+  type PhraseTarget,
+  requestSubject,
+  requestTarget,
+  syncPhrases,
+} from './consent.js';
 
 import { EventLog, type McpEvent, toModelEvent } from './events.js';
 import { address as asAddress, agentId, isPlain, oneOf, relayUrl, safe, UNTRUSTED_FIELD, UNTRUSTED_NOTE, untrusted } from './untrusted.js';
@@ -978,7 +990,12 @@ export class RdvMcpServer {
       );
     }
     const contact = await this.withAgent(async (agent) => {
-      if (!agent.book.state.candidates[grantId]) throw new ToolError(`probe answer ${grantId} is no longer pending`);
+      // Under the same lock as the confirm: the answer must still be the one the human approved, not another under the same ID.
+      const now = Object.hasOwn(agent.book.state.candidates, grantId) ? agent.book.state.candidates[grantId] : undefined;
+      if (!now) throw new ToolError(`probe answer ${grantId} is no longer pending`);
+      if (candidateDigest(now) !== candidateDigest(cand)) {
+        throw new ToolError(`probe answer ${grantId} changed since your user reviewed it. Nothing was confirmed; show your user the current details and ask again.`);
+      }
       const c = agent.confirmCandidate(grantId);
       dropPhrase(home, { action: 'candidate', id: grantId });
       return c;
@@ -1067,7 +1084,13 @@ export class RdvMcpServer {
     }
 
     const contact = await this.withAgent(async (agent) => {
-      if (!agent.book.state.pending[a.request_id]) throw new ToolError(`request ${a.request_id} is no longer pending`);
+      // Under the same lock as the grant: the request must still be the one the human approved (phrase or form), not
+      // another one that took its peer-chosen ID in between. The phrase is used up only once the grant went through.
+      const now = Object.hasOwn(agent.book.state.pending, a.request_id) ? agent.book.state.pending[a.request_id] : undefined;
+      if (!now) throw new ToolError(`request ${a.request_id} is no longer pending`);
+      if (requestSubject(now) !== requestSubject(pending)) {
+        throw new ToolError(`request ${a.request_id} changed since your user reviewed it. Nothing was granted; show your user the current request and ask again.`);
+      }
       const c = await agent.grant(a.request_id, { tier, scope: scopeFor(mayMeet) });
       dropPhrase(home, { action: 'request', id: a.request_id });
       return c;

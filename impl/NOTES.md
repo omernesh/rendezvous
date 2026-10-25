@@ -471,6 +471,13 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       sender, or evicted and sent again) is another subject, so a new
       phrase. Probe answers are bound to grant id, grantor, probe and
       receipt time (`candidateDigest`); meetings as in item 59.
+    - **Checked again where the grant happens.** The phrase (or form) is
+      checked before the grant, outside its lock, so a request could take
+      the same ID in between. The grant itself (under the home lock)
+      re-reads the pending request and refuses unless `requestSubject`
+      still matches the one the human reviewed (`candidateDigest` for a
+      probe answer); the phrase is dropped only after the grant went
+      through. The dinner confirm already does this (`boundStep`, item 59).
     - **Old files fail closed.** An entry with a plaintext `phrase`, no
       hash, a malformed `previous`, or `terms` that don't hash to its
       `digest` approves nothing, the terminal shows nothing for it, and the
