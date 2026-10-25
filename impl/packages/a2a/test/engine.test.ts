@@ -13,6 +13,8 @@ import {
   SEEN_PER_TASK,
   type MeetingScope,
   MAX_TASKS_PER_PEER,
+  MeetingChangedError,
+  meetingSnapshot,
   MemoryCalendar,
   type NegotiationEvent,
   type NegotiationState,
@@ -21,6 +23,7 @@ import {
   parseWindow,
   propose,
   receive,
+  sameMeeting,
   type Slot,
   type Span,
   sameSpan,
@@ -583,6 +586,51 @@ describe('negotiation', () => {
         expect(s.holds).toEqual([evening(1, 19, 21)]);
       }
       expect(() => confirmMeeting(john.state, p.taskId, ctxOf(john))).toThrow(/already completed/);
+    });
+
+    it('consent is bound to the reviewed meeting: a peer re-proposing under the same task ID gets a refusal', () => {
+      const omer = side(OMER, 1, { autoConfirm: false });
+      const john = side(JOHN, 2, { autoConfirm: false, busy: [evening(0)] });
+      const p = propose(omer.state, JOHN, ctxOf(omer));
+      apply(john, receive(john.state, OMER, p.outgoing[0].payload, ctxOf(john)));
+      // John's human is shown Tuesday (an approval form, or a phrase for it).
+      const reviewed = meetingSnapshot(task(john, p.taskId))!;
+      expect(reviewed).toMatchObject({ taskId: p.taskId, peer: OMER, stage: 'human-accept', start: evening(1, 19, 21).start });
+
+      // Meanwhile the peer cancels, pushes the canceled task out of John's per-peer cap
+      // with finished filler tasks, and proposes again under the same task ID: another evening.
+      const later = new Date(NOW.getTime() + 60_000);
+      apply(john, receive(john.state, OMER, cancel(p.state, p.taskId, ctxOf(omer)).outgoing[0].payload, ctxOf(john)));
+      const allBusy = { ...ctxOf(john, later), busy: [{ start: '2026-10-26T00:00:00+02:00', end: '2026-11-02T00:00:00+02:00' }] };
+      for (let i = 0; i < MAX_TASKS_PER_PEER; i++) {
+        const f = propose(emptyState(), JOHN, { ...ctxOf(omer), newId: ids(i + 10) });
+        apply(john, receive(john.state, OMER, f.outgoing[0].payload, allBusy)); // declined: nothing free
+      }
+      expect(john.state.tasks[p.taskId]).toBeUndefined(); // evicted
+      const again = structuredClone(p.outgoing[0].payload) as Extract<A2APayload, { type: 'a2a/message' }>;
+      again.message.messageId = '00000000-0000-4000-9999-000000000001';
+      (again.message.parts[1] as { data: { slots: Slot[] } }).data.slots = [evening(3, 19, 21)];
+      apply(john, receive(john.state, OMER, again, ctxOf(john, later)));
+      const now = task(john, p.taskId);
+      expect(now.hold).toMatchObject({ stage: 'human-accept', slot: evening(3, 19, 21) });
+      expect(sameMeeting(meetingSnapshot(now), reviewed)).toBe(false);
+
+      // The old approval lands on nothing: refused, no accept sent, the new hold stays for review.
+      expect(() => confirmMeeting(john.state, p.taskId, ctxOf(john, later), reviewed)).toThrow(MeetingChangedError);
+      expect(task(john, p.taskId).hold?.stage).toBe('human-accept');
+      // Approving what is held now works.
+      const ok = confirmMeeting(john.state, p.taskId, ctxOf(john, later), meetingSnapshot(now));
+      expect(verbs(ok.outgoing)).toEqual(['meeting/accept']);
+      expect(ok.outgoing[0].payload).toMatchObject({ message: { parts: expect.arrayContaining([{ kind: 'data', data: expect.objectContaining({ slot: evening(3, 19, 21) }) }]) } });
+    });
+
+    it('a changed slot, stage, peer or task creation time is a different meeting', () => {
+      const base = { taskId: 't', peer: OMER, contextId: 'c', created: NOW.toISOString(), stage: 'human-accept' as const, start: 'a', end: 'b', place: null };
+      expect(sameMeeting(base, { ...base })).toBe(true);
+      for (const k of ['taskId', 'peer', 'contextId', 'created', 'start', 'end'] as const) expect(sameMeeting(base, { ...base, [k]: 'x' })).toBe(false);
+      expect(sameMeeting(base, { ...base, stage: 'human-confirm' })).toBe(false);
+      expect(sameMeeting(base, { ...base, place: '{"name":"x"}' })).toBe(false);
+      expect(sameMeeting(base, undefined)).toBe(false);
     });
 
     it('a cancel racing the accept releases the holds on both sides', () => {

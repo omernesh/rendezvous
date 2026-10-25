@@ -29,6 +29,7 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { parseWindow, type Slot, toSlot, toSpan } from '@rendezvous/a2a';
 import { type AgentState, generateKey, NostrTransport } from '@rendezvous/core';
+import { Home } from '../src/home.js';
 import { relaysFromEnv } from './contact.js';
 import { assert, type Line, Listener, rdv } from './harness.js';
 
@@ -187,7 +188,7 @@ export async function runDinnerScenario(opts: DinnerScenarioOptions): Promise<Di
         await rdv(['dinner', 'cancel', taskId], dirs.omer, { timeoutMs: timeout });
         await johnL.waitFor(dinner(taskId, 'released'), 'john releases the hold', timeout);
         assert(johnHolds().length === 0, 'john’s calendar has no hold left');
-        const late = await rdv(['dinner', 'confirm', taskId], dirs.john, { check: false });
+        const late = await rdv(['dinner', 'confirm', taskId, '--hold', 'abcdef012345'], dirs.john, { check: false });
         assert(late.code === 1 && late.stderr.includes('already canceled'), `confirm after cancel fails (${late.stderr})`);
       });
       return await step('both sides end canceled', async () => {
@@ -199,11 +200,36 @@ export async function runDinnerScenario(opts: DinnerScenarioOptions): Promise<Di
     }
 
     if (v === 'overlap') {
+      await step('a confirm is refused once the held meeting changed since john listed it', async () => {
+        const code = (await tasks('john')).find((x) => x.id === taskId)?.hold_code as string;
+        assert(/^[0-9a-f]{12}$/.test(code), `rdv dinner list shows a hold code (${code})`);
+        const noCode = await rdv(['dinner', 'confirm', taskId], dirs.john, { check: false });
+        assert(noCode.code === 2 && noCode.stderr.includes('--hold'), `confirm without --hold is refused (${noCode.stderr})`);
+        // Stand-in for a peer that changed the task under the same ID after john reviewed it: another slot.
+        const home = new Home(dirs.john);
+        let reviewed: Slot | undefined;
+        const setHold = (slot?: Slot) =>
+          home.locked(async () => {
+            const state = home.readNegotiations();
+            const h = state.tasks[taskId].hold!;
+            reviewed ??= h.slot;
+            const day = toSpan(h.slot);
+            h.slot = slot ?? toSlot({ start: day.start + 86_400_000, end: day.end + 86_400_000 }, 120);
+            home.writeNegotiations(state);
+          });
+        await setHold();
+        const stale = await rdv(['dinner', 'confirm', taskId, '--hold', code], dirs.john, { check: false });
+        assert(stale.code === 1 && stale.stderr.includes('not the meeting you reviewed'), `stale --hold is refused (${stale.stderr})`);
+        const after = (await tasks('john')).find((x) => x.id === taskId);
+        assert(after?.hold?.stage === 'human-accept' && !stale.lines.some((l) => l.kind === 'accepted'), 'nothing was accepted');
+        await setHold(reviewed); // back to what john reviewed, so the code is valid again
+      });
       await step('john confirms, then omer confirms', async () => {
-        const jc = await rdv(['dinner', 'confirm', taskId], dirs.john, { timeoutMs: timeout });
+        const hold = async (who: 'omer' | 'john') => (await tasks(who)).find((x) => x.id === taskId)?.hold_code as string;
+        const jc = await rdv(['dinner', 'confirm', taskId, '--hold', await hold('john')], dirs.john, { timeoutMs: timeout });
         assert(jc.lines.some((l) => l.kind === 'accepted' && l.task === taskId), 'john’s confirm sends the accept');
         await omerL.waitFor(dinner(taskId, 'confirm-needed'), 'omer is asked to confirm', timeout);
-        const oc = await rdv(['dinner', 'confirm', taskId], dirs.omer, { timeoutMs: timeout });
+        const oc = await rdv(['dinner', 'confirm', taskId, '--hold', await hold('omer')], dirs.omer, { timeoutMs: timeout });
         assert(oc.lines.some((l) => l.kind === 'completed' && l.task === taskId), 'omer’s confirm completes it');
       });
     }

@@ -17,7 +17,7 @@ import {
   topicForHint,
   verifyCard,
 } from '@rendezvous/core';
-import { awaitingHuman, cancel, confirmMeeting, NegotiationError, parseInstant, propose, type Step } from '@rendezvous/a2a';
+import { cancel, confirmMeeting, describeSlot, meetingSnapshot, NegotiationError, type NegotiationTask, parseInstant, propose, type Step } from '@rendezvous/a2a';
 import { CliError, type Config, type ConsentAction, consentKey, Home, type InboxEntry, parseJsonLines } from './home.js';
 
 import { listen } from './listen.js';
@@ -28,6 +28,8 @@ import {
   DEFAULT_LISTEN_WINDOW,
   dinnerText,
   dinnerView,
+  meetingCode,
+  meetingDigest,
   meetingScope,
   type NegotiateOptions,
   taskText,
@@ -519,9 +521,28 @@ export async function dinnerCancel({ home, out, values, positionals }: Ctx): Pro
   await ownerStep(home, out, str(values.calendar), () => cancel(home.readNegotiations(), positionals[0], { now: new Date() }, str(values.reason)));
 }
 
-/** The human confirms the meeting a negotiation waits on (issue #8): sends meeting/accept or meeting/confirm. */
+/**
+ * The human confirms the meeting a negotiation waits on (issue #8): sends
+ * meeting/accept or meeting/confirm. Only the meeting they reviewed: --hold
+ * is the code `rdv dinner list` showed, checked under the lock, so a peer
+ * that changed the task since (same ID, other slot or peer) gets nothing.
+ */
 export async function dinnerConfirm({ home, out, values, positionals }: Ctx): Promise<void> {
-  await ownerStep(home, out, str(values.calendar), () => confirmMeeting(home.readNegotiations(), positionals[0], { now: new Date() }));
+  const taskId = positionals[0];
+  const code = (str(values.hold) ?? '').toLowerCase().replace(/[^0-9a-f]/g, '');
+  if (!code) throw new CliError('--hold <code> is required: the code "rdv dinner list" shows for this dinner, so you confirm the meeting you reviewed', 2);
+  await ownerStep(home, out, str(values.calendar), () => {
+    const state = home.readNegotiations();
+    const task = Object.hasOwn(state.tasks, taskId) ? state.tasks[taskId] : undefined;
+    const snap = task ? meetingSnapshot(task) : undefined;
+    if (task && snap && meetingCode(snap) !== code) {
+      throw new CliError(
+        `dinner ${clean(taskId)} is not the meeting you reviewed (now ${clean(describeSlot(task.hold!.slot))} with ${clean(task.peer)}). ` +
+          'Nothing was confirmed: run "rdv dinner list", check it again, and confirm with its current --hold code.',
+      );
+    }
+    return confirmMeeting(state, taskId, { now: new Date() }, snap);
+  });
 }
 
 export async function dinnerList({ home, out }: Ctx): Promise<void> {
@@ -530,11 +551,13 @@ export async function dinnerList({ home, out }: Ctx): Promise<void> {
   tasks.sort((a, b) => a.created.localeCompare(b.created));
   if (tasks.length === 0 && !out.json) out.emit({}, 'no negotiations');
   // The MCP server's confirm phrase for a meeting, like `contact pending`: text mode only, for the human.
-  const phraseLine = (id: string) => {
-    const e = consent[consentKey('meeting', id)];
-    const phrase = e?.action === 'meeting' ? e.phrase : undefined;
+  // Only a phrase issued for the meeting as it is now: a stale one approves nothing, so it is not shown.
+  const phraseLine = (t: NegotiationTask) => {
+    const snap = meetingSnapshot(t);
+    const e = snap ? consent[consentKey('meeting', t.id)] : undefined;
+    const phrase = snap && e?.action === 'meeting' && e.digest === meetingDigest(snap) ? e.phrase : undefined;
     return phrase ? `\n  confirm phrase (tell it to your MCP client to confirm this dinner): ${clean(phrase)}` : '';
   };
-  for (const t of tasks) out.emit(taskView(t), taskText(t) + (awaitingHuman(t) ? phraseLine(t.id) : ''));
+  for (const t of tasks) out.emit(taskView(t), taskText(t) + phraseLine(t));
 }
 

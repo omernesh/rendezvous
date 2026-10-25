@@ -6,8 +6,9 @@ import {
   describeSlot,
   isTerminal,
   JsonFileCalendar,
-
+  meetingSnapshot,
   type MeetingScope,
+  type MeetingSnapshot,
   type NegotiationEvent,
   type NegotiationState,
   type NegotiationTask,
@@ -16,6 +17,7 @@ import {
   type Step,
   WindowError,
 } from '@rendezvous/a2a';
+import { createHash } from 'node:crypto';
 import type { Agent, Contact, Payload } from '@rendezvous/core';
 import { writeAtomic } from './fsutil.js';
 import { CliError, type Home } from './home.js';
@@ -176,9 +178,30 @@ export function dinnerText(e: NegotiationEvent): string | undefined {
   return lines.join('\n');
 }
 
+/**
+ * Digest of what the human reviews before confirming a held meeting
+ * (MeetingSnapshot). A confirm phrase is bound to it, and so is
+ * `rdv dinner confirm --hold`: consent is for this meeting, not for whatever
+ * the peer-chosen task ID points at later.
+ */
+export function meetingDigest(s: MeetingSnapshot): string {
+  const fields = [s.taskId, s.peer, s.contextId, s.created, s.stage, s.start, s.end, s.place];
+  return createHash('sha256').update(`rdv1/meeting-consent\0${JSON.stringify(fields)}`).digest('hex');
+}
+
+/** The short form `rdv dinner list` shows and `rdv dinner confirm --hold` takes (48 bits). */
+export const meetingCode = (s: MeetingSnapshot): string => meetingDigest(s).slice(0, 12);
+
+/** The hold code of a task waiting for its human, if it is. */
+export function holdCode(t: NegotiationTask): string | undefined {
+  const s = meetingSnapshot(t);
+  return s ? meetingCode(s) : undefined;
+}
+
 export function taskView(t: NegotiationTask) {
   const { seen: _seen, ...rest } = t;
-  return { event: 'task', ...rest };
+  const code = holdCode(t);
+  return { event: 'task', ...rest, ...(code ? { hold_code: code } : {}) };
 }
 
 /** What a pending task with a held slot waits for, in words. */
@@ -187,7 +210,7 @@ export function holdText(t: NegotiationTask): string | undefined {
   const slot = safe(describeSlot(t.hold.slot));
   return t.hold.stage === 'peer-confirm'
     ? `held ${slot} (tentative): waiting for the peer to confirm`
-    : `held ${slot} (tentative): waiting for YOUR confirmation (rdv dinner confirm ${safe(t.id)}, or rdv dinner cancel)`;
+    : `held ${slot} (tentative): waiting for YOUR confirmation (rdv dinner confirm ${safe(t.id)} --hold ${holdCode(t) ?? '-'}, or rdv dinner cancel)`;
 }
 
 export function taskText(t: NegotiationTask): string {

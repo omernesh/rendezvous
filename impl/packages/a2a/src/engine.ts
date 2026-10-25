@@ -191,6 +191,9 @@ export interface Step {
 
 export class NegotiationError extends Error {}
 
+/** The held meeting is no longer the one the human reviewed: nothing was done; ask them again. */
+export class MeetingChangedError extends NegotiationError {}
+
 export const DEFAULT_MINUTES = 120;
 export const MAX_ROUNDS = 3;
 /** Terminal tasks kept for replay detection before the oldest are pruned. */
@@ -725,9 +728,11 @@ export function cancel(state: NegotiationState, taskId: string, ctx: Pick<Ctx, '
  * Our human confirms the meeting a task is waiting on (issue #8): in
  * `human-accept` this sends meeting/accept, in `human-confirm` it sends
  * meeting/confirm and completes the task. A task past `expires` expires
- * instead. Throws NegotiationError when there is nothing to confirm.
+ * instead. Throws NegotiationError when there is nothing to confirm, and
+ * MeetingChangedError when `expected` (what the human reviewed) no longer
+ * matches the task. Callers that asked a human must pass `expected`.
  */
-export function confirmMeeting(state: NegotiationState, taskId: string, ctx: Pick<Ctx, 'now' | 'newId'>): Step {
+export function confirmMeeting(state: NegotiationState, taskId: string, ctx: Pick<Ctx, 'now' | 'newId'>, expected?: MeetingSnapshot): Step {
   const run = new Run(state, ctx as Ctx);
   const task = Object.hasOwn(run.state.tasks, taskId) ? run.state.tasks[taskId] : undefined;
   if (!task) throw new NegotiationError(`no negotiation ${taskId}`);
@@ -735,10 +740,56 @@ export function confirmMeeting(state: NegotiationState, taskId: string, ctx: Pic
   const hold = task.hold;
   if (hold?.stage === 'peer-confirm') throw new NegotiationError(`negotiation ${taskId} is waiting for the peer to confirm, not for you`);
   if (!hold) throw new NegotiationError(`negotiation ${taskId} has no meeting waiting for your confirmation`);
+  if (expected && !sameMeeting(meetingSnapshot(task), expected)) {
+    throw new MeetingChangedError(`the meeting in negotiation ${taskId} changed since your user reviewed it; nothing was confirmed`);
+  }
   if (run.expireIfDue(task)) return run.result();
   if (hold.stage === 'human-accept') run.sendAccept(task, hold.slot);
   else run.sendConfirm(task, hold.slot);
   return run.result();
+}
+
+/**
+ * What the human reviewed when asked to confirm a held meeting. The task ID
+ * is peer-chosen and a task can change under it (canceled, evicted and
+ * re-proposed with the same ID, by the same or another peer), so consent is
+ * bound to this snapshot, not to the ID: confirmMeeting with `expected`
+ * refuses unless the task still holds exactly this.
+ */
+export interface MeetingSnapshot {
+  taskId: string;
+  peer: string;
+  contextId: string;
+  /** When we created the task: a re-proposal under the same ID gets a new one. */
+  created: string;
+  stage: Hold['stage'];
+  start: string;
+  end: string;
+  /** The place as stored (canonical JSON of the task's place), or null. */
+  place: string | null;
+}
+
+/** The snapshot of a task waiting for our human, or undefined when it is not waiting for them. */
+export function meetingSnapshot(t: NegotiationTask): MeetingSnapshot | undefined {
+  if (!awaitingHuman(t)) return undefined;
+  const hold = t.hold!;
+  return {
+    taskId: t.id,
+    peer: t.peer,
+    contextId: t.contextId,
+    created: t.created,
+    stage: hold.stage,
+    start: hold.slot.start,
+    end: hold.slot.end,
+    place: t.place ? JSON.stringify(t.place) : null,
+  };
+}
+
+const SNAPSHOT_KEYS = ['taskId', 'peer', 'contextId', 'created', 'stage', 'start', 'end', 'place'] as const;
+
+/** Exactly the same meeting (string-equal fields; no normalization). */
+export function sameMeeting(a: MeetingSnapshot | undefined, b: MeetingSnapshot | undefined): boolean {
+  return !!a && !!b && SNAPSHOT_KEYS.every((k) => a[k] === b[k]);
 }
 
 /** Does this task wait for our human to confirm a meeting? */

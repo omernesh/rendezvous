@@ -47,7 +47,14 @@ export interface ConsentEntry {
   /** The only action this phrase approves. */
   action: ConsentAction;
   phrase: string;
-
+  /**
+   * meeting: the digest of the meeting the phrase was issued for
+   * (meetingDigest). It approves that meeting only; a changed hold gets a new
+   * phrase.
+   */
+  digest?: string;
+  /** The phrase this one replaced because the meeting changed, so a stale phrase is reported as such. */
+  previous?: string;
   created: string;
   attempts: number;
 }

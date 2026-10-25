@@ -10,7 +10,7 @@ import { startTestRelay, type TestRelay } from '@rendezvous/core/testing';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { Listener, RDV_BIN, rdv } from '../../cli/scenarios/harness.js';
 import { checkPhrase, dropPhrase, EventLog, EVENTS_KEPT, MAX_ATTEMPTS, normalizePhrase, syncPhrases, toModelEvent, UNTRUSTED_NOTE } from '../src/index.js';
-import { confirmWithPhrase, dinnerFlow, type ElicitHandler, INJECTION, makeSide, ok, phraseFromHumanLog, type Side, waitEvent } from './flow.js';
+import { confirmWithPhrase, dinnerFlow, type ElicitHandler, INJECTION, makeSide, moveHold, ok, phraseFromHumanLog, type Side, waitEvent } from './flow.js';
 import { appendEvents, Home } from '@rendezvous/cli/lib';
 
 const ESC = String.fromCharCode(27);
@@ -100,6 +100,26 @@ describe('rdv-mcp: two Claude sessions book dinner (in-memory relay)', () => {
         const text = execFileSync(process.execPath, [RDV_BIN, 'dinner', 'list', '--home', side.home.dir], { encoding: 'utf8' });
         expect(text).toContain(`confirm this dinner): ${phrase}`);
         expect((await rdv(['dinner', 'list'], side.home.dir)).stdout).not.toContain(phrase);
+        if (side === john) {
+          // The meeting changes after the human read the phrase (same task ID, another evening):
+          // their phrase confirms nothing, and a new one is issued for what is held now.
+          const undo = await moveHold(side.home, taskId);
+          const stale = await side.call('rdv_negotiate', { action: 'confirm', task_id: taskId, confirm_phrase: phrase });
+          expect(stale.isError).toBe(true);
+          expect(stale.text).toContain('changed since your user reviewed it');
+          const reissued = phraseFromHumanLog(side, taskId);
+          phrases.push(reissued);
+          expect(reissued).not.toBe(phrase);
+          expect(side.humanLog.some((l) => l.includes(taskId) && l.includes('CHANGED'))).toBe(true);
+          expect(execFileSync(process.execPath, [RDV_BIN, 'dinner', 'list', '--home', side.home.dir], { encoding: 'utf8' })).toContain(reissued);
+          expect((await ok(side, 'rdv_negotiate', { action: 'status' })).negotiations[0].waiting_for).toContain('your user');
+          // Back to what the human reviewed: the phrase issued for the moved meeting is stale in turn.
+          await undo();
+          const back = await side.call('rdv_negotiate', { action: 'confirm', task_id: taskId, confirm_phrase: reissued });
+          expect(back.isError).toBe(true);
+          expect(back.text).toContain('changed since your user reviewed it');
+          phrases.push(phraseFromHumanLog(side, taskId));
+        }
         await confirmWithPhrase(side, taskId);
         expect(side.home.readConsent()[`meeting:${taskId}`]).toBeUndefined(); // single use
 
@@ -121,10 +141,13 @@ describe('rdv-mcp: two Claude sessions book dinner (in-memory relay)', () => {
     const dinners: string[] = [];
     let answer: 'decline' | 'accept-unchecked' | 'accept' = 'decline';
     let dinnerAnswer: 'cancel' | 'accept' = 'cancel';
+    // Runs while the form is open, after the human saw the meeting: a peer changing it then.
+    let whileOpen: (() => Promise<void>) | undefined;
     const { omer, john } = await pair({
-      elicit: (params): ElicitResult => {
+      elicit: async (params): Promise<ElicitResult> => {
         if (params.message.includes('confirm this dinner')) {
           dinners.push(params.message);
+          await whileOpen?.();
           return dinnerAnswer === 'cancel' ? { action: 'cancel' } : { action: 'accept', content: { approve: true } };
         }
         asked.push(params.message);
@@ -160,9 +183,20 @@ describe('rdv-mcp: two Claude sessions book dinner (in-memory relay)', () => {
         expect(dismissed.isError).toBe(true);
         expect((await ok(side, 'rdv_negotiate', { action: 'status' })).negotiations[0].waiting_for).toContain('your user');
         dinnerAnswer = 'accept';
+        // The human approves the evening shown, but the held meeting changes before the confirm runs: refused.
+        let undo: (() => Promise<void>) | undefined;
+        whileOpen = async () => {
+          undo = await moveHold(side.home, taskId);
+        };
+        const swapped = await side.call('rdv_negotiate', { action: 'confirm', task_id: taskId });
+        whileOpen = undefined;
+        expect(swapped.isError).toBe(true);
+        expect(swapped.text).toContain('changed since your user reviewed it');
+        expect((await ok(side, 'rdv_negotiate', { action: 'status' })).negotiations[0].waiting_for).toContain('your user');
+        await undo!();
         const confirmed = await ok(side, 'rdv_negotiate', { action: 'confirm', task_id: taskId });
         expect(confirmed.next).toContain('until the peer confirms');
-        expect(dinners).toHaveLength(2);
+        expect(dinners).toHaveLength(3);
         expect(dinners[0]).toContain('Fingerprint: rdv1:');
         expect(dinners[0]).toContain('When: ');
       },
@@ -259,6 +293,35 @@ describe('confirm phrases', () => {
     // Dropping one action's phrase keeps the others.
     dropPhrase(home, { action: 'request', id });
     expect(Object.keys(home.readConsent()).sort()).toEqual([`candidate:${id}`, `meeting:${id}`]);
+  });
+
+  it('are bound to the meeting: a changed hold gets a new phrase, and the old one confirms nothing', () => {
+    root = mkdtempSync(join(tmpdir(), 'rdv-phrase-'));
+    const home = new Home(root);
+    home.ensureDir();
+    const id = '00000000-0000-4000-8000-00000000d1d1';
+    const tuesday = { action: 'meeting', id, digest: 'a'.repeat(64) } as const;
+    const thursday = { ...tuesday, digest: 'b'.repeat(64) };
+    const [first] = syncPhrases(home, [tuesday]);
+    expect(first.changed).toBeUndefined();
+    expect(syncPhrases(home, [tuesday])).toEqual([]);
+    // Checked against another meeting under the same ID (not yet re-synced): refused, nothing counted.
+    expect(checkPhrase(home, thursday, first.phrase)).toMatchObject({ ok: false, reason: 'changed' });
+    // The hold changed: a new phrase, and the human's old one is reported as stale.
+    const [second] = syncPhrases(home, [thursday]);
+    expect(second).toMatchObject({ changed: true });
+    expect(second.phrase).not.toBe(first.phrase);
+    expect(checkPhrase(home, thursday, first.phrase)).toMatchObject({ ok: false, reason: 'changed', left: MAX_ATTEMPTS });
+    expect(checkPhrase(home, tuesday, second.phrase)).toMatchObject({ ok: false, reason: 'changed' });
+    expect(checkPhrase(home, thursday, second.phrase).ok).toBe(true);
+    // A legacy meeting phrase with no digest approves no meeting.
+    const consent = home.readConsent();
+    delete consent[`meeting:${id}`].digest;
+    home.writeConsent(consent);
+    expect(checkPhrase(home, thursday, second.phrase)).toMatchObject({ ok: false, reason: 'changed' });
+    // The task ended: its phrase is dropped.
+    syncPhrases(home, []);
+    expect(home.readConsent()).toEqual({});
   });
 });
 

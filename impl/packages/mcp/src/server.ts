@@ -26,7 +26,11 @@ import {
   cancel,
   confirmMeeting,
   describeSlot,
+  MeetingChangedError,
+  meetingSnapshot,
+  type MeetingSnapshot,
   NegotiationError,
+  sameMeeting,
   type NegotiationTask,
   parseInstant,
   propose,
@@ -63,6 +67,8 @@ import {
   initHome,
   type LoggedEvent,
   isJunk,
+  meetingCode,
+  meetingDigest,
   meetingScope,
   type NegotiateOptions,
   relayTransport,
@@ -403,8 +409,10 @@ export class RdvMcpServer {
 
   /** Runs before new log lines become visible: confirm phrases for new requests reach the human first. */
   private async beforeVisible(raw: LoggedEvent[]): Promise<void> {
-    // ...and so do phrases for dinners held for the human (issue #8).
-    if (raw.some((e) => e.obj.event === 'request' || e.obj.event === 'candidate' || (e.obj.event === 'dinner' && e.obj.kind === 'confirm-needed'))) {
+    // ...and so do phrases for dinners held for the human (issue #8). Any
+    // dinner event re-syncs: a task that ended loses its phrase, and one
+    // whose held meeting changed gets a new one bound to the new meeting.
+    if (raw.some((e) => e.obj.event === 'request' || e.obj.event === 'candidate' || e.obj.event === 'dinner')) {
       await this.refreshPhrases();
     }
   }
@@ -439,7 +447,7 @@ export class RdvMcpServer {
       const targets: PhraseTarget[] = [
         ...Object.keys(pending).map((id) => ({ action: 'request' as const, id })),
         ...Object.keys(candidates).map((id) => ({ action: 'candidate' as const, id })),
-        ...meetings.map((t) => ({ action: 'meeting' as const, id: t.id })),
+        ...meetings.map((t) => ({ action: 'meeting' as const, id: t.id, digest: meetingDigest(meetingSnapshot(t)!) })),
       ];
       return syncPhrases(this.home, targets).map((c) => ({
         ...c,
@@ -451,15 +459,17 @@ export class RdvMcpServer {
     for (const c of created) {
       if (c.p) this.announcePhrase(c.p, c.phrase);
       else if (c.g) this.announceCandidatePhrase(c.g, c.phrase);
-      else if (c.t) this.announceMeetingPhrase(c.t, c.phrase);
+      else if (c.t) this.announceMeetingPhrase(c.t, c.phrase, c.changed);
     }
   }
 
-  private announceMeetingPhrase(t: NegotiationTask, phrase: string): void {
+  private announceMeetingPhrase(t: NegotiationTask, phrase: string, changed = false): void {
+    const snap = meetingSnapshot(t);
     this.humanLog(
-      `dinner ${t.id} with ${fingerprint(t.peer)} on ${describeSlot(t.hold!.slot)} is held for you. ` +
+      `dinner ${t.id} with ${fingerprint(t.peer)} on ${describeSlot(t.hold!.slot)} is held for you` +
+        `${changed ? ' (it CHANGED since its last confirm phrase, which no longer works)' : ''}. ` +
         `To confirm it, tell your assistant this confirm phrase: ${phrase}  ` +
-        `(or confirm it yourself: rdv dinner confirm ${t.id} --home "${this.home.dir}"; to refuse: rdv dinner cancel ${t.id})`,
+        `(or confirm it yourself: rdv dinner confirm ${t.id} --hold ${snap ? meetingCode(snap) : '-'} --home "${this.home.dir}"; to refuse: rdv dinner cancel ${t.id})`,
     );
   }
 
@@ -1043,7 +1053,7 @@ export class RdvMcpServer {
       try {
         s = act();
       } catch (err) {
-        if (err instanceof NegotiationError) throw new ToolError(err.message);
+        if (err instanceof NegotiationError && !(err instanceof MeetingChangedError)) throw new ToolError(err.message);
         throw err;
       }
       home.writeNegotiations(s.state); // before sending (issue #4)
@@ -1053,7 +1063,14 @@ export class RdvMcpServer {
     });
   }
 
-  /** The human confirms a held meeting (issue #8): the same gate as rdv_grant, elicitation or a confirm phrase. */
+  /**
+   * The human confirms a held meeting (issue #8): the same gate as rdv_grant,
+   * elicitation or a confirm phrase. Consent is bound to the meeting the human
+   * reviewed, not to the peer-chosen task ID: we snapshot it before asking,
+   * the phrase must be the one issued for that snapshot, and the confirm runs
+   * only if the task still matches it under the lock. Otherwise nothing is
+   * confirmed and the human is asked again (a new phrase is issued).
+   */
   private async confirmTask(taskId: string, phrase: string | undefined) {
     const home = this.home;
     const task = await home.locked(async () => {
@@ -1061,17 +1078,20 @@ export class RdvMcpServer {
       return Object.hasOwn(tasks, taskId) ? tasks[taskId] : undefined;
     });
     if (!task) throw new ToolError(`no negotiation ${taskId}`);
-    if (!awaitingHuman(task)) {
+    const snap = meetingSnapshot(task);
+    if (!snap) {
       throw new ToolError(
         task.hold?.stage === 'peer-confirm' && !['completed', 'canceled', 'rejected'].includes(task.state)
           ? `negotiation ${taskId} is waiting for the peer to confirm; there is nothing for your user to confirm`
           : `negotiation ${taskId} has no meeting waiting for your user (state ${task.state})`,
       );
     }
+    const target: PhraseTarget = { action: 'meeting', id: taskId, digest: meetingDigest(snap) };
     await this.refreshPhrases();
     if (phrase !== undefined) {
-      const check = await home.locked(async () => checkPhrase(home, { action: 'meeting', id: taskId }, phrase));
+      const check = await home.locked(async () => checkPhrase(home, target, phrase));
       if (!check.ok) {
+        if (check.reason === 'changed') return this.meetingChanged(taskId);
         if (check.reason === 'wrong' && check.rotated) this.announceMeetingPhrase(task, check.rotated);
         throw new ToolError(
           check.reason === 'no-phrase'
@@ -1094,8 +1114,9 @@ export class RdvMcpServer {
         { timeout: this.elicitTimeoutMs },
       );
       if (res.action === 'decline') {
-        // An explicit no from the human: give the slot back and tell the peer.
-        const step = await this.ownerStep(() => cancel(home.readNegotiations(), taskId, { now: new Date() }, 'declined by owner'), () => dropPhrase(home, { action: 'meeting', id: taskId }));
+        // An explicit no from the human: give the slot back and tell the peer. Only for the meeting they saw.
+        const step = await this.boundStep(snap, () => cancel(home.readNegotiations(), taskId, { now: new Date() }, 'declined by owner'));
+        if (!step) return this.meetingChanged(taskId);
         await this.publishSteps(step.events);
         return { task_id: safe(taskId), state: step.state.tasks[taskId]?.state, note: 'Your user declined this dinner; the negotiation was canceled and the hold released.' };
       }
@@ -1106,10 +1127,11 @@ export class RdvMcpServer {
       throw new ToolError(
         `not confirmed: this dinner needs your user. Ask them for the confirm phrase of dinner ${taskId}: they can see it by running ` +
           `"rdv dinner list --home \\"${home.dir}\\"" in their own terminal (it is also in this server's log). Then call rdv_negotiate again with action "confirm", task_id and confirm_phrase. ` +
-          `Or they can confirm directly: "rdv dinner confirm ${taskId} --home \\"${home.dir}\\"".`,
+          `Or they can confirm directly with the "rdv dinner confirm" command "rdv dinner list" shows for it.`,
       );
     }
-    const step = await this.ownerStep(() => confirmMeeting(home.readNegotiations(), taskId, { now: new Date() }), () => dropPhrase(home, { action: 'meeting', id: taskId }));
+    const step = await this.boundStep(snap, () => confirmMeeting(home.readNegotiations(), taskId, { now: new Date() }, snap));
+    if (!step) return this.meetingChanged(taskId);
     await this.publishSteps(step.events);
 
     const t = step.state.tasks[taskId];
@@ -1124,6 +1146,39 @@ export class RdvMcpServer {
             ? 'Accepted; it stays held until the peer confirms. Follow it with rdv_inbox.'
             : 'The negotiation ended instead (see rdv_inbox).',
     };
+  }
+
+  /**
+   * An owner step on the meeting the human reviewed, under the lock: refused
+   * (undefined, nothing saved or sent) when the task no longer matches `snap`.
+   * The meeting's phrase is used up either way it proceeds.
+   */
+  private async boundStep(snap: MeetingSnapshot, act: () => Step): Promise<Step | undefined> {
+    const home = this.home;
+    try {
+      return await this.ownerStep(
+        () => {
+          const now = home.readNegotiations().tasks;
+          const cur = Object.hasOwn(now, snap.taskId) ? meetingSnapshot(now[snap.taskId]) : undefined;
+          if (!sameMeeting(cur, snap)) throw new MeetingChangedError(`the meeting in negotiation ${snap.taskId} changed since your user reviewed it`);
+          return act();
+        },
+        () => dropPhrase(home, { action: 'meeting', id: snap.taskId }),
+      );
+    } catch (err) {
+      if (err instanceof MeetingChangedError) return undefined;
+      throw err;
+    }
+  }
+
+  /** The meeting changed between the human's review and the confirm: nothing was done; re-issue and ask again. */
+  private async meetingChanged(taskId: string): Promise<never> {
+    await this.refreshPhrases();
+    throw new ToolError(
+      `dinner ${taskId} changed since your user reviewed it (another time, peer or stage, or a new negotiation under the same ID). ` +
+        'Nothing was confirmed. Show your user the current details (rdv_negotiate action "status") and ask them again; ' +
+        'if they use a confirm phrase, a new one was issued to them and the old one no longer works.',
+    );
   }
 
   private async negotiate(a: {

@@ -245,3 +245,26 @@ export function phraseFromHumanLog(side: Side, requestId: string): string {
   if (!m) throw new Error(`no confirm phrase for ${requestId} in the human log:\n${side.humanLog.join('\n')}`);
   return m[1];
 }
+
+/**
+ * Stand-in for a peer that changed the held meeting under the same task ID
+ * after the human reviewed it: move the hold a day later. Returns the undo,
+ * which puts back exactly what was reviewed.
+ */
+export async function moveHold(home: Home, taskId: string): Promise<() => Promise<void>> {
+  let reviewed: Slot | undefined;
+  await home.locked(async () => {
+    const state = home.readNegotiations();
+    const hold = state.tasks[taskId].hold!;
+    reviewed = hold.slot;
+    const s = toSpan(hold.slot);
+    hold.slot = toSlot({ start: s.start + 86_400_000, end: s.end + 86_400_000 }, 120);
+    home.writeNegotiations(state);
+  });
+  return () =>
+    home.locked(async () => {
+      const state = home.readNegotiations();
+      state.tasks[taskId].hold!.slot = reviewed!;
+      home.writeNegotiations(state);
+    });
+}

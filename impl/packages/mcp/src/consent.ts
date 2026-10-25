@@ -9,12 +9,19 @@
 // `<action>:<id>` with its action, and checked only for that action: the
 // phrase shown for "approve contact" can never confirm a dinner, or the
 // reverse (security review of issue #8).
+//
+// A meeting phrase is also bound to the meeting itself: the digest of what
+// the human was shown (meetingDigest of the MeetingSnapshot). The task ID is
+// the peer's, and a task can change under it, so a phrase approves only the
+// meeting it was issued for; a changed hold gets a new phrase.
 import { randomInt, timingSafeEqual } from 'node:crypto';
 import { type ConsentAction, type ConsentEntry, consentKey, type Home } from '@rendezvous/cli/lib';
 
 export interface PhraseTarget {
   action: ConsentAction;
   id: string;
+  /** meeting: meetingDigest of the held meeting; the phrase approves only that. */
+  digest?: string;
 }
 
 // 64 short, distinct, easy-to-say words: 6 bits each.
@@ -58,43 +65,65 @@ function entryFor(consent: Record<string, ConsentEntry>, t: PhraseTarget): Conse
   return e?.action === t.action ? e : undefined;
 }
 
+function fresh(t: PhraseTarget, previous?: string): ConsentEntry {
+  return {
+    action: t.action,
+    phrase: newPhrase(),
+    ...(t.digest !== undefined ? { digest: t.digest } : {}),
+    ...(previous !== undefined ? { previous } : {}),
+    created: new Date().toISOString(),
+    attempts: 0,
+  };
+}
+
 /**
  * Make sure each target (pending request, probe answer, held meeting) has a
- * phrase and drop phrases for targets that are gone. Call under the home
- * lock. Returns the phrases it created.
+ * phrase, replace the phrase of a meeting that changed (other digest), and
+ * drop phrases for targets that are gone. Call under the home lock. Returns
+ * the phrases it created; `changed` marks a replacement.
  */
-export function syncPhrases(home: Home, targets: PhraseTarget[]): Array<PhraseTarget & { phrase: string }> {
+export function syncPhrases(home: Home, targets: PhraseTarget[]): Array<PhraseTarget & { phrase: string; changed?: boolean }> {
   const consent = home.readConsent();
-  const created: Array<PhraseTarget & { phrase: string }> = [];
+  const created: Array<PhraseTarget & { phrase: string; changed?: boolean }> = [];
   const next: Record<string, ConsentEntry> = {};
   for (const t of targets) {
     const key = consentKey(t.action, t.id);
     const have = entryFor(consent, t);
-    next[key] = have ?? { action: t.action, phrase: newPhrase(), created: new Date().toISOString(), attempts: 0 };
-    if (!have) created.push({ ...t, phrase: next[key].phrase });
+    if (have && have.digest === t.digest) {
+      next[key] = have;
+      continue;
+    }
+    next[key] = fresh(t, have?.phrase);
+    created.push({ ...t, phrase: next[key].phrase, ...(have ? { changed: true } : {}) });
   }
   const keys = Object.keys(consent);
   if (created.length || keys.length !== Object.keys(next).length || keys.some((k) => !next[k])) home.writeConsent(next);
   return created;
 }
 
-export type PhraseCheck = { ok: true } | { ok: false; reason: 'no-phrase' | 'wrong'; rotated?: string; left: number };
+export type PhraseCheck = { ok: true } | { ok: false; reason: 'no-phrase' | 'wrong' | 'changed'; rotated?: string; left: number };
 
 /**
- * Check a phrase for one action on one ID. Call under the home lock. Only a
- * phrase issued for that same action counts. A wrong guess counts;
- * MAX_ATTEMPTS replaces the phrase.
+ * Check a phrase for one action on one ID (and, for a meeting, the digest of
+ * the meeting being confirmed). Call under the home lock. Only a phrase
+ * issued for that same action and meeting counts: one issued for another
+ * meeting, or replaced because the meeting changed, is 'changed' (the caller
+ * re-syncs and asks the human again). A wrong guess counts; MAX_ATTEMPTS
+ * replaces the phrase.
  */
 export function checkPhrase(home: Home, target: PhraseTarget, given: string): PhraseCheck {
   const consent = home.readConsent();
   const entry = entryFor(consent, target);
   if (!entry) return { ok: false, reason: 'no-phrase', left: MAX_ATTEMPTS };
+  if (entry.digest !== target.digest) return { ok: false, reason: 'changed', left: MAX_ATTEMPTS - entry.attempts };
   if (same(given, entry.phrase)) return { ok: true };
+  if (entry.previous !== undefined && same(given, entry.previous)) return { ok: false, reason: 'changed', left: MAX_ATTEMPTS - entry.attempts };
   entry.attempts += 1;
   let rotated: string | undefined;
   if (entry.attempts >= MAX_ATTEMPTS) {
-    rotated = newPhrase();
-    consent[consentKey(target.action, target.id)] = { action: target.action, phrase: rotated, created: new Date().toISOString(), attempts: 0 };
+    const next = fresh(target);
+    rotated = next.phrase;
+    consent[consentKey(target.action, target.id)] = next;
   }
   home.writeConsent(consent);
   return { ok: false, reason: 'wrong', rotated, left: rotated ? MAX_ATTEMPTS : MAX_ATTEMPTS - entry.attempts };
@@ -105,6 +134,5 @@ export function dropPhrase(home: Home, target: PhraseTarget): void {
   const key = consentKey(target.action, target.id);
   if (!Object.hasOwn(consent, key)) return;
   delete consent[key];
-
   home.writeConsent(consent);
 }

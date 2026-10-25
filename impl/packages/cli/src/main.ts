@@ -126,10 +126,11 @@ const COMMANDS: Record<string, Command> = {
     run: cmd.dinnerCancel,
   },
   'dinner confirm': {
-    usage: 'rdv dinner confirm <task-id> [--calendar cal.json]',
-    summary: 'Confirm the dinner a negotiation is holding for you (sends meeting/accept or meeting/confirm)',
+    usage: 'rdv dinner confirm <task-id> --hold <code> [--calendar cal.json]',
+    summary:
+      'Confirm the dinner a negotiation is holding for you (sends meeting/accept or meeting/confirm). --hold is the code "rdv dinner list" shows: it is refused if the meeting changed since',
     args: 1,
-    options: { calendar: { type: 'string' } },
+    options: { hold: { type: 'string' }, calendar: { type: 'string' } },
     run: cmd.dinnerConfirm,
   },
   'dinner list': { usage: 'rdv dinner list', summary: 'List dinner negotiations and their state', args: 0, run: cmd.dinnerList },

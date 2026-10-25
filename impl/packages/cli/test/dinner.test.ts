@@ -65,7 +65,8 @@ describe('dinner commands', () => {
       expect((await run(['listen', '--negotiate', '--calendar', cal, '--tz', 'CET'])).code).toBe(2);
       expect((await run(['dinner', 'list'])).lines).toEqual([]);
       expect((await run(['dinner', 'cancel', '00000000-0000-4000-8000-000000000001'])).code).toBe(1);
-      expect((await run(['dinner', 'confirm', '00000000-0000-4000-8000-000000000001'])).code).toBe(1);
+      expect((await run(['dinner', 'confirm', '00000000-0000-4000-8000-000000000001'])).code).toBe(2); // no --hold
+      expect((await run(['dinner', 'confirm', '00000000-0000-4000-8000-000000000001', '--hold', 'abcdef012345'])).code).toBe(1);
       expect((await run(['listen', '--auto-confirm'])).code).toBe(2); // --auto-confirm without --negotiate
 
     } finally {
