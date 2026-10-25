@@ -635,6 +635,45 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
     35) can no longer be canceled in-protocol. a2a only: no core wire change,
     vectors unchanged.
 
+## Chat onboarding (Claude Code plugin)
+
+62. **Setup by chat, consent still with the human.** `plugins/rendezvous`
+    is a Claude Code plugin (the repo root is its marketplace) with an
+    Agent Skill that walks install → `rdv_init` → `rdv_publish_card` →
+    `rdv_discover` / `rdv_request_contact` → wait in `rdv_inbox` → `rdv_send`,
+    and the receiving side through `rdv_pending_requests` and `rdv_grant`.
+    No new tool grants anything; approvals still need the form or the phrase
+    (items 57, 59). Choices:
+    - **Launcher, not a PATH command.** `.mcp.json` runs `node
+      bin/rdv-mcp.mjs`, which imports the build in `$RDV_DIR` or
+      `~/.rendezvous/src` in-process. A bare `rdv-mcp` is a `.cmd` shim on
+      Windows, which a stdio client can't spawn without `cmd /c`. When the
+      build is missing it exits 1 with install instructions on stderr
+      (stdout stays clean: it is the MCP channel).
+    - **Consent guard hook** (PreToolUse on Bash, PowerShell and Read). It
+      denies the commands that approve or that print a phrase (the list in
+      the MCP README) and reads of `agent.json`, `agent.json.bak` or
+      `consent.json` under `.rendezvous` or `$RDV_HOME`. JSON-mode
+      `contact pending` and `dinner list` stay allowed: they show no
+      phrase. Honest limit, same as item 57: it matches command text, so a
+      model with a shell can get past it (an alias, a variable, another
+      interpreter). It makes drifting or injected attempts fail loudly; the
+      boundary is still the MCP gate and running the server as another user.
+    - **Skill lint.** `packages/mcp/test/plugin.test.ts` runs every inline
+      command and code-block line of the skill and its references through
+      the guard; a refused command may appear only in a paragraph that says
+      it is the human's ("own terminal", "never run"), and never in a code
+      block.
+    - **`rdv_status` contacts carry `claimed_addresses`** from the peer's
+      card (strict address or quarantined, at most 8), so "tell John …" can
+      find John's agent ID. They are self-asserted, like everything in a
+      card; the contact itself is what the humans approved.
+    - **What the plugin can't do:** in `claude -p` there is no elicitation
+      (Claude Code cancels it), so headless runs fall back to the phrase.
+      The phrase reaches the human through `rdv contact pending` in their
+      own terminal or the server's stderr, which Claude Code only keeps in
+      its MCP log, so the interactive form is the no-terminal path.
+
 ## Not implemented yet
 
 

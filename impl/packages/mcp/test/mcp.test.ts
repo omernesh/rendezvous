@@ -24,7 +24,7 @@ import {
   UNTRUSTED_NOTE,
 } from '../src/index.js';
 import type { AgentState, PendingRequest } from '@rendezvous/core';
-import { confirmWithPhrase, dinnerFlow, type ElicitHandler, INJECTION, makeSide, moveHold, ok, phraseFromHumanLog, phraseFromTerminal, type Side, waitEvent } from './flow.js';
+import { confirmWithPhrase, dinnerFlow, type ElicitHandler, INJECTION, makeSide, moveHold, ok, onboardingFlow, phraseFromHumanLog, phraseFromTerminal, type Side, waitEvent } from './flow.js';
 import { appendEvents, Home } from '@rendezvous/cli/lib';
 import { generateKey } from '@rendezvous/core';
 
@@ -880,4 +880,54 @@ describe('one inbound consumer per home (issue #9)', () => {
       await johnL.stop();
     }
   }, 60_000);
+});
+
+describe('chat onboarding (the plugin skill, plugins/rendezvous)', () => {
+  it('install to first message through the tools; each approval comes from the human, through a form', async () => {
+    root = mkdtempSync(join(tmpdir(), 'rdv-onboard-'));
+    const forms: Record<string, string[]> = { omer: [], john: [] };
+    const human =
+      (who: string): ElicitHandler =>
+      (params) => {
+        forms[who].push(params.message);
+        return { action: 'accept', content: { approve: true } };
+      };
+    const omer = await makeSide('omer', join(root, 'omer'), { elicit: human('omer') });
+    const john = await makeSide('john', join(root, 'john'), { elicit: human('john') });
+    sides.push(omer, john);
+    await onboardingFlow(omer, john, {
+      relays: [relay.url],
+      tag: randomBytes(3).toString('hex'),
+      timeoutMs: 10_000,
+      approve: async (j, id) => {
+        expect(await ok(j, 'rdv_grant', { request_id: id })).toMatchObject({ granted: true });
+      },
+      confirm: async (o, grantId) => {
+        expect(await ok(o, 'rdv_grant', { grant_id: grantId })).toMatchObject({ confirmed: true });
+      },
+    });
+    expect(forms.john).toHaveLength(1);
+    expect(forms.john[0]).toContain('approve this contact request');
+    expect(forms.omer).toHaveLength(1);
+    expect(forms.omer[0]).toContain('is this the agent you were looking for');
+  });
+
+  it('without forms, the model alone is refused and the phrase the human typed works', async () => {
+    const { omer, john } = await pair();
+    await onboardingFlow(omer, john, {
+      relays: [relay.url],
+      tag: randomBytes(3).toString('hex'),
+      timeoutMs: 10_000,
+      approve: async (j, id) => {
+        const solo = await j.call('rdv_grant', { request_id: id });
+        expect(solo.isError).toBe(true);
+        expect(solo.text).toContain('rdv contact pending');
+        await ok(j, 'rdv_grant', { request_id: id, confirm_phrase: phraseFromHumanLog(j, id) });
+      },
+      confirm: async (o, grantId) => {
+        expect((await o.call('rdv_grant', { grant_id: grantId })).isError).toBe(true);
+        await ok(o, 'rdv_grant', { grant_id: grantId, confirm_phrase: phraseFromHumanLog(o, grantId) });
+      },
+    });
+  });
 });

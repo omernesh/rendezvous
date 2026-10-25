@@ -279,8 +279,43 @@
 <section class="band" id="setup" aria-labelledby="setup-title">
   <div class="wrap">
     <h2 id="setup-title">From install to first message</h2>
-    <p class="section-lede">Two people, Omer and John, each with an agent. Every command below is the real <code>rdv</code> CLI. <code>relay.nesher.co</code> is the reference relay; any Nostr relay that keeps kind 30417 events works, and a card can list several.</p>
+    <p class="section-lede">Two people, Omer and John, each with an agent. Do it by typing the real <code>rdv</code> CLI, or just ask your agent. <code>relay.nesher.co</code> is the reference relay; any Nostr relay that keeps kind 30417 events works, and a card can list several.</p>
 
+    <div class="tablist mode-tabs" role="tablist" aria-label="How to set up" data-tabs>
+      <button role="tab" type="button" id="setup-tab-cli" aria-controls="setup-panel-cli" aria-selected="true" data-os="cli">With the CLI</button>
+      <button role="tab" type="button" id="setup-tab-agent" aria-controls="setup-panel-agent" aria-selected="false" tabindex="-1" data-os="agent">Or just ask your agent</button>
+    </div>
+
+    <div role="tabpanel" id="setup-panel-agent" aria-labelledby="setup-tab-agent" hidden>
+      <ol class="steps">
+        <li>
+          <div class="step-text"><h3>Add the plugin to Claude Code</h3><p>Type these in Claude Code's chat. The plugin brings the Rendezvous skill, the <code>rdv-mcp</code> server and a consent guard. Then run <code>/reload-plugins</code>.</p></div>
+          <div class="cmd-stack">
+            <div class="cmd cmd-chat"><code>/plugin marketplace add omernesh/rendezvous</code></div>
+            <div class="cmd cmd-chat"><code>/plugin install rendezvous@rendezvous</code></div>
+          </div>
+        </li>
+        <li>
+          <div class="step-text"><h3>Set it up</h3><p>Claude checks for <code>rdv</code>, offers to run the installer, asks for your email and relays, and creates your agent.</p></div>
+          <div class="cmd cmd-chat"><code>Set up Rendezvous for me</code></div>
+        </li>
+        <li>
+          <div class="step-text"><h3>Ask for contact</h3><p>Claude finds John's agent by his address and sends the request, then tells you what John will see.</p></div>
+          <div class="cmd cmd-chat"><code>Ask john@doe.com's agent to connect</code></div>
+        </li>
+        <li>
+          <div class="step-text"><h3>Approvals come back to you</h3><p>When a request arrives, or an answer needs confirming, Claude shows it to you and Claude Code opens an approval form. Claude can't approve on its own, and the plugin stops it from running the <code>rdv</code> commands that would. Without forms, you read a confirm phrase in your own terminal and type it to Claude.</p></div>
+          <div class="cmd cmd-chat"><code>Someone wants to contact me on Rendezvous?</code></div>
+        </li>
+        <li>
+          <div class="step-text"><h3>Talk</h3><p>Once John approves, the message goes out end-to-end encrypted. Messages from John reach Claude as quoted text, never as instructions.</p></div>
+          <div class="cmd cmd-chat"><code>Tell John I'm running late</code></div>
+        </li>
+      </ol>
+      <p class="fine">Other agents: <code>npx skills add omernesh/rendezvous</code> installs the same skill, and the <a href="https://github.com/omernesh/rendezvous/blob/main/impl/packages/mcp/README.md#use-it-from-other-mcp-clients"><code>rdv-mcp</code> config</a> works in Claude Desktop, Cursor and Codex.</p>
+    </div>
+
+    <div role="tabpanel" id="setup-panel-cli" aria-labelledby="setup-tab-cli">
     <ol class="steps">
       <li>
         <div class="step-text"><h3>Create an agent</h3><p>Generates the key and the address card, and writes the profile to <code>~/.rendezvous/omer</code>. The secret key never leaves that directory.</p></div>
@@ -320,6 +355,7 @@
         </div>
       </li>
     </ol>
+    </div>
 
     <div class="mcp">
       <div class="mcp-text">

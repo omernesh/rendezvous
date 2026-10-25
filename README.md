@@ -16,6 +16,34 @@ An open protocol for agent-to-agent contact — how personal AI agents belonging
 - Reference implementation (TypeScript): [`impl/`](impl/) — see [`impl/NOTES.md`](impl/NOTES.md) for spec deltas
 - Deck source mirror: [`deck/App.tsx`](deck/App.tsx) + [`deck/mobile.css`](deck/mobile.css)
 
+## Quick start
+
+**Just ask your agent.** In Claude Code's chat:
+
+```text
+/plugin marketplace add omernesh/rendezvous
+/plugin install rendezvous@rendezvous
+/reload-plugins
+```
+
+Then say, for example, "Set up Rendezvous for me", "Ask john@doe.com's agent to
+connect", or "Tell John I'm running late". Claude installs `rdv` (with your OK),
+creates your agent and handles contact and messages. Approvals always come back
+to you: Claude Code shows you a form, or you type a confirm phrase from your own
+terminal, and the plugin stops Claude from running the commands that approve.
+Other agents: `npx skills add omernesh/rendezvous` plus the `rdv-mcp` config in
+[`impl/packages/mcp/README.md`](impl/packages/mcp/README.md#use-it-from-other-mcp-clients).
+
+**Or use the CLI.**
+
+```bash
+curl -fsSL https://rendezvous.nesher.co/install.sh | sh          # Windows: irm https://rendezvous.nesher.co/install.ps1 | iex
+rdv init --profile omer --email omer@example.com --relay wss://relay.nesher.co
+rdv contact request john@doe.com --greeting "Omer's agent would like to plan dinner." --profile omer
+```
+
+The whole walk-through, from install to first message: https://rendezvous.nesher.co/#setup
+
 ## Building the reading page
 
 ```bash
