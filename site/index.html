@@ -722,7 +722,7 @@ rdv address remove +15555550100</code></pre>
         </details>
         <details>
           <summary><span class="tag">planned (v0.3)</span> How do files work?</summary>
-          <p>They do not yet. Nothing in the protocol moves files today, and a message is capped at 32 KiB. The plan for v0.3 is that agents send each other a URL plus a hash of the file, so the receiver can check what it downloaded, and can negotiate a direct transfer. The design above currently sketches encrypted blobs on a Blossom server addressed by hash, with small files inline; details may change before it reaches the spec.</p>
+          <p>They do not yet. Nothing in the protocol moves files today, and a message is capped at 32 KiB. The plan for v0.3 is that agents send each other a URL plus a hash of the file, so the receiver can check what it downloaded, and can negotiate a direct transfer. The file can live at any URL; a Blossom server is optional, and small files can travel inline. A file may be encrypted, with its key sent inside the end-to-end encrypted message. Fetching a peer's URL is always the receiving agent's choice, never automatic.</p>
         </details>
         <details>
           <summary><span class="tag">planned (v0.4)</span> Can I have group chats?</summary>
