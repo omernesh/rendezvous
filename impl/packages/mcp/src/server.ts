@@ -73,7 +73,8 @@ import {
   validateNegotiateOptions,
 } from '@rendezvous/cli/lib';
 import { z } from 'zod';
-import { checkPhrase, dropPhrase, syncPhrases } from './consent.js';
+import { checkPhrase, dropPhrase, type PhraseTarget, syncPhrases } from './consent.js';
+
 import { EventLog, type McpEvent, toModelEvent } from './events.js';
 import { address as asAddress, agentId, isPlain, oneOf, relayUrl, safe, UNTRUSTED_FIELD, UNTRUSTED_NOTE, untrusted } from './untrusted.js';
 
@@ -434,12 +435,17 @@ export class RdvMcpServer {
       } catch (err) {
         this.humanLog(`error reading negotiations: ${(err as Error).message}`); // contact approval keeps working
       }
-      const ids = [...Object.keys(pending), ...Object.keys(candidates), ...meetings.map((t) => t.id)];
-      return syncPhrases(this.home, ids).map((c) => ({
+      // Peer-chosen IDs may collide across kinds: each phrase is scoped to its action (consent.ts).
+      const targets: PhraseTarget[] = [
+        ...Object.keys(pending).map((id) => ({ action: 'request' as const, id })),
+        ...Object.keys(candidates).map((id) => ({ action: 'candidate' as const, id })),
+        ...meetings.map((t) => ({ action: 'meeting' as const, id: t.id })),
+      ];
+      return syncPhrases(this.home, targets).map((c) => ({
         ...c,
-        p: pending[c.id] as PendingRequest | undefined,
-        g: candidates[c.id] as GrantCandidate | undefined,
-        t: meetings.find((t) => t.id === c.id),
+        p: c.action === 'request' ? (pending[c.id] as PendingRequest | undefined) : undefined,
+        g: c.action === 'candidate' ? (candidates[c.id] as GrantCandidate | undefined) : undefined,
+        t: c.action === 'meeting' ? meetings.find((t) => t.id === c.id) : undefined,
       }));
     });
     for (const c of created) {
@@ -693,7 +699,7 @@ export class RdvMcpServer {
           const from = await this.withAgent(async (agent) => {
             const c = agent.rejectCandidate(grant_id, { block: block === true });
             if (!c) throw new ToolError(`no probe answer ${grant_id}`);
-            dropPhrase(home, grant_id);
+            dropPhrase(home, { action: 'candidate', id: grant_id });
             return c.grant.from;
           });
           return { rejected: safe(grant_id), from: safe(from), blocked: block === true };
@@ -703,7 +709,7 @@ export class RdvMcpServer {
             const p = agent.book.state.pending[request_id];
             if (!p) throw new ToolError(`no pending request ${request_id}`);
             agent.decline(request_id, { block: block === true });
-            dropPhrase(home, request_id);
+            dropPhrase(home, { action: 'request', id: request_id });
             return p.request.from;
           });
           return { declined: request_id, from: safe(from), blocked: block === true };
@@ -910,7 +916,7 @@ export class RdvMcpServer {
     });
     await this.refreshPhrases();
     if (phrase !== undefined) {
-      const check = await home.locked(async () => checkPhrase(home, grantId, phrase));
+      const check = await home.locked(async () => checkPhrase(home, { action: 'candidate', id: grantId }, phrase));
       if (!check.ok) {
         if (check.reason === 'wrong' && check.rotated) this.announceCandidatePhrase(cand, check.rotated);
         throw new ToolError(
@@ -946,7 +952,7 @@ export class RdvMcpServer {
     const contact = await this.withAgent(async (agent) => {
       if (!agent.book.state.candidates[grantId]) throw new ToolError(`probe answer ${grantId} is no longer pending`);
       const c = agent.confirmCandidate(grantId);
-      dropPhrase(home, grantId);
+      dropPhrase(home, { action: 'candidate', id: grantId });
       return c;
     });
     await this.refreshPhrases(); // the probe's other answers are gone
@@ -969,7 +975,7 @@ export class RdvMcpServer {
     const mayMeet = a.may_propose_meetings ?? true;
 
     if (a.confirm_phrase !== undefined) {
-      const check = await home.locked(async () => checkPhrase(home, a.request_id, a.confirm_phrase!));
+      const check = await home.locked(async () => checkPhrase(home, { action: 'request', id: a.request_id }, a.confirm_phrase!));
       if (!check.ok) {
         if (check.reason === 'wrong' && check.rotated) this.announcePhrase(pending, check.rotated);
         throw new ToolError(
@@ -1020,7 +1026,7 @@ export class RdvMcpServer {
     const contact = await this.withAgent(async (agent) => {
       if (!agent.book.state.pending[a.request_id]) throw new ToolError(`request ${a.request_id} is no longer pending`);
       const c = await agent.grant(a.request_id, { tier, scope: scopeFor(mayMeet) });
-      dropPhrase(home, a.request_id);
+      dropPhrase(home, { action: 'request', id: a.request_id });
       return c;
     });
     const v = contactView(contact);
@@ -1064,7 +1070,7 @@ export class RdvMcpServer {
     }
     await this.refreshPhrases();
     if (phrase !== undefined) {
-      const check = await home.locked(async () => checkPhrase(home, taskId, phrase));
+      const check = await home.locked(async () => checkPhrase(home, { action: 'meeting', id: taskId }, phrase));
       if (!check.ok) {
         if (check.reason === 'wrong' && check.rotated) this.announceMeetingPhrase(task, check.rotated);
         throw new ToolError(
@@ -1089,7 +1095,7 @@ export class RdvMcpServer {
       );
       if (res.action === 'decline') {
         // An explicit no from the human: give the slot back and tell the peer.
-        const step = await this.ownerStep(() => cancel(home.readNegotiations(), taskId, { now: new Date() }, 'declined by owner'), () => dropPhrase(home, taskId));
+        const step = await this.ownerStep(() => cancel(home.readNegotiations(), taskId, { now: new Date() }, 'declined by owner'), () => dropPhrase(home, { action: 'meeting', id: taskId }));
         await this.publishSteps(step.events);
         return { task_id: safe(taskId), state: step.state.tasks[taskId]?.state, note: 'Your user declined this dinner; the negotiation was canceled and the hold released.' };
       }
@@ -1103,7 +1109,7 @@ export class RdvMcpServer {
           `Or they can confirm directly: "rdv dinner confirm ${taskId} --home \\"${home.dir}\\"".`,
       );
     }
-    const step = await this.ownerStep(() => confirmMeeting(home.readNegotiations(), taskId, { now: new Date() }), () => dropPhrase(home, taskId));
+    const step = await this.ownerStep(() => confirmMeeting(home.readNegotiations(), taskId, { now: new Date() }), () => dropPhrase(home, { action: 'meeting', id: taskId }));
     await this.publishSteps(step.events);
 
     const t = step.state.tasks[taskId];
@@ -1147,7 +1153,7 @@ export class RdvMcpServer {
     }
     if (action === 'cancel') {
       if (!a.task_id) throw new ToolError('task_id is required to cancel');
-      const step = await this.ownerStep(() => cancel(home.readNegotiations(), a.task_id!, { now: new Date() }, a.reason), () => dropPhrase(home, a.task_id!));
+      const step = await this.ownerStep(() => cancel(home.readNegotiations(), a.task_id!, { now: new Date() }, a.reason), () => dropPhrase(home, { action: 'meeting', id: a.task_id! }));
       await this.publishSteps(step.events);
       return { task_id: safe(a.task_id), state: step.state.tasks[a.task_id]?.state };
     }

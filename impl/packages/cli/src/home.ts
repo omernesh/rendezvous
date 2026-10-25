@@ -33,9 +33,21 @@ export interface InboxEntry {
   payload: Payload;
 }
 
-/** A confirm phrase the MCP server issued for a pending request; only a human should ever see it. */
+/** What a confirm phrase approves: a contact request, a probe answer, or a held dinner. */
+export type ConsentAction = 'request' | 'candidate' | 'meeting';
+
+/**
+ * `consent.json` key: IDs are peer-chosen and may collide across actions, so
+ * every phrase lives under its action (security review of issue #8).
+ */
+export const consentKey = (action: ConsentAction, id: string): string => `${action}:${id}`;
+
+/** A confirm phrase the MCP server issued for one action; only a human should ever see it. */
 export interface ConsentEntry {
+  /** The only action this phrase approves. */
+  action: ConsentAction;
   phrase: string;
+
   created: string;
   attempts: number;
 }

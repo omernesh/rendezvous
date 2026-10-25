@@ -9,7 +9,7 @@ import type { ElicitResult } from '@modelcontextprotocol/sdk/types.js';
 import { startTestRelay, type TestRelay } from '@rendezvous/core/testing';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { Listener, RDV_BIN, rdv } from '../../cli/scenarios/harness.js';
-import { checkPhrase, EventLog, EVENTS_KEPT, MAX_ATTEMPTS, normalizePhrase, syncPhrases, toModelEvent, UNTRUSTED_NOTE } from '../src/index.js';
+import { checkPhrase, dropPhrase, EventLog, EVENTS_KEPT, MAX_ATTEMPTS, normalizePhrase, syncPhrases, toModelEvent, UNTRUSTED_NOTE } from '../src/index.js';
 import { confirmWithPhrase, dinnerFlow, type ElicitHandler, INJECTION, makeSide, ok, phraseFromHumanLog, type Side, waitEvent } from './flow.js';
 import { appendEvents, Home } from '@rendezvous/cli/lib';
 
@@ -90,7 +90,8 @@ describe('rdv-mcp: two Claude sessions book dinner (in-memory relay)', () => {
         expect(granted).toMatchObject({ granted: true, tier: 'stranger', binding: 'claimed' });
         expect(granted.scope).toMatchObject({ may_propose_meetings: true, may_access_calendar: 'free_busy' });
         // Single use: the phrase is gone with the request.
-        expect(j.home.readConsent()[requestId]).toBeUndefined();
+        expect(j.home.readConsent()[`request:${requestId}`]).toBeUndefined();
+        expect(Object.keys(j.home.readConsent()).some((k) => k.endsWith(requestId))).toBe(false);
       },
       confirm: async (side, taskId) => {
         // The human sees the dinner's phrase in `rdv dinner list` (text mode only) and in the server log.
@@ -100,7 +101,8 @@ describe('rdv-mcp: two Claude sessions book dinner (in-memory relay)', () => {
         expect(text).toContain(`confirm this dinner): ${phrase}`);
         expect((await rdv(['dinner', 'list'], side.home.dir)).stdout).not.toContain(phrase);
         await confirmWithPhrase(side, taskId);
-        expect(side.home.readConsent()[taskId]).toBeUndefined(); // single use
+        expect(side.home.readConsent()[`meeting:${taskId}`]).toBeUndefined(); // single use
+
       },
     });
     expect(r.taskId).toMatch(/^[0-9a-f-]{36}$/);
@@ -216,17 +218,47 @@ describe('confirm phrases', () => {
     root = mkdtempSync(join(tmpdir(), 'rdv-phrase-'));
     const home = new Home(root);
     home.ensureDir();
-    const [a, b] = syncPhrases(home, ['req-a', 'req-b']);
+    const reqA = { action: 'request', id: 'req-a' } as const;
+    const reqB = { action: 'request', id: 'req-b' } as const;
+    const [a, b] = syncPhrases(home, [reqA, reqB]);
     expect(a.phrase).not.toBe(b.phrase);
-    expect(checkPhrase(home, 'req-a', b.phrase).ok).toBe(false); // another request's phrase
-    expect(checkPhrase(home, 'req-a', normalizePhrase(a.phrase.toUpperCase())).ok).toBe(true);
-    for (let i = 1; i < MAX_ATTEMPTS; i++) expect(checkPhrase(home, 'req-b', 'wrong')).toMatchObject({ ok: false, left: MAX_ATTEMPTS - i });
-    const last = checkPhrase(home, 'req-b', 'wrong');
+    expect(checkPhrase(home, reqA, b.phrase).ok).toBe(false); // another request's phrase
+    expect(checkPhrase(home, reqA, normalizePhrase(a.phrase.toUpperCase())).ok).toBe(true);
+    for (let i = 1; i < MAX_ATTEMPTS; i++) expect(checkPhrase(home, reqB, 'wrong')).toMatchObject({ ok: false, left: MAX_ATTEMPTS - i });
+    const last = checkPhrase(home, reqB, 'wrong');
     expect(last.ok === false && last.rotated).toBeTruthy();
-    expect(checkPhrase(home, 'req-b', b.phrase).ok).toBe(false); // the old phrase is dead
-    expect(syncPhrases(home, ['req-a'])).toEqual([]);
-    expect(Object.keys(home.readConsent())).toEqual(['req-a']);
+    expect(checkPhrase(home, reqB, b.phrase).ok).toBe(false); // the old phrase is dead
+    expect(syncPhrases(home, [reqA])).toEqual([]);
+    expect(Object.keys(home.readConsent())).toEqual(['request:req-a']);
     if (process.platform !== 'win32') expect(statSync(home.consentPath).mode & 0o777).toBe(0o600);
+  });
+
+  it('are scoped by action: a peer-chosen ID shared by a request and a dinner never lets one phrase approve the other', () => {
+    root = mkdtempSync(join(tmpdir(), 'rdv-phrase-'));
+    const home = new Home(root);
+    home.ensureDir();
+    // A peer made its dinner task ID equal to its own contact request ID (both are its choice).
+    const id = '00000000-0000-4000-8000-00000000c0de';
+    const [req, meet, cand] = syncPhrases(home, [
+      { action: 'request', id },
+      { action: 'meeting', id },
+      { action: 'candidate', id },
+    ]);
+    expect(new Set([req.phrase, meet.phrase, cand.phrase]).size).toBe(3);
+    expect(Object.keys(home.readConsent()).sort()).toEqual([`candidate:${id}`, `meeting:${id}`, `request:${id}`]);
+    // The phrase the human was shown to approve the contact does not confirm the dinner, and the reverse.
+    expect(checkPhrase(home, { action: 'meeting', id }, req.phrase).ok).toBe(false);
+    expect(checkPhrase(home, { action: 'request', id }, meet.phrase).ok).toBe(false);
+    expect(checkPhrase(home, { action: 'candidate', id }, meet.phrase).ok).toBe(false);
+    expect(checkPhrase(home, { action: 'meeting', id }, meet.phrase).ok).toBe(true);
+    // An entry whose stored action disagrees with its key (tampered, or a legacy file) approves nothing.
+    const consent = home.readConsent();
+    consent[`meeting:${id}`] = { ...consent[`request:${id}`] };
+    home.writeConsent(consent);
+    expect(checkPhrase(home, { action: 'meeting', id }, req.phrase)).toMatchObject({ ok: false, reason: 'no-phrase' });
+    // Dropping one action's phrase keeps the others.
+    dropPhrase(home, { action: 'request', id });
+    expect(Object.keys(home.readConsent()).sort()).toEqual([`candidate:${id}`, `meeting:${id}`]);
   });
 });
 

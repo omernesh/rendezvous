@@ -285,7 +285,12 @@ the marker (CLI behavior, live-run logs, calendar settings) stay here only.
     mode, never in a tool result), or `rdv dinner confirm` in a terminal.
     `rdv listen --negotiate` waits the same way unless `--auto-confirm`
     (bots, the scenarios' `duplicate` variant). Each side's human confirms
-    once. **spec change**, SPEC §5.5 and §7.3 (rev 3, amended).
+    once. **spec change**, SPEC §5.5 and §7.3 (rev 3, amended). Phrases
+    are scoped by action (`consent.json` keys `request:<id>`,
+    `candidate:<id>`, `meeting:<id>`, each entry storing its action):
+    request, grant and task IDs are all peer-chosen, so a peer could make
+    its dinner's task ID equal its contact request's ID and have the
+    "approve contact" phrase confirm the dinner, or the reverse.
 43. **Inbox is an event log, not an ack queue** (§13 says "receive/ack").
     `rdv_inbox` returns events after a cursor from the home's `events.jsonl`;
     nothing is acknowledged back to the peer. (folded into SPEC rev 3 §13)

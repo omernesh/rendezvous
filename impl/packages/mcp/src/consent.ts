@@ -3,8 +3,19 @@
 // kept in consent.json (mode 600) and shown only on human-facing channels:
 // `rdv contact pending` in a terminal and this server's stderr. It is never
 // part of a tool result, so the model can only learn it from its human.
+//
+// Phrases are scoped by action: request IDs, grant IDs and task IDs are all
+// chosen by peers, so one peer could make them equal. A phrase is stored under
+// `<action>:<id>` with its action, and checked only for that action: the
+// phrase shown for "approve contact" can never confirm a dinner, or the
+// reverse (security review of issue #8).
 import { randomInt, timingSafeEqual } from 'node:crypto';
-import type { ConsentEntry, Home } from '@rendezvous/cli/lib';
+import { type ConsentAction, type ConsentEntry, consentKey, type Home } from '@rendezvous/cli/lib';
+
+export interface PhraseTarget {
+  action: ConsentAction;
+  id: string;
+}
 
 // 64 short, distinct, easy-to-say words: 6 bits each.
 const WORDS = [
@@ -40,45 +51,60 @@ function same(a: string, b: string): boolean {
   return x.length === y.length && timingSafeEqual(x, y);
 }
 
+/** The stored entry for this action and ID, only if it was issued for that action. */
+function entryFor(consent: Record<string, ConsentEntry>, t: PhraseTarget): ConsentEntry | undefined {
+  const key = consentKey(t.action, t.id);
+  const e = Object.hasOwn(consent, key) ? consent[key] : undefined;
+  return e?.action === t.action ? e : undefined;
+}
+
 /**
- * Make sure each pending request has a phrase and drop phrases for requests
- * that are gone. Call under the home lock. Returns the phrases it created.
+ * Make sure each target (pending request, probe answer, held meeting) has a
+ * phrase and drop phrases for targets that are gone. Call under the home
+ * lock. Returns the phrases it created.
  */
-export function syncPhrases(home: Home, pendingIds: string[]): Array<{ id: string; phrase: string }> {
+export function syncPhrases(home: Home, targets: PhraseTarget[]): Array<PhraseTarget & { phrase: string }> {
   const consent = home.readConsent();
-  const created: Array<{ id: string; phrase: string }> = [];
+  const created: Array<PhraseTarget & { phrase: string }> = [];
   const next: Record<string, ConsentEntry> = {};
-  for (const id of pendingIds) {
-    next[id] = consent[id] ?? { phrase: newPhrase(), created: new Date().toISOString(), attempts: 0 };
-    if (!consent[id]) created.push({ id, phrase: next[id].phrase });
+  for (const t of targets) {
+    const key = consentKey(t.action, t.id);
+    const have = entryFor(consent, t);
+    next[key] = have ?? { action: t.action, phrase: newPhrase(), created: new Date().toISOString(), attempts: 0 };
+    if (!have) created.push({ ...t, phrase: next[key].phrase });
   }
-  if (created.length || Object.keys(consent).length !== pendingIds.length || Object.keys(consent).some((id) => !next[id])) {
-    home.writeConsent(next);
-  }
+  const keys = Object.keys(consent);
+  if (created.length || keys.length !== Object.keys(next).length || keys.some((k) => !next[k])) home.writeConsent(next);
   return created;
 }
 
 export type PhraseCheck = { ok: true } | { ok: false; reason: 'no-phrase' | 'wrong'; rotated?: string; left: number };
 
-/** Check a phrase for one request. Call under the home lock. A wrong guess counts; MAX_ATTEMPTS replaces the phrase. */
-export function checkPhrase(home: Home, requestId: string, given: string): PhraseCheck {
+/**
+ * Check a phrase for one action on one ID. Call under the home lock. Only a
+ * phrase issued for that same action counts. A wrong guess counts;
+ * MAX_ATTEMPTS replaces the phrase.
+ */
+export function checkPhrase(home: Home, target: PhraseTarget, given: string): PhraseCheck {
   const consent = home.readConsent();
-  const entry = consent[requestId];
+  const entry = entryFor(consent, target);
   if (!entry) return { ok: false, reason: 'no-phrase', left: MAX_ATTEMPTS };
   if (same(given, entry.phrase)) return { ok: true };
   entry.attempts += 1;
   let rotated: string | undefined;
   if (entry.attempts >= MAX_ATTEMPTS) {
     rotated = newPhrase();
-    consent[requestId] = { phrase: rotated, created: new Date().toISOString(), attempts: 0 };
+    consent[consentKey(target.action, target.id)] = { action: target.action, phrase: rotated, created: new Date().toISOString(), attempts: 0 };
   }
   home.writeConsent(consent);
   return { ok: false, reason: 'wrong', rotated, left: rotated ? MAX_ATTEMPTS : MAX_ATTEMPTS - entry.attempts };
 }
 
-export function dropPhrase(home: Home, requestId: string): void {
+export function dropPhrase(home: Home, target: PhraseTarget): void {
   const consent = home.readConsent();
-  if (!consent[requestId]) return;
-  delete consent[requestId];
+  const key = consentKey(target.action, target.id);
+  if (!Object.hasOwn(consent, key)) return;
+  delete consent[key];
+
   home.writeConsent(consent);
 }
