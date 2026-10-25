@@ -7,7 +7,8 @@
 //           John confirms the answer. A local HTTPS store holds the file.
 //   ok      John's human releases his Q4 plan from his own terminal: `rdv
 //           file prepare` encrypts it, he uploads the ciphertext, `rdv task
-//           request --file` sends the reference (requester-side release).
+//           request --file` holds the request, and `rdv task release
+//           <hold> --code` sends the reference (requester-side release gate).
 //           Omer's agent holds the task `submitted` (start gate): nothing is
 //           fetched, a fetch is refused. Omer approves with the code; the
 //           agent fetches, verifies and decrypts into quarantine. The draft
@@ -225,12 +226,21 @@ export async function runReviewScenario(opts: ReviewScenarioOptions): Promise<Re
       return { sha: p.sha256 as string, url };
     });
 
-    const taskId = await step('john asks omer for a review, with the file', async () => {
+    const taskId = await step('john asks omer for a review; the request with his file waits for his release', async () => {
       const due = new Date(Date.now() + 3 * 86_400_000).toISOString().replace(/\.\d{3}Z$/, 'Z');
       const input = JSON.stringify({ data: { focus: ['clarity', 'numbers'], due } });
       const r = await rdv(['task', 'request', omer, '--text', ASK_TEXT, '--input', input, '--expires', due, '--file', `${sha}=${url}`], dirs.john, { timeoutMs: timeout });
-      const sent = r.lines.find((l) => l.event === 'task' && l.kind === 'requested');
-      assert(sent?.task, 'the review was requested');
+      // Requester-side release gate (issue #53): held, shown with the recipient and the file; nothing sent yet.
+      const held = r.lines.find((l) => l.event === 'task-request-held');
+      assert(held?.hold && held.release_code && held.peer === omer, `the request is held for john (${JSON.stringify(r.lines)})`);
+      assert(held.files?.[0]?.sha256 === sha && !JSON.stringify(held).includes('"key"'), 'the hold shows the file, never its key');
+      await new Promise((res) => setTimeout(res, 300));
+      assert(!omerL.lines.some((l) => l.event === 'task' && l.kind === 'start-needed'), 'nothing reached omer before the release');
+      const wrong = await rdv(['task', 'release', held.hold, '--code', 'ffffffffffff'], dirs.john, { check: false });
+      assert(wrong.code === 1 && wrong.stderr.includes('not the one you reviewed'), `a wrong code sends nothing (${wrong.stderr})`);
+      const rel = await rdv(['task', 'release', held.hold, '--code', held.release_code], dirs.john, { timeoutMs: timeout });
+      const sent = rel.lines.find((l) => l.event === 'task' && l.kind === 'requested');
+      assert(sent?.task, `the review was requested once released (${JSON.stringify(rel.lines)})`);
       return sent.task as string;
     });
 

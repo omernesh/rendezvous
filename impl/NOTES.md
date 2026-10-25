@@ -1944,7 +1944,9 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       verdict, comments}`. (b) The document is Markdown, not a PDF, so the
       decrypted text can be checked. (c) The requester-side release is
       John's own terminal: `rdv file prepare`, an upload to the store, `rdv
-      task request --file` (the MCP `request` takes no files, item 77).
+      task request --file` (held, #53), `rdv task release <hold> --code`;
+      a wrong code sends nothing and Omer sees nothing before it (the MCP
+      `request` takes no files, item 77).
     - **Human gates go through the human paths.** CLI: the codes `rdv task
       list` shows (`approve --code`, `release --code`; a wrong code and the
       code of the first draft are refused). MCP: the phrases on the
