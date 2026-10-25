@@ -727,6 +727,7 @@ export class RdvMcpServer {
         };
       }),
       pending_requests: Object.keys(state.book.pending ?? {}).length,
+      pending_dropped_when_full: state.book.pendingEvicted ?? 0,
       probe_answers: Object.keys(state.book.candidates ?? {}).length,
       negotiation: this.settings.calendar
         ? { calendar: this.settings.calendar, window: this.settings.window ?? DEFAULT_LISTEN_WINDOW, tz: this.settings.tz ?? '(calendar or machine offset)' }

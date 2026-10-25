@@ -103,6 +103,17 @@ export function toModelEvent(e: Raw, negotiating: boolean): Omit<McpEvent, 'n' |
         next_step:
           'Someone answered your discovery probe. Show your user the fingerprint and ask whether this is the person they meant; it becomes a contact only when they confirm (rdv_grant with grant_id).',
       };
+    case 'pending-evicted': {
+      const total = typeof e.total === 'number' && Number.isSafeInteger(e.total) ? e.total : null;
+      // First drop, then every 50th, so a flood can't fill the log with these.
+      if (total !== null && total !== 1 && total % 50 !== 0) return null;
+      return {
+        type: 'pending_flooded',
+        dropped_requests: total,
+        next_step:
+          'Your pending contact requests were full, so the weakest were dropped; someone may be flooding this agent. Tell your user. A dropped requester can ask again.',
+      };
+    }
     case 'probe-overflow':
       return {
         type: 'probe_flooded',

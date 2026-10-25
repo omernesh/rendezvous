@@ -49,6 +49,8 @@ export interface AgentEvents {
   candidate: [GrantCandidate];
   /** Answers to one of our probes were dropped (too many). Emitted on the first drop per probe; see probeOverflows(). */
   'probe-overflow': [ProbeOverflow];
+  /** The pending list was full and a request was dropped; `total` counts all such drops (someone may be flooding us). */
+  'pending-evicted': [total: number];
   contact: [Contact];
   message: [peer: string, payload: Payload, envelope: Envelope];
   revoked: [peer: string];
@@ -288,7 +290,11 @@ export class Agent extends EventEmitter<AgentEvents> {
     const outcome = this.book.receiveRequest(req, binding);
     switch (outcome.status) {
       case 'pending':
+        if (outcome.evicted) this.emit('pending-evicted', outcome.evicted.total);
         this.emit('request', outcome.pending);
+        return;
+      case 'evicted':
+        this.emit('pending-evicted', outcome.total);
         return;
       case 'auto-grant':
         await this.issueGrant(req, binding, { tier: outcome.tier, scope: outcome.scope });

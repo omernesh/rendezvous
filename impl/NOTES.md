@@ -298,8 +298,15 @@ the marker (CLI behavior, live-run logs, calendar settings) stay here only.
 ## Security review fixes (2026-10-25)
 
 Independent review of the implementation; H1/H2 are under items 15 and 18.
-46. **Peer-driven state is bounded** (M1). Pending requests: 64 in all (the
-    oldest evicted) and 4 per sender (more are dropped as `rate-limited`).
+46. **Peer-driven state is bounded** (M1). Pending requests: 64 in all and
+    4 per sender (more are dropped as `rate-limited`). A full list evicts the
+    weakest request, the newcomer included: lowest binding first, then topic
+    probes before requests sent to our card (today every inbound binding is
+    `claimed`, so this is the split that matters), then the oldest. The
+    evicted id leaves `seenIds` so the requester's retry is accepted, and
+    `book.pendingEvicted` counts drops for the human (`pending-evicted` in
+    `listen` and `rdv contact pending`; `pending_flooded` in the MCP server,
+    on the first drop and every 50th).
     Declined request ids live in their own list (1000), so a flood of fresh
     ids that evicts `seenIds` can't bring a declined request back. `listen`
     and the MCP server drop envelopes that don't open for us and invalid

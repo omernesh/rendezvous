@@ -322,7 +322,7 @@ describe('bounded peer-driven state (security review M1)', () => {
     const t0 = Date.parse('2026-10-25T10:00:00Z');
     for (let i = 0; i < 200; i++) book.receiveRequest(reqFrom(), 'claimed', new Date(t0 + i * 1000));
     expect(Object.keys(book.state.pending)).toHaveLength(PENDING_LIMIT);
-    // The newest are kept, the oldest evicted.
+    // Same rank: the newest are kept, the oldest evicted.
     const received = Object.values(book.state.pending).map((p) => Date.parse(p.received));
     expect(Math.min(...received)).toBe(t0 + (200 - PENDING_LIMIT) * 1000);
 
@@ -331,6 +331,26 @@ describe('bounded peer-driven state (security review M1)', () => {
     const outcomes = Array.from({ length: PENDING_PER_SENDER + 2 }, () => one.receiveRequest(reqFrom(mallory), 'claimed').status);
     expect(outcomes.filter((s) => s === 'pending')).toHaveLength(PENDING_PER_SENDER);
     expect(outcomes.at(-1)).toBe('rate-limited');
+  });
+
+  it('a flood of probes evicts probes, not a request sent to our card; evicted requesters can retry', () => {
+    const book = new ContactBook();
+    const me = generateKey();
+    const friend = generateKey();
+    const direct = createContactRequest(friend, card(friend), { toHint: me.id, greeting: 'hi' });
+    const t0 = Date.parse('2026-10-25T10:00:00Z');
+    expect(book.receiveRequest(direct, 'claimed', new Date(t0)).status).toBe('pending');
+    const flood = Array.from({ length: 200 }, () => reqFrom());
+    flood.forEach((r, i) => book.receiveRequest(r, 'claimed', new Date(t0 + (i + 1) * 1000)));
+    expect(Object.keys(book.state.pending)).toHaveLength(PENDING_LIMIT);
+    expect(book.state.pending[direct.id]).toBeDefined(); // oldest, but sent to our card: kept
+    expect(book.state.pendingEvicted).toBe(200 + 1 - PENDING_LIMIT);
+    // An evicted probe is no longer "seen": its retry is accepted (evicting the oldest probe).
+    const gone = flood[0];
+    expect(book.state.seenIds).not.toContain(gone.id);
+    const retry = book.receiveRequest(gone, 'claimed', new Date(t0 + 999_000));
+    expect(retry).toMatchObject({ status: 'pending', evicted: { id: flood[200 + 1 - PENDING_LIMIT].id } });
+    expect(book.state.pending[gone.id]).toBeDefined();
   });
 
   it('a declined request stays declined after a flood evicts the replay ids', () => {

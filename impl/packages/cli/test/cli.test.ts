@@ -185,8 +185,8 @@ describe('inbound items that change nothing (security review M1)', () => {
   });
 });
 
-describe('flooded probes are shown to the human', () => {
-  it('rdv contact pending reports dropped probe answers', async () => {
+describe('floods are shown to the human', () => {
+  it('rdv contact pending reports dropped probe answers and dropped requests', async () => {
     const dir = tmp();
     try {
       const home = join(dir, 'h');
@@ -195,9 +195,11 @@ describe('flooded probes are shown to the human', () => {
       const state = JSON.parse(readFileSync(path, 'utf8'));
       const ref = '00000000-0000-4000-8000-0000000000aa';
       state.book.outstanding[ref] = { to_hint: 'alice@x.com', sent: new Date().toISOString(), binding: 'claimed', dropped: 7 };
+      state.book.pendingEvicted = 12;
       writeFileSync(path, JSON.stringify(state));
       const r = await rdv(['contact', 'pending'], home);
       expect(r.lines).toContainEqual({ event: 'probe-overflow', request_ref: ref, to_hint: 'alice@x.com', dropped: 7 });
+      expect(r.lines).toContainEqual({ event: 'pending-evicted', total: 12 });
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

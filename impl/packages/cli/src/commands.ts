@@ -286,14 +286,25 @@ export async function contactPending({ home, out }: Ctx): Promise<void> {
   };
   for (const p of pending) out.emit(requestView(p), requestText(p) + phraseLine(p.request.id));
   // Answers to our own topic probes: anyone who saw the probe could have sent one.
-  const { candidates, overflows } = await withAgent(
+  const { candidates, overflows, evicted } = await withAgent(
     home,
-    async (agent) => ({ candidates: agent.grantCandidates(), overflows: agent.book.probeOverflows() }),
+    async (agent) => ({
+      candidates: agent.grantCandidates(),
+      overflows: agent.book.probeOverflows(),
+      evicted: agent.book.state.pendingEvicted ?? 0,
+    }),
     { save: false },
   );
   candidates.sort((a, b) => a.received.localeCompare(b.received));
   for (const c of candidates) out.emit(candidateView(c), candidateText(c) + phraseLine(c.grant.id));
   for (const o of overflows) out.emit(overflowView(o), overflowText(o));
+  if (evicted > 0) {
+    out.emit(
+      { event: 'pending-evicted', total: evicted },
+      `${evicted} inbound request(s) were dropped because the pending list was full (weakest first: probes before requests to your card). ` +
+        'Someone may be flooding you; a dropped requester can simply ask again.',
+    );
+  }
 }
 
 /** `rdv contact confirm <grant-id>`: the owner picks which answer to a topic probe is the real peer. */

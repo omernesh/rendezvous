@@ -209,7 +209,9 @@ export interface ProbeOverflow {
 }
 
 export type RequestOutcome =
-  | { status: 'pending'; pending: PendingRequest }
+  | { status: 'pending'; pending: PendingRequest; evicted?: { id: string; total: number } }
+  /** The pending list was full of stronger requests: this one was not kept (retrying later is accepted). */
+  | { status: 'evicted'; evicted: string; total: number }
   | { status: 'auto-grant'; tier: Tier; scope: GrantScope }
   | { status: 'blocked' | 'duplicate' | 'invalid' | 'already-contact' | 'rate-limited' };
 
@@ -233,7 +235,19 @@ export interface ContactBookState {
    * of fresh ids can evict, so a declined request can't come back on replay.
    */
   declined: string[];
+  /** Pending requests dropped because the list was full (shown to the human: someone may be flooding us). */
+  pendingEvicted?: number;
   rate: Record<string, number[]>;
+}
+
+/** Eviction order for a full pending list: smaller goes first. */
+function pendingRank(p: PendingRequest): [number, number, string] {
+  const direct = isAgentId(p.request.to_hint) ? 1 : 0; // sent to our card, not posted on a public topic
+  return [BINDING_STRENGTH[p.binding] ?? 0, direct, p.received];
+}
+
+function rankLess(a: [number, number, string], b: [number, number, string]): boolean {
+  return a[0] !== b[0] ? a[0] < b[0] : a[1] !== b[1] ? a[1] < b[1] : a[2] < b[2];
 }
 
 const SEEN_LIMIT = 5000;
@@ -323,14 +337,29 @@ export class ContactBook {
     if (this.state.policy === 'allow') return { status: 'blocked' }; // allow = allowlist only
     // Bounded: keys cost an attacker nothing, so the overall cap is what holds.
     const all = Object.values(this.state.pending);
-    if (all.filter((p) => p.request.from === req.from).length >= PENDING_PER_SENDER) return { status: 'rate-limited' };
-    if (all.length >= PENDING_LIMIT) {
-      const oldest = all.reduce((a, b) => (a.received <= b.received ? a : b));
-      delete this.state.pending[oldest.request.id];
+    if (all.filter((p) => p.request.from === req.from).length >= PENDING_PER_SENDER) {
+      this.unmarkSeen(req.id); // a later retry from this sender is welcome
+      return { status: 'rate-limited' };
     }
     const pending: PendingRequest = { request: req, binding, received: now.toISOString() };
+    if (all.length >= PENDING_LIMIT) {
+      // Evict the weakest: lowest binding, then topic probes before requests
+      // sent to our card, then the oldest. The newcomer competes too.
+      const victim = [...all, pending].reduce((a, b) => (rankLess(pendingRank(b), pendingRank(a)) ? b : a));
+      this.state.pendingEvicted = (this.state.pendingEvicted ?? 0) + 1;
+      this.unmarkSeen(victim.request.id); // so the requester's retry is accepted
+      if (victim === pending) return { status: 'evicted', evicted: req.id, total: this.state.pendingEvicted };
+      delete this.state.pending[victim.request.id];
+      this.state.pending[req.id] = pending;
+      return { status: 'pending', pending, evicted: { id: victim.request.id, total: this.state.pendingEvicted } };
+    }
     this.state.pending[req.id] = pending;
     return { status: 'pending', pending };
+  }
+
+  private unmarkSeen(id: string): void {
+    const i = this.state.seenIds.lastIndexOf(id);
+    if (i >= 0) this.state.seenIds.splice(i, 1);
   }
 
   /** The human approved (or the allowlist did): record the relationship we granted. */

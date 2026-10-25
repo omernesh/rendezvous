@@ -222,6 +222,8 @@ describe('event log (security review M1)', () => {
     const flooded = toModelEvent({ event: 'probe-overflow', request_ref: '00000000-0000-4000-8000-0000000000aa', to_hint: 'alice@x.com', dropped: 3 }, false)!;
     expect(flooded).toMatchObject({ type: 'probe_flooded', probe_for: 'alice@x.com', dropped: 3 });
     expect(String(flooded.next_step)).toContain('by card');
+    expect(toModelEvent({ event: 'pending-evicted', total: 1 }, false)).toMatchObject({ type: 'pending_flooded', dropped_requests: 1 });
+    expect(toModelEvent({ event: 'pending-evicted', total: 2 }, false)).toBeNull(); // rate-limited in the log
   });
 });
 
