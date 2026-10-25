@@ -27,6 +27,7 @@ const KINDS = [
   'duplicate',
   'ignored',
   'invalid',
+  'unsupported',
 ];
 const state = oneOf(TASK_STATES);
 /** Events kept in memory (events.jsonl keeps EVENTS_FILE_KEPT lines and is compacted at twice that). */
@@ -83,6 +84,8 @@ function dinnerSummary(e: Raw): string {
     case 'ignored':
     case 'invalid':
       return `Ignored a negotiation message from ${peer}.`;
+    case 'unsupported':
+      return `${peer}'s agent cannot process a dinner message we sent (its software does not support it).`;
     default:
       return `Negotiation update with ${peer}.`;
   }
@@ -208,7 +211,9 @@ export function toModelEvent(e: Raw, negotiating: boolean): Omit<McpEvent, 'n' |
               '(an approval form, or the confirm phrase they read in their own terminal). If not, use action "cancel".'
             : e.kind === 'meeting-canceled'
               ? 'Tell your user that this agreed dinner was called off and is no longer in their calendar.'
-              : undefined,
+              : e.kind === 'unsupported'
+                ? "Tell your user that the other person's agent did not understand our last dinner message. If it was a cancellation, they may still expect your user: your user should tell them directly."
+                : undefined,
 
         reason: e.reason === undefined ? undefined : untrusted(e.reason),
         peer_text: peerText?.length ? peerText : undefined,

@@ -56,7 +56,10 @@
   slots, deduplication by `messageId`, cancellation, resend bounds, and
   persisting state before send. Amended: agreement is an accept → confirm
   handshake (`meeting/confirm`) with tentative, exclusive holds, and each
-  human confirms the specific meeting (§5.5, §7.3; was §11.8).
+  human confirms the specific meeting (§5.5, §7.3; was §11.8). Amended: new
+  verbs are A2A extensions, advertised on the card; a receiver answers what
+  it does not support instead of dropping it, and ignores `metadata`
+  (§4.3, §7.5; was §11.11).
 - **Elsewhere:** threat-model rows (§8), probe privacy (§9), new open problems
   (§11), phases aligned with the implementation plan (§12), MCP consent and
   inbox semantics (§13).
@@ -232,6 +235,8 @@ Rules:
 - `rendezvous` is ordered by preference; `pref: 0` entries (like DNS TXT) are
   lookup hints rather than delivery addresses.
 - The card is versioned (`v`), signed, and revocable via expiry.
+- `capabilities` also lists the A2A extension URIs the agent supports for
+  the meeting verbs, which is how a peer learns what it may send (§7.5).
 - **Changing a card.** An agent may list several addresses, and its owner
   may add or remove them at any time. Each change re-signs the card with a
   `created` later than the previous card's (`v` is the schema version and
@@ -850,7 +855,9 @@ and `contextId` are UUIDs; one `contextId` covers one negotiation.
 A message has human parts (`text`) and one machine part (`data`) whose
 `data.rdv` names the verb (§7.2). Text parts are for humans and never drive
 anything (§5.6). Receivers validate strictly and reject unknown keys, unknown
-verbs and non-UUID IDs.
+verbs and non-UUID IDs; §7.5 says which unknowns are answered as unsupported
+and which are ignored. Each message lists the extension URI of its verb in
+`extensions` (§7.5).
 
 ### 7.2 Meeting verbs
 
@@ -867,7 +874,8 @@ verbs and non-UUID IDs.
 A slot is `{"start", "end"}`, RFC 3339 date-times with an explicit offset
 (`Z` or `±HH:MM`), compared as instants, so an accept may write the slot in
 another offset; at most 12 hours long. `expires` defaults to 48 hours and a
-receiver clamps it to 7 days. How to extend the verb set is open (§11).
+receiver clamps it to 7 days. New verbs are added as A2A extensions (§7.5);
+`meeting/cancel` is the first.
 
 ### 7.3 Task states
 
@@ -909,8 +917,12 @@ peer can only free time this way, never commit it. A `meeting/cancel` for a
 task that already ended is answered with its status and changes nothing, and
 a later negotiation of the same slot is a new task that it never touches.
 Likewise, a peer reporting `canceled` or `rejected` for a task the receiver
-completed releases it (the confirm crossed a cancel or arrived too late). An
-agent that predates the verb drops it as unknown and keeps the meeting.
+completed releases it (the confirm crossed a cancel or arrived too late).
+`meeting/cancel` is an extension (§7.5): an agent that does not support it
+answers it as unsupported and keeps the meeting, and an agent that predates
+§7.5 drops it silently, so before sending it the sender checks the peer's
+card and, when the card does not advertise it, tells its human to let the
+other person know directly.
 
 ### 7.4 Scope and defaults
 
@@ -928,6 +940,109 @@ Peer state is bounded: only a meeting-capable grant may create tasks (or
 tombstones); a receiver SHOULD cap tasks per peer (reference: 32, evicting
 finished ones and tombstones first and refusing when all are pending) and
 prune finished tasks (reference: after 30 days).
+
+### 7.5 Extending the meeting verbs
+
+**Spec change** (issue #4; resolves §11.11). The verb set grows:
+`meeting/confirm` and `meeting/cancel` both came after the first draft, and
+validation is strict (§7.1), so an agent rejects whatever it does not know.
+Two ways to extend it were compared.
+
+- **(a) A version field in our payload**, such as `data.v: 2` or a protocol
+  version in `metadata`, with a version on the card (`rdv/v2`).
+- **(b) A2A extension URIs.** A2A v0.3 names each extension by a URI
+  (`AgentCard.capabilities.extensions`, entries `{uri, description,
+  required, params}`), lists the URIs relevant to a message in
+  `Message.extensions`, puts extension data in `metadata` keyed by the URI,
+  and requires a new URI for a breaking change. Extensions may constrain
+  `DataPart`s but may not add fields to A2A's own objects or new enum values
+  such as task states. Rendezvous has no A2A agent card; its address card
+  (§4.3) plays that role.
+
+| | (a) version field | (b) extension URIs |
+|---|---|---|
+| Old peer receives it | A strict parser rejects the unknown `v` key, so *every* message of the new version fails, not only the new verb; in `metadata` the version is ignored and the old peer fails on the verb anyway | Only a message with the new verb fails; every other message is unchanged, and rev-3 parsers already accept `extensions` |
+| `meeting/cancel` | Version 2 = rev 3 + cancel. A sender must downgrade each peer to version 1 to keep negotiating with it, which needs discovery anyway | Its own URI, `…/ext/meeting-cancel/v1`, independent of every other verb |
+| Granularity | Linear: version 3 implies all of version 2, so a peer cannot support one later feature without the ones before it | Per feature; each URI is immutable |
+| Discovery | One number on the card | The URIs on the card (`capabilities`) |
+| A2A | Ours alone | Native: an A2A gateway maps the URIs to `AgentExtension` entries |
+| Cost | One integer | About 50 bytes per message |
+
+Neither option changes how an agent already deployed behaves: an agent from
+before this section drops an unknown verb silently. What helps there is
+knowing in advance, which is discovery. The two candidates are the card and
+the grant scope. The scope is a permission one human gives one peer (§5.3);
+putting what software can do next to what a person may do would put feature
+upgrades under consent and need a new grant per contact for each one. The
+card describes the agent, is signed, travels with every request and grant,
+and already has `capabilities`. The limit is staleness: a contact holds the
+card it received with the request or grant, and no message announces a newer
+one (§4.3), so a peer that upgrades still looks old. That errs on the safe
+side: we warn when we did not need to.
+
+**Recommendation: (b), with the card as the discovery channel.** The rules:
+
+1. **Extension URIs.** `https://rendezvous.nesher.co/ext/meetings/v1` covers
+   `meeting/propose`, `meeting/counter`, `meeting/accept`, `meeting/confirm`,
+   `meeting/decline`, `rdv/cancel` and the unsupported reply (rule 5).
+   `https://rendezvous.nesher.co/ext/meeting-cancel/v1` covers
+   `meeting/cancel`. A URI never changes meaning: a breaking change gets a
+   new URI, and a new verb is a new extension.
+2. **Advertising.** An agent lists the URIs it supports in its card's
+   `capabilities`, after `rdv/v1` and `a2a/0.3`. A card that lists none
+   predates this section: assume nothing optional about it.
+3. **Sending.** Each message lists the URI of its verb in
+   `message.extensions`. A sender SHOULD NOT send a verb whose extension the
+   peer's card does not advertise. When a human's decision has to go out
+   anyway (a `meeting/cancel`), the sender sends it and tells its human that
+   the peer may not act on it, so the humans can settle it directly.
+4. **Receiving.** Unknowns fall into three classes:
+   - *Critical, answered as unsupported*: an unknown verb; a verb of an
+     extension the receiver does not support; an unknown key anywhere
+     inside `data` (slots and `place` included); an unknown part kind.
+   - *Ignorable, accepted*: `metadata` on a message, a part or a status
+     update, whatever it holds, and URIs in `message.extensions` that the
+     receiver does not know. Whether a message is understood is decided by
+     its `data`, never by that list.
+   - *Malformed, dropped silently as before*: everything else, including
+     unknown keys in A2A's own objects (A2A forbids extensions to add them)
+     and unknown task states (nor new enum values).
+
+   So an extension puts data a receiver may ignore in `metadata`, keyed by
+   its URI, and anything that changes the meaning of a message in `data`,
+   which only peers that advertise the extension receive.
+5. **The unsupported reply.** A receiver that refuses a message as
+   unsupported answers with a status update that carries its real state for
+   the task (or `rejected` if it has none) and, under the key
+   `<meetings URI>/unsupported`, the refused `messageId` and its verb:
+
+   ```json
+   { "type": "a2a/task-update", "update": {
+       "kind": "status-update", "taskId": "<taskId>", "contextId": "<contextId>",
+       "status": { "state": "completed", "timestamp": "…" }, "final": true,
+       "metadata": { "https://rendezvous.nesher.co/ext/meetings/v1/unsupported":
+         { "messageId": "<the refused messageId>", "verb": "meeting/cancel" } } } }
+   ```
+
+   It changes no state on either side beyond what the status already means
+   (§7.3). It goes only to the peer the task belongs to, with the same
+   `contextId`; for a task the receiver does not have, only within a
+   meeting-capable grant; never in answer to a status update; and a receiver
+   bounds it per task (reference: 8). The sender tells its human. The verb
+   is echoed by the peer, so the sender names it only if it is a verb the
+   sender knows. A rev-3 parser accepts this update, since `metadata` is
+   free-form.
+
+**`meeting/cancel` under each.** Under (a) it would have been version 2: a
+rev-3 agent receiving any version-2 message rejects it, so the canceling
+agent must remember which peers speak version 1 and talk version 1 to them,
+and the cancel itself still fails there, silently. Under (b) it is
+`…/ext/meeting-cancel/v1`: the canceling agent reads the peer's card, sends
+the cancel, and, when the card does not list the URI, tells its human that
+the other agent may keep the dinner. An agent that knows §7.5 but not this
+extension answers unsupported, and the sender learns it in-band. Both close
+the gap left open in §11.8 as far as a protocol can: the canceling side now
+knows.
 
 ---
 
@@ -1027,9 +1142,11 @@ prune finished tasks (reference: after 30 days).
    call off an agreed meeting, and a peer's `canceled` or `rejected` status
    now releases a meeting the receiver completed, which closes the race where
    a confirm is delayed past the accepter's grace period or crosses the
-   accepter's owner's cancel. Still open: an agent that predates the verb
-   ignores it and keeps the meeting, and nothing tells the canceling side;
-   the humans have to sort that out.
+   accepter's owner's cancel. An agent that predates the verb still ignores
+   it and keeps the meeting, but the canceling side now knows: the peer's
+   card does not advertise the verb, or its agent answers unsupported (§7.5),
+   and the canceling agent tells its human to settle it directly. Still open:
+   a peer that upgraded keeps looking old until a newer card reaches us.
 
 9. **No forward secrecy.** Envelopes are encrypted to a static recipient key
    (§6.4). Conversation-scoped keys from the handshake are future work.
@@ -1037,8 +1154,9 @@ prune finished tasks (reference: after 30 days).
     `seq` state for any validly signed envelope before deciding whether to
     admit the sender, so every fresh key cost it memory. It now keeps channel
     state only for senders it admits or asked (§6.4).
-11. **Extending the meeting verbs.** Validation is strict (§7.2); whether
-    extensions use a version field or an A2A extension URI is undecided.
+11. **Extending the meeting verbs** (resolved). New verbs are A2A extension
+    URIs advertised in the card's `capabilities`; unknown verbs and `data`
+    fields are answered as unsupported, `metadata` is ignorable (§7.5).
 
 ---
 

@@ -1539,13 +1539,21 @@ export class RdvMcpServer {
           `Or they can run "rdv dinner cancel ${taskId}" themselves.`,
       );
     }
-    const step = await this.boundStep(snap, () => cancelMeeting(home.readNegotiations(), taskId, { now: new Date() }, { reason, expected: snap }));
+    const step = await this.boundStep(snap, () => {
+      // The peer's card says whether its agent understands meeting/cancel (SPEC §7.5).
+      const { contacts } = (home.readAgentState() as AgentState).book;
+      const peerCapabilities = Object.hasOwn(contacts, task.peer) ? contacts[task.peer].card?.capabilities : undefined;
+      return cancelMeeting(home.readNegotiations(), taskId, { now: new Date() }, { reason, expected: snap, peerCapabilities });
+    });
     if (!step) return this.meetingChanged(taskId, 'canceled');
     await this.publishSteps(step.events);
+    const unsupported = step.events.some((e) => e.kind === 'unsupported');
     return {
       task_id: safe(taskId),
       state: step.state.tasks[taskId]?.state,
-      next: 'Canceled: the dinner was removed from your calendar and their agent was told.',
+      next: unsupported
+        ? "Canceled here and removed from your calendar, but their agent does not advertise dinner cancellation and may keep the dinner. Tell your user to let the other person know directly."
+        : 'Canceled: the dinner was removed from your calendar and their agent was told.',
     };
   }
 

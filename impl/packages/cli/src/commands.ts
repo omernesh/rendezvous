@@ -20,7 +20,7 @@ import {
   topicForHint,
   verifyCard,
 } from '@rendezvous/core';
-import { cancel, cancelMeeting, confirmMeeting, describeSlot, meetingSnapshot, NegotiationError, type NegotiationTask, parseInstant, propose, type Step } from '@rendezvous/a2a';
+import { cancel, cancelMeeting, cardCapabilities, confirmMeeting, describeSlot, meetingSnapshot, NegotiationError, type NegotiationTask, parseInstant, propose, type Step } from '@rendezvous/a2a';
 import { candidateDigest, describeApproval, reissueForDisplay, requestSubject, type ShownPhrase } from './consent.js';
 import { CliError, type Config, type ConfigAddress, type ConsentAction, consentKey, Home, type InboxEntry, parseJsonLines } from './home.js';
 
@@ -152,6 +152,8 @@ export async function initHome(home: Home, opts: InitOptions): Promise<{ id: str
       rendezvous: relays.map((relay, i) => ({ type: 'nostr' as const, relay, pref: i + 1 })),
       discovery: addresses.length ? { addresses, public_pointer: publicPointer } : undefined,
       policy: config.policy,
+      // The meeting extensions we support, so contacts learn them from the card (SPEC §7.5).
+      capabilities: cardCapabilities(),
     });
     home.writeConfig(config);
     home.writeAgentState(a.toJSON());
@@ -711,7 +713,11 @@ export async function dinnerCancel({ home, out, values, positionals }: Ctx): Pro
   await ownerStep(home, out, str(values.calendar), () => {
     const state = home.readNegotiations();
     const task = Object.hasOwn(state.tasks, taskId) ? state.tasks[taskId] : undefined;
-    return task?.state === 'completed' ? cancelMeeting(state, taskId, { now: new Date() }, { reason }) : cancel(state, taskId, { now: new Date() }, reason);
+    if (task?.state !== 'completed') return cancel(state, taskId, { now: new Date() }, reason);
+    // The peer's card says whether its agent understands meeting/cancel (SPEC §7.5).
+    const { contacts } = home.readAgentState().book;
+    const peerCapabilities = Object.hasOwn(contacts, task.peer) ? contacts[task.peer].card?.capabilities : undefined;
+    return cancelMeeting(state, taskId, { now: new Date() }, { reason, peerCapabilities });
   });
 }
 

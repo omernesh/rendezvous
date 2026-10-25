@@ -5,7 +5,9 @@ import {
   awaitingHuman,
   cancel,
   cancelMeeting,
+  cardCapabilities,
   CONFIRM_GRACE_MS,
+  EXTENSIONS,
   confirmMeeting,
   type Effect,
   type Ctx,
@@ -22,14 +24,20 @@ import {
   type NegotiationState,
   NegotiationError,
   type Outgoing,
+  parsePayload,
   parseWindow,
+  peerAdvertises,
   propose,
   receive,
   sameMeeting,
   type Slot,
   type Span,
   sameSpan,
+  SUPPORTED_EXTENSIONS,
   toSpan,
+  UNSUPPORTED_KEY,
+  type Verb,
+  VERB_EXTENSION,
 } from '../src/index.js';
 
 const OMER = 'rdv1:omer';
@@ -909,6 +917,185 @@ describe('canceling an agreed meeting (issue #20)', () => {
     expect([task(omer, p.taskId).state, task(john, p.taskId).state]).toEqual(['canceled', 'canceled']);
     expect([omer.holds, john.holds]).toEqual([[], []]);
     expect(omer.events.find((e) => e.kind === 'meeting-canceled')).toMatchObject({ reason: 'peer reports canceled' });
+  });
+});
+
+describe('extensions (SPEC §7.5, issue #4)', () => {
+  type Msg = Extract<A2APayload, { type: 'a2a/message' }>;
+  type Upd = Extract<A2APayload, { type: 'a2a/task-update' }>;
+  const agreed = () => {
+    const omer = side(OMER, 1);
+    const john = side(JOHN, 2, { busy: [evening(0)] });
+    const { taskId, wire } = start(omer, john);
+    expect([task(omer, taskId).state, task(john, taskId).state]).toEqual(['completed', 'completed']);
+    return { omer, john, taskId, wire };
+  };
+  /** A message as a peer running some later version would send it. */
+  const future = (data: Record<string, unknown>, ids: { taskId: string; contextId: string; messageId?: string }): Msg => ({
+    type: 'a2a/message',
+    message: {
+      kind: 'message',
+      messageId: ids.messageId ?? '00000000-0000-4000-8eee-000000000001',
+      taskId: ids.taskId,
+      contextId: ids.contextId,
+      role: 'agent',
+      parts: [
+        { kind: 'text', text: 'Can we move it?' },
+        { kind: 'data', data: data as never },
+      ],
+      extensions: ['https://rendezvous.nesher.co/ext/meeting-reschedule/v1'],
+    },
+  });
+
+  it('every message names the extension of its verb', () => {
+    const { wire } = agreed();
+    for (const o of wire) {
+      if (o.payload.type !== 'a2a/message') continue;
+      const verb = (o.payload.message.parts.find((p) => p.kind === 'data') as { data: { rdv: Verb } }).data.rdv;
+      expect(o.payload.message.extensions).toEqual([VERB_EXTENSION[verb]]);
+    }
+    const { omer, taskId } = agreed();
+    const c = cancelMeeting(omer.state, taskId, ctxOf(omer));
+    expect((c.outgoing[0].payload as Msg).message.extensions).toEqual([EXTENSIONS.meetingCancel]);
+  });
+
+  it('an old-style peer gets meeting/cancel, answers unsupported, and the sender learns it (NOTES 61 open item)', () => {
+    const { omer, john, taskId } = agreed();
+    // John's agent predates meeting/cancel: it supports only the base meeting extension.
+    const oldJohn = { ...ctxOf(john), extensions: [EXTENSIONS.meeting] };
+    const c = cancelMeeting(omer.state, taskId, ctxOf(omer));
+    apply(omer, c);
+    const r = receive(john.state, OMER, c.outgoing[0].payload, oldJohn);
+    apply(john, r);
+    // John keeps the meeting (he cannot honor the verb), but says so instead of dropping it.
+    expect(task(john, taskId).state).toBe('completed');
+    expect(r.effects).toEqual([]);
+    expect(r.events).toEqual([expect.objectContaining({ kind: 'invalid', taskId, reason: expect.stringMatching(/unsupported verb "meeting\/cancel"/) })]);
+    expect(r.outgoing).toHaveLength(1);
+    const reply = r.outgoing[0].payload as Upd;
+    expect(reply.update).toMatchObject({ taskId, contextId: task(john, taskId).contextId, status: { state: 'completed' }, final: true });
+    expect(reply.update.metadata).toEqual({ [UNSUPPORTED_KEY]: { messageId: (c.outgoing[0].payload as Msg).message.messageId, verb: 'meeting/cancel' } });
+    // A pre-§7.5 parser accepts the reply too: metadata is free-form there.
+    expect(parsePayload(reply, { extensions: [EXTENSIONS.meeting] }).ok).toBe(true);
+
+    const back = receive(omer.state, JOHN, reply, ctxOf(omer));
+    apply(omer, back);
+    expect(back.events).toContainEqual(
+      expect.objectContaining({ kind: 'unsupported', taskId, peer: JOHN, reason: "the peer's agent does not support meeting/cancel" }),
+    );
+    expect(task(omer, taskId)).toMatchObject({ state: 'canceled', peerState: 'completed' });
+    expect(back.outgoing).toEqual([]); // updates are never answered: no loop
+  });
+
+  it('capability discovery: the peer card says up front whether meeting/cancel will be understood', () => {
+    expect(cardCapabilities()).toEqual(['rdv/v1', 'a2a/0.3', EXTENSIONS.meeting, EXTENSIONS.meetingCancel]);
+    expect(SUPPORTED_EXTENSIONS).toEqual([EXTENSIONS.meeting, EXTENSIONS.meetingCancel]);
+    expect(peerAdvertises(cardCapabilities(), 'meeting/cancel')).toBe(true);
+    expect(peerAdvertises(cardCapabilities([EXTENSIONS.meeting]), 'meeting/cancel')).toBe(false);
+    expect(peerAdvertises(cardCapabilities([EXTENSIONS.meeting]), 'meeting/propose')).toBe(true);
+    expect(peerAdvertises(['rdv/v1', 'a2a/0.3'], 'meeting/propose')).toBe(false); // a card from before §7.5 advertises nothing
+    expect(peerAdvertises(undefined, 'meeting/cancel')).toBe(false);
+
+    const { omer, taskId } = agreed();
+    const legacy = cancelMeeting(omer.state, taskId, ctxOf(omer), { peerCapabilities: ['rdv/v1', 'a2a/0.3'] });
+    expect(legacy.events.map((e) => e.kind)).toEqual(['meeting-canceled', 'unsupported']);
+    expect(legacy.events[1]).toMatchObject({ taskId, peer: JOHN, state: 'canceled', reason: expect.stringMatching(/does not advertise meeting\/cancel/) });
+    expect(verbs(legacy.outgoing)).toEqual(['meeting/cancel']); // still sent: harmless, and a newer agent honors it
+    for (const peerCapabilities of [cardCapabilities(), undefined]) {
+      expect(cancelMeeting(omer.state, taskId, ctxOf(omer), { peerCapabilities }).events.map((e) => e.kind)).toEqual(['meeting-canceled']);
+    }
+  });
+
+  it('a verb from the future is answered unsupported, only to its own peer and bounded', () => {
+    const { omer, john, taskId } = agreed();
+    const contextId = task(john, taskId).contextId;
+    const m = future({ rdv: 'meeting/reschedule', slot: evening(2, 19, 21) }, { taskId, contextId });
+    const r = receive(john.state, OMER, m, ctxOf(john));
+    expect(r.outgoing).toHaveLength(1);
+    expect((r.outgoing[0].payload as Upd).update).toMatchObject({ status: { state: 'completed' }, metadata: { [UNSUPPORTED_KEY]: { verb: 'meeting/reschedule' } } });
+    expect(r.state.tasks[taskId].state).toBe('completed');
+    // The sender's notice names only verbs it knows; an echo of another verb gets a generic reason.
+    const back = receive(omer.state, JOHN, r.outgoing[0].payload, ctxOf(omer));
+    expect(back.events).toContainEqual(expect.objectContaining({ kind: 'unsupported', reason: "the peer's agent does not support one of our messages" }));
+
+    // Another peer naming this task, or the right peer with another context: no reply.
+    expect(receive(john.state, MALLORY, m, ctxOf(john)).outgoing).toEqual([]);
+    expect(receive(john.state, OMER, future({ rdv: 'meeting/reschedule' }, { taskId, contextId: john.newId() }), ctxOf(john)).outgoing).toEqual([]);
+    // A task we do not have: `rejected`, but only within a meeting-capable grant.
+    const fresh = { taskId: john.newId(), contextId: john.newId() };
+    const u = receive(john.state, OMER, future({ rdv: 'meeting/poll', options: [] }, fresh), ctxOf(john));
+    expect((u.outgoing[0].payload as Upd).update).toMatchObject({ ...fresh, status: { state: 'rejected' }, final: true });
+    expect(u.state.tasks[fresh.taskId]).toBeUndefined(); // no state for a stranger's task
+    expect(receive(john.state, OMER, future({ rdv: 'meeting/poll' }, fresh), { ...ctxOf(john), scope: { may_propose_meetings: false } }).outgoing).toEqual([]);
+    // Replays are capped per task.
+    let s = john.state;
+    let sent = 0;
+    for (let i = 0; i < FINISHED_REPLIES + 5; i++) {
+      const step = receive(s, OMER, future({ rdv: 'meeting/reschedule' }, { taskId, contextId, messageId: john.newId() }), ctxOf(john));
+      s = step.state;
+      sent += step.outgoing.length;
+    }
+    expect(sent).toBe(FINISHED_REPLIES);
+  });
+
+  it('unknown critical fields reject as unsupported; malformed input is still dropped silently', () => {
+    const omer = side(OMER, 1);
+    const john = side(JOHN, 2);
+    const p = propose(omer.state, JOHN, ctxOf(omer));
+    const good = p.outgoing[0].payload as Msg;
+    const withData = (f: (d: Record<string, unknown>) => void): Msg => {
+      const x = structuredClone(good);
+      f((x.message.parts.find((q) => q.kind === 'data') as { data: Record<string, unknown> }).data);
+      return x;
+    };
+    // An unknown key in `data` changes the meaning, so it is critical: refused, and the sender is told.
+    for (const m of [
+      withData((d) => (d.recurrence = 'weekly')),
+      withData((d) => (d.place = { name: 'Cafe', address: 'Main St 1' })),
+      withData((d) => ((d.slots as Record<string, unknown>[])[0].tz = 'Asia/Jerusalem')),
+    ]) {
+      const r = receive(john.state, OMER, m, ctxOf(john));
+      expect(r.events).toEqual([expect.objectContaining({ kind: 'invalid', reason: expect.stringMatching(/unknown field/) })]);
+      expect(r.state.tasks).toEqual({});
+      expect(r.outgoing).toEqual([expect.objectContaining({ payload: expect.objectContaining({ type: 'a2a/task-update' }) })]);
+      expect((r.outgoing[0].payload as Upd).update.metadata).toEqual({ [UNSUPPORTED_KEY]: { messageId: good.message.messageId, verb: 'meeting/propose' } });
+    }
+    // Malformed (a missing field, a bad slot, a bad id): no reply, as before.
+    for (const m of [
+      withData((d) => delete d.slots),
+      withData((d) => (d.expires = 'tomorrow')),
+      { ...good, message: { ...good.message, taskId: 'not-a-uuid' } },
+    ]) {
+      const r = receive(john.state, OMER, m, ctxOf(john));
+      expect(r.events.map((e) => e.kind)).toEqual(['invalid']);
+      expect(r.outgoing).toEqual([]);
+    }
+  });
+
+  it('unknown ignorable fields are accepted: metadata anywhere and unknown extension URIs', () => {
+    const omer = side(OMER, 1);
+    const john = side(JOHN, 2, { busy: [evening(0)] });
+    const p = propose(omer.state, JOHN, ctxOf(omer));
+    apply(omer, p);
+    const m = structuredClone(p.outgoing[0].payload as Msg);
+    const ext = 'https://rendezvous.nesher.co/ext/dress-code/v1';
+    m.message.extensions = [...(m.message.extensions ?? []), ext];
+    m.message.metadata = { [ext]: { code: 'smart casual' } };
+    for (const part of m.message.parts) part.metadata = { [`${ext}/hint`]: [1, 2, 3] };
+    const r = receive(john.state, OMER, m, ctxOf(john));
+    apply(john, r);
+    expect(r.events.map((e) => e.kind)).toEqual(['offer-received', 'accepted']);
+    // The rest of the negotiation runs as usual, and update metadata we do not know is ignored too.
+    const back = r.outgoing.map((o) => o.payload);
+    const confirm = receive(omer.state, JOHN, back[0], ctxOf(omer));
+    apply(omer, confirm);
+    const done = receive(john.state, OMER, confirm.outgoing[0].payload, ctxOf(john));
+    apply(john, done);
+    const ack = structuredClone(done.outgoing[0].payload as Upd);
+    ack.update.metadata = { [ext]: { seen: true }, [UNSUPPORTED_KEY]: 'not a notice' };
+    const last = receive(omer.state, JOHN, ack, ctxOf(omer));
+    expect(last.events.map((e) => e.kind)).toEqual(['status']);
+    expect([task(omer, p.taskId).state, task(john, p.taskId).state]).toEqual(['completed', 'completed']);
   });
 });
 
