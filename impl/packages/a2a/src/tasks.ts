@@ -889,10 +889,28 @@ function executorTask(run: Run, taskId: string): TaskRecord & { approval: Approv
   return task as TaskRecord & { approval: ApprovalClass };
 }
 
+/**
+ * Before acting on or sending anything for a peer's task, re-check that we
+ * still implement its capability and that the current grant still allows it
+ * (`invoke` may have been narrowed or revoked since the task arrived). If not,
+ * the task ends with code `scope` (`rejected` if it never started, else
+ * `failed`), the work is aborted and the peer told; nothing else is sent.
+ */
+function scopeLost(run: Run, task: TaskRecord): boolean {
+  if (run.ctx.registry.get(task.capability) && invokeLimits(run.ctx.invoke, task.capability)) return false;
+  const started = task.state !== 'submitted';
+  run.setState(task, started ? 'failed' : 'rejected', { reason: 'the grant no longer allows this capability', code: 'scope' });
+  run.effects.push({ kind: 'abort', taskId: task.id, peer: task.peer, capability: task.capability, code: 'scope' });
+  run.status(task);
+  run.event({ kind: started ? 'failed' : 'rejected', taskId: task.id, peer: task.peer, state: task.state, capability: task.capability, code: 'scope', reason: task.reason });
+  return true;
+}
+
 /** The start gate passed (our human approved, or a policy did): act on the task. */
 export function startTask(state: TaskEngineState, taskId: string, ctx: TaskCtx): TaskStep {
   const run = new Run(state, ctx);
   const task = executorTask(run, taskId);
+  if (scopeLost(run, task)) return run.result();
   if (!task.gate) throw new TaskError(`task ${taskId} is not waiting for approval`);
   if (run.expireIfDue(task)) return run.result();
   const step = task.gate.step;
@@ -937,6 +955,7 @@ function statusMessage(run: Run, task: TaskRecord, cap: Capability, content: { t
 export function askInput(state: TaskEngineState, taskId: string, ctx: TaskCtx, content: { text?: string; data?: Record<string, unknown> }, opts: ReleaseOptions = {}): TaskStep {
   const run = new Run(state, ctx);
   const task = executorTask(run, taskId);
+  if (scopeLost(run, task)) return run.result();
   if (task.state !== 'working' || task.gate) throw new TaskError(`task ${taskId} is not being worked on`);
   if (task.inputs >= TASK_BOUNDS.inputsPerTask) throw new TaskError(`the requester may answer at most ${TASK_BOUNDS.inputsPerTask} times`);
   const cap = ctx.registry.get(task.capability);
@@ -966,6 +985,7 @@ export function sendArtifact(
 ): TaskStep & { artifactId: string } {
   const run = new Run(state, ctx);
   const task = executorTask(run, taskId);
+  if (scopeLost(run, task)) return { ...run.result(), artifactId: artifact.artifactId ?? '' };
   if (task.state !== 'working' || task.gate) throw new TaskError(`task ${taskId} is not being worked on`);
   const cap = ctx.registry.get(task.capability);
   if (!cap) throw new TaskError(`unknown capability ${task.capability}`);
@@ -1019,6 +1039,7 @@ export function finishTask(
 ): TaskStep {
   const run = new Run(state, ctx);
   const task = executorTask(run, taskId);
+  if (scopeLost(run, task)) return run.result();
   if (task.state === 'submitted' || task.gate) throw new TaskError(`task ${taskId} has not started; use rejectTask`);
   const cap = ctx.registry.get(task.capability);
   if (!cap) throw new TaskError(`unknown capability ${task.capability}`);
