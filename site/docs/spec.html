@@ -883,8 +883,9 @@ approve &lt;task-id&gt; --code &lt;code&gt;</code> and <code>rdv task release &l
 (<code>rdv_task</code> "approve-start", "approve-release"). A file of the owner's
 reaches a peer through the same release gate (<code>rdv task submit --file</code>,
 <code>rdv_task</code> "submit" with <code>files</code>), or in a request the owner sends from their
-own terminal (<code>rdv task request --file</code>); the MCP server attaches none to a
-request (§7.7, NOTES 77).</p>
+own terminal (<code>rdv task request --file</code>), which is held for the same release
+gate before it leaves; the MCP server attaches none to a request (§7.7,
+NOTES 77).</p>
 <h3 id="551-auto-approve-all-per-contact">5.5.1 Auto-approve-all per contact<a class="anchor" href="#551-auto-approve-all-per-contact" title="Link to this section" aria-label="Link to this section">#</a></h3>
 <p>(<strong>spec change</strong>, issue #25.) Approving every task by hand is safe and
 tiring. For a contact the owner trusts as much as their own agent, the owner

@@ -807,8 +807,9 @@ approve <task-id> --code <code>` and `rdv task release <task-id> --code
 (`rdv_task` "approve-start", "approve-release"). A file of the owner's
 reaches a peer through the same release gate (`rdv task submit --file`,
 `rdv_task` "submit" with `files`), or in a request the owner sends from their
-own terminal (`rdv task request --file`); the MCP server attaches none to a
-request (§7.7, NOTES 77).
+own terminal (`rdv task request --file`), which is held for the same release
+gate before it leaves; the MCP server attaches none to a request (§7.7,
+NOTES 77).
 
 ### 5.5.1 Auto-approve-all per contact
 
