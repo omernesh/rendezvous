@@ -2,6 +2,7 @@
 // one trusted contact, only while the owner's setting holds; every doubt
 // fails closed; every action is audited without peer text; only the owner's
 // own terminal turns it on.
+import { createHmac } from 'node:crypto';
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -10,10 +11,11 @@ import { type Agent, type Contact, fingerprint, generateKey, type GrantScope } f
 import { startTestRelay, type TestRelay } from '@rendezvous/core/testing';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { Listener, rdv } from '../scenarios/harness.js';
-import { checkAutoApprove, scopeDigest, setAutoApprove, subjectOf, sweepAutoApprove, turnOffAutoApprove } from '../src/autoapprove.js';
+import { checkAutoApprove, ownerBinding, scopeDigest, setAutoApprove, subjectOf, sweepAutoApprove, turnOffAutoApprove } from '../src/autoapprove.js';
 import { audit, contactAutoApprove, init, ownerSecretReset, ownerSecretSet, type Tty } from '../src/commands.js';
 import { AUDIT_KEPT, type AutoApproveEntry, Home } from '../src/home.js';
-import { hasOwnerSecret, storeOwnerSecret } from '../src/ownersecret.js';
+import { stable } from '../src/hash.js';
+import { clearOwnerSecret, hasOwnerSecret, ownerSecretInfo, RESET_COOLDOWN_MS, storeOwnerSecret } from '../src/ownersecret.js';
 import { Output } from '../src/output.js';
 import { approveRelease, hostRegistry, releaseDigest, submitDraft, tasksInbound } from '../src/tasks.js';
 
@@ -97,17 +99,89 @@ async function arrive(from = PEER, text = PEER_TEXT, capability = REQUEST_URI) {
 }
 
 describe('auto-approve in the gates', () => {
-  it('holds only while an owner passphrase is set: without one the gate waits, and the entry is kept for when it is set (issue #47)', async () => {
+  it('holds only under the passphrase it was set under: an unreadable file approves nothing and removes nothing; no passphrase ends it for good (issue #47)', async () => {
     setAutoApprove(home, subjectOf(f.agent), PEER, null);
+    const back = home.readAutoApprove();
+    writeFileSync(home.ownerSecretPath, '{ torn');
+    expect((await arrive()).task().state).not.toBe('working');
+    expect(sweepAutoApprove(home, subjectOf(f.agent)).ended).toEqual([]);
+    expect(Object.keys(home.readAutoApprove())).toEqual([PEER]);
+    // Gone, in a home with no trace of one (no audit line, no marker): none is set, so the entry ends, audited.
     rmSync(home.ownerSecretPath);
     const { task } = await arrive();
     expect(task().state).not.toBe('working');
-    expect(Object.keys(home.readAutoApprove())).toEqual([PEER]);
-    writeFileSync(home.ownerSecretPath, '{ torn');
-    expect((await arrive()).task().state).not.toBe('working');
-    rmSync(home.ownerSecretPath);
+    expect(home.readAutoApprove()).toEqual({});
+    expect(home.readAudit().at(-1)).toMatchObject({ gate: 'auto-approve', action: 'off', reason: 'owner-secret', peer: PEER });
+    // Setting one does not bring it back: the owner turns it on again.
     await storeOwnerSecret(home, 'OWNER-PASS set again');
+    home.writeAutoApprove(back);
+    expect((await arrive()).task().state).not.toBe('working');
+    expect(home.readAudit().at(-1)).toMatchObject({ action: 'off', reason: 'owner-secret' });
+    setAutoApprove(home, subjectOf(f.agent), PEER, null);
     expect((await arrive()).task().state).toBe('working');
+  });
+
+  it('a new passphrase, a change or a reset ends every entry set before it; set lists and audits them (issue #47)', async () => {
+    const s = subjectOf(f.agent);
+    setAutoApprove(home, s, PEER, null);
+    setAutoApprove(home, s, OTHER, null);
+    const underA = home.readAutoApprove();
+    rmSync(home.auditPath, { force: true });
+    // Passphrase B (a change): both entries end, at once, listed and audited.
+    expect((await storeOwnerSecret(home, 'OWNER-PASS number B', 'changed')).autoApproveOff.sort()).toEqual([PEER, OTHER].sort());
+    expect(home.readAutoApprove()).toEqual({});
+    expect(home.readAudit().map((a) => [a.gate, a.action, a.reason ?? null, a.peer])).toEqual([
+      ['auto-approve', 'off', 'owner-secret', PEER],
+      ['auto-approve', 'off', 'owner-secret', OTHER],
+      ['owner-secret', 'changed', null, 'owner'],
+    ]);
+    // An entry made under A, put back by hand (MAC still valid), does not hold under B.
+    home.writeAutoApprove(underA);
+    expect(checkAutoApprove(underA[PEER], s, PEER, new Date(), ownerBinding(home))).toEqual({ ok: false, reason: 'owner-secret' });
+    expect((await arrive()).task().state).not.toBe('working');
+    expect(sweepAutoApprove(home, s).ended).toEqual([{ peer: OTHER, reason: 'owner-secret' }]);
+    expect(home.readAutoApprove()).toEqual({});
+    // One set under B holds; the same passphrase typed again makes a new record, and ends it too.
+    setAutoApprove(home, s, PEER, null);
+    expect((await arrive()).task().state).toBe('working');
+    expect((await storeOwnerSecret(home, 'OWNER-PASS number B', 'changed')).autoApproveOff).toEqual([PEER]);
+    expect((await arrive()).task().state).not.toBe('working');
+    // A reset leaves no passphrase: an entry from before approves nothing and is removed.
+    setAutoApprove(home, s, PEER, null);
+    const beforeReset = home.readAutoApprove();
+    await clearOwnerSecret(home);
+    home.writeAutoApprove(beforeReset);
+    expect((await arrive()).task().state).not.toBe('working');
+    expect(home.readAutoApprove()).toEqual({});
+    expect(() => setAutoApprove(home, s, PEER, null)).toThrow(/rdv owner-secret set/);
+  });
+
+  it('an entry without the passphrase binding (made before it existed) approves nothing', async () => {
+    const e = setAutoApprove(home, subjectOf(f.agent), PEER, null).entry;
+    const { owner: _owner, mac: _mac, ...old } = e;
+    // Re-MACed by the agent itself, as the version before this binding wrote it: still nothing.
+    const legacy = { ...old, mac: createHmac('sha256', f.agent.key.secretKey).update(`rdv1/auto-approve\0${stable(old)}`).digest('hex') } as AutoApproveEntry;
+    expect(checkAutoApprove(legacy, subjectOf(f.agent), PEER, new Date(), ownerBinding(home))).toEqual({ ok: false, reason: 'owner-secret' });
+  });
+
+  it('a deleted owner-secret.json counts as a reset, not as never set: cooldown, banner, auto-approve off (issue #47)', async () => {
+    setAutoApprove(home, subjectOf(f.agent), PEER, null);
+    await storeOwnerSecret(home, 'OWNER-PASS for the gates', 'changed'); // an audit line: a passphrase existed
+    setAutoApprove(home, subjectOf(f.agent), PEER, null);
+    rmSync(home.ownerSecretPath);
+    expect(hasOwnerSecret(home)).toBe(false);
+    const info = ownerSecretInfo(home);
+    expect(info).toMatchObject({ set: null, missing: true, reset: expect.any(String), note: expect.stringMatching(/OWNER PASSPHRASE FILE DELETED .*A new one can be set after .*someone with access/) });
+    // The reset is written down when first noticed, so the cooldown runs from then and later reads keep it.
+    expect(JSON.parse(readFileSync(home.ownerSecretPath, 'utf8'))).toEqual({ v: 1, reset: info.reset, missing: true });
+    await expect(storeOwnerSecret(home, 'OWNER-PASS of the model')).rejects.toThrow(/reset: a new one can be set after/);
+    expect(hasOwnerSecret(home)).toBe(false);
+    expect((await arrive()).task().state).not.toBe('working');
+    expect(home.readAutoApprove()).toEqual({});
+    await expect(clearOwnerSecret(home)).rejects.toThrow(/nothing to reset/);
+    // After the cooldown, a new one can be set as after any reset.
+    expect((await storeOwnerSecret(home, 'OWNER-PASS after the wait', 'set', new Date(Date.now() + RESET_COOLDOWN_MS + 1000))).autoApproveOff).toEqual([]);
+    expect(hasOwnerSecret(home)).toBe(true);
   });
 
   it('a trusted contact: the start and the release pass without asking, every class; both are audited with no peer text', async () => {
@@ -163,24 +237,24 @@ describe('auto-approve in the gates', () => {
     // One that is still running holds until then, and not a moment past it.
     const until = new Date(Date.now() + 60_000);
     const e = setAutoApprove(home, subjectOf(f.agent), PEER, until.toISOString()).entry;
-    expect(checkAutoApprove(e, subjectOf(f.agent), PEER, new Date(until.getTime() - 1)).ok).toBe(true);
-    expect(checkAutoApprove(e, subjectOf(f.agent), PEER, until)).toEqual({ ok: false, reason: 'expired' });
+    expect(checkAutoApprove(e, subjectOf(f.agent), PEER, new Date(until.getTime() - 1), ownerBinding(home)).ok).toBe(true);
+    expect(checkAutoApprove(e, subjectOf(f.agent), PEER, until, ownerBinding(home))).toEqual({ ok: false, reason: 'expired' });
   });
 
   it('fails closed on a future-dated, NaN, malformed or forged entry, and on an unreadable clock', async () => {
     const s = subjectOf(f.agent);
     const good = setAutoApprove(home, s, PEER, null).entry;
     const now = new Date();
-    expect(checkAutoApprove(good, s, PEER, new Date(NaN))).toEqual({ ok: false, reason: 'clock' });
+    expect(checkAutoApprove(good, s, PEER, new Date(NaN), ownerBinding(home))).toEqual({ ok: false, reason: 'clock' });
     // Set in the future (a clock that went back): nothing, even with a valid MAC.
     const future = setAutoApprove(home, s, PEER, null, new Date(Date.now() + 3_600_000)).entry;
-    expect(checkAutoApprove(future, s, PEER, now)).toEqual({ ok: false, reason: 'invalid' });
+    expect(checkAutoApprove(future, s, PEER, now, ownerBinding(home))).toEqual({ ok: false, reason: 'invalid' });
     // Edited by hand (a later expiry, NaN, another peer): the MAC no longer matches.
     for (const bad of [{ until: '2999-01-01T00:00:00Z' }, { set: 'NaN' }, { until: 'not a time' }, { peer: OTHER }, { mode: 'some' }, { v: 2 }, { mac: '00'.repeat(32) }]) {
-      expect(checkAutoApprove({ ...good, ...bad } as AutoApproveEntry, s, PEER, now).ok, JSON.stringify(bad)).toBe(false);
+      expect(checkAutoApprove({ ...good, ...bad } as AutoApproveEntry, s, PEER, now, ownerBinding(home)).ok, JSON.stringify(bad)).toBe(false);
     }
     // Under another agent's key (copied from another home): nothing.
-    expect(checkAutoApprove(good, subjectOf(fake().agent), PEER, now)).toEqual({ ok: false, reason: 'invalid' });
+    expect(checkAutoApprove(good, subjectOf(fake().agent), PEER, now, ownerBinding(home))).toEqual({ ok: false, reason: 'invalid' });
     // A forged file in the home approves nothing, and is removed and audited at the gate.
     home.writeAutoApprove({ [PEER]: { ...good, until: '2999-01-01T00:00:00Z' } });
     const { task } = await arrive();
@@ -457,13 +531,38 @@ describe('rdv contact auto-approve and rdv audit', () => {
       const unlocked = JSON.parse(readFileSync(john.ownerSecretPath, 'utf8'));
       writeFileSync(john.ownerSecretPath, JSON.stringify({ ...unlocked, failures: 0, locked_until: undefined }));
 
-      // Revoking the contact also ends it, audited when the command saves.
+      // Changing the passphrase ends auto-approve set under the old one; set says which, and it stays off.
       await contactAutoApprove(ctx([omerId, 'all'], tty(PASS)));
+      await ownerSecretSet(ctx([], tty([PASS, 'NEW-PASS 12345', 'NEW-PASS 12345'])));
+      expect(john.readAutoApprove()).toEqual({});
+      expect(john.readAudit().slice(-2).map((a) => [a.gate, a.action, a.reason ?? null])).toEqual([
+        ['auto-approve', 'off', 'owner-secret'],
+        ['owner-secret', 'changed', null],
+      ]);
+
+      // Revoking the contact also ends it, audited when the command saves.
+      await contactAutoApprove(ctx([omerId, 'all'], tty('NEW-PASS 12345')));
       await rdv(['contact', 'revoke', omerId], johnHome);
       expect(john.readAutoApprove()).toEqual({});
       expect(john.readAudit().at(-1)).toMatchObject({ action: 'off', reason: 'revoked' });
       // A logged line is not output of `audit`'s own terminal: text mode works too.
       await audit(ctx([], undefined, {}));
+
+      // owner-secret.json and audit.jsonl both deleted: the marker (MACed with the agent key) still says one existed,
+      // so it counts as a reset: the banner, the cooldown, and auto-approve refused.
+      expect(existsSync(john.ownerSecretMarkerPath)).toBe(true);
+      expect(readFileSync(john.ownerSecretMarkerPath, 'utf8')).not.toContain('NEW-PASS');
+      rmSync(john.ownerSecretPath);
+      rmSync(john.auditPath);
+      const banner = (await rdv(['whoami'], johnHome)).lines[0].owner_passphrase;
+      expect(banner).toMatchObject({ set: null, missing: true, note: expect.stringMatching(/OWNER PASSPHRASE FILE DELETED/) });
+      await expect(ownerSecretSet(ctx([], tty(PASS)))).rejects.toThrow(/reset: a new one can be set after/);
+      await expect(contactAutoApprove(ctx([omerId, 'all'], tty(PASS)))).rejects.toThrow(/rdv owner-secret set/);
+      // A marker not MACed by this agent (written by hand, or copied from another home) says nothing.
+      rmSync(john.ownerSecretPath);
+      writeFileSync(john.ownerSecretMarkerPath, JSON.stringify({ v: 1, first: new Date().toISOString(), mac: 'ab'.repeat(32) }));
+      expect(hasOwnerSecret(john)).toBe(false);
+      expect(existsSync(john.ownerSecretPath)).toBe(false);
     } finally {
       await Promise.all([johnL.stop(), omerL.stop()]);
     }

@@ -14,14 +14,22 @@
 // - LOCKOUT_AFTER wrong answers in a row lock it, for a minute and then twice
 //   as long after each further miss (up to a day); a right answer resets it.
 //
+// - Auto-approve entries are bound to the passphrase record they were set
+//   under (ownerSecretBinding): any set, change or reset ends every older one.
+// - A passphrase that existed (the audit log, or a marker MACed with the
+//   agent key, says so) and whose file is gone counts as reset, not as never
+//   set: the cooldown, the banner, and auto-approve off.
+//
 // Defence in depth, not a boundary: a same-user model with a shell can still
 // replace the file or watch the owner type into a terminal it controls
 // (NOTES 77).
-import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
+import { createHmac, randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
 import { closeSync, existsSync, openSync, readFileSync } from 'node:fs';
 import { isatty, ReadStream } from 'node:tty';
+import { b64decode } from '@rendezvous/core';
 import { writeAtomic } from './fsutil.js';
-import { CliError, type Home } from './home.js';
+import { type AuditEntry, CliError, type Home } from './home.js';
+import { sha, sha256, stable } from './hash.js';
 
 export const OWNER_SECRET_MIN = 8;
 export const OWNER_SECRET_MAX = 1024;
@@ -44,26 +52,31 @@ export interface OwnerSecretRecord {
   locked_until?: string;
 }
 
-/** What `rdv owner-secret reset` leaves: no passphrase, and when it was reset (for the cooldown and the banner). */
+/**
+ * What `rdv owner-secret reset` leaves: no passphrase, and when it was reset
+ * (for the cooldown and the banner). `missing`: nobody reset it; the file of a
+ * passphrase that existed was found gone at `reset`, and that counts the same.
+ */
 export interface OwnerSecretReset {
   v: 1;
   reset: string;
+  missing?: true;
 }
 
 const derive = (secret: string, salt: Buffer) => scryptSync(`rdv1/owner-secret\0${secret.normalize('NFC')}`, salt, 32, SCRYPT);
 
-function readAny(home: Home): OwnerSecretRecord | OwnerSecretReset | null {
-  if (!existsSync(home.ownerSecretPath)) return null;
+function readAny(home: Home, now = new Date()): OwnerSecretRecord | OwnerSecretReset | null {
+  if (!existsSync(home.ownerSecretPath)) return missing(home, now);
   let r: OwnerSecretRecord;
   try {
     r = JSON.parse(readFileSync(home.ownerSecretPath, 'utf8')) as OwnerSecretRecord;
   } catch (err) {
     throw unreadable(home, (err as Error).message);
   }
-  if (r && r.v === 1 && Object.keys(r).length === 2 && typeof (r as unknown as OwnerSecretReset).reset === 'string') {
-    const t = (r as unknown as OwnerSecretReset).reset;
-    if (Number.isNaN(Date.parse(t))) throw unreadable(home, 'unrecognized');
-    return { v: 1, reset: t };
+  const x = r as unknown as OwnerSecretReset | null;
+  if (x && x.v === 1 && typeof x.reset === 'string' && (Object.keys(x).length === 2 || (Object.keys(x).length === 3 && x.missing === true))) {
+    if (Number.isNaN(Date.parse(x.reset))) throw unreadable(home, 'unrecognized');
+    return { v: 1, reset: x.reset, ...(x.missing ? { missing: true as const } : {}) };
   }
   const ok =
     r &&
@@ -77,6 +90,79 @@ function readAny(home: Home): OwnerSecretRecord | OwnerSecretReset | null {
     (r.locked_until === undefined || !Number.isNaN(Date.parse(r.locked_until)));
   if (!ok) throw unreadable(home, 'unrecognized');
   return r;
+}
+
+/**
+ * No owner-secret.json. Never set: null. Set once (an `owner-secret` line in
+ * the audit log, or a valid marker): the file was deleted instead of reset,
+ * which counts as a reset from now, written down so the cooldown runs from
+ * the moment it was noticed and the banner shows.
+ */
+function missing(home: Home, now: Date): OwnerSecretReset | null {
+  if (!ownerSecretExisted(home)) return null;
+  const t = Number.isFinite(now.getTime()) ? now : new Date();
+  const r: OwnerSecretReset = { v: 1, reset: t.toISOString(), missing: true };
+  try {
+    writeAtomic(home.ownerSecretPath, `${JSON.stringify(r, null, 2)}\n`, 0o600);
+  } catch {
+    // Still a reset for this read; the next one tries again.
+  }
+  return r;
+}
+
+/** Has a passphrase ever been set in this home? The audit log says so, or (if it was cut or deleted) the marker. */
+export function ownerSecretExisted(home: Home): boolean {
+  try {
+    if (home.readAudit().some((a) => a.gate === 'owner-secret')) return true;
+  } catch {
+    // an unreadable audit log: the marker decides
+  }
+  return markerValid(home);
+}
+
+const markerMac = (secretKey: Uint8Array, body: { v: 1; first: string }) => createHmac('sha256', secretKey).update(`rdv1/owner-secret-marker\0${stable(body)}`).digest('hex');
+
+function agentKey(home: Home): Uint8Array | null {
+  try {
+    return b64decode(home.readAgentState().secretKey);
+  } catch {
+    return null;
+  }
+}
+
+/** The marker holds only if this agent's key MACed it: one copied from another home, or written by hand, is not ours. */
+function markerValid(home: Home): boolean {
+  if (!existsSync(home.ownerSecretMarkerPath)) return false;
+  const key = agentKey(home);
+  if (!key) return false;
+  try {
+    const m = JSON.parse(readFileSync(home.ownerSecretMarkerPath, 'utf8')) as { v?: unknown; first?: unknown; mac?: unknown };
+    if (!m || m.v !== 1 || typeof m.first !== 'string' || typeof m.mac !== 'string' || !/^[0-9a-f]{64}$/.test(m.mac)) return false;
+    return timingSafeEqual(Buffer.from(m.mac, 'hex'), Buffer.from(markerMac(key, { v: 1, first: m.first }), 'hex'));
+  } catch {
+    return false;
+  }
+}
+
+/** Write the marker once (inside the lock), so a deleted passphrase file is still noticed if the audit log goes too. */
+function writeMarker(home: Home, now: Date): void {
+  if (markerValid(home)) return;
+  const key = agentKey(home);
+  if (!key) return;
+  const body = { v: 1 as const, first: now.toISOString() };
+  writeAtomic(home.ownerSecretMarkerPath, `${JSON.stringify({ ...body, mac: markerMac(key, body) }, null, 2)}\n`, 0o600);
+}
+
+/**
+ * What an auto-approve entry is bound to: the passphrase record it was set
+ * under, by its `set` time and a digest of its salt (never the hash or the
+ * passphrase). Every set, change or reset makes a new one, so every older
+ * entry fails. Null when no passphrase is set; throws when the file is
+ * unreadable.
+ */
+export function ownerSecretBinding(home: Home): string | null {
+  const r = read(home);
+  return r ? sha('rdv1/auto-approve-owner', { set: r.set, salt: sha256(Buffer.from(r.salt, 'hex')) }) : null;
 }
 
 function read(home: Home): OwnerSecretRecord | null {
@@ -143,16 +229,33 @@ export function weakOwnerSecret(secret: string): string | undefined {
  * audit it: the first one is trust on first use, so its time is shown by
  * `rdv whoami` and `rdv_status` for the owner to recognize.
  */
-export async function storeOwnerSecret(home: Home, secret: string, action: 'set' | 'changed' | 'reset' = 'set', now = new Date()): Promise<void> {
+export async function storeOwnerSecret(home: Home, secret: string, action: 'set' | 'changed' | 'reset' = 'set', now = new Date()): Promise<{ autoApproveOff: string[] }> {
   const weak = weakOwnerSecret(secret);
   if (weak) throw new CliError(`the passphrase needs ${weak}`, 2);
   const salt = randomBytes(16);
-  await home.locked(async () => {
-    const end = cooldownEnd(readAny(home), now);
+  return home.locked(async () => {
+    const end = cooldownEnd(readAny(home, now), now);
     if (end) throw new CliError(`the owner passphrase was reset: a new one can be set after ${end.toISOString()} (rdv owner-secret set, in your own terminal)`);
+    // Every auto-approve entry was bound to the old record (or to none): it ends here, audited; the owner turns each back on.
+    const off = endAllAutoApprove(home, now);
     write(home, { v: 1, salt: salt.toString('hex'), hash: derive(secret, salt).toString('hex'), set: now.toISOString(), failures: 0 });
-    home.appendAudit([{ ts: now.toISOString(), peer: OWNER_PEER, gate: 'owner-secret', by: 'human', action }]);
+    writeMarker(home, now);
+    home.appendAudit([...off.lines, { ts: now.toISOString(), peer: OWNER_PEER, gate: 'owner-secret', by: 'human', action }]);
+    return { autoApproveOff: off.peers };
   });
+}
+
+/** Remove every auto-approve entry (inside the lock): a new passphrase record holds none of them. An unreadable file goes too. */
+function endAllAutoApprove(home: Home, now: Date): { peers: string[]; lines: AuditEntry[] } {
+  if (!existsSync(home.autoApprovePath)) return { peers: [], lines: [] };
+  let peers: string[];
+  try {
+    peers = Object.keys(home.readAutoApprove());
+  } catch {
+    peers = [];
+  }
+  home.writeAutoApprove({});
+  return { peers, lines: peers.map((peer): AuditEntry => ({ ts: now.toISOString(), peer, gate: 'auto-approve', by: 'human', action: 'off', reason: 'owner-secret' })) };
 }
 
 /** The audit log's `peer` for owner passphrase lines (they concern no contact). */
@@ -173,12 +276,13 @@ export async function clearOwnerSecret(home: Home, now = new Date()): Promise<vo
       throw new CliError(`too many wrong owner passphrases: reset is refused until ${r.locked_until}`);
     }
     writeAtomic(home.ownerSecretPath, `${JSON.stringify({ v: 1, reset: now.toISOString() } satisfies OwnerSecretReset, null, 2)}\n`, 0o600);
+    writeMarker(home, now);
     home.appendAudit([{ ts: now.toISOString(), peer: OWNER_PEER, gate: 'owner-secret', by: 'human', action: 'reset' }]);
   });
 }
 
 /** What `rdv whoami` and `rdv_status` show: when it was set, or that it isn't (never the hash). */
-export function ownerSecretInfo(home: Home): { set: string | null; reset?: string; locked_until?: string; note: string } {
+export function ownerSecretInfo(home: Home): { set: string | null; reset?: string; missing?: true; locked_until?: string; note: string } {
   let r: OwnerSecretRecord | OwnerSecretReset | null;
   try {
     r = readAny(home);
@@ -187,10 +291,12 @@ export function ownerSecretInfo(home: Home): { set: string | null; reset?: strin
   }
   if (r && 'reset' in r) {
     const end = cooldownEnd(r, new Date());
+    const what = r.missing ? `FILE DELETED (found gone ${r.reset}, counted as a reset)` : `RESET ${r.reset}`;
     return {
       set: null,
       reset: r.reset,
-      note: `OWNER PASSPHRASE RESET ${r.reset}: none is set, so auto-approve is off for everyone. ${end ? `A new one can be set after ${end.toISOString()}` : 'Set a new one'} with "rdv owner-secret set" in your own terminal. If you did not reset it, someone with access to your account did`,
+      ...(r.missing ? { missing: true as const } : {}),
+      note: `OWNER PASSPHRASE ${what}: none is set, so auto-approve is off for everyone. ${end ? `A new one can be set after ${end.toISOString()}` : 'Set a new one'} with "rdv owner-secret set" in your own terminal. If you did not ${r.missing ? 'delete owner-secret.json' : 'reset it'}, someone with access to your account did`,
     };
   }
   if (!r) return { set: null, note: 'no owner passphrase is set, so auto-approve cannot be turned on: the owner sets one with "rdv owner-secret set" in their own terminal' };

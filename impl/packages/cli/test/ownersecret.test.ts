@@ -10,6 +10,8 @@ import {
   clearOwnerSecret,
   hasOwnerSecret,
   LOCKOUT_AFTER,
+  ownerSecretBinding,
+  ownerSecretExisted,
   ownerSecretInfo,
   ownerSecretLock,
   RESET_COOLDOWN_MS,
@@ -28,6 +30,40 @@ describe('owner passphrase', () => {
     home = new Home(join(dir, 'h'));
   });
   afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  it('binds auto-approve to the record: a wrong or right answer keeps the binding, a new passphrase (even the same one) changes it', async () => {
+    expect(ownerSecretBinding(home)).toBeNull();
+    await storeOwnerSecret(home, PASS);
+    const a = ownerSecretBinding(home);
+    expect(a).toMatch(/^[0-9a-f]{64}$/);
+    // Never the hash, the salt or the passphrase itself.
+    const rec = JSON.parse(readFileSync(home.ownerSecretPath, 'utf8'));
+    expect([rec.hash, rec.salt, PASS]).not.toContain(a);
+    await checkOwnerSecret(home, 'not the passphrase');
+    await checkOwnerSecret(home, PASS);
+    expect(ownerSecretBinding(home)).toBe(a);
+    await storeOwnerSecret(home, PASS, 'changed');
+    expect(ownerSecretBinding(home)).not.toBe(a);
+    await clearOwnerSecret(home);
+    expect(ownerSecretBinding(home)).toBeNull();
+    writeFileSync(home.ownerSecretPath, '{ torn');
+    expect(() => ownerSecretBinding(home)).toThrow(/unreadable/);
+  });
+
+  it('a deleted file of a passphrase that existed (the audit log says so) is a reset; with no trace of one, it is never set', async () => {
+    await storeOwnerSecret(home, PASS);
+    rmSync(home.ownerSecretPath);
+    expect(ownerSecretExisted(home)).toBe(true);
+    expect(ownerSecretInfo(home)).toMatchObject({ set: null, missing: true });
+    await expect(storeOwnerSecret(home, PASS)).rejects.toThrow(/a new one can be set after/);
+    // No audit line and no marker (this home has no agent key to MAC one): nothing says one existed.
+    rmSync(home.ownerSecretPath);
+    rmSync(home.auditPath);
+    expect(ownerSecretExisted(home)).toBe(false);
+    expect(ownerSecretInfo(home)).toMatchObject({ set: null, note: expect.stringContaining('no owner passphrase is set') });
+    await storeOwnerSecret(home, PASS);
+    expect(hasOwnerSecret(home)).toBe(true);
+  });
 
   it('is stored as a salted scrypt hash, never in clear', async () => {
     expect(hasOwnerSecret(home)).toBe(false);
