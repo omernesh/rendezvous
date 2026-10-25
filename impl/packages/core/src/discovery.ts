@@ -31,6 +31,31 @@ export function canonAddress(addr: DiscoveryAddress): string {
   throw new Error(`unsupported address type: ${(addr as DiscoveryAddress).type}`);
 }
 
+/** Most addresses one agent holds (public and private together). */
+export const MAX_ADDRESSES = 8;
+
+/** `"omer@example.com"` → email, `"+1 555…"` → phone, by the same rule as `topicForHint`; then canonicalized. */
+export function parseAddress(text: string): DiscoveryAddress {
+  const t = text.trim();
+  const type = t.includes('@') ? 'email' : t.startsWith('+') ? 'phone' : null;
+  if (!type) throw new Error(`not an email address or +phone number: ${text}`);
+  return { type, value: canonAddress({ type, value: t }) };
+}
+
+/**
+ * Canonicalize a list of addresses and drop the repeats (same canonical
+ * value), keeping the first. Throws on a bad address or more than `max`.
+ */
+export function normalizeAddresses(addrs: DiscoveryAddress[], max = MAX_ADDRESSES): DiscoveryAddress[] {
+  const out: DiscoveryAddress[] = [];
+  for (const a of addrs) {
+    const value = canonAddress(a);
+    if (!out.some((o) => o.type === a.type && o.value === value)) out.push({ type: a.type, value });
+  }
+  if (out.length > max) throw new Error(`too many addresses: ${out.length} (at most ${max})`);
+  return out;
+}
+
 /** dtopic(address) = base32(SHA-256("rdv1/disc:" ‖ canon(address)))[0:26] */
 export function dtopic(addr: DiscoveryAddress): string {
   return b32encode(sha256(utf8ToBytes('rdv1/disc:' + canonAddress(addr)))).slice(0, 26);

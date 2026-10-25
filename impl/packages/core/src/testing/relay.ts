@@ -60,7 +60,15 @@ export async function startTestRelay(port = 0): Promise<TestRelay> {
           ws.send(JSON.stringify(['OK', ev?.id, false, 'invalid: bad signature']));
           return;
         }
-        if (!events.some((e) => e.id === ev.id)) {
+        // NIP-01 addressable kinds: keep only the newest per (pubkey, kind, d); a tie keeps the lower id.
+        const d = (e: Event) => e.tags.find((t) => t[0] === 'd')?.[1] ?? '';
+        const addressable = ev.kind >= 30000 && ev.kind < 40000;
+        const older = addressable ? events.findIndex((e) => e.kind === ev.kind && e.pubkey === ev.pubkey && d(e) === d(ev)) : -1;
+        const superseded =
+          older >= 0 &&
+          (events[older].created_at > ev.created_at || (events[older].created_at === ev.created_at && events[older].id <= ev.id));
+        if (!events.some((e) => e.id === ev.id) && !superseded) {
+          if (older >= 0) events.splice(older, 1);
           events.push(ev);
           for (const [client, clientSubs] of subs) {
             for (const [id, filters] of clientSubs) {

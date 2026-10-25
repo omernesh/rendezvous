@@ -120,6 +120,66 @@ describe('rdv commands', () => {
     expect(usage.code).toBe(2);
   });
 
+  it('several emails and phones: init dedupes, rdv address adds, removes, caps and canonicalizes', async () => {
+    const home = join(root, 'multi');
+    const state = () => JSON.parse(readFileSync(join(home, ['agent', 'json'].join('.')), 'utf8'));
+    await rdv(
+      ['init', '--email', 'omer@example.com', '--email', 'Omer@Work.Example.com', '--email', 'OMER@example.com', '--phone', '+1 555 555 0123', '--phone', '+15555550124', '--phone', '+1-555-555-0123', '--relay', relay.url],
+      home,
+    );
+    const four = [
+      { type: 'email', value: 'omer@example.com' },
+      { type: 'email', value: 'omer@work.example.com' },
+      { type: 'phone', value: '+15555550123' },
+      { type: 'phone', value: '+15555550124' },
+    ];
+    expect(JSON.parse(readFileSync(join(home, 'config.json'), 'utf8')).addresses).toEqual(four);
+    expect(state().card.discovery.addresses).toEqual(four);
+    const list = await rdv(['address', 'list'], home);
+    expect(list.lines.map((l) => [l.value, l.public, typeof l.topic])).toEqual(four.map((a) => [a.value, true, 'string']));
+
+    // Duplicates (in any spelling) and bad input are refused; nothing changes.
+    const created = state().card.created;
+    expect((await rdv(['address', 'add', 'OMER@WORK.example.com'], home, { check: false })).code).toBe(1);
+    expect((await rdv(['address', 'add', '+1 (555) 555-0124'], home, { check: false })).code).toBe(1);
+    expect((await rdv(['address', 'add', 'omer'], home, { check: false })).code).toBe(2);
+    expect((await rdv(['address', 'add', '+12'], home, { check: false })).code).toBe(2);
+    expect((await rdv(['address', 'add', 'x@example.com', '--public', '--private'], home, { check: false })).code).toBe(2);
+    expect((await rdv(['address', 'remove', 'nobody@example.com'], home, { check: false })).code).toBe(1);
+    expect(state().card.created).toBe(created);
+
+    // Add: canonical, listed on a newer card; a private one is kept off the card.
+    const add = await rdv(['address', 'add', 'Omer@Home.Example.com'], home);
+    expect(add.lines[0]).toMatchObject({ event: 'address-added', address: { type: 'email', value: 'omer@home.example.com', public: true }, published: [] });
+    expect(Date.parse(state().card.created)).toBeGreaterThan(Date.parse(created));
+    expect(state().card.discovery.addresses.at(-1)).toEqual({ type: 'email', value: 'omer@home.example.com' });
+    const priv = await rdv(['address', 'add', '+15555550125', '--private'], home);
+    expect(priv.lines[0].address).toEqual({ type: 'phone', value: '+15555550125', public: false });
+    expect(priv.lines[0].card_created).toBeUndefined();
+    expect(state().card.discovery.addresses).toHaveLength(5);
+    expect((await rdv(['whoami'], home)).lines[0].addresses.at(-1)).toEqual({ type: 'phone', value: '+15555550125', public: false });
+
+    // The cap counts private addresses too.
+    await rdv(['address', 'add', 'omer@a.example.com'], home);
+    await rdv(['address', 'add', 'omer@b.example.com'], home);
+    const full = await rdv(['address', 'add', 'omer@c.example.com'], home, { check: false });
+    expect([full.code, full.stderr]).toEqual([1, expect.stringContaining('the most it may hold')]);
+
+    // Remove: off the card and the config; the private one goes from the config only.
+    const rm = await rdv(['address', 'remove', 'OMER@work.example.com'], home);
+    expect(rm.lines[0]).toMatchObject({ event: 'address-removed', address: { value: 'omer@work.example.com', public: true } });
+    expect(state().card.discovery.addresses.map((a: { value: string }) => a.value)).not.toContain('omer@work.example.com');
+    const before = state().card;
+    await rdv(['address', 'remove', '+15555550125'], home);
+    expect(state().card).toEqual(before);
+    const left = await rdv(['address', 'list'], home);
+    expect(left.lines.map((l) => l.value)).toEqual(['omer@example.com', '+15555550123', '+15555550124', 'omer@home.example.com', 'omer@a.example.com', 'omer@b.example.com']);
+
+    // More than the cap at init is a usage error.
+    const many = Array.from({ length: 9 }, (_, i) => ['--email', `omer+${i}@example.com`]).flat();
+    expect((await rdv(['init', ...many, '--relay', relay.url], join(root, 'many'), { check: false })).code).toBe(2);
+  });
+
   it('auto-grant above stranger needs --auto-grant-any-tier (security review L7)', async () => {
     const home = join(root, 'cap');
     await rdv(['init', '--email', 'cap@example.com', '--relay', 'ws://127.0.0.1:9'], home);

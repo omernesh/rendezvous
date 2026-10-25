@@ -175,6 +175,20 @@ describe('the /rdv-onboarding command', () => {
     expect(md).toMatch(/\*\*Resume\.\*\*/);
   });
 
+  it('asks for more emails and phones, and whether each address is public, one question at a time', () => {
+    expect(md).toMatch(/"Add another\s+email\?" is a question of its own/);
+    expect(md).toMatch(/ask "Add another email\?" again\. Repeat until the\s+answer is no/);
+    expect(md).toMatch(/ask "Add another\s+phone\?" as a question of its own, and repeat until the answer is no/);
+    expect(md).toMatch(/Ask about each address in turn, one per question/);
+    expect(md).toMatch(/each \*\*public\*\* address makes this agent findable by it/);
+    // Private addresses go through rdv_addresses after rdv_init, which takes only the public ones.
+    expect(md).toMatch(/`emails` and `phones` \(the \*\*public\*\*\s+addresses only\)/);
+    expect(md).toMatch(/`rdv_addresses` \(`action: "add"`,\s+`public: false`\)/);
+    const skill = readFileSync(join(SKILL_DIR, 'SKILL.md'), 'utf8');
+    expect(skill).toContain('add my work email to rendezvous');
+    expect(skill).toMatch(/## Manage the user's own addresses/);
+  });
+
   it("reuses the rendezvous skill's consent rules instead of restating its own", () => {
     expect(md).toContain('${CLAUDE_PLUGIN_ROOT}/skills/rendezvous/SKILL.md');
     expect(md).toMatch(/"Consent rules"/);

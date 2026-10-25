@@ -1,7 +1,7 @@
 // The state directory (`--home`, default ~/.rendezvous/<profile>):
 //   agent.json   Agent.toJSON(), holds the secret key (mode 600)
 //   agent.json.bak  the previous good agent.json (mode 600), read if agent.json is torn
-//   config.json  relays, addresses, policy
+//   config.json  relays, addresses (public and private), policy
 //   inbox.jsonl  received payloads, one JSON object per line
 //   cards.json   cards found by `rdv lookup` (so `contact request <agent-id>` works)
 //   negotiations.json  dinner negotiations (@rendezvous/a2a engine state)
@@ -18,10 +18,20 @@ import { emptyState, type NegotiationState } from '@rendezvous/a2a';
 import type { AddressCard, AgentState, DiscoveryAddress, GrantScope, InboundPolicy, Payload, Tier } from '@rendezvous/core';
 import { acquireLock, writeAtomic } from './fsutil.js';
 
+/**
+ * One of our addresses. A public one (no `private`) is listed on the card and
+ * opens its probe topic (SPEC §4.3); a private one is kept here only, for the
+ * owner's own reference, and nobody can find the agent by it.
+ */
+export interface ConfigAddress extends DiscoveryAddress {
+  private?: true;
+}
+
 export interface Config {
   profile: string;
   relays: string[];
-  addresses: DiscoveryAddress[];
+  /** All our addresses; the card lists the public ones, in this order. */
+  addresses: ConfigAddress[];
   policy: { inbound: InboundPolicy; public: boolean };
   public_pointer: boolean;
 }

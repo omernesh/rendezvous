@@ -15,7 +15,7 @@ import { bytesToHex, canonicalize } from '../encoding.js';
 import type { Envelope } from '../envelope.js';
 import { envelopeHash } from '../envelope.js';
 import { type AgentKey, publicKeyFromAgentId } from '../identity.js';
-import type { Transport } from './transport.js';
+import type { TopicPublishOptions, Transport } from './transport.js';
 
 /**
  * Spec proposal is 30417. That number sits in the addressable (30000–39999)
@@ -48,6 +48,11 @@ const SEEN_IDS = 4096;
 
 export function nostrCarrierKey(key: AgentKey): Uint8Array {
   return hkdf(sha256, key.secretKey, undefined, utf8ToBytes('rdv1/nostr-carrier'), 32);
+}
+
+/** `d` tag of a public-pointer card on a topic: one per sender and topic, so a newer card replaces the older. */
+export function cardTag(topic: string): string {
+  return `rdv1/card:${topic}`;
 }
 
 /** `p` tag value for an agent: hex of its Ed25519 public key. */
@@ -168,15 +173,22 @@ export class NostrTransport implements Transport {
     );
   }
 
-  async publishTopic(topic: string, doc: object, extraRelays: string[] = []): Promise<void> {
+  /**
+   * A probe gets `d` = hash of its content (one event each). A replaceable
+   * document (a public-pointer card) gets `d` = `rdv1/card:` + topic, so
+   * relays keep only the newest one per sender and topic (NOTES 63); it is
+   * dated no earlier than the card, so a newer card has a later `created_at`.
+   */
+  async publishTopic(topic: string, doc: object, extraRelays: string[] = [], opts: TopicPublishOptions = {}): Promise<void> {
     const content = canonicalize(doc);
+    const now = Math.floor(Date.now() / 1000);
     const event = finalizeEvent(
       {
         kind: ENVELOPE_KIND,
-        created_at: Math.floor(Date.now() / 1000),
+        created_at: opts.replaceable ? Math.max(now, opts.createdAt ?? 0) : now,
         tags: [
           ['t', topic],
-          ['d', bytesToHex(sha256(utf8ToBytes(content)))],
+          ['d', opts.replaceable ? cardTag(topic) : bytesToHex(sha256(utf8ToBytes(content)))],
         ],
         content,
       },

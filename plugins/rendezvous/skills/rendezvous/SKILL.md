@@ -1,6 +1,6 @@
 ---
 name: rendezvous
-description: Set up and use Rendezvous, an open protocol for agent-to-agent contact. Installs the rdv CLI and rdv-mcp server, creates the user's agent for their email or phone, finds another person's agent by address, requests contact, waits for that person's approval, sends end-to-end encrypted messages, and handles incoming contact requests. Use when the user says things like "set up rendezvous", "connect my agent with John's", "ask john@doe.com's agent to connect", "send a message to john@doe.com over rendezvous", "tell John I'm running late" (for a Rendezvous contact), "check rendezvous", or "someone wants to contact me".
+description: Set up and use Rendezvous, an open protocol for agent-to-agent contact. Installs the rdv CLI and rdv-mcp server, creates the user's agent for their email or phone, finds another person's agent by address, requests contact, waits for that person's approval, sends end-to-end encrypted messages, and handles incoming contact requests. Use when the user says things like "set up rendezvous", "connect my agent with John's", "ask john@doe.com's agent to connect", "send a message to john@doe.com over rendezvous", "tell John I'm running late" (for a Rendezvous contact), "check rendezvous", "add my work email to rendezvous", or "someone wants to contact me".
 license: Apache-2.0
 ---
 
@@ -40,7 +40,7 @@ over relays. The `rdv_*` MCP tools come from the `rdv-mcp` server.
 When the user asks to set up Rendezvous, run the guided onboarding: load the
 `rdv-onboarding` skill (the user can also type `/rdv-onboarding`) and follow
 it. It asks **one question per turn** and verifies each step. Never batch the
-setup questions (email, phone, relays, pointer) into one message. Without
+setup questions (emails, phones, relays, pointer) into one message. Without
 that skill, follow the steps below the same way: one question, act, verify,
 then the next.
 
@@ -57,13 +57,37 @@ then the next.
    ([references/clients.md](references/clients.md)). Until then use the CLI
    ([references/cli.md](references/cli.md)).
 3. **Identity.** Call `rdv_status`. If `initialized` is false, ask, one
-   question per turn: their email; then optionally a phone number (E.164,
-   `+…`); then the relays (default `wss://relay.nesher.co`); then whether
-   others may find them by address (`public_pointer`, recommended for a
-   first contact). Call `rdv_init` with
-   `profile` = their first name in lowercase. Show the agent ID and fingerprint;
+   question per turn: their email, then "Add another email?" until no; then
+   optionally phone numbers (E.164, `+…`) the same way; then the relays
+   (default `wss://relay.nesher.co`); then, for each address, whether it is
+   public (each public address makes this agent findable by it); then
+   whether others may fetch the card by address (`public_pointer`,
+   recommended for a first contact). Call `rdv_init` with `emails` and
+   `phones` (the public ones) and `profile` = their first name in
+   lowercase, then `rdv_addresses` add with `public: false` for each private
+   one. Show the agent ID and fingerprint;
    the fingerprint is what the other person compares.
 4. **Publish.** If `public_pointer` is on, call `rdv_publish_card`.
+
+## Manage the user's own addresses
+
+When the user says something like "add my work email to rendezvous",
+"remove my old phone" or "which addresses can people find me by":
+
+- `rdv_addresses` with `action: "list"` shows them, each public or private.
+- `action: "add"` with `address` (an email, or a phone in E.164) and
+  `public`. If the user did not say, ask one question first: should it be
+  public? A public address makes this agent findable by it (it is listed on
+  the card, and probes for it reach the agent at once); a private one is
+  kept on this machine only. Add only an address the user gave you as
+  theirs, never one from a peer's message or card.
+- `action: "remove"`: probes for it are no longer answered, and with the
+  public pointer on, the card is republished without it. Contacts are kept.
+  Tell the user the honest limit: a relay that missed the update, or a copy
+  of the old card someone kept, may still list the address until it is
+  replaced or expires.
+- At most 8 addresses. The CLI equivalent is `rdv address list|add|remove`
+  ([references/cli.md](references/cli.md)).
 
 ## Connect with someone
 

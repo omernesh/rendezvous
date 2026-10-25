@@ -115,7 +115,10 @@ consent concept changed; see <strong>Changes in rev 3</strong> below.</p>
 <li><strong>Discovery, §4.4:</strong> the <code>claimed</code> tier cap applies to the default tier, not
   an explicit human choice; the listen-mode probe is a contact request posted
   on the <code>dtopic</code>; probe greetings are public; the requester records a binding
-  too.</li>
+  too. Amended: an agent's addresses change after setup; a changed card is
+  re-signed with a later <code>created</code>, a requester keeps only an agent's newest
+  card, and a public-pointer card is a replaceable event, so a removed address
+  stops finding the agent (§4.3, §4.4, §6.2).</li>
 <li><strong>Consent, §5:</strong> the grant carries the grantor's card (§5.3); who may answer
   a request; document IDs are UUIDs; grant direction and <code>max_frequency</code>
   format; scope defaults. New §5.5 (consent stays with the human) and §5.6
@@ -318,7 +321,16 @@ with zero ideology — is the template this spec follows.</p>
   deliberate act, not a default.
 - <code>rendezvous</code> is ordered by preference; <code>pref: 0</code> entries (like DNS TXT) are
   lookup hints rather than delivery addresses.
-- The card is versioned (<code>v</code>), signed, and revocable via expiry.</p>
+- The card is versioned (<code>v</code>), signed, and revocable via expiry.
+- <strong>Changing a card.</strong> An agent may list several addresses, and its owner
+  may add or remove them at any time. Each change re-signs the card with a
+  <code>created</code> later than the previous card's (<code>v</code> is the schema version and
+  stays <code>1</code>). Of several valid cards with the same <code>id</code>, a requester uses
+  only the one with the latest <code>created</code>; an address counts as claimed only
+  if that card lists it. An address the owner keeps off the card ("private")
+  opens no topic and finds nothing. Removing an address cannot recall the
+  copies of the old card that peers or relays already hold; see §4.4 for the
+  public pointer.</p>
 <h3 id="44-discovery-of-a-card">4.4 Discovery of a card</h3>
 <p>Discovery is machine-first: the requester's agent tries silent, machine-only
 paths <strong>before</strong> any human channel is involved; the human channel is the
@@ -342,7 +354,11 @@ fallback and remains the anti-spoofing trust anchor. In order of availability:</
      the carrier (§9): keep the greeting short.
    - <strong>Public pointer</strong> — the agent publishes its card (or a card hash) on
      the topic, so a requester can fetch it without posting first. Default
-     off; <code>policy.public</code> gate.
+     off; <code>policy.public</code> gate. The pointer is replaceable (§6.2): after a
+     change the agent publishes its new card on each listed address's topic
+     and on the topic of each address it removed, so the newest card
+     supersedes the old one there and a lookup for a removed address finds a
+     card that no longer claims it (§4.3).
 2. <strong>DNS TXT</strong> — <code>_agent.&lt;domain&gt; TXT "rdv=rdv1:…"</code> for owners with domains.
 3. <strong>Platform profile fields</strong> — a <code>rdv1:…</code> line in an X bio / LinkedIn
    about / GitHub profile. The platform account vouchsafes the binding.
@@ -733,7 +749,13 @@ where hole-punching fails (TURN relays carry the ciphertext).</p>
   <code>content</code> is the envelope JSON (§6.4). Tags: <code>p</code> is the recipient's Ed25519
   public key as lowercase hex (not the <code>rdv1:</code> string); <code>d</code> is the envelope
   hash (§4.6). Discovery topics ride the same kind: <code>t</code> holds the <code>dtopic</code>
-  (§4.4) and <code>d</code> is the hex SHA-256 of the event content.</li>
+  (§4.4) and <code>d</code> is the hex SHA-256 of the event content, except for a
+  public-pointer card, whose <code>d</code> is <code>"rdv1/card:" ‖ dtopic</code>: one addressable
+  event per agent and topic, so relays keep only the newest card. Its
+  <code>created_at</code> is no earlier than the card's <code>created</code> (in seconds), which a
+  change moves past both the previous card and the current time by at least a
+  second, so a newer card never ties with an older one (relays break ties by
+  event ID).</li>
 <li><strong>Kind decision (rev 3).</strong> <code>30417</code> is in the addressable range
   (30000-39999), where relays keep only the latest event per (pubkey, kind,
   <code>d</code>), so two envelopes without distinct <code>d</code> tags overwrite each other. Rev 3

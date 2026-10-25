@@ -88,8 +88,9 @@ the human reads in their own terminal (`rdv contact pending`), below.
 
 | Tool | Input | Output |
 |---|---|---|
-| `rdv_init` | profile, email, phone, relays, public_pointer, calendar, window, tz | agent ID, fingerprint; keeps an existing agent (re-key only with `rdv init --force`) |
-| `rdv_status` | — | ID, relays, contacts (`local_label`: what your user called them; `unverified_claims`: the addresses their cards claim; `label_conflict` when two share a label), pending count, negotiation settings, approval mode |
+| `rdv_init` | profile, emails[], phones[] (`email` / `phone`: one of each, kept as aliases), relays, public_pointer, calendar, window, tz | agent ID, fingerprint; keeps an existing agent (re-key only with `rdv init --force`). Every address is public; at most 8 |
+| `rdv_addresses` | action `list` / `add` / `remove`, address, public (add; default true) | our addresses, each public or private; `add` / `remove` re-sign and (pointer on) republish the card and re-subscribe at once, like `rdv address`. The owner's own setup, not a consent decision; strict email / E.164 only; contacts are kept |
+| `rdv_status` | — | ID, our addresses (`addresses`, and `our_addresses` with public or private), relays, contacts (`local_label`: what your user called them; `unverified_claims`: the addresses their cards claim; `label_conflict` when two share a label), pending count, negotiation settings, approval mode |
 | `rdv_publish_card` | — | topics published |
 | `rdv_discover` | address | cards found (agent ID, fingerprint, claimed addresses, relays); never a label (anyone can publish a card for any address) |
 | `rdv_request_contact` | target (email, +phone, or agent ID), greeting, label (probes only) | request ID, local_label (a probe: the address probed, applied only when the human confirms the answer; by agent ID: none, and a `label` is refused) |

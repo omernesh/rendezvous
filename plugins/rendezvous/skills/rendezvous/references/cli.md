@@ -8,7 +8,8 @@ machine-readable output.
 | Step | MCP tool | CLI |
 |---|---|---|
 | Who am I | `rdv_status` | `rdv whoami` |
-| Create the agent | `rdv_init` | `rdv init --email omer@example.com --relay wss://relay.nesher.co [--phone +15555550100] [--public-pointer]` |
+| Create the agent | `rdv_init` | `rdv init --email omer@example.com [--email omer.work@example.com] --relay wss://relay.nesher.co [--phone +15555550100] [--public-pointer]` |
+| Our addresses | `rdv_addresses` | `rdv address list`, `rdv address add omer.work@example.com [--private]`, `rdv address remove +15555550100` |
 | Publish the card | `rdv_publish_card` | `rdv card publish` |
 | Find a card | `rdv_discover` | `rdv lookup john@doe.com` |
 | Ask for contact | `rdv_request_contact` | `rdv contact request john@doe.com --greeting "…"` (or the agent ID the user picked, without `--label`) |
