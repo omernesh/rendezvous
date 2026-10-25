@@ -1,0 +1,317 @@
+{
+  "saved_by": "main c9a76ae (rev 3, before scope.invoke)",
+  "omer": {
+    "secretKey": "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=",
+    "card": {
+      "v": 1,
+      "id": "rdv1:rkeohxlubhyzl7ks3mwtzos5olfgocn7dwkbeg7toseadnapn5oa",
+      "created": "2026-10-25T18:38:59.801Z",
+      "expires": null,
+      "capabilities": [
+        "rdv/v1",
+        "a2a/0.3"
+      ],
+      "rendezvous": [
+        {
+          "type": "nostr",
+          "relay": "ws://127.0.0.1:1",
+          "pref": 1
+        }
+      ],
+      "policy": {
+        "inbound": "prompt",
+        "public": false
+      },
+      "sig": "XtfIdjEXlYAtXVx1NaExNytnoXYdoq7YQlRJUUyPP2Zv7g73pYF3SvkE58X8xjsG6FzxOV65yS7iOazFIupoBQ=="
+    },
+    "book": {
+      "policy": "prompt",
+      "contacts": {
+        "rdv1:qe4xodvipulv6vvdkrtmgtd6ztfy3curwtxdpis56yhvxd6jwoka": {
+          "peer": "rdv1:qe4xodvipulv6vvdkrtmgtd6ztfy3curwtxdpis56yhvxd6jwoka",
+          "card": {
+            "capabilities": [
+              "rdv/v1",
+              "a2a/0.3"
+            ],
+            "created": "2026-10-25T18:38:59.806Z",
+            "expires": null,
+            "id": "rdv1:qe4xodvipulv6vvdkrtmgtd6ztfy3curwtxdpis56yhvxd6jwoka",
+            "policy": {
+              "inbound": "prompt",
+              "public": false
+            },
+            "rendezvous": [
+              {
+                "pref": 1,
+                "relay": "ws://127.0.0.1:1",
+                "type": "nostr"
+              }
+            ],
+            "sig": "NZwrJmvyjadfOgZTW2FHiYS2yMYEPLlW6m7tNf6lHoxmQGJx3OGQwk9eLeGBDmbT7dsF6Umz19+p1AVufVlBAw==",
+            "v": 1
+          },
+          "tier": "friend",
+          "inboundScope": {
+            "may_initiate": true,
+            "may_propose_meetings": true,
+            "max_frequency": "100/day"
+          },
+          "inboundGranted": true,
+          "outboundScope": {
+            "may_initiate": true
+          },
+          "label": "john@example.com",
+          "binding": "claimed",
+          "grantId": "2a7a1f6a-b977-4da4-b816-1ff3dad6fec3",
+          "expires": null,
+          "since": "2026-10-25T18:38:59.976Z"
+        },
+        "rdv1:5vesrrri2hbmn2xjam4jawmvmeuvsjz2lrr7snrwyfdbjlehg7iq": {
+          "peer": "rdv1:5vesrrri2hbmn2xjam4jawmvmeuvsjz2lrr7snrwyfdbjlehg7iq",
+          "card": {
+            "capabilities": [
+              "rdv/v1",
+              "a2a/0.3"
+            ],
+            "created": "2026-10-25T18:38:59.809Z",
+            "expires": null,
+            "id": "rdv1:5vesrrri2hbmn2xjam4jawmvmeuvsjz2lrr7snrwyfdbjlehg7iq",
+            "policy": {
+              "inbound": "prompt",
+              "public": false
+            },
+            "rendezvous": [
+              {
+                "pref": 1,
+                "relay": "ws://127.0.0.1:1",
+                "type": "nostr"
+              }
+            ],
+            "sig": "8W9kD/UKgT2QfKznQT40G0/JE6rtl1M1yvXgg1RFHmUbnN46BhXF+q7T3ssLhUi2vBCBC2jBvqMv469K/kSqBg==",
+            "v": 1
+          },
+          "tier": "stranger",
+          "inboundScope": {
+            "may_initiate": true,
+            "may_propose_meetings": false,
+            "may_access_calendar": "none",
+            "max_frequency": "50/day"
+          },
+          "inboundGranted": false,
+          "outboundScope": {
+            "max_frequency": "100/day",
+            "may_access_calendar": "free_busy",
+            "may_initiate": true,
+            "may_propose_meetings": true
+          },
+          "grantedTier": "colleague",
+          "outboundTs": "2026-10-25T18:39:00.305Z",
+          "label": "dana@example.com",
+          "binding": "claimed",
+          "grantId": "14df6322-4461-41a1-b1a9-86a0a55e787e",
+          "expires": null,
+          "since": "2026-10-25T18:39:00.327Z"
+        }
+      },
+      "pending": {},
+      "outstanding": {},
+      "candidates": {},
+      "blocked": [],
+      "allowlist": {
+        "rdv1:zkj2yfyfdbyhdvt3qpd76dx6qeeor3cfgblv25zgq6jthw62xz6a": {
+          "tier": "business",
+          "scope": {
+            "may_initiate": true,
+            "may_propose_meetings": false
+          }
+        }
+      },
+      "seenIds": [
+        "b0e5a144-7132-4b10-a360-7fb674fabdcb",
+        "14df6322-4461-41a1-b1a9-86a0a55e787e"
+      ],
+      "declined": [],
+      "rate": {}
+    },
+    "channels": {
+      "rdv1:qe4xodvipulv6vvdkrtmgtd6ztfy3curwtxdpis56yhvxd6jwoka": {
+        "outSeq": 1,
+        "outPrev": "44ba641442d8b7989c0da8ce1ea83819af0450e5caf392a7952734e79a08a55f",
+        "inSeq": 1,
+        "inPrev": "35681392c3b30413b49b6edc5cb0ccd9a525b7c9fb7af4a50d7a503595de36ea",
+        "inRecent": [
+          "35681392c3b30413b49b6edc5cb0ccd9a525b7c9fb7af4a50d7a503595de36ea"
+        ],
+        "inNewest": 1792953539818
+      },
+      "rdv1:5vesrrri2hbmn2xjam4jawmvmeuvsjz2lrr7snrwyfdbjlehg7iq": {
+        "outSeq": 1,
+        "outPrev": "ab5e1fd6928c08ddd348c0774eb1819b7cc5e3339d4612c1398886868dfc06aa",
+        "inSeq": 1,
+        "inPrev": "a2e225eac2e3973a914652a5ccf5625fff4c18f7d826684f6c62bf2ac001efdd",
+        "inRecent": [
+          "a2e225eac2e3973a914652a5ccf5625fff4c18f7d826684f6c62bf2ac001efdd"
+        ],
+        "inNewest": 1792953540307
+      }
+    },
+    "outbox": {
+      "rdv1:qe4xodvipulv6vvdkrtmgtd6ztfy3curwtxdpis56yhvxd6jwoka": [
+        {
+          "v": 1,
+          "from": "rdv1:rkeohxlubhyzl7ks3mwtzos5olfgocn7dwkbeg7toseadnapn5oa",
+          "to": "rdv1:qe4xodvipulv6vvdkrtmgtd6ztfy3curwtxdpis56yhvxd6jwoka",
+          "seq": 1,
+          "prev": null,
+          "created": "2026-10-25T18:38:59.978Z",
+          "ttl": "48h",
+          "content": {
+            "alg": "x25519+aes256gcm",
+            "epk": "qo6kVdHJfCqah7kjcxmT0/99u5l3ijctk8MFXrslIkg=",
+            "nonce": "5osCrEiDoo3HSDvd",
+            "ciphertext": "pGf3Kfk1ZlI8mwvhntT+7wssoRZad+klgSnhdXTlGgbeA30qtG26tC6+JsoX1RuQmWtW66LJL8r+QAFUHXbiVWnngRs1mmMCvAhnB9Xnpay7jFLMYQB4B9fSKp7pZz9Hnnn9XZAlzyj6Bz894pu5SdGg+aJZjXPWmBr4HmwmRzG+gZx/j+yuD8WfpE24EdVTuSn6WokoMy0bxq3mK4oKz04U3h7O7k+Xi1TEVgkVYZXgtH1l+MSZFxQJVmMJSgavkdNLJkvnZT//w6UpkWqKBTbzVXVV7iF7jxRICBKvvKWBm6ztA/Gwx+gbeb6ONyVy9ETjmyvvI2ZJ1ZopJMyrjpdnVpUMklecfBo5zpqUG/1CT3LIjlcFnmMTHyzqxgLJXBGjN01DSQWNmtqQtdpFiFTVzDXaa2LddEwtctxDD8VYJWpN2wSq5Mmp2sLBVRPFEPymx7+ZDJ4Ozj8w++6ktKlZU3yxCGd0PeLFBjFOqycfXJ+m5oKrPLWnd+YcfiydQmXOz5dAvftt+q+zICSlgriHIfqb7O1wGSKkdqeB9RxTDneitzSM7nzO+81i8KZWnxb5xUwSBax2Hf49if0eiSMkC0RqWEtAj6+fCL+CZmsKYS/u6gD5wgO50lSy3Es/kWgKCq78j5D0Jb8HjyO5Mwp8/YifBYasHideXgP7rsOP6d7XZo0JZN8GfOFNhVAPk/mJony89imsgBZj01Z78JXULIMCMM9qPYHcnwcAjb+6UYiDkYMpzwYqW5X6w+Pru8S1wHE568Jv1XoSOcS4sSrSFaGpQDf5v62xnpE3BHLL9Q9hmcuQe6jr6KaO6eBK79GRqVf8Sg2+8WKHcjYSbkSqIXqVV1fU/rDWdCxtNHMU+K6N1LZqIYPvk95HljdfDLFRad60uPWa9sOJ8kaD1iwBrHV8915g52aFVsVoHIEvwKb7O11NjMb05L5oWb7uHnIUXWDp6w/HhzGVOgoPkz8GYiC6FedwqC5ZfBoQ5Y/oPK4e+5r4e4M4H7bhGupMh/CsgfhUiaBLiocCy3VQTfiEcIeuqXUHtYn2zky7vsjFLqR0e4hR90bHtiECjX4ZnflI7T6ZAq6Gyxk42jgF0qiNhMUSSPLMKZpdbG8gdwdEtHc6yYntfeEYISHNmEQu2GaYqOMYK4gjeMCvwcBDWPjRirSTjFNv2QgykbOx1stA+OTdDQ=="
+          },
+          "sig": "VhApWHocfgpOyvM9zzfZSGmvw61V5+Q42CTuH4VuQDwJlLqi9TOSMkSo7hlAqO1/kWBf17RjOaP7pbiTqr5hDw=="
+        }
+      ],
+      "rdv1:5vesrrri2hbmn2xjam4jawmvmeuvsjz2lrr7snrwyfdbjlehg7iq": [
+        {
+          "v": 1,
+          "from": "rdv1:rkeohxlubhyzl7ks3mwtzos5olfgocn7dwkbeg7toseadnapn5oa",
+          "to": "rdv1:5vesrrri2hbmn2xjam4jawmvmeuvsjz2lrr7snrwyfdbjlehg7iq",
+          "seq": 1,
+          "prev": null,
+          "created": "2026-10-25T18:39:00.137Z",
+          "ttl": "48h",
+          "content": {
+            "alg": "x25519+aes256gcm",
+            "epk": "TRPPtLwWxGURdAQf7Ig5yBkSfukpWMX3L7JD8DIR7FY=",
+            "nonce": "DFNcmxIf31J2YKRM",
+            "ciphertext": "Y6p+ECK6mLpEIL1xf7pmj8/RqNiA2dg/BaGOrKD9DJqTWRXKMt6U806iN96g/yMKRQ/kZOq1TMk6FKdB19cgg7UfENlX+KWAKeGtdCL2kaXFUyKZQBLTuuHDfMozV+S+izrhQqRnVFnVlhTjS+JE1w/5hzzI/b7Trzn05/xm6G9rtJcP7IKsVWS+hITMpmBw6J/bzqVqFK573hFfY6+cc3CyYL6sMJN56Ux53b1y+5DG/+nqC1FwKtAt8MxHbHi7HVLcCNZqHmOZLYyKg8WIEbphD6SOIrp1z8n9ORWZv6eQvbIAsoFB/KqVKv7t4T2mXS0hVoF0jmHLnOuBwTuifrRU48cZ8ICDPDA1bk+Z6P2uPVOc/MbbrfIeng7bwF8Bxpi0jk9elU2UR9zSgSOqsGhVmnlE9XZcsUtJu2m0U5hldlNoYC/dtW5rUFUb21tXkLTDZGZQp9gnhY8PQNBLXhXwaJPA3Edu0kXSY0k38LqmwYelnC9PRLtTjLnRngtxJQoSdpwxfCeTh0ueqv0SC6gpOWB9+lnrpwXUpjzHZM3m6tjM8n5NlnNJER8PcXBr2cKPTmN0Yho+tI1RNuylHHI9AjmzGExO+4ekgAqKYaPV35//Xc8lP7OWvFCtIJBMKTfs5NfhR29UgjiMI8YnZmp3ARgYHwpPdo1VrT3BQ5O7JbHS9bNPQD25dr+WCJhUIcBWiHbUMdjpJmNQIZWtQurLe7nmw7V0a6dd72MN65jivnpPEFmwVBga6aImaOObn2+Pn4nYshHxjaVTM3TNzJh24iYwwq+cBGO3daqNC/wjcqzGgoVcjub9/Ed+M1Et4JHdWQMwk3Hzgx0ip5NVDmaxF9GAbC/BFp1RXldodrk5gbmiQT3hEh49FvRD6keBo7V2sZvGs2yawzjXsX2TyPoth/IOB/uCWbtOLvjdluY4wKOwEaPcd5O4rtvUVwICbP+r01N3vyS+mNCjPsPWAB2ypxU+JlRkhs/Yr4jH6szhf1Y2rdDqn8q2j08BkEuEyeGkjSS9ecXd+ls6+S6fjVnXYyNJgth9YiGrjw=="
+          },
+          "sig": "iKiGfTuqkQ8EPwB3bsZU4Rv9hNGUIxyg8ntw/0BpVsYLgSgr/xiastKCRBnFNvXH0lBh1s5dfx3ALdViHhucAw=="
+        }
+      ]
+    },
+    "buffer": {}
+  },
+  "john": {
+    "secretKey": "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=",
+    "card": {
+      "v": 1,
+      "id": "rdv1:qe4xodvipulv6vvdkrtmgtd6ztfy3curwtxdpis56yhvxd6jwoka",
+      "created": "2026-10-25T18:38:59.806Z",
+      "expires": null,
+      "capabilities": [
+        "rdv/v1",
+        "a2a/0.3"
+      ],
+      "rendezvous": [
+        {
+          "type": "nostr",
+          "relay": "ws://127.0.0.1:1",
+          "pref": 1
+        }
+      ],
+      "policy": {
+        "inbound": "prompt",
+        "public": false
+      },
+      "sig": "NZwrJmvyjadfOgZTW2FHiYS2yMYEPLlW6m7tNf6lHoxmQGJx3OGQwk9eLeGBDmbT7dsF6Umz19+p1AVufVlBAw=="
+    },
+    "book": {
+      "policy": "prompt",
+      "contacts": {
+        "rdv1:rkeohxlubhyzl7ks3mwtzos5olfgocn7dwkbeg7toseadnapn5oa": {
+          "peer": "rdv1:rkeohxlubhyzl7ks3mwtzos5olfgocn7dwkbeg7toseadnapn5oa",
+          "card": {
+            "capabilities": [
+              "rdv/v1",
+              "a2a/0.3"
+            ],
+            "created": "2026-10-25T18:38:59.801Z",
+            "expires": null,
+            "id": "rdv1:rkeohxlubhyzl7ks3mwtzos5olfgocn7dwkbeg7toseadnapn5oa",
+            "policy": {
+              "inbound": "prompt",
+              "public": false
+            },
+            "rendezvous": [
+              {
+                "pref": 1,
+                "relay": "ws://127.0.0.1:1",
+                "type": "nostr"
+              }
+            ],
+            "sig": "XtfIdjEXlYAtXVx1NaExNytnoXYdoq7YQlRJUUyPP2Zv7g73pYF3SvkE58X8xjsG6FzxOV65yS7iOazFIupoBQ==",
+            "v": 1
+          },
+          "tier": "stranger",
+          "inboundScope": {
+            "may_initiate": true,
+            "may_propose_meetings": false,
+            "may_access_calendar": "none",
+            "max_frequency": "50/day"
+          },
+          "inboundGranted": false,
+          "outboundScope": {
+            "max_frequency": "100/day",
+            "may_initiate": true,
+            "may_propose_meetings": true
+          },
+          "grantedTier": "friend",
+          "outboundTs": "2026-10-25T18:38:59.976Z",
+          "label": "omer@example.com",
+          "binding": "claimed",
+          "grantId": "2a7a1f6a-b977-4da4-b816-1ff3dad6fec3",
+          "expires": null,
+          "since": "2026-10-25T18:38:59.998Z"
+        }
+      },
+      "pending": {},
+      "outstanding": {},
+      "candidates": {},
+      "blocked": [],
+      "allowlist": {},
+      "seenIds": [
+        "2a7a1f6a-b977-4da4-b816-1ff3dad6fec3"
+      ],
+      "declined": [],
+      "rate": {}
+    },
+    "channels": {
+      "rdv1:rkeohxlubhyzl7ks3mwtzos5olfgocn7dwkbeg7toseadnapn5oa": {
+        "outSeq": 1,
+        "outPrev": "35681392c3b30413b49b6edc5cb0ccd9a525b7c9fb7af4a50d7a503595de36ea",
+        "inSeq": 1,
+        "inPrev": "44ba641442d8b7989c0da8ce1ea83819af0450e5caf392a7952734e79a08a55f",
+        "inRecent": [
+          "44ba641442d8b7989c0da8ce1ea83819af0450e5caf392a7952734e79a08a55f"
+        ],
+        "inNewest": 1792953539978
+      }
+    },
+    "outbox": {
+      "rdv1:rkeohxlubhyzl7ks3mwtzos5olfgocn7dwkbeg7toseadnapn5oa": [
+        {
+          "v": 1,
+          "from": "rdv1:qe4xodvipulv6vvdkrtmgtd6ztfy3curwtxdpis56yhvxd6jwoka",
+          "to": "rdv1:rkeohxlubhyzl7ks3mwtzos5olfgocn7dwkbeg7toseadnapn5oa",
+          "seq": 1,
+          "prev": null,
+          "created": "2026-10-25T18:38:59.818Z",
+          "ttl": "48h",
+          "content": {
+            "alg": "x25519+aes256gcm",
+            "epk": "5mjjLZvAaJBF36sl4yfsSxaCbkOWHf8kUu2r8WE60Gk=",
+            "nonce": "Wuss+ToWdrIN+WdC",
+            "ciphertext": "wpBTprewLfG7IZb9avciDJu+ol6VpfQ1iSL+8s7HBnhIhzdKb87Tf7VtzpJgXgQ+TPj+lPW6RVCnV1/s9YNo9MHIELWKDCpdJX89UATDPi5+DRarAJDLDKFCwoDY9S6Lws8PQuTPl0R59pp+U9St/QXg3DE8A2ZOBO7nTDnemrUtqMvNpT6qf9YiaFWLVvxyVRIHgavlxNhf1Ls026p/dW9ylrgkDjAU+s2zlIcYGW0zHQP+nKABqSFd/91IAxO+IcZH4XZJgqVWsgBBmdh1SxMISYF3O17Oxa5dx24ovdb3R1Eq0IxwsZv4DFk8IfMnjQRrz48dND+5eJm3exgFU+9XSSX1RskeVx7nYEm/bSUZryg9Ew+GY6wQ5U3uXbVcrmfstOHVsdwImtwJa3mUC3XCem73zsb1PmKeKtT9s0urNT1cZpSGoetX0AmIfRf705JHOKGTrlDnnlhjtPjPsYjztsyoNV0m8BNf+odRQMX5b8kluTi3JmlKzYprq4Y+tyCED+eg1VSnsmu8j7AvUeY4bTqQri+8Wh4xT3AFPgAzyrNKzy5AX70PO7OyrfEmwEqKFYUcTUGDsSNd7OcoB0+OdNA09gI6bn2rV/gLIVkaNeN+dIJcYPGHUOX/USvLinD4bjI+wc3fqRgkfn7nxkV9duMi/PBu/4etrKRcv8RNkoYE27UD5fdJ+THT0hmXekYfGr1YURubrT05mskbsii+epSII4LLihWg307deAaBhEk+9HtQr4EBvo0AzRL54mmJrPz8E2EgvD1lfxNDEOavKmdDXiRuKJ/wBna9PcCReWsbgC01aua9wuRklpmfz4u7jzO7l56wfhQiieqwdGWgGTlPE0fzg7SQYNp6UMmbdNAeqUMdOsle2+hY+PlGjvT5TewnqzyGlT1EqjHDUoVop8Gsw/QpQjhnqDxeQ09pJwq+166BB1Ezeop5LVrs1tMH2ywLhnRcVjxFGgAk6KwoqEvCQs3bm8+B6Auna2NFx5rnzGNgm1cCNDkNlU6dzaK3T1J7hSgPk6gCGrXsoWsQ60XHhbHTcWdhUQ=="
+          },
+          "sig": "AAZg5isL8N63gOpyF+rEm08cWbivQ5tb0TcAM5WZW7uF5qaKvqNL3L4oRHl+XBkMGZASgHathYg5HEAYdu6uDQ=="
+        }
+      ]
+    },
+    "buffer": {}
+  }
+}

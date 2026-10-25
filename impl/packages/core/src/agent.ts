@@ -19,7 +19,9 @@ import {
   createReverseGrant,
   createRevoke,
   defaultTier,
+  grantScope,
   isReverseGrant,
+  MEETING_CAPABILITIES,
   verifyContactRequest,
 } from './contact.js';
 import { type Binding, dtopic, normalizeAddresses, topicForHint } from './discovery.js';
@@ -40,7 +42,13 @@ const OUTBOX_LIMIT = 64;
 /** Gap buffer bounds: per peer (OUTBOX_LIMIT envelopes) and across peers. */
 const BUFFER_PEER_LIMIT = 16;
 /** The scope the owner grants when it doesn't pick one. */
-export const DEFAULT_GRANT_SCOPE: Readonly<GrantScope> = Object.freeze({ may_initiate: true, may_propose_meetings: true, max_frequency: '100/day' });
+/** The scope the owner grants when it doesn't pick one: meetings, and no other capability (§5.3). */
+export const DEFAULT_GRANT_SCOPE: Readonly<GrantScope> = Object.freeze({
+  may_initiate: true,
+  may_propose_meetings: true,
+  max_frequency: '100/day',
+  invoke: Object.freeze(Object.fromEntries(MEETING_CAPABILITIES.map((u) => [u, Object.freeze({})]))) as GrantScope['invoke'],
+});
 /** `rdv/resend` requests we honor per contact (each can make us republish up to OUTBOX_LIMIT envelopes). */
 export const RESEND_LIMIT = { count: 10, windowMs: 3_600_000 };
 /** Reverse grants we process per contact (each one rewrites the contact; NOTES 60). */
@@ -310,10 +318,11 @@ export class Agent extends EventEmitter<AgentEvents> {
     const c = this.book.contact(peer);
     if (!c) throw new Error(`no active contact ${peer}`);
     const tier = opts.tier ?? defaultTier(c.binding);
-    const scope = opts.scope ?? { ...DEFAULT_GRANT_SCOPE };
+    // Both fields, consistent (§5.3): the peer may run an older version that reads only may_propose_meetings.
+    const scope = grantScope(opts.scope ?? DEFAULT_GRANT_SCOPE);
     const contact = this.book.allowInbound(peer, { tier, scope });
     // Our rights for the peer end with the contact itself.
-    const grant = createReverseGrant(this.key, this.card, contact, { tier, scope: { ...scope }, expires: contact.expires });
+    const grant = createReverseGrant(this.key, this.card, contact, { tier, scope: grantScope(scope), expires: contact.expires });
     await this.deliver(peer, grant, relaysOf(contact.card));
     return contact;
   }
@@ -364,7 +373,8 @@ export class Agent extends EventEmitter<AgentEvents> {
   ): Promise<Contact> {
     const grant = createGrant(this.key, this.card, request, {
       tier: opts.tier ?? defaultTier(binding),
-      scope: opts.scope ?? { ...DEFAULT_GRANT_SCOPE },
+      // Both fields, consistent (§5.3); throws on a malformed invoke before anything is recorded or sent.
+      scope: grantScope(opts.scope ?? DEFAULT_GRANT_SCOPE),
       expires: opts.expires,
     });
     const contact = this.book.recordIssuedGrant(grant, request, binding, opts.label);

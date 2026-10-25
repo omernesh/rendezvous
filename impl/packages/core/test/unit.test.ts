@@ -1,5 +1,23 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
+  Agent,
+  type AgentState,
+  allowedCapabilities,
+  DEFAULT_GRANT_SCOPE,
+  DEFAULT_MAX_OPEN,
+  effectiveInvoke,
+  type GrantScope,
+  grantScope,
+  INVOKE_MAX,
+  invokeLimits,
+  invokeProblem,
+  isCapabilityUri,
+  MEETING_CANCEL_CAPABILITY,
+  MEETING_CAPABILITIES,
+  MEETINGS_CAPABILITY,
+  scopeAllows,
+  type Transport,
   Channels,
   ContactBook,
   canonicalize,
@@ -856,3 +874,179 @@ describe('reverse grants (issue #14, NOTES 60)', () => {
   });
 });
 
+describe('scope.invoke: capability-scoped grants and the migration rule (issue #23)', () => {
+  const REVIEW = 'https://rendezvous.nesher.co/ext/review/v1';
+  const REQUEST = 'https://rendezvous.nesher.co/ext/request/v1';
+  const card = (k: ReturnType<typeof generateKey>) => createCard(k, { rendezvous: hints });
+
+  it('validates invoke: capability URI keys, limit shapes, no wildcard', () => {
+    expect(invokeProblem({})).toBeNull();
+    expect(invokeProblem({ [REVIEW]: {}, [REQUEST]: { max_frequency: '5/day', max_open: 2 } })).toBeNull();
+    expect(invokeProblem({ [REVIEW]: { future_limit: 'ignored' } })).toBeNull(); // unknown limit fields are ignorable
+    const bad: unknown[] = [
+      null,
+      [],
+      [REVIEW],
+      'all',
+      { '*': {} },
+      { 'https://rendezvous.nesher.co/ext/*': {} },
+      { 'http://rendezvous.nesher.co/ext/review/v1': {} },
+      { 'review/v1': {} },
+      { [`https://example.com/${'x'.repeat(200)}`]: {} },
+      { 'https://example.com/a b': {} },
+      { 'https://user:pw@example.com/x': {} },
+      { [REVIEW]: true },
+      { [REVIEW]: [] },
+      { [REVIEW]: { max_frequency: 'lots' } },
+      { [REVIEW]: { max_frequency: 5 } },
+      { [REVIEW]: { max_open: 0 } },
+      { [REVIEW]: { max_open: 1.5 } },
+      { [REVIEW]: { max_open: '2' } },
+      Object.fromEntries(Array.from({ length: INVOKE_MAX + 1 }, (_, i) => [`https://example.com/ext/c${i}/v1`, {}])),
+    ];
+    for (const b of bad) expect(invokeProblem(b), JSON.stringify(b)).not.toBeNull();
+    expect(isCapabilityUri(MEETINGS_CAPABILITY)).toBe(true);
+  });
+
+  it('a received grant with a malformed invoke is invalid; a well-formed one, or none, verifies', () => {
+    const omer = generateKey();
+    const john = generateKey();
+    const req = createContactRequest(omer, card(omer), { toHint: john.id, greeting: 'hi' });
+    const grant = (scope: object) => createGrant(john, card(john), req, { tier: 'friend', scope });
+    expect(verifyGrant(grant({ may_initiate: true }))).toBe(true);
+    expect(verifyGrant(grant({ may_initiate: true, invoke: { [REVIEW]: { max_open: 2 } } }))).toBe(true);
+    expect(verifyGrant(grant({ may_initiate: true, invoke: { '*': {} } }))).toBe(false);
+    expect(verifyGrant(grant({ may_initiate: true, invoke: [REVIEW] }))).toBe(false);
+    const rev = createReverseGrant(john, card(john), { peer: omer.id, grantId: crypto.randomUUID() }, { tier: 'friend', scope: { invoke: { [REVIEW]: 1 } } });
+    expect(verifyReverseGrant(rev)).toBe(false);
+  });
+
+  it('migration matrix: invoke first, the boolean as fallback, the narrower when they disagree, deny by default', () => {
+    const both = Object.fromEntries(MEETING_CAPABILITIES.map((u) => [u, {}]));
+    const cases: Array<[string, GrantScope | null | undefined, { meet: boolean; review: boolean }]> = [
+      ['nothing', undefined, { meet: false, review: false }],
+      ['empty', {}, { meet: false, review: false }],
+      ['boolean only, true', { may_propose_meetings: true }, { meet: true, review: false }],
+      ['boolean only, false', { may_propose_meetings: false }, { meet: false, review: false }],
+      ['invoke only, meetings', { invoke: both }, { meet: true, review: false }],
+      ['invoke only, review', { invoke: { [REVIEW]: {} } }, { meet: false, review: true }],
+      ['invoke only, empty', { invoke: {} }, { meet: false, review: false }],
+      ['both consistent, meetings', { may_propose_meetings: true, invoke: both }, { meet: true, review: false }],
+      ['both consistent, none', { may_propose_meetings: false, invoke: { [REVIEW]: {} } }, { meet: false, review: true }],
+      ['inconsistent: boolean true, invoke without meetings', { may_propose_meetings: true, invoke: { [REVIEW]: {} } }, { meet: false, review: true }],
+      ['inconsistent: boolean false, invoke with meetings', { may_propose_meetings: false, invoke: both }, { meet: false, review: false }],
+      ['malformed invoke allows nothing', { may_propose_meetings: true, invoke: { [REVIEW]: {}, '*': {} } }, { meet: false, review: false }],
+      ['invoke not an object', { may_propose_meetings: true, invoke: [REVIEW] as never }, { meet: false, review: false }],
+    ];
+    for (const [name, scope, want] of cases) {
+      expect([scopeAllows(scope, MEETINGS_CAPABILITY), scopeAllows(scope, REVIEW)], name).toEqual([want.meet, want.review]);
+      expect(scopeAllows(scope, REQUEST), name).toBe(false); // never listed, never allowed: no wildcard
+    }
+    expect(invokeLimits({ invoke: { [REVIEW]: { max_frequency: '5/day' } } }, REVIEW)).toEqual({ max_frequency: '5/day', max_open: DEFAULT_MAX_OPEN });
+    expect(invokeLimits({ invoke: {} }, REVIEW)).toBeNull();
+    expect(allowedCapabilities({ may_propose_meetings: true })).toEqual([...MEETING_CAPABILITIES].sort());
+    // What a task engine is handed: the rule applied, never the raw field.
+    expect(effectiveInvoke({ may_propose_meetings: true, invoke: { [REVIEW]: { max_open: 2 }, '*': {} } })).toEqual({});
+    expect(effectiveInvoke({ may_propose_meetings: false, invoke: { [MEETINGS_CAPABILITY]: {}, [REVIEW]: { max_open: 2 } } })).toEqual({ [REVIEW]: { max_open: 2 } });
+    expect(Object.keys(effectiveInvoke({ may_propose_meetings: true })).sort()).toEqual([...MEETING_CAPABILITIES].sort());
+    expect(effectiveInvoke(undefined)).toEqual({});
+  });
+
+  it('grantScope writes both fields consistently, so a reader of the boolean alone agrees with invoke', () => {
+    const inputs: GrantScope[] = [
+      { may_initiate: true, may_propose_meetings: true, max_frequency: '100/day' },
+      { may_initiate: true, may_propose_meetings: false },
+      { may_initiate: true },
+      { invoke: { [MEETINGS_CAPABILITY]: {} } },
+      { invoke: { [REVIEW]: { max_frequency: '5/day' } } },
+      { may_propose_meetings: true, invoke: { [MEETINGS_CAPABILITY]: {}, [REVIEW]: {} } },
+    ];
+    for (const i of inputs) {
+      const out = grantScope(i);
+      expect(typeof out.may_propose_meetings).toBe('boolean');
+      expect(invokeProblem(out.invoke)).toBeNull();
+      expect(out.may_propose_meetings, JSON.stringify(i)).toBe(scopeAllows(out, MEETINGS_CAPABILITY));
+      expect(scopeAllows(out, MEETING_CANCEL_CAPABILITY)).toBe(out.may_propose_meetings);
+      // Never wider than what was asked.
+      for (const u of [REVIEW, REQUEST]) if (!scopeAllows(i, u)) expect(scopeAllows(out, u)).toBe(false);
+      expect(grantScope(out)).toEqual(out); // idempotent
+    }
+    expect(grantScope({ may_propose_meetings: true }).invoke).toEqual(Object.fromEntries(MEETING_CAPABILITIES.map((u) => [u, {}])));
+    expect(grantScope({}).invoke).toEqual({}); // no capability granted by default
+    expect(() => grantScope({ may_propose_meetings: true, invoke: { [REVIEW]: {} } })).toThrow(/disagree/);
+    expect(() => grantScope({ may_propose_meetings: false, invoke: { [MEETINGS_CAPABILITY]: {} } })).toThrow(/disagree/);
+    expect(() => grantScope({ invoke: { [MEETING_CANCEL_CAPABILITY]: {} } })).toThrow(/meeting-cancel/);
+    expect(() => grantScope({ invoke: { '*': {} } })).toThrow(/capability URI/);
+    // A copy: changing the result never touches the input, nor the frozen defaults.
+    const src = { invoke: { [REVIEW]: { max_open: 2 } } };
+    grantScope(src).invoke![REVIEW].max_open = 3;
+    expect(src.invoke[REVIEW].max_open).toBe(2);
+    expect(Object.isFrozen(DEFAULT_GRANT_SCOPE.invoke)).toBe(true);
+    expect(scopeAllows(DEFAULT_INBOUND_SCOPE, MEETINGS_CAPABILITY)).toBe(false);
+  });
+
+  it('ContactBook.mayInvoke reads the direction asked, and only for an active contact', () => {
+    const omer = generateKey();
+    const john = generateKey();
+    const req = createContactRequest(john, card(john), { toHint: omer.id, greeting: 'hi' });
+    const book = new ContactBook();
+    expect(book.receiveRequest(req, 'claimed').status).toBe('pending');
+    const g = createGrant(omer, card(omer), req, { tier: 'friend', scope: grantScope({ invoke: { [REVIEW]: {} } }) });
+    book.recordIssuedGrant(g, req, 'claimed');
+    expect(book.mayInvoke(john.id, REVIEW)).toBe(true);
+    expect(book.mayInvoke(john.id, MEETINGS_CAPABILITY)).toBe(false);
+    expect(book.mayInvoke(john.id, REVIEW, 'outbound')).toBe(false); // what John granted us is a separate scope
+    expect(book.mayInvoke(generateKey().id, REVIEW)).toBe(false);
+    book.block(john.id);
+    expect(book.mayInvoke(john.id, REVIEW)).toBe(false);
+    // allowInbound validates too, and leaves the contact alone when it throws.
+    const b2 = new ContactBook();
+    b2.receiveRequest(req, 'claimed');
+    b2.recordIssuedGrant(g, req, 'claimed');
+    const before = JSON.stringify(b2.contact(john.id));
+    expect(() => b2.allowInbound(john.id, { tier: 'family', scope: { invoke: { '*': {} } } })).toThrow();
+    expect(JSON.stringify(b2.contact(john.id))).toBe(before);
+  });
+
+  it('agent state saved by main (rev 3) loads unchanged and is read through the rule, widening nothing', () => {
+    const fixture = JSON.parse(readFileSync(new URL('./fixtures/agent-main-rev3.json', import.meta.url), 'utf8')) as {
+      omer: AgentState;
+      john: AgentState;
+    };
+    const noTransport = (): Transport => ({
+      async sendEnvelope() {},
+      onEnvelopes: () => () => {},
+      async publishTopic() {},
+      onTopics: () => () => {},
+      fetchTopic: async () => [],
+      close() {},
+    });
+    const omer = Agent.fromJSON(structuredClone(fixture.omer), noTransport);
+    const john = Agent.fromJSON(structuredClone(fixture.john), noTransport);
+    const byLabel = (a: Agent, l: string) => a.contacts().find((c) => c.label === l)!.peer;
+    const johnId = byLabel(omer, 'john@example.com');
+    const danaId = byLabel(omer, 'dana@example.com');
+    // Nothing is rewritten: the saved state round-trips byte for byte.
+    expect(JSON.stringify(omer.toJSON().book)).toBe(JSON.stringify(fixture.omer.book));
+    expect(JSON.stringify(john.toJSON().book)).toBe(JSON.stringify(fixture.john.book));
+    for (const c of [...omer.contacts(), ...john.contacts()]) {
+      expect(c.inboundScope?.invoke).toBeUndefined(); // main never wrote invoke
+      expect(c.outboundScope?.invoke).toBeUndefined();
+    }
+    // Omer's human granted John meetings (main's default grant): still meetings, nothing else.
+    expect(omer.book.mayInvoke(johnId, MEETINGS_CAPABILITY)).toBe(true);
+    expect(omer.book.mayInvoke(johnId, MEETING_CANCEL_CAPABILITY)).toBe(true);
+    expect(omer.book.mayInvoke(johnId, REVIEW)).toBe(false);
+    // Dana granted Omer meetings; Omer's inbound for Dana is main's local default: no meetings, nothing else.
+    expect(omer.book.mayInvoke(danaId, MEETINGS_CAPABILITY, 'outbound')).toBe(true);
+    expect(omer.book.mayInvoke(danaId, MEETINGS_CAPABILITY)).toBe(false);
+    expect(omer.book.mayInvoke(danaId, REVIEW)).toBe(false);
+    expect(omer.book.mayInvoke(danaId, REVIEW, 'outbound')).toBe(false);
+    // John's side: Omer's grant lets John propose; John's own default for Omer does not.
+    expect(john.book.mayInvoke(omer.id, MEETINGS_CAPABILITY, 'outbound')).toBe(true);
+    expect(john.book.mayInvoke(omer.id, MEETINGS_CAPABILITY)).toBe(false);
+    // The allowlist entry (no meetings) grants exactly that when it is used.
+    const [allowed] = Object.values(omer.book.state.allowlist);
+    expect(grantScope(allowed.scope)).toMatchObject({ may_propose_meetings: false, invoke: {} });
+  });
+});

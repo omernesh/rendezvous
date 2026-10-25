@@ -612,7 +612,11 @@ the human reads a friendly note.</p>
     &quot;may_initiate&quot;: true,
     &quot;may_propose_meetings&quot;: true,
     &quot;may_access_calendar&quot;: &quot;free_busy&quot;,
-    &quot;max_frequency&quot;: &quot;20/day&quot;
+    &quot;max_frequency&quot;: &quot;20/day&quot;,
+    &quot;invoke&quot;: {
+      &quot;https://rendezvous.nesher.co/ext/meetings/v1&quot;: {},
+      &quot;https://rendezvous.nesher.co/ext/meeting-cancel/v1&quot;: {}
+    }
   },
   &quot;expires&quot;: &quot;2027-10-08T00:00:00Z&quot;,
   &quot;ts&quot;: &quot;…&quot;,
@@ -683,7 +687,59 @@ capped.</p>
   own grant triggers one; an agent never sends one on its own.
 - <strong><code>max_frequency</code></strong> is <code>"&lt;n&gt;/&lt;minute|hour|day&gt;"</code>; exceeding it revokes the
   grant (§10).
-- Scope defaults for meetings are in §7.4.</p>
+- <strong><code>scope.invoke</code></strong> is an object whose keys are capability URIs the grantee
+  may invoke on the grantor, each mapping to its limits:</p>
+<p><code>json
+  "scope": {
+    "may_initiate": true,
+    "max_frequency": "100/day",
+    "invoke": {
+      "https://rendezvous.nesher.co/ext/meetings/v1": {},
+      "https://rendezvous.nesher.co/ext/meeting-cancel/v1": {},
+      "https://rendezvous.nesher.co/ext/review/v1": { "max_frequency": "5/day", "max_open": 2 }
+    },
+    "may_propose_meetings": true,
+    "may_access_calendar": "free_busy"
+  }</code></p>
+<ul>
+<li><strong>Deny by default.</strong> A task whose capability is not a key of <code>invoke</code> is
+    refused with a <code>rejected</code> status and creates no state. There is no
+    wildcard: each capability is a separate human decision.</li>
+<li><strong>Shape.</strong> Keys are <code>https</code> URIs of at most 200 characters, at most 32 of
+    them; each value is an object. A grant whose <code>invoke</code> is not of this
+    shape is invalid (§5.3 rules above). Limit fields a receiver does not
+    know are ignored.</li>
+<li><strong>Limits.</strong> <code>max_frequency</code> per capability (same format as above) and
+    <code>max_open</code> (tasks not yet terminal, a positive integer; default 4).
+    Going over a capability's limit rejects that task only (<code>rejected</code>,
+    reason <code>rate</code>), creates no state, and is counted for the human. It does
+    not revoke the grant.</li>
+<li><strong>Gross abuse revokes.</strong> The grant is revoked (§10, with a <code>rdv/revoke</code>
+    and the human told) only when the peer (a) goes over the grant-wide
+    <code>max_frequency</code>, as today; or (b) has more tasks rejected for one
+    capability's limit in that capability's window than three times the
+    limit itself (more than 15 rejected on a <code>5/day</code> capability), or more
+    than 50 tasks rejected for any per-capability limit in 24 hours.
+    Rejections for a closed gate, a human's "no" or an unsupported capability
+    never count towards (b).</li>
+<li><strong>Free messages</strong> (<code>rdv_send</code> notes, any payload that is not a task) need
+    only <code>may_initiate</code>, as today.</li>
+<li><strong>Meetings.</strong> <code>may_propose_meetings: true</code> is read as <code>invoke</code> holding the
+    meetings and meeting-cancel URIs. A grant that has <code>invoke</code> MUST also
+    write <code>may_propose_meetings</code>, consistent with it, until the field is
+    retired; a receiver that finds the two inconsistent applies the narrower
+    (no meetings). <code>may_access_calendar</code> is unchanged.</li>
+<li><strong>Direction</strong> is unchanged: a received grant sets what we may invoke on
+    the peer; the reverse grant is how our owner's grant reaches it.</li>
+<li><strong>Migration.</strong> <code>invoke</code> is a backward-compatible addition, since <code>scope</code>
+    is an open object: an older peer stores it, ignores it, and still reads
+    <code>may_propose_meetings</code>. A receiver reads <code>invoke</code> first and falls back to
+    the boolean when it is absent; stored grants are read through the same
+    rule and need no rewriting. <code>may_propose_meetings</code> is retired in v0.5.</li>
+<li>Scope defaults for meetings are in §7.4. Default scopes put nothing in
+  <code>invoke</code> except the meeting URIs where they already allow meetings: no
+  capability is ever granted by default.</li>
+</ul>
 <h3 id="54-policy-and-revocation">5.4 Policy and revocation</h3>
 <ul>
 <li>The receiving agent's inbound policy is <code>allow</code> (only grants from the
@@ -706,7 +762,8 @@ of model output alone. Acceptable approvals are:
   local UI) and typed by the human; it never appears in a tool result. The
   phrase approves the request on the terms shown with it (tier and scope),
   and nothing else: the host MUST refuse it for any other tier or scope the
-  model asks for, and show the human a new phrase for those terms instead.
+  model asks for (another list of capabilities in <code>scope.invoke</code> included),
+  and show the human a new phrase for those terms instead.
   A host SHOULD store only a salted, slow hash of the phrase, so that it
   cannot be read back from disk. The reference implementation accepts a
   phrase only for tiers less close than <code>family</code> (<code>friend</code> and below);
@@ -1033,8 +1090,11 @@ answers it as unsupported and keeps the meeting, and an agent that predates
 card and, when the card does not advertise it, tells its human to let the
 other person know directly.</p>
 <h3 id="74-scope-and-defaults">7.4 Scope and defaults</h3>
-<p>Meeting verbs require <code>may_propose_meetings: true</code> in the grant that covers
-the direction (§5.3): proposing to a peer, and answering on a negotiation we
+<p>Meeting verbs require the meetings capability in the grant that covers the
+direction (§5.3): <code>scope.invoke</code> holding
+<code>https://rendezvous.nesher.co/ext/meetings/v1</code>, or, in a grant without
+<code>invoke</code>, <code>may_propose_meetings: true</code>; when both are present and disagree,
+there are no meetings. Proposing to a peer, and answering on a negotiation we
 proposed, need the peer's grant to us; a peer proposing to us needs the grant
 our owner gave the peer. For the agent that granted the contact, "the peer's
 grant to us" is the peer's reverse grant (§5.3): until the requester's owner
@@ -1042,8 +1102,9 @@ grants back, the grantor cannot propose. If <code>may_access_calendar</code> is 
 counts as <code>free_busy</code>, because proposing a slot is a free/busy disclosure;
 <code>none</code> blocks negotiation. At every level, including <code>full</code>, meeting messages
 carry slots only, never event titles.</p>
-<p>Peer state is bounded: only a meeting-capable grant may create tasks (or
-tombstones); a receiver SHOULD cap tasks per peer (reference: 32, evicting
+<p>Peer state is bounded: only a grant whose <code>invoke</code> covers the capability
+(for meetings, the rule above) may create a task or a tombstone; anything else
+is refused before state is kept; a receiver SHOULD cap tasks per peer (reference: 32, evicting
 finished ones and tombstones first and refusing when all are pending) and
 prune finished tasks (reference: after 30 days).</p>
 <p><strong>General tasks</strong> (<strong>spec change</strong>, issue #22). Every task a peer can create
@@ -1668,7 +1729,7 @@ calling card.</strong></p>
 </tr>
 <tr>
 <td><code>rdv_grant</code> / <code>rdv_revoke</code></td>
-<td>approve/reject/revoke contacts with tier+scope; a grant needs the human's own approval (§5.5)</td>
+<td>approve/reject/revoke contacts with tier+scope (meetings and the capabilities in <code>scope.invoke</code>); a grant needs the human's own approval (§5.5)</td>
 </tr>
 <tr>
 <td><code>rdv_send</code></td>

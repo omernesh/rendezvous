@@ -1287,6 +1287,71 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       nor is any capability registered. The slice that wires them adds
       `TASKS_URI` and the registry's URIs to the card (follow-up issue).
 
+## Capability-scoped grants (v0.3)
+
+74. **`scope.invoke` and the migration from `may_propose_meetings`**
+    (**spec change**, §5.3, §5.5, §7.4, §13; issue #23, design A.4). A grant's
+    `scope` gains `invoke`: capability URI → limits (`max_frequency`,
+    `max_open`). Core, `contact.ts`:
+    - **Shape** (`invokeProblem`, `isCapabilityUri`): a plain object of at
+      most 32 keys, each an `https` URI of at most 200 printable ASCII
+      characters with a host, no userinfo and no `*` (no wildcard), each
+      value an object; `max_frequency` parses like the grant-wide one,
+      `max_open` is a positive integer. Unknown limit fields are ignored, as
+      other open scope fields are. `verifyGrant`/`verifyReverseGrant` refuse
+      a grant whose `invoke` is malformed; one without `invoke` (every older
+      peer) verifies as before.
+    - **Reading rule** (`scopeAllows`, `ContactBook.mayInvoke(peer,
+      capability, 'inbound' | 'outbound')`): `invoke` first; without it, only
+      the two meeting URIs can be allowed, by `may_propose_meetings: true`.
+      With both, a meeting URI also needs the boolean not to be `false`, so
+      a disagreement in either direction means no meetings (the narrower). A
+      malformed `invoke` allows nothing. Stored contacts are read through the
+      same rule: an `agent.json` saved by main loads and saves back byte for
+      byte, and nothing it held widens (fixture
+      `core/test/fixtures/agent-main-rev3.json`, produced by main's own core
+      at c9a76ae).
+    - **Writing** (`grantScope`): every grant v0.3 issues (`Agent.grant`, the
+      allowlist auto-grant, `allowInbound` and its reverse grant) writes both
+      fields, consistent: `invoke` holding the meetings URI ⇔
+      `may_propose_meetings: true`, and meeting-cancel goes with meetings. A
+      boolean-only scope gets an `invoke` from the boolean; a scope whose two
+      fields disagree, or whose `invoke` is malformed, throws before
+      anything is recorded or sent. `DEFAULT_GRANT_SCOPE` lists the meeting
+      URIs and nothing else; `DEFAULT_INBOUND_SCOPE` an empty `invoke`.
+      `createGrant` itself still signs the scope it is given, so the test
+      vectors are unchanged.
+    - **Direction** unchanged (item 15, item 60): a received grant sets only
+      `outboundScope`. The a2a engine, which does not import core, applies
+      the same rule in `meetingsAllowed` (`checkScope`), and the CLI's
+      `meetingScope` hands it core's answer, so both agree on every shape
+      (cli test). A proposal from a peer whose grant does not cover meetings
+      is refused before a task or tombstone is kept, as before.
+    - **Surfaces.** `rdv contact grant` takes `--invoke <uri>` (repeatable)
+      and `--no-meetings` on top of the default scope or `--scope-file`, all
+      checked before sending (exit 2). `rdv_grant` takes `invoke` (URIs
+      besides meetings, which stay `may_propose_meetings`) with `request_id`
+      or `agent_id`; the form names the capabilities and has one checkbox
+      for them (unchecked grants none), and a confirm phrase is bound to the
+      exact list through the existing terms digest (item 57/66: the digest
+      covers the whole scope), so a phrase shown for one list is refused for
+      any other and the human is shown a phrase for the list asked.
+      `describeTerms` prints `may invoke <uris>`. Contact views gain
+      `outbound_invoke` and `inbound_invoke`; the MCP `reverse_grant` event
+      gains `invoke`, each URI strict-shaped (`capability` in
+      `untrusted.ts`) or quarantined. A phrase issued before this change for
+      a pending request carries the old default scope (no `invoke`), so the
+      first use after upgrading is refused as other terms and a new phrase
+      is shown.
+    - **Not here:** enforcing the per-capability limits and the gross-abuse
+      threshold (issue #28) and the tasks that ask for capabilities (issue
+      #22, item 73, whose engine takes the grant's `invoke` map in its
+      context): a host wiring that engine passes `effectiveInvoke(scope)`,
+      the map with this item's reading rule applied (a malformed `invoke`
+      gives `{}`, a boolean-only grant the meeting URIs), never the raw
+      field. `invokeLimits` gives the limits with `max_open` defaulted to 4.
+      `may_propose_meetings` is retired in v0.5.
+
 ## Not implemented yet
 
 

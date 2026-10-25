@@ -81,10 +81,17 @@ const COMMANDS: Record<string, Command> = {
     run: cmd.contactPending,
   },
   'contact grant': {
-    usage: 'rdv contact grant <request-id|agent-id> [--tier friend] [--scope-file s.json] [--label john@doe.com]',
-    summary: 'Approve a pending request, or give a contact rights towards you (meetings etc.; the contact is told)',
+    usage:
+      'rdv contact grant <request-id|agent-id> [--tier friend] [--scope-file s.json] [--invoke <capability-uri>]... [--no-meetings] [--label john@doe.com]',
+    summary: 'Approve a pending request, or give a contact rights towards you (meetings, capabilities it may invoke; the contact is told)',
     args: 1,
-    options: { tier: { type: 'string' }, 'scope-file': { type: 'string' }, label: { type: 'string' } },
+    options: {
+      tier: { type: 'string' },
+      'scope-file': { type: 'string' },
+      invoke: { type: 'string', multiple: true },
+      'no-meetings': { type: 'boolean' },
+      label: { type: 'string' },
+    },
     run: cmd.contactGrant,
   },
   'contact confirm': {

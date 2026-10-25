@@ -7,7 +7,7 @@
 import { describeSlot, isA2APayload, type Slot, TASK_STATES } from '@rendezvous/a2a';
 import { fingerprint } from '@rendezvous/core';
 import { appendEvents, eventsStamp, type Home, type LoggedEvent, readEvents, STRANGER_DROPS } from '@rendezvous/cli/lib';
-import { address, agentId, isPlain, oneOf, safe, token, untrusted, uuid } from './untrusted.js';
+import { address, agentId, capability, isPlain, oneOf, safe, token, untrusted, uuid } from './untrusted.js';
 
 const TIERS = ['spouse', 'family', 'friend', 'colleague', 'business', 'stranger'];
 const BINDINGS = ['in-person', 'dns', 'mailbox', 'claimed'];
@@ -151,12 +151,15 @@ export function toModelEvent(e: Raw, negotiating: boolean): Omit<McpEvent, 'n' |
     case 'reverse-grant': {
       // The peer's human granted us rights towards it (NOTES 60). It changes only what we may do; tell the user.
       const meetings = e.outbound_meetings === true;
+      // Capability URIs the peer's grant lets us invoke (§5.3). The peer wrote them: strict shape, else quarantined.
+      const invoke = Array.isArray(e.outbound_invoke) ? e.outbound_invoke.slice(0, 32).map(capability) : [];
       return {
         type: 'reverse_grant',
         peer: agentId(e.peer),
         fingerprint: fp(e.peer),
         their_tier_for_you: oneOf(TIERS)(e.granted_tier),
         may_propose_meetings: meetings,
+        invoke,
         summary: meetings
           ? `${who(e.peer)} now lets you propose meetings to them (rdv_negotiate).`
           : `${who(e.peer)} updated what you may do towards them; meetings are not allowed.`,

@@ -33,6 +33,9 @@ afterEach(async () => {
 
 const SCOPE = { may_initiate: true, may_propose_meetings: true, may_access_calendar: 'free_busy', max_frequency: '100/day' } as const;
 const PHRASE = /[a-z]+-[a-z]+-[a-z]+-\d{3}/;
+const MEETINGS = 'https://rendezvous.nesher.co/ext/meetings/v1';
+const REVIEW = 'https://rendezvous.nesher.co/ext/review/v1';
+const OTHER = 'https://rendezvous.nesher.co/ext/request/v1';
 
 /** What the human answers in each kind of form; `inbound` handles the new one. */
 interface Human {
@@ -201,6 +204,63 @@ describe('rdv_grant agent_id: grant an existing contact more (issue #1)', () => 
     expect(omer.transcript.join('\n')).not.toMatch(PHRASE);
   });
 
+  it('invoke (issue #23): the phrase is bound to the exact capability list, an altered list is refused, and the reverse grant carries it', async () => {
+    const { omer, john, o, j } = await connected();
+    const asks = () => omer.humanLog.filter((l) => l.includes('asks to grant your contact') && l.includes(j.agent_id));
+    // Not a capability URI, a wildcard, meetings through invoke, invoke on a probe answer: refused, no phrase issued.
+    for (const invoke of [['review'], ['https://rendezvous.nesher.co/ext/*'], ['http://example.com/ext/x/v1'], [MEETINGS]]) {
+      const r = await omer.call('rdv_grant', { agent_id: j.agent_id, tier: 'friend', invoke });
+      expect(r.isError, invoke[0]).toBe(true);
+      expect(r.text).toMatch(/capability URI|may_propose_meetings/);
+    }
+    expect((await omer.call('rdv_grant', { grant_id: crypto.randomUUID(), invoke: [REVIEW] })).text).toContain('invoke goes with');
+    expect(asks()).toHaveLength(0);
+
+    // Asked for review/v1: the human is shown exactly that list, with the phrase for it.
+    expect((await omer.call('rdv_grant', { agent_id: j.agent_id, tier: 'friend', invoke: [REVIEW] })).isError).toBe(true);
+    expect(asks().at(-1)).toContain(`tier friend, may propose meetings, may invoke ${REVIEW}`);
+    const forReview = phraseFromHumanLog(omer, j.agent_id);
+    // The same phrase with one more capability, or with none: refused, and a phrase for exactly that list goes to the human.
+    const wider = await omer.call('rdv_grant', { agent_id: j.agent_id, tier: 'friend', invoke: [REVIEW, OTHER], confirm_phrase: forReview });
+    expect(wider.isError).toBe(true);
+    expect(wider.text).toContain('does not approve these terms');
+    expect(asks().at(-1)).toContain(`may invoke ${OTHER} ${REVIEW}`);
+    expect(await rightsOf(omer, j.agent_id)).toContain('default');
+    const forWider = phraseFromHumanLog(omer, j.agent_id);
+    const narrower = await omer.call('rdv_grant', { agent_id: j.agent_id, tier: 'friend', confirm_phrase: forWider });
+    expect(narrower.text).toContain('does not approve these terms');
+    const forNone = phraseFromHumanLog(omer, j.agent_id);
+    // Ask for review/v1 again: the phrase for exactly that list is the one that works.
+    expect((await omer.call('rdv_grant', { agent_id: j.agent_id, tier: 'friend', invoke: [REVIEW], confirm_phrase: forNone })).isError).toBe(true);
+    const granted = await ok(omer, 'rdv_grant', { agent_id: j.agent_id, tier: 'friend', invoke: [REVIEW], confirm_phrase: phraseFromHumanLog(omer, j.agent_id) });
+    expect(granted.scope).toMatchObject({ may_propose_meetings: true, invoke: { [REVIEW]: {}, [MEETINGS]: {} } });
+    expect(Object.keys(granted.scope.invoke)).not.toContain(OTHER);
+    expect(granted.next).toContain(REVIEW);
+    const rev = await waitEvent(john, (e) => e.type === 'reverse_grant' && e.peer === o.agent_id, 'the reverse grant', 10_000);
+    expect(rev.may_propose_meetings).toBe(true);
+    expect(rev.invoke).toContain(REVIEW);
+    expect(rev.invoke).not.toContain(OTHER);
+    // Omer's rights towards John are John's own grant still: John's form-less status shows the default grant.
+    const status = (await ok(omer, 'rdv_status')).contacts.find((c: { agent_id: string }) => c.agent_id === j.agent_id);
+    expect(status.their_rights).toBe('granted by your user');
+  });
+
+  it('invoke by form: the form names the capabilities, and unchecking them grants none', async () => {
+    const h: Human = { forms: [] };
+    const { omer, john, o, j } = await connected({ omer: h, john: { forms: [] } });
+    let schema: { properties?: Record<string, { title?: string }> } | undefined;
+    h.inbound = (params) => {
+      schema = params.requestedSchema as typeof schema;
+      return { action: 'accept', content: { approve: true, tier: 'friend', allow_invoke: false } };
+    };
+    const granted = await ok(omer, 'rdv_grant', { agent_id: j.agent_id, invoke: [REVIEW] });
+    expect(h.forms[0]).toContain(`may also invoke: ${REVIEW}`);
+    expect(schema?.properties?.allow_invoke?.title).toContain(REVIEW);
+    expect(Object.keys(granted.scope.invoke)).not.toContain(REVIEW);
+    const rev = await waitEvent(john, (e) => e.type === 'reverse_grant' && e.peer === o.agent_id, 'the reverse grant', 10_000);
+    expect(rev.invoke).not.toContain(REVIEW);
+  });
+
   it('by phrase: a contact replaced after the phrase was shown is refused, and the human gets a new phrase', async () => {
     const { omer, j } = await connected();
     expect((await omer.call('rdv_grant', { agent_id: j.agent_id })).isError).toBe(true);
@@ -235,6 +295,8 @@ describe('rdv_grant agent_id: grant an existing contact more (issue #1)', () => 
     const [issued] = syncPhrases(home, [inboundTarget(c, 'stranger', SCOPE)]);
     expect(checkPhrase(home, inboundTarget(c, 'friend', SCOPE), issued.phrase)).toMatchObject({ ok: false, reason: 'terms' });
     expect(checkPhrase(home, inboundTarget(c, 'stranger', { ...SCOPE, may_propose_meetings: false }), issued.phrase)).toMatchObject({ ok: false, reason: 'terms' });
+    // Bound to the capability list too (issue #23): adding one is other terms.
+    expect(checkPhrase(home, inboundTarget(c, 'stranger', { ...SCOPE, invoke: { [REVIEW]: {} } }), issued.phrase)).toMatchObject({ ok: false, reason: 'terms' });
     for (const other of [{ grantId: 'g2' }, { since: '2026-10-25T11:00:00Z' }, { label: 'mallory@example.com' }]) {
       expect(checkPhrase(home, inboundTarget({ ...(c as object), ...other } as never, 'stranger', SCOPE), issued.phrase)).toMatchObject({ ok: false, reason: 'changed' });
     }

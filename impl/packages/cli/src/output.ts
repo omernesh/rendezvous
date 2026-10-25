@@ -2,8 +2,12 @@
 // key never goes through here: views below pick fields explicitly.
 import {
   type AddressCard,
+  allowedCapabilities,
   type Contact,
   fingerprint,
+  MEETING_CAPABILITIES,
+  MEETINGS_CAPABILITY,
+  scopeAllows,
   type GrantCandidate,
   type PendingRequest,
   type ProbeOverflow,
@@ -80,7 +84,11 @@ export function contactView(c: Contact) {
     /** granted: our human set the peer's rights; default: the local default (no meetings, rate-limited). */
     inbound: c.inboundGranted === false ? 'default' : 'granted',
     /** The peer's grant (or reverse grant, NOTES 60) lets us propose meetings to it. */
-    outbound_meetings: c.outboundScope?.may_propose_meetings === true,
+    outbound_meetings: scopeAllows(c.outboundScope, MEETINGS_CAPABILITY),
+    /** Capabilities the peer's grant lets us invoke on it (§5.3, meetings included; the migration rule applied). */
+    outbound_invoke: allowedCapabilities(c.outboundScope),
+    /** Capabilities our human lets the peer invoke on us. */
+    inbound_invoke: allowedCapabilities(c.inboundScope),
   };
 }
 
@@ -90,8 +98,11 @@ export function contactText(c: Contact): string {
   const theirs = v.granted_tier ? `  their tier for us ${safe(v.granted_tier)}` : '';
   const inbound = v.inbound === 'default' ? '  inbound: default (no meetings; "rdv contact grant <agent-id>" to allow more)' : '';
   const outbound = v.outbound_meetings ? '  you may propose meetings' : '';
+  const others = (l: string[]) => l.filter((u) => !MEETING_CAPABILITIES.includes(u)).map(safe).join(', ');
+  const theyInvoke = others(v.inbound_invoke) ? `  they may invoke ${others(v.inbound_invoke)}` : '';
+  const youInvoke = others(v.outbound_invoke) ? `  you may invoke ${others(v.outbound_invoke)}` : '';
   const label = v.label ? `  label ${safe(v.label)}` : '';
-  return `${safe(v.peer)}${label}  tier ${safe(v.tier)}  binding ${safe(v.binding)}  fingerprint ${safe(v.fingerprint)}  since ${safe(v.since)}${expires}${theirs}${inbound}${outbound}`;
+  return `${safe(v.peer)}${label}  tier ${safe(v.tier)}  binding ${safe(v.binding)}  fingerprint ${safe(v.fingerprint)}  since ${safe(v.since)}${expires}${theirs}${inbound}${outbound}${youInvoke}${theyInvoke}`;
 }
 
 export function overflowView(o: ProbeOverflow) {

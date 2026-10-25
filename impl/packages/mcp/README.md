@@ -97,7 +97,7 @@ the human reads in their own terminal (`rdv contact pending`), below.
 | `rdv_discover` | address | cards found (agent ID, fingerprint, claimed addresses, relays); never a label (anyone can publish a card for any address), never our own card (for our own address: `own_card_on_relays`) |
 | `rdv_request_contact` | target (email, +phone, or agent ID), greeting, label (probes only) | request ID, local_label (a probe: the address probed, applied only when the human confirms the answer; by agent ID: none, and a `label` is refused) |
 | `rdv_pending_requests` | — | requests with fingerprint, binding, how they arrived, untrusted greeting |
-| `rdv_grant` | request_id, tier, may_propose_meetings, confirm_phrase, label; or grant_id (+ confirm_phrase, label) to confirm a probe answer; or agent_id (+ tier, may_propose_meetings, confirm_phrase) to grant an existing contact more, which also sends it a reverse grant | contact (needs the human, below) |
+| `rdv_grant` | request_id, tier, may_propose_meetings, invoke, confirm_phrase, label; or grant_id (+ confirm_phrase, label) to confirm a probe answer; or agent_id (+ tier, may_propose_meetings, invoke, confirm_phrase) to grant an existing contact more, which also sends it a reverse grant | contact (needs the human, below) |
 | `rdv_revoke` | agent_id, or request_id / grant_id (+ block) to decline | revoked / declined / rejected |
 | `rdv_send` | agent_id or to (a `local_label`), payload `{type, …}` (not `a2a/*`, `rdv/*`) | agent ID, fingerprint, envelope seq; `to` is refused when no contact, or more than one, has that label |
 | `rdv_inbox` | since cursor, limit, wait_seconds (≤ 60) | events + next_cursor |
@@ -109,6 +109,7 @@ arrive, so a client that subscribes needn't poll.
 
 Events: `contact_request`, `contact_candidate` (an answer to our discovery
 probe, confirmed through the same human gate as a grant), `contact`, `message`, `revoked`, `dropped`, `error`,
+`reverse_grant` (what a contact's human now lets us do: `may_propose_meetings` and `invoke`, the capability URIs),
 and `dinner` (kind proposed / offer-received / countered / confirm-needed /
 accepted / completed / released / rejected / canceled / expired / status, with
 a plain-language `summary` we write from validated fields; `confirm-needed`
@@ -116,8 +117,12 @@ also carries a `next_step`).
 
 Grants issued here always carry `may_initiate: true`,
 `may_access_calendar: "free_busy"`, `max_frequency: "100/day"`, and
-`may_propose_meetings` (default true). The calendar adapter only ever shares
-free slots, never titles.
+`may_propose_meetings` (default true), and `scope.invoke` (NOTES 74): the
+meeting capabilities when meetings are allowed, plus exactly the capability
+URIs passed in `invoke`, nothing else (deny by default, no wildcard). The form
+names those capabilities with one checkbox, and a confirm phrase approves only
+the list it was shown with. The calendar adapter only ever shares free slots,
+never titles.
 
 ## Consent: the human decides (demo-critical)
 
