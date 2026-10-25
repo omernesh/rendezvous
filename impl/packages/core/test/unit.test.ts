@@ -8,6 +8,8 @@ import {
   createGrant,
   createRevoke,
   DEFAULT_INBOUND_SCOPE,
+  PENDING_LIMIT,
+  PENDING_PER_SENDER,
   defaultTier,
   dtopic,
   fingerprint,
@@ -285,6 +287,38 @@ describe('received grants never widen inbound rights (security review H1/H2)', (
     expect(verifyGrant(weird)).toBe(false);
     expect(book.receiveGrant(weird, bob.id)).toBeNull();
     expect(TIERS).toContain('stranger');
+  });
+});
+
+describe('bounded peer-driven state (security review M1)', () => {
+  const card = (k: ReturnType<typeof generateKey>) => createCard(k, { rendezvous: hints });
+  const reqFrom = (k = generateKey()) => createContactRequest(k, card(k), { toHint: 'bob@x.com', greeting: 'x' });
+
+  it('caps pending requests overall and per sender', () => {
+    const book = new ContactBook();
+    const t0 = Date.parse('2026-10-25T10:00:00Z');
+    for (let i = 0; i < 200; i++) book.receiveRequest(reqFrom(), 'claimed', new Date(t0 + i * 1000));
+    expect(Object.keys(book.state.pending)).toHaveLength(PENDING_LIMIT);
+    // The newest are kept, the oldest evicted.
+    const received = Object.values(book.state.pending).map((p) => Date.parse(p.received));
+    expect(Math.min(...received)).toBe(t0 + (200 - PENDING_LIMIT) * 1000);
+
+    const one = new ContactBook();
+    const mallory = generateKey();
+    const outcomes = Array.from({ length: PENDING_PER_SENDER + 2 }, () => one.receiveRequest(reqFrom(mallory), 'claimed').status);
+    expect(outcomes.filter((s) => s === 'pending')).toHaveLength(PENDING_PER_SENDER);
+    expect(outcomes.at(-1)).toBe('rate-limited');
+  });
+
+  it('a declined request stays declined after a flood evicts the replay ids', () => {
+    const book = new ContactBook();
+    const req = reqFrom();
+    expect(book.receiveRequest(req, 'claimed').status).toBe('pending');
+    book.decline(req.id);
+    for (let i = 0; i < 5001; i++) book.markSeen(crypto.randomUUID());
+    expect(book.state.seenIds).not.toContain(req.id);
+    expect(book.receiveRequest(req, 'claimed').status).toBe('duplicate');
+    expect(book.state.pending).toEqual({});
   });
 });
 

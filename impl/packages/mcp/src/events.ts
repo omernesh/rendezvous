@@ -6,13 +6,26 @@ import { appendFileSync, existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describeSlot, isA2APayload, type Slot, TASK_STATES } from '@rendezvous/a2a';
 import { fingerprint } from '@rendezvous/core';
-import { type Home, parseJsonLines } from '@rendezvous/cli/lib';
+import { type Home, parseJsonLines, writeAtomic } from '@rendezvous/cli/lib';
 import { address, agentId, isPlain, oneOf, safe, token, untrusted, uuid } from './untrusted.js';
 
 const TIERS = ['spouse', 'family', 'friend', 'colleague', 'business', 'stranger'];
 const BINDINGS = ['in-person', 'dns', 'mailbox', 'claimed'];
 const KINDS = ['proposed', 'offer-received', 'countered', 'accepted', 'completed', 'rejected', 'canceled', 'expired', 'status', 'duplicate', 'ignored', 'invalid'];
 const state = oneOf(TASK_STATES);
+/** Drop reasons a stranger can trigger at will; not worth the model's attention. */
+const STRANGER_DROPS = [
+  'contact request',
+  'no grant for sender',
+  'out-of-order envelope from a non-contact',
+  'unexpected or invalid grant',
+  'topic doc',
+  'request signer differs',
+  'grant signer differs',
+  'blocked sender',
+];
+/** Events kept in memory and in mcp-events.jsonl (the file is compacted at twice this). */
+export const EVENTS_KEPT = 1000;
 /** Fingerprint only for a well-formed agent ID. */
 const fp = (id: unknown) => (isPlain(agentId(id)) ? fingerprint(id as string) : untrusted(id));
 
@@ -103,6 +116,8 @@ export function toModelEvent(e: Raw, negotiating: boolean): Omit<McpEvent, 'n' |
       return { type: 'revoked', peer: agentId(e.peer) };
     case 'dropped':
       if (String(e.reason).includes('duplicate') || String(e.reason).includes('replay')) return null; // relays replay on every restart
+      // Anyone can cause these by writing to us; they would only push real events out of the log (M1).
+      if (STRANGER_DROPS.some((r) => String(e.reason).startsWith(r))) return null;
       // Core's reasons are fixed strings, but some carry decoder detail: quarantine them all.
       return { type: 'dropped', reason: untrusted(e.reason) };
     case 'error':
@@ -133,10 +148,17 @@ export function toModelEvent(e: Raw, negotiating: boolean): Omit<McpEvent, 'n' |
 export class EventLog {
   private next: number;
   private waiters: Array<() => void> = [];
+  /** The last EVENTS_KEPT events, oldest first; reads never re-parse the file. */
+  private events: McpEvent[];
+  /** Lines in the file, to know when to compact it. */
+  private lines: number;
 
   constructor(private readonly home: Home) {
-    const all = this.readAll();
+    const all = this.readFile();
+    this.events = all.slice(-EVENTS_KEPT);
+    this.lines = all.length;
     this.next = all.length ? all[all.length - 1].n + 1 : 1;
+    if (this.lines > EVENTS_KEPT) this.compact();
   }
 
   get path(): string {
@@ -148,9 +170,15 @@ export class EventLog {
     return this.next - 1;
   }
 
-  private readAll(): McpEvent[] {
+  private readFile(): McpEvent[] {
     if (!existsSync(this.path)) return [];
     return parseJsonLines<McpEvent>(readFileSync(this.path, 'utf8'));
+  }
+
+  /** Rewrite the file with only the events we keep. */
+  private compact(): void {
+    writeAtomic(this.path, this.events.map((e) => JSON.stringify(e) + '\n').join(''), 0o600);
+    this.lines = this.events.length;
   }
 
   append(items: Array<Omit<McpEvent, 'n' | 'ts'>>): McpEvent[] {
@@ -159,18 +187,28 @@ export class EventLog {
     const ts = new Date().toISOString();
     const out = items.map((it) => ({ n: this.next++, ts, ...it }) as McpEvent);
     appendFileSync(this.path, out.map((e) => JSON.stringify(e) + '\n').join(''), { mode: 0o600 });
+    this.events.push(...out);
+    if (this.events.length > EVENTS_KEPT) this.events.splice(0, this.events.length - EVENTS_KEPT);
+    this.lines += out.length;
+    if (this.lines > 2 * EVENTS_KEPT) this.compact();
     for (const w of this.waiters.splice(0)) w();
     return out;
   }
 
   since(cursor: number, limit: number): McpEvent[] {
-    return this.readAll()
-      .filter((e) => e.n > cursor)
-      .slice(0, limit);
+    // Cursors are increasing, so binary-search the first event after `cursor`.
+    let lo = 0;
+    let hi = this.events.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (this.events[mid].n > cursor) hi = mid;
+      else lo = mid + 1;
+    }
+    return this.events.slice(lo, lo + limit);
   }
 
   tail(limit: number): McpEvent[] {
-    return this.readAll().slice(-limit);
+    return this.events.slice(-limit);
   }
 
   /** Resolves when something is appended, or after `ms`. */

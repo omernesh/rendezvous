@@ -4,7 +4,7 @@
 export { initHome, type InitOptions, requestContactTo, TIERS, withAgent } from './commands.js';
 export { acquireLock, LockTimeoutError, writeAtomic } from './fsutil.js';
 export { CliError, type Config, type ConsentEntry, Home, type InboxEntry, parseJsonLines } from './home.js';
-export { type Emitted, FeedTransport, handleInbound, hasExpiring, type ListenOptions, SWEEP_MS } from './listen.js';
+export { type Emitted, FeedTransport, handleInbound, hasExpiring, isJunk, type ListenOptions, SWEEP_MS } from './listen.js';
 export {
   buildCtx,
   carryOut,

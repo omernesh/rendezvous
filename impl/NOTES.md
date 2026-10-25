@@ -290,6 +290,20 @@ the marker (CLI behavior, live-run logs, calendar settings) stay here only.
     + `wss://relay.primal.net` pass (about 1.6 s); nos.lol + relay.primal.net
     pass (about 2.7 s). Agreed Wed 28 Oct 19:00+02:00 each time.
 
+## Security review fixes (2026-10-25)
+
+Independent review of the implementation; H1/H2 are under items 15 and 18.
+46. **Peer-driven state is bounded** (M1). Pending requests: 64 in all (the
+    oldest evicted) and 4 per sender (more are dropped as `rate-limited`).
+    Declined request ids live in their own list (1000), so a flood of fresh
+    ids that evicts `seenIds` can't bring a declined request back. `listen`
+    and the MCP server drop envelopes that don't open for us and invalid
+    topic docs before taking the lock (`isJunk`), and skip the `agent.json`
+    rewrite when an item changed nothing (relay replays). The MCP event log
+    keeps the last 1000 events in memory, compacts `mcp-events.jsonl` at
+    2000 lines, reads by cursor without re-parsing, and hides drop reasons a
+    stranger can cause at will.
+
 ## Not implemented yet
 
 Mailbox probe and invite (§5.2), directories and suggestions (§4.5), DNS TXT

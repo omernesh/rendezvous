@@ -9,7 +9,7 @@ import type { ElicitResult } from '@modelcontextprotocol/sdk/types.js';
 import { startTestRelay, type TestRelay } from '@rendezvous/core/testing';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { RDV_BIN, rdv } from '../../cli/scenarios/harness.js';
-import { checkPhrase, MAX_ATTEMPTS, normalizePhrase, syncPhrases, toModelEvent, UNTRUSTED_NOTE } from '../src/index.js';
+import { checkPhrase, EventLog, EVENTS_KEPT, MAX_ATTEMPTS, normalizePhrase, syncPhrases, toModelEvent, UNTRUSTED_NOTE } from '../src/index.js';
 import { dinnerFlow, type ElicitHandler, INJECTION, makeSide, ok, phraseFromHumanLog, type Side, waitEvent } from './flow.js';
 import { Home } from '@rendezvous/cli/lib';
 
@@ -197,6 +197,28 @@ describe('confirm phrases', () => {
     expect(syncPhrases(home, ['req-a'])).toEqual([]);
     expect(Object.keys(home.readConsent())).toEqual(['req-a']);
     if (process.platform !== 'win32') expect(statSync(home.consentPath).mode & 0o777).toBe(0o600);
+  });
+});
+
+describe('event log (security review M1)', () => {
+  it('is bounded on disk and in memory, keeps cursors, and hides drops any stranger can cause', () => {
+    root = mkdtempSync(join(tmpdir(), 'rdv-events-'));
+    const home = new Home(root);
+    const log = new EventLog(home);
+    for (let i = 0; i < 5; i++) log.append(Array.from({ length: 600 }, (_, j) => ({ type: 'message', i: i * 600 + j })));
+    const lines = readFileSync(log.path, 'utf8').trim().split('\n').length;
+    expect(lines).toBeLessThanOrEqual(2 * EVENTS_KEPT);
+    expect(log.cursor).toBe(3000);
+    expect(log.tail(2).map((e) => e.n)).toEqual([2999, 3000]);
+    expect(log.since(2990, 3).map((e) => e.n)).toEqual([2991, 2992, 2993]);
+    expect(log.since(0, 1)[0].n).toBe(3000 - EVENTS_KEPT + 1); // older events are gone
+    const reopened = new EventLog(home);
+    expect(reopened.cursor).toBe(3000);
+    expect(readFileSync(log.path, 'utf8').trim().split('\n')).toHaveLength(EVENTS_KEPT);
+    for (const reason of ['no grant for sender', 'contact request rate-limited', 'out-of-order envelope from a non-contact']) {
+      expect(toModelEvent({ event: 'dropped', reason }, false)).toBeNull();
+    }
+    expect(toModelEvent({ event: 'dropped', reason: 'envelope chain fork' }, false)).not.toBeNull();
   });
 });
 

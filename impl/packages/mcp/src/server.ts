@@ -40,6 +40,7 @@ import {
   hasExpiring,
   type Home,
   initHome,
+  isJunk,
   meetingScope,
   type NegotiateOptions,
   relayTransport,
@@ -244,8 +245,13 @@ export class RdvMcpServer {
     this.real = real;
     const topics = (boot.card.discovery?.addresses ?? []).map(dtopic);
     this.unsubs = [
-      real.onEnvelopes(boot.id, (raw) => this.enqueue((t) => t.feedEnvelope(raw))),
-      real.onTopics(topics, (doc, topic) => this.enqueue((t) => t.feedTopic(doc, topic))),
+      // Junk (unopenable envelopes, invalid topic docs) never takes the lock or reaches the log (M1).
+      real.onEnvelopes(boot.id, (raw) => {
+        if (!isJunk(boot.key, { envelope: raw })) this.enqueue((t) => t.feedEnvelope(raw));
+      }),
+      real.onTopics(topics, (doc, topic) => {
+        if (!isJunk(boot.key, { doc })) this.enqueue((t) => t.feedTopic(doc, topic));
+      }),
     ];
     this.sweeper = setInterval(() => {
       if (this.negotiateOpts() && hasExpiring(this.home)) this.enqueue(() => {}, true);

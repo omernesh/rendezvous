@@ -195,7 +195,7 @@ export interface GrantCandidate {
 export type RequestOutcome =
   | { status: 'pending'; pending: PendingRequest }
   | { status: 'auto-grant'; tier: Tier; scope: GrantScope }
-  | { status: 'blocked' | 'duplicate' | 'invalid' | 'already-contact' };
+  | { status: 'blocked' | 'duplicate' | 'invalid' | 'already-contact' | 'rate-limited' };
 
 export interface ContactBookState {
   policy: InboundPolicy;
@@ -212,11 +212,20 @@ export interface ContactBookState {
   blocked: string[];
   allowlist: Record<string, { tier: Tier; scope: GrantScope }>;
   seenIds: string[];
+  /**
+   * Request ids our human declined. Kept apart from `seenIds`, which a flood
+   * of fresh ids can evict, so a declined request can't come back on replay.
+   */
+  declined: string[];
   rate: Record<string, number[]>;
 }
 
 const SEEN_LIMIT = 5000;
 const CLAIMED_TIER_CAP: Tier = 'stranger';
+/** Pending inbound requests kept: in total (oldest evicted) and per sender (newer ones refused). */
+export const PENDING_LIMIT = 64;
+export const PENDING_PER_SENDER = 4;
+const DECLINED_LIMIT = 1000;
 /** Probe answers kept: per probe, and in total (oldest evicted). */
 export const CANDIDATES_PER_PROBE = 8;
 export const CANDIDATES_LIMIT = 64;
@@ -234,6 +243,7 @@ export class ContactBook {
       blocked: [],
       allowlist: {},
       seenIds: [],
+      declined: [],
       rate: {},
       ...state,
     };
@@ -284,12 +294,19 @@ export class ContactBook {
   receiveRequest(input: unknown, binding: Binding, now = new Date()): RequestOutcome {
     if (!verifyContactRequest(input, now)) return { status: 'invalid' };
     const req = input;
-    if (!this.markSeen(req.id)) return { status: 'duplicate' };
+    if (this.state.declined.includes(req.id) || !this.markSeen(req.id)) return { status: 'duplicate' };
     if (this.isBlocked(req.from) || this.state.policy === 'block') return { status: 'blocked' };
     if (this.contact(req.from, now)) return { status: 'already-contact' };
     const allowed = this.state.allowlist[req.from];
     if (allowed) return { status: 'auto-grant', ...allowed };
     if (this.state.policy === 'allow') return { status: 'blocked' }; // allow = allowlist only
+    // Bounded: keys cost an attacker nothing, so the overall cap is what holds.
+    const all = Object.values(this.state.pending);
+    if (all.filter((p) => p.request.from === req.from).length >= PENDING_PER_SENDER) return { status: 'rate-limited' };
+    if (all.length >= PENDING_LIMIT) {
+      const oldest = all.reduce((a, b) => (a.received <= b.received ? a : b));
+      delete this.state.pending[oldest.request.id];
+    }
     const pending: PendingRequest = { request: req, binding, received: now.toISOString() };
     this.state.pending[req.id] = pending;
     return { status: 'pending', pending };
@@ -412,6 +429,10 @@ export class ContactBook {
   decline(requestId: string, block = false): void {
     const p = this.state.pending[requestId];
     delete this.state.pending[requestId];
+    if (p && !this.state.declined.includes(requestId)) {
+      this.state.declined.push(requestId);
+      if (this.state.declined.length > DECLINED_LIMIT) this.state.declined.splice(0, this.state.declined.length - DECLINED_LIMIT);
+    }
     if (p && block) this.block(p.request.from);
   }
 

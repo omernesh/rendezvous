@@ -9,7 +9,16 @@
 // produced them is on disk, so a reaction to an event always sees it.
 import { spawn } from 'node:child_process';
 import { expire, isA2APayload, isTerminal, receive, type Step } from '@rendezvous/a2a';
-import { Agent, dtopic, type Envelope, type Tier, type Transport } from '@rendezvous/core';
+import {
+  Agent,
+  type AgentKey,
+  dtopic,
+  type Envelope,
+  openEnvelope,
+  type Tier,
+  type Transport,
+  verifyContactRequest,
+} from '@rendezvous/core';
 import type { Home, InboxEntry } from './home.js';
 import { buildCtx, carryOut, dinnerText, dinnerView, inboundMeetingScope, type NegotiateOptions } from './negotiate.js';
 import {
@@ -61,6 +70,18 @@ export class FeedTransport implements Transport {
   close() {}
 }
 
+/**
+ * Items that can't change state, judged without state: envelopes that don't
+ * open for us (bad signature, wrong recipient, expired) and topic docs that
+ * aren't valid contact requests from someone else. Callers drop them before
+ * taking the lock, so junk from strangers costs no lock and no state write
+ * (security review M1).
+ */
+export function isJunk(key: AgentKey, item: { envelope: unknown } | { doc: unknown }): boolean {
+  if ('envelope' in item) return !openEnvelope(key, item.envelope).ok;
+  return !verifyContactRequest(item.doc) || item.doc.from === key.id;
+}
+
 export interface Emitted {
   obj: { event: string } & Record<string, unknown>;
   human?: string;
@@ -97,6 +118,7 @@ export async function handleInbound(
     async () => {
       const t = new FeedTransport(real);
       const agent = Agent.fromJSON(home.readAgentState(), () => t);
+      const loaded = JSON.stringify(agent.toJSON());
       const grants: Promise<unknown>[] = [];
       const inbox: InboxEntry[] = [];
       let flushed = 0;
@@ -140,7 +162,8 @@ export async function handleInbound(
       if (opts.negotiate) await negotiateInbound(home, opts.negotiate, agent, inbox, sweep, events);
       await agent.idle();
       agent.stop();
-      save();
+      // Replays and refused items usually change nothing: skip the rewrite then.
+      if (flushed < inbox.length || JSON.stringify(agent.toJSON()) !== loaded) save();
     },
     { timeoutMs: 60_000 },
   );
@@ -210,8 +233,12 @@ export async function listen(home: Home, out: Output, opts: ListenOptions): Prom
   };
 
   const unsubs = [
-    real.onEnvelopes(boot.id, (raw) => enqueue((t) => t.feedEnvelope(raw))),
-    real.onTopics(topics, (doc, topic) => enqueue((t) => t.feedTopic(doc, topic))),
+    real.onEnvelopes(boot.id, (raw) => {
+      if (!isJunk(boot.key, { envelope: raw })) enqueue((t) => t.feedEnvelope(raw));
+    }),
+    real.onTopics(topics, (doc, topic) => {
+      if (!isJunk(boot.key, { doc })) enqueue((t) => t.feedTopic(doc, topic));
+    }),
   ];
   out.emit(
     { event: 'ready', id: boot.id, relays: config.relays, topics },

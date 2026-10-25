@@ -147,6 +147,44 @@ describe('terminal safety (security regression)', () => {
 });
 
 
+describe('inbound items that change nothing (security review M1)', () => {
+  it('junk is filtered before the lock, and a replay does not rewrite agent.json', async () => {
+    const { utimesSync } = await import('node:fs');
+    const { createCard, createContactRequest, generateKey, keyFromSecret, b64decode, sealEnvelope, dtopic } = await import('@rendezvous/core');
+    const { FeedTransport, handleInbound, isJunk } = await import('../src/listen.js');
+    const { Home } = await import('../src/home.js');
+    const { initHome } = await import('../src/commands.js');
+    const dir = tmp();
+    try {
+      const home = new Home(join(dir, 'h'));
+      await initHome(home, { profile: 'bob', relays: ['ws://127.0.0.1:9'], emails: ['bob@x.com'] });
+      const me = keyFromSecret(b64decode(home.readAgentState().secretKey));
+      const k = generateKey();
+      const req = createContactRequest(k, createCard(k, { rendezvous: [{ type: 'nostr', relay: 'ws://127.0.0.1:9', pref: 1 }] }), {
+        toHint: 'bob@x.com',
+        greeting: 'hi',
+      });
+      // Stateless junk: wrong recipient, garbage, our own request.
+      expect(isJunk(me, { envelope: sealEnvelope(k, k.id, { type: 'note' }, { seq: 1, prev: null }) })).toBe(true);
+      expect(isJunk(me, { doc: { junk: true } })).toBe(true);
+      expect(isJunk(me, { doc: req })).toBe(false);
+
+      const real = { sendEnvelope: async () => {}, publishTopic: async () => {}, fetchTopic: async () => [], onEnvelopes: () => () => {}, onTopics: () => () => {}, close() {} };
+      const topic = dtopic({ type: 'email', value: 'bob@x.com' });
+      const feed = (t: InstanceType<typeof FeedTransport>) => t.feedTopic(req, topic);
+      await handleInbound(home, real, feed, {});
+      expect(Object.keys(home.readAgentState().book.pending)).toEqual([req.id]);
+      const old = new Date('2020-01-01T00:00:00Z');
+      utimesSync(home.agentPath, old, old);
+      const again = await handleInbound(home, real, feed, {}); // relay replay
+      expect(again.map((e) => e.obj.event)).toEqual(['dropped']);
+      expect(statSync(home.agentPath).mtimeMs).toBe(old.getTime());
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('negotiation scope by direction (security review H2)', () => {
   const NOW = new Date('2026-10-25T10:00:00Z');
   const window = parseWindow('next week evenings', { now: NOW, offsetMinutes: 120 });
