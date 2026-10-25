@@ -6,18 +6,20 @@
   "workspaces": [
     "packages/core",
     "packages/a2a",
-    "packages/cli"
+    "packages/cli",
+    "packages/mcp"
   ],
   "engines": {
     "node": ">=20"
   },
   "scripts": {
-    "build": "tsc -b packages/core packages/a2a packages/cli",
+    "build": "tsc -b packages/core packages/a2a packages/cli packages/mcp",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "npm test --workspaces --if-present",
     "test:live": "npm run test:live --workspaces --if-present",
     "test:vectors:update": "npm run test:vectors:update -w @rendezvous/core",
-    "rdv": "node packages/cli/dist/src/bin.js"
+    "rdv": "node packages/cli/dist/src/bin.js",
+    "rdv-mcp": "node packages/mcp/dist/src/bin.js"
   },
   "devDependencies": {
     "@types/node": "^22.20.5",
