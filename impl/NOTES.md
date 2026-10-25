@@ -1509,6 +1509,13 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       No result carries a phrase or a code; peer text, input, file parts
       and results are `untrusted_peer_text`. `rdv_status` gains `tasks`
       (capabilities, open, waiting for the user, dropped without asking).
+    - **Only content shown in full is approved** (security review on
+      commit). A form or the server's log shows at most 2000 characters
+      (`SHOW_MAX`) of what a gate's digest covers (the peer's text, input,
+      answer and file parts, or the whole draft). Over that, no form is
+      opened and the log carries no phrase, only a pointer to `rdv task
+      list`, which prints every character with the phrase; the phrase is
+      bound to the digest of exactly that.
     - **Honest limit** (as item 57): the release gate stops a result from
       leaving through the task. A model with a shell can still run `rdv
       send` with any payload, `a2a/*` included (`rdv_send` refuses those

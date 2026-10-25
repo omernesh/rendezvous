@@ -556,7 +556,7 @@ export function taskListText(t: TaskRecord, s: TaskHostState): string {
   for (const x of t.text ?? []) lines.push(`  request (untrusted, written by the peer): ${safe(JSON.stringify(x))}`);
   if (t.input !== undefined) lines.push(`  input (untrusted): ${safe(JSON.stringify(t.input))}`);
   if (t.answer !== undefined) lines.push(`  answer (untrusted): ${safe(JSON.stringify(t.answer))}`);
-  for (const f of t.files ?? []) lines.push(`  file (untrusted, not fetched): ${safe(JSON.stringify(f.file.name ?? f.file.uri ?? 'inline'))}`);
+  for (const f of t.files ?? []) lines.push(`  file (untrusted, not fetched; all of it, as approved): ${safe(JSON.stringify(f))}`);
   if (t.reason) lines.push(`  reason: ${safe(JSON.stringify(t.reason))}${t.code ? ` (${safe(t.code)})` : ''}`);
   if (v.start_code) lines.push(`  waiting for YOUR approval to start: rdv task approve ${safe(t.id)} --code ${v.start_code}  (or rdv task decline ${safe(t.id)})`);
   if (v.release_code && v.draft) {

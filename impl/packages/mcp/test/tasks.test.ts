@@ -211,7 +211,7 @@ describe('approval classes (SPEC §7.6.3)', () => {
     await waitEvent(john, taskEvent(c, 'start-needed'), 'confirm gate (john)', T);
     expect(forms.asked.length).toBe(grantForms + 1);
     await ok(john, 'rdv_task', { action: 'approve-start', task_id: c });
-    expect(forms.asked.at(-1)).toContain('Input (untrusted): {"topic":"Q4 plan"}');
+    expect(forms.asked.at(-1)).toContain('input (untrusted): {"topic":"Q4 plan"}');
     await waitEvent(omer, (e) => e.type === 'task' && e.task_id === c && e.state === 'working', 'confirm working (omer)', T);
 
     const audit = john.home.readAudit();
@@ -361,5 +361,59 @@ describe('state survives a restart', () => {
     await ok(john3, 'rdv_task', { action: 'approve-release', task_id: id, confirm_phrase: pr });
     const got = await waitEvent(omer, taskEvent(id, 'artifact'), 'the result', T);
     expect(got.peer_text[0].untrusted_peer_text).toBe(RESULT);
+  });
+});
+
+describe('a gate opens only on content the human saw in full (security review)', () => {
+  const LONG = `${'Please read all of this. '.repeat(80)}`.slice(0, 2000) + 'X'; // 2001 characters
+  const terminal = (side: Side) => execFileSync(process.execPath, [RDV_BIN, 'task', 'list', '--home', side.home.dir], { encoding: 'utf8' });
+
+  it('a 2001-character request gets no form and no excerpt with a phrase; the terminal shows all of it with the phrase that works', async () => {
+    const forms = johnForms();
+    const { omer, john, johnId } = await connected({ john: forms.handler });
+    const asked = forms.asked.length;
+    const id = await request(omer, johnId, { text: LONG });
+    await waitEvent(john, taskEvent(id, 'start-needed'), 'the start gate', T);
+    // The form would show only part of it: it is never opened, and nothing starts.
+    const viaForm = await john.call('rdv_task', { action: 'approve-start', task_id: id });
+    expect(viaForm.isError).toBe(true);
+    expect(viaForm.text).toContain('too long to show your user in an approval form');
+    expect(viaForm.text).toContain('rdv task list');
+    expect(forms.asked.length).toBe(asked);
+    expect((await ok(john, 'rdv_task', { action: 'status', task_id: id })).state).toBe('submitted');
+    // The server's log never puts a phrase next to a part of it.
+    const logged = john.humanLog.filter((l) => l.includes(id));
+    expect(logged.some((l) => l.includes('too long to show here'))).toBe(true);
+    expect(logged.some((l) => /confirm phrase: [a-z]+-/.test(l))).toBe(false);
+    // The terminal shows every character, with a phrase bound to exactly that; it works.
+    const text = terminal(john);
+    expect(text).toContain(LONG);
+    await ok(john, 'rdv_task', { action: 'approve-start', task_id: id, confirm_phrase: phraseFromTerminal(text, id) });
+    await waitEvent(omer, (e) => e.type === 'task' && e.task_id === id && e.state === 'working', 'working (omer)', T);
+  });
+
+  it('a long draft is released only with the phrase shown beside all of it, and a draft changed after that is refused', async () => {
+    const { omer, john, johnId } = await connected();
+    const id = await request(omer, johnId);
+    await waitEvent(john, taskEvent(id, 'start-needed'), 'the start gate', T);
+    await ok(john, 'rdv_task', { action: 'approve-start', task_id: id, confirm_phrase: phraseFromHumanLog(john, id) });
+    await ok(john, 'rdv_task', { action: 'submit', task_id: id, text: LONG });
+    expect(john.humanLog.at(-1)).toContain('too long to show here');
+    const shown = terminal(john);
+    expect(shown).toContain(LONG);
+    const p = phraseFromTerminal(shown, id);
+    // The draft changes after the human read it: the phrase for what they saw sends nothing.
+    await ok(john, 'rdv_task', { action: 'submit', task_id: id, text: `${LONG} and the owner's calendar` });
+    const refused = await john.call('rdv_task', { action: 'approve-release', task_id: id, confirm_phrase: p });
+    expect(refused.isError).toBe(true);
+    expect(refused.text).toContain('changed since your user reviewed it');
+    await new Promise((r) => setTimeout(r, 300));
+    expect((await ok(omer, 'rdv_inbox', { since: 0, limit: 200 })).events.some(taskEvent(id, 'artifact'))).toBe(false);
+    // Read again in full: that phrase sends exactly what was shown.
+    const again = terminal(john);
+    expect(again).toContain("and the owner's calendar");
+    await ok(john, 'rdv_task', { action: 'approve-release', task_id: id, confirm_phrase: phraseFromTerminal(again, id) });
+    const got = await waitEvent(omer, taskEvent(id, 'artifact'), 'the result', T);
+    expect(got.peer_text[0].untrusted_peer_text).toContain('[truncated'); // the model's view is capped; the human's was not
   });
 });
