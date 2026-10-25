@@ -22,7 +22,8 @@ Local: `npm install && npm run build` in `impl/`.
 
 ```powershell
 cd impl
-pwsh packages/cli/scenarios/two-machine.ps1                       # defaults: relay-host relay and host
+$env:RDV_LIVE_RELAYS = 'ws://<relay-host>:7777'; $env:RDV_REMOTE = 'user@<relay-host>'
+pwsh packages/cli/scenarios/two-machine.ps1                       # relay and host from the env vars
 pwsh packages/cli/scenarios/two-machine.ps1 -Relay wss://nos.lol -Remote user@<relay-host>
 ```
 

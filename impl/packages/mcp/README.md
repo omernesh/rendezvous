@@ -162,4 +162,4 @@ and elicitation accept / decline) → negotiate → refused model-only dinner
 confirmation → each human confirms (phrase, form) → completed on both sides, plus
 
 a stdio smoke test, phrase rules and hardening. Live:
-`RDV_LIVE_RELAYS=ws://<relay-host>:7777 npm run test:live -w @rendezvous/mcp`.
+`RDV_LIVE_RELAYS=wss://relay.example npm run test:live -w @rendezvous/mcp`.

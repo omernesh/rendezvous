@@ -1,5 +1,5 @@
 // The two-MCP-server dinner flow against real relays (PLAN §6.1). Skips unless
-// RDV_LIVE_RELAYS lists relays: RDV_LIVE_RELAYS=ws://<relay-host>:7777 npm run test:live
+// RDV_LIVE_RELAYS lists relays: RDV_LIVE_RELAYS=wss://relay.example npm run test:live
 import { randomBytes } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';

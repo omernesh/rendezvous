@@ -7,8 +7,9 @@ services:
     labels:
       com.centurylinklabs.watchtower.enable: "false"
     ports:
+      # SITE_BIND_LAN comes from .env (see .env.example) and defaults to loopback. Never use 0.0.0.0.
       - "127.0.0.1:7778:80"
-      - "<lan-ip>:7778:80"   # LAN: the tunnel connector reaches the host here
+      - "${SITE_BIND_LAN:-127.0.0.1}:${SITE_PORT_LAN:-17778}:80"   # LAN: where a tunnel connector reaches the site
     read_only: true
     tmpfs:
       - /var/cache/nginx

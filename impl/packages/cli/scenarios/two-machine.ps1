@@ -1,15 +1,19 @@
 # Two-machine contact scenario (PLAN 4.5, run 2). PowerShell 7+, run on the Windows side.
-#   John  = remote host (default relay-host), `rdv listen --auto-grant friend --auto-grant-any-tier`
+#   John  = remote host ($env:RDV_REMOTE or -Remote), `rdv listen --auto-grant friend --auto-grant-any-tier`
 #   Omer  = this machine
 # Both talk to the same relay. Exits 0 on PASS, 1 on FAIL. Cleans up its own processes and temp dirs.
-#   pwsh two-machine.ps1 [-Relay ws://<relay-host>:7777] [-Remote user@<relay-host>] [-RemoteRepo '~/src/rendezvous-test']
+#   pwsh two-machine.ps1 [-Relay ws://host:7777] [-Remote user@host] [-RemoteRepo '~/src/rendezvous-test']
+#   -Relay defaults to the first entry of $env:RDV_LIVE_RELAYS; -Remote to $env:RDV_REMOTE.
 param(
-  [string]$Relay = 'ws://<relay-host>:7777',
-  [string]$Remote = 'user@<relay-host>',
+  [string]$Relay = (($env:RDV_LIVE_RELAYS ?? '') -split ',' | Where-Object { $_.Trim() } | Select-Object -First 1),
+  [string]$Remote = $env:RDV_REMOTE,
   [string]$RemoteRepo = '~/src/rendezvous-test',
   [int]$TimeoutSec = 30
 )
 $ErrorActionPreference = 'Stop'
+if (-not $Relay) { throw 'no relay: pass -Relay or set RDV_LIVE_RELAYS' }
+if (-not $Remote) { throw 'no remote host: pass -Remote user@host or set RDV_REMOTE' }
+$Relay = $Relay.Trim()
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $bin = Join-Path (Split-Path -Parent $here) 'dist/src/bin.js'   # scenarios/ -> packages/cli/dist
 $tag = -join ((1..8) | ForEach-Object { '{0:x}' -f (Get-Random -Max 16) })
