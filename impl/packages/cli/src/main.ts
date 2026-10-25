@@ -23,7 +23,7 @@ const COMMON: Options = {
 
 const COMMANDS: Record<string, Command> = {
   init: {
-    usage: 'rdv init --profile omer --email omer@example.com --relay wss://… [--relay …] [--phone +…] [--public-pointer] [--force]',
+    usage: 'rdv init --profile omer --email omer@example.com [--email …] --relay wss://… [--relay …] [--phone +…] [--phone …] [--public-pointer] [--force]',
     summary: 'Generate a key and card, write state',
     args: 0,
     options: {
@@ -36,6 +36,25 @@ const COMMANDS: Record<string, Command> = {
     run: cmd.init,
   },
   whoami: { usage: 'rdv whoami', summary: 'Print agent ID, fingerprint, card JSON', args: 0, run: cmd.whoami },
+  'address list': {
+    usage: 'rdv address list',
+    summary: "List this agent's addresses: public ones are on the card and findable, private ones are kept locally",
+    args: 0,
+    run: cmd.addressList,
+  },
+  'address add': {
+    usage: 'rdv address add <email|+phone> [--public|--private]',
+    summary: 'Add an address (default --public: listed on the card, answers probes); re-signs and republishes the card',
+    args: 1,
+    options: { public: { type: 'boolean' }, private: { type: 'boolean' } },
+    run: cmd.addressAdd,
+  },
+  'address remove': {
+    usage: 'rdv address remove <email|+phone>',
+    summary: 'Remove an address: probes on it are no longer answered; re-signs and republishes the card (contacts are kept)',
+    args: 1,
+    run: cmd.addressRemove,
+  },
   'card publish': {
     usage: 'rdv card publish',
     summary: 'Publish public pointers (if enabled)',

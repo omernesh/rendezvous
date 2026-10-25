@@ -40,7 +40,10 @@
 - **Discovery, §4.4:** the `claimed` tier cap applies to the default tier, not
   an explicit human choice; the listen-mode probe is a contact request posted
   on the `dtopic`; probe greetings are public; the requester records a binding
-  too.
+  too. Amended: an agent's addresses change after setup; a changed card is
+  re-signed with a later `created`, a requester keeps only an agent's newest
+  card, and a public-pointer card is a replaceable event, so a removed address
+  stops finding the agent (§4.3, §4.4, §6.2).
 - **Consent, §5:** the grant carries the grantor's card (§5.3); who may answer
   a request; document IDs are UUIDs; grant direction and `max_frequency`
   format; scope defaults. New §5.5 (consent stays with the human) and §5.6
@@ -228,6 +231,15 @@ Rules:
 - `rendezvous` is ordered by preference; `pref: 0` entries (like DNS TXT) are
   lookup hints rather than delivery addresses.
 - The card is versioned (`v`), signed, and revocable via expiry.
+- **Changing a card.** An agent may list several addresses, and its owner
+  may add or remove them at any time. Each change re-signs the card with a
+  `created` later than the previous card's (`v` is the schema version and
+  stays `1`). Of several valid cards with the same `id`, a requester uses
+  only the one with the latest `created`; an address counts as claimed only
+  if that card lists it. An address the owner keeps off the card ("private")
+  opens no topic and finds nothing. Removing an address cannot recall the
+  copies of the old card that peers or relays already hold; see §4.4 for the
+  public pointer.
 
 ### 4.4 Discovery of a card
 
@@ -256,7 +268,11 @@ fallback and remains the anti-spoofing trust anchor. In order of availability:
      the carrier (§9): keep the greeting short.
    - **Public pointer** — the agent publishes its card (or a card hash) on
      the topic, so a requester can fetch it without posting first. Default
-     off; `policy.public` gate.
+     off; `policy.public` gate. The pointer is replaceable (§6.2): after a
+     change the agent publishes its new card on each listed address's topic
+     and on the topic of each address it removed, so the newest card
+     supersedes the old one there and a lookup for a removed address finds a
+     card that no longer claims it (§4.3).
 2. **DNS TXT** — `_agent.<domain> TXT "rdv=rdv1:…"` for owners with domains.
 3. **Platform profile fields** — a `rdv1:…` line in an X bio / LinkedIn
    about / GitHub profile. The platform account vouchsafes the binding.
@@ -674,7 +690,13 @@ where hole-punching fails (TURN relays carry the ciphertext).
   `content` is the envelope JSON (§6.4). Tags: `p` is the recipient's Ed25519
   public key as lowercase hex (not the `rdv1:` string); `d` is the envelope
   hash (§4.6). Discovery topics ride the same kind: `t` holds the `dtopic`
-  (§4.4) and `d` is the hex SHA-256 of the event content.
+  (§4.4) and `d` is the hex SHA-256 of the event content, except for a
+  public-pointer card, whose `d` is `"rdv1/card:" ‖ dtopic`: one addressable
+  event per agent and topic, so relays keep only the newest card. Its
+  `created_at` is no earlier than the card's `created` (in seconds), which a
+  change moves past both the previous card and the current time by at least a
+  second, so a newer card never ties with an older one (relays break ties by
+  event ID).
 - **Kind decision (rev 3).** `30417` is in the addressable range
   (30000-39999), where relays keep only the latest event per (pubkey, kind,
   `d`), so two envelopes without distinct `d` tags overwrite each other. Rev 3

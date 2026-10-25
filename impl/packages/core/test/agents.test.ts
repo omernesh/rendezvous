@@ -123,10 +123,101 @@ describe('two agents over a Nostr relay', () => {
     const johnSees = waitFor(john, 'request');
     const req = await omer.requestContact('john@doe.com', 'hi'); // meant for John
     await johnSees;
-    // Someone copies it onto Carol's topic.
-    await omer.transport.publishTopic(dtopic({ type: 'email', value: 'carol@example.com' }), req);
+    // Someone else copies it onto Carol's topic. (From another Nostr key: the same content from the same key has the
+    // same `d`, so a NIP-01 relay, the test relay included, would keep only one of the two events.)
+    const mallory = new NostrTransport({ key: generateKey(), relays: [relay.url] });
+    await mallory.publishTopic(dtopic({ type: 'email', value: 'carol@example.com' }), req);
+    mallory.close();
     expect(await dropped).toBe('topic doc is not a probe for this topic');
     expect(carol.pendingRequests()).toEqual([]);
+  });
+
+  it('several addresses: a probe on each reaches the agent; after removal it does not, and a running agent re-subscribes live', async () => {
+    const omer = make('omer@example.com');
+    const john = Agent.create((key: AgentKey) => new NostrTransport({ key, relays: [relay.url] }), {
+      rendezvous: [{ type: 'nostr', relay: relay.url, pref: 1 }],
+      discovery: {
+        addresses: [
+          { type: 'email', value: 'john@doe.com' },
+          { type: 'email', value: 'john@work.doe.com' },
+          { type: 'phone', value: '+15555550123' },
+          { type: 'phone', value: '+15555550124' },
+        ],
+        public_pointer: false,
+      },
+    });
+    john.on('error', (e) => {
+      throw e;
+    });
+    john.start();
+    agents.push(john);
+    await new Promise((r) => setTimeout(r, 200));
+    for (const addr of ['john@doe.com', 'JOHN@work.doe.com', '+1 555 555 0123', '+15555550124']) {
+      const seen = waitFor<{ request: { id: string; to_hint: string } }>(john, 'request');
+      await omer.requestContact(addr, `hi ${addr}`);
+      const p = await seen;
+      expect(p.request.to_hint).toBe(addr);
+      john.decline(p.request.id); // a sender may have only a few pending at once
+    }
+
+    // Live: drop the work email, add a third phone, without restarting.
+    const before = john.card;
+    const r = john.setAddresses([
+      { type: 'email', value: 'john@doe.com' },
+      { type: 'phone', value: '+15555550123' },
+      { type: 'phone', value: '+15555550124' },
+      { type: 'phone', value: '+1-555-555-0125' },
+    ]);
+    expect(r.added).toEqual([{ type: 'phone', value: '+15555550125' }]);
+    expect(r.removed).toEqual([{ type: 'email', value: 'john@work.doe.com' }]);
+    expect(Date.parse(john.card.created)).toBeGreaterThan(Date.parse(before.created));
+    expect(john.topics()).not.toContain(dtopic({ type: 'email', value: 'john@work.doe.com' }));
+    await new Promise((r) => setTimeout(r, 200));
+    const added = waitFor<{ request: { to_hint: string } }>(john, 'request');
+    await omer.requestContact('+15555550125', 'new phone');
+    expect((await added).request.to_hint).toBe('+15555550125');
+    // The removed topic is no longer subscribed: a probe there never arrives.
+    const got: string[] = [];
+    john.on('request', (p) => got.push(p.request.to_hint));
+    john.on('dropped', (reason) => got.push(reason));
+    await omer.requestContact('john@work.doe.com', 'old email');
+    await new Promise((r) => setTimeout(r, 400));
+    expect(got).toEqual([]);
+    // Even fed by hand (a listener that has not re-subscribed yet), it is refused.
+    const req = (await import('../src/index.js')).createContactRequest(omer.key, omer.card, { toHint: 'john@work.doe.com', greeting: 'x' });
+    const dropped = new Promise<string>((resolve) => john.once('dropped', (reason) => resolve(reason)));
+    (john as unknown as { handleTopicDoc(d: unknown, t: string): Promise<void> }).handleTopicDoc(req, dtopic({ type: 'email', value: 'john@work.doe.com' }));
+    expect(await dropped).toBe('topic doc is not a probe for this topic');
+    // Too many, or a bad one: refused, card unchanged.
+    const card = john.card;
+    expect(() => john.setAddresses(Array.from({ length: 9 }, (_, i) => ({ type: 'email' as const, value: `john+${i}@doe.com` })))).toThrow(/too many/);
+    expect(() => john.setAddresses([{ type: 'phone', value: '555' }])).toThrow();
+    expect(john.card).toBe(card);
+  }, 20_000);
+
+  it('a removed address leaves the public pointer: the newer card replaces the old one on its topic', async () => {
+    const omer = make('omer@example.com');
+    const john = make('john@doe.com', { pointer: true });
+    john.setAddresses([
+      { type: 'email', value: 'john@doe.com' },
+      { type: 'email', value: 'john@work.doe.com' },
+    ]);
+    expect(await john.publishPointers()).toHaveLength(2);
+    expect((await omer.lookup('john@work.doe.com')).map((c) => c.id)).toEqual([john.id]);
+    const old = (await omer.lookup('john@work.doe.com'))[0];
+
+    const { removed } = john.setAddresses([{ type: 'email', value: 'john@doe.com' }]);
+    expect(await john.publishPointers(removed)).toEqual([dtopic({ type: 'email', value: 'john@doe.com' }), dtopic({ type: 'email', value: 'john@work.doe.com' })]);
+    expect(await omer.lookup('john@work.doe.com')).toEqual([]);
+    expect((await omer.lookup('john@doe.com')).map((c) => c.created)).toEqual([john.card.created]);
+    // One card event per topic on the relay (replaceable), not one per version.
+    const workTopic = dtopic({ type: 'email', value: 'john@work.doe.com' });
+    const onWork = relay.events.filter((e) => e.tags.some((t) => t[0] === 't' && t[1] === workTopic));
+    expect(onWork).toHaveLength(1);
+    expect(JSON.parse(onWork[0].content).created).toBe(john.card.created);
+    // Someone replays the old card on the topic: the newer one still wins.
+    await omer.transport.publishTopic(workTopic, old);
+    expect(await omer.lookup('john@work.doe.com')).toEqual([]);
   });
 
   it('ignores messages from strangers', async () => {

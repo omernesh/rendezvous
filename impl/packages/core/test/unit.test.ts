@@ -32,6 +32,11 @@ import {
   verifyContactRequest,
   verifyGrant,
   verifyDoc,
+  MAX_ADDRESSES,
+  newerCard,
+  normalizeAddresses,
+  parseAddress,
+  reissueCard,
 } from '../src/index.js';
 
 const hints = [{ type: 'nostr' as const, relay: 'ws://127.0.0.1:1', pref: 1 }];
@@ -82,6 +87,45 @@ describe('discovery topics', () => {
     expect(dtopic({ type: 'phone', value: '+972-54-000-0000' })).toBe(dtopic({ type: 'phone', value: '+972540000000' }));
     expect(dtopic({ type: 'email', value: 'john@doe.com' })).toHaveLength(26);
     expect(() => dtopic({ type: 'phone', value: '054-000-0000' })).toThrow();
+  });
+
+  it('parses, canonicalizes, dedupes and caps an address list', () => {
+    expect(parseAddress(' Omer@Work.Example.com ')).toEqual({ type: 'email', value: 'omer@work.example.com' });
+    expect(parseAddress('+1 (555) 555-0123')).toEqual({ type: 'phone', value: '+15555550123' });
+    expect(() => parseAddress('omer')).toThrow(/not an email address or \+phone/);
+    expect(() => parseAddress('+12')).toThrow(/E\.164/);
+    const list = normalizeAddresses([
+      { type: 'email', value: 'omer@example.com' },
+      { type: 'email', value: 'OMER@example.com' },
+      { type: 'phone', value: '+1-555-555-0123' },
+      { type: 'phone', value: '+15555550123' },
+      { type: 'email', value: 'omer@work.example.com' },
+    ]);
+    expect(list).toEqual([
+      { type: 'email', value: 'omer@example.com' },
+      { type: 'phone', value: '+15555550123' },
+      { type: 'email', value: 'omer@work.example.com' },
+    ]);
+    const many = Array.from({ length: MAX_ADDRESSES + 1 }, (_, i) => ({ type: 'email' as const, value: `omer+${i}@example.com` }));
+    expect(normalizeAddresses(many.slice(0, MAX_ADDRESSES))).toHaveLength(MAX_ADDRESSES);
+    expect(() => normalizeAddresses(many)).toThrow(/too many addresses/);
+  });
+
+  it('a reissued card is newer, re-signed, keeps everything but the addresses', () => {
+    const k = generateKey();
+    const now = new Date('2026-10-25T10:00:00.000Z');
+    const card = createCard(k, { rendezvous: hints, discovery: { addresses: [{ type: 'email', value: 'omer@example.com' }], public_pointer: true }, policy: { public: true }, now });
+    // Even with a clock that has not moved, created moves forward by a second.
+    const next = reissueCard(k, card, { addresses: [{ type: 'email', value: 'omer@work.example.com' }], public_pointer: true }, now);
+    expect(verifyCard(next).ok).toBe(true);
+    expect(next.created).toBe('2026-10-25T10:00:01.000Z');
+    expect(next.discovery).toEqual({ addresses: [{ type: 'email', value: 'omer@work.example.com' }], public_pointer: true });
+    expect({ ...next, created: card.created, discovery: card.discovery, sig: card.sig }).toEqual(card);
+    expect(newerCard(card, next)).toBe(next);
+    expect(newerCard(next, card)).toBe(next);
+    // No addresses and no pointer: no discovery block, as at init.
+    expect(reissueCard(k, next, { addresses: [], public_pointer: false }).discovery).toBeUndefined();
+    expect(() => reissueCard(generateKey(), card, { addresses: [], public_pointer: false })).toThrow(/another key/);
   });
 
   it('caps the default tier for claimed bindings', () => {

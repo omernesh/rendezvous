@@ -57,6 +57,37 @@ export function createCard(key: AgentKey, opts: CardOptions): AddressCard {
   return signDoc(body, key);
 }
 
+/**
+ * A newer card with the same key and hints but other discovery addresses.
+ * `created` is at least a second past both the old card and now, so the
+ * newest card always sorts last (lookup prefers it), and as a replaceable
+ * Nostr event (dated max(now, created), `NostrTransport.publishTopic`) it is
+ * in a later second than any earlier publish of the card it replaces: relays
+ * keep the newest per `d`, and a tie would keep a random one (NOTES 63).
+ */
+export function reissueCard(
+  key: AgentKey,
+  card: AddressCard,
+  discovery: { addresses: DiscoveryAddress[]; public_pointer: boolean },
+  now: Date = new Date(),
+): AddressCard {
+  if (card.id !== key.id) throw new Error('card belongs to another key');
+  const prev = parseTimestamp(card.created) ?? 0;
+  const created = new Date(Math.max(now.getTime(), prev) + 1000);
+  const { sig: _sig, ...body } = card;
+  const next: CardBody = {
+    ...body,
+    created: created.toISOString(),
+    discovery: discovery.addresses.length || discovery.public_pointer ? { addresses: discovery.addresses.map((a) => ({ ...a })), public_pointer: discovery.public_pointer } : undefined,
+  };
+  return signDoc(next, key);
+}
+
+/** The newer of two cards of one agent (by `created`). */
+export function newerCard(a: AddressCard, b: AddressCard): AddressCard {
+  return (parseTimestamp(b.created) ?? 0) > (parseTimestamp(a.created) ?? 0) ? b : a;
+}
+
 export type CardCheck = { ok: true; card: AddressCard } | { ok: false; reason: string };
 
 /** Structural + signature + expiry check. Cards are self-signed by `id`. */

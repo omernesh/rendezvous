@@ -1,7 +1,7 @@
 // Library entry (`@rendezvous/cli/lib`) for the MCP server: the same home-dir
 // format, lock, crash-safe send path and inbound loop as `rdv`, so `rdv` and
 // `rdv-mcp` can share a profile.
-export { initHome, type InitOptions, requestContactTo, TIERS, withAgent } from './commands.js';
+export { type AddressChange, type AddressView, addressViews, changeAddress, initHome, type InitOptions, requestContactTo, TIERS, withAgent } from './commands.js';
 export { appendEvents, EVENTS_FILE_KEPT, eventsStamp, isNoise, type LoggedEvent, readEvents, STRANGER_DROPS } from './events.js';
 export { acquireLock, LockTimeoutError, type LongLock, tryLongLock, writeAtomic } from './fsutil.js';
 export {
@@ -34,13 +34,14 @@ export {
   type ConsentAction,
   type ConsentEntry,
   type ConsentHash,
+  type ConfigAddress,
   type ConsentTerms,
   consentKey,
   Home,
   type InboxEntry,
   parseJsonLines,
 } from './home.js';
-export { type Emitted, FeedTransport, handleInbound, hasExpiring, isJunk, type ListenOptions, SWEEP_MS } from './listen.js';
+export { ADDRESS_POLL_MS, type Emitted, FeedTransport, handleInbound, hasExpiring, isJunk, type ListenOptions, SWEEP_MS, type TopicChange, watchTopics } from './listen.js';
 export {
   agreedDigest,
   buildCtx,

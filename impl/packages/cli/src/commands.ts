@@ -5,13 +5,15 @@ import { existsSync, readFileSync, statSync } from 'node:fs';
 import {
   type AddressCard,
   Agent,
-  canonAddress,
   cleanLabel,
   type DiscoveryAddress,
   dtopic,
   fingerprint,
   type GrantScope,
   isAgentId,
+  MAX_ADDRESSES,
+  normalizeAddresses,
+  parseAddress,
   type Payload,
   type Tier,
   TIERS as CORE_TIERS,
@@ -20,7 +22,7 @@ import {
 } from '@rendezvous/core';
 import { cancel, cancelMeeting, confirmMeeting, describeSlot, meetingSnapshot, NegotiationError, type NegotiationTask, parseInstant, propose, type Step } from '@rendezvous/a2a';
 import { candidateDigest, describeApproval, reissueForDisplay, requestSubject, type ShownPhrase } from './consent.js';
-import { CliError, type Config, type ConsentAction, consentKey, Home, type InboxEntry, parseJsonLines } from './home.js';
+import { CliError, type Config, type ConfigAddress, type ConsentAction, consentKey, Home, type InboxEntry, parseJsonLines } from './home.js';
 
 import { listen } from './listen.js';
 import { relayTransport } from './transport.js';
@@ -123,10 +125,13 @@ export async function initHome(home: Home, opts: InitOptions): Promise<{ id: str
   const { relays, profile } = opts;
   if (relays.length === 0) throw new CliError('at least one --relay is required', 2);
   for (const r of relays) if (!/^wss?:\/\/\S+$/.test(r)) throw new CliError(`not a ws:// or wss:// relay URL: ${r}`, 2);
-  const addresses: DiscoveryAddress[] = [];
+  let addresses: DiscoveryAddress[];
   try {
-    for (const e of opts.emails ?? []) addresses.push({ type: 'email', value: canonAddress({ type: 'email', value: e }) });
-    for (const p of opts.phones ?? []) addresses.push({ type: 'phone', value: canonAddress({ type: 'phone', value: p }) });
+    // Canonical, repeats dropped, at most MAX_ADDRESSES (as `rdv address add`).
+    addresses = normalizeAddresses([
+      ...(opts.emails ?? []).map((value) => ({ type: 'email' as const, value })),
+      ...(opts.phones ?? []).map((value) => ({ type: 'phone' as const, value })),
+    ]);
   } catch (err) {
     throw new CliError((err as Error).message, 2);
   }
@@ -176,17 +181,137 @@ export async function whoami({ home, out }: Ctx): Promise<void> {
   const { agent, config } = await withAgent(home, async (agent, config) => ({ agent, config }), { save: false });
   const fp = fingerprint(agent.id);
   out.emit(
-    { id: agent.id, fingerprint: fp, profile: config.profile, home: home.dir, card: agent.card },
+    { id: agent.id, fingerprint: fp, profile: config.profile, home: home.dir, addresses: addressViews(config), card: agent.card },
     [
       `id:          ${agent.id}`,
       `fingerprint: ${fp}`,
       `profile:     ${config.profile} (${home.dir})`,
-      `addresses:   ${config.addresses.map((a) => a.value).join(', ') || '(none)'}`,
+      `addresses:   ${config.addresses.map((a) => (a.private ? `${a.value} (private)` : a.value)).join(', ') || '(none)'}`,
       `relays:      ${config.relays.join(', ')}`,
       `public pointer: ${config.public_pointer ? 'on' : 'off'}`,
       'card:',
       JSON.stringify(agent.card, null, 2),
     ].join('\n'),
+  );
+}
+
+// --- our own addresses (the owner's setup, not a consent decision) ----------
+
+export interface AddressView {
+  type: 'email' | 'phone';
+  value: string;
+  /** Listed on the card, so a probe or lookup for it finds this agent. */
+  public: boolean;
+  /** Its discovery topic, for a public address. */
+  topic?: string;
+}
+
+export function addressViews(config: Config): AddressView[] {
+  return config.addresses.map((a) => ({
+    type: a.type,
+    value: a.value,
+    public: !a.private,
+    ...(a.private ? {} : { topic: dtopic(a) }),
+  }));
+}
+
+export interface AddressChange {
+  change: 'added' | 'removed';
+  address: AddressView;
+  addresses: AddressView[];
+  /** The card's new `created`, when the change re-signed it (a public address). */
+  card_created?: string;
+  /** Topics the new card was published on (public pointer on): our addresses, plus a removed one, so the new card replaces the old there. */
+  published: string[];
+}
+
+/**
+ * Add or remove one of our addresses, under the lock. A public address is
+ * listed on the card: the card is re-signed (later `created`), and with the
+ * public pointer on, published on our topics and on a removed one first, so
+ * a relay failure changes nothing (try again). A private address changes
+ * config.json only. A running `rdv listen` / rdv-mcp re-subscribes when it
+ * sees the new card (watchTopics). Contacts are never touched.
+ */
+export async function changeAddress(
+  home: Home,
+  op: { add: string; public?: boolean } | { remove: string },
+): Promise<AddressChange> {
+  let addr: DiscoveryAddress;
+  try {
+    addr = parseAddress('add' in op ? op.add : op.remove);
+  } catch (err) {
+    throw new CliError((err as Error).message, 2);
+  }
+  return withAgent(home, async (agent, config) => {
+    const same = (a: DiscoveryAddress) => a.type === addr.type && a.value === addr.value;
+    const had = config.addresses.find(same);
+    let next: ConfigAddress[];
+    let entry: ConfigAddress;
+    if ('add' in op) {
+      if (had) throw new CliError(`${addr.value} is already one of this agent's addresses (${had.private ? 'private' : 'public'}); to change that, remove it and add it again`);
+      if (config.addresses.length >= MAX_ADDRESSES) throw new CliError(`this agent already has ${config.addresses.length} addresses, the most it may hold; remove one first`);
+      entry = op.public === false ? { ...addr, private: true } : { ...addr };
+      next = [...config.addresses, entry];
+    } else {
+      if (!had) throw new CliError(`${addr.value} is not one of this agent's addresses`);
+      entry = had;
+      next = config.addresses.filter((a) => !same(a));
+    }
+    const result: AddressChange = {
+      change: 'add' in op ? 'added' : 'removed',
+      address: addressViews({ ...config, addresses: [entry] })[0],
+      addresses: addressViews({ ...config, addresses: next }),
+      published: [],
+    };
+    if (!entry.private) {
+      const { removed } = agent.setAddresses(next.filter((a) => !a.private), { publicPointer: config.public_pointer });
+      result.card_created = agent.card.created;
+      try {
+        result.published = await agent.publishPointers(removed);
+      } catch (err) {
+        throw new CliError(`could not publish the new card, so nothing changed (try again): ${(err as Error).message}`);
+      }
+    }
+    // The card, then the config, both under the lock: a listener follows the card (watchTopics).
+    home.writeAgentState(agent.toJSON());
+    home.writeConfig({ ...config, addresses: next });
+    return result;
+  });
+}
+
+function addressText(a: AddressView): string {
+  return `${a.value}  ${a.type}  ${a.public ? `public (topic ${a.topic})` : 'private (not on the card)'}`;
+}
+
+export async function addressList({ home, out }: Ctx): Promise<void> {
+  home.requireInit();
+  const views = addressViews(home.readConfig());
+  if (views.length === 0) out.emit({ event: 'addresses', addresses: [] }, '(no addresses)');
+  for (const a of views) out.emit({ event: 'address', ...a }, addressText(a));
+}
+
+function visibility(values: Ctx['values']): boolean | undefined {
+  if (values.public === true && values.private === true) throw new CliError('give --public or --private, not both', 2);
+  return values.private === true ? false : true;
+}
+
+export async function addressAdd({ home, out, values, positionals }: Ctx): Promise<void> {
+  const r = await changeAddress(home, { add: positionals[0], public: visibility(values) });
+  out.emit(
+    { event: 'address-added', ...r },
+    `added ${addressText(r.address)}${r.published.length ? `
+published the new card on ${r.published.length} topic(s)` : ''}`,
+  );
+}
+
+export async function addressRemove({ home, out, positionals }: Ctx): Promise<void> {
+  const r = await changeAddress(home, { remove: positionals[0] });
+  out.emit(
+    { event: 'address-removed', ...r },
+    `removed ${r.address.value}${r.address.public ? ': probes on it are no longer answered' : ''}` +
+      (r.published.length ? `
+published the new card on ${r.published.length} topic(s), replacing the old one there` : ''),
   );
 }
 
@@ -198,8 +323,7 @@ export async function cardPublish({ home, out }: Ctx): Promise<void> {
       if (!agent.card.discovery?.public_pointer || !agent.card.policy.public || addrs.length === 0) {
         throw new CliError('public pointer is off for this agent (re-run "rdv init" with --public-pointer and an address)');
       }
-      await agent.publishPointers();
-      return addrs.map(dtopic);
+      return agent.publishPointers();
     },
     { save: false },
   );

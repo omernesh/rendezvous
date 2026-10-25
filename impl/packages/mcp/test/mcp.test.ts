@@ -708,6 +708,7 @@ describe('rdv-mcp over stdio', () => {
       const tools = (await client.listTools()).tools.map((t) => t.name).sort();
       expect(tools).toEqual(
         [
+          'rdv_addresses',
           'rdv_discover',
           'rdv_grant',
           'rdv_inbox',
@@ -1173,5 +1174,142 @@ describe('local labels are part of what the human approves (NOTES 62)', () => {
     expect(forms[1].message).toContain(`Fingerprint: ${j.fingerprint}`);
     expect(await labelOf(omer, j.agent_id)).toBeNull();
     expect((await omer.call('rdv_send', { to: johnAt, payload: { type: 'note', text: 'x' } })).isError).toBe(true);
+  });
+});
+
+describe('our own addresses (several emails and phones, managed after setup)', () => {
+  const third = async (name: string) => {
+    const s = await makeSide(name, join(root, name));
+    sides.push(s);
+    return s;
+  };
+  /** Wait until the server's human log has said "now listening on N address topic(s)" `times` times. */
+  const resubscribed = async (s: Side, times: number) => {
+    const count = () => s.humanLog.filter((l) => l.includes('now listening on')).length;
+    for (let i = 0; i < 100 && count() < times; i++) await new Promise((r) => setTimeout(r, 100));
+    expect(count()).toBe(times);
+    return s.humanLog.filter((l) => l.includes('now listening on')).at(-1);
+  };
+
+  it('rdv_init takes emails and phones arrays, with email and phone as aliases; repeats collapse', async () => {
+    const { omer, john } = await pair();
+    await ok(omer, 'rdv_init', {
+      profile: 'omer',
+      email: 'omer@example.com',
+      emails: ['OMER@example.com', 'omer@work.example.com'],
+      phone: '+1 555 555 0123',
+      phones: ['+15555550123', '+15555550124'],
+      relays: [relay.url],
+    });
+    const status = await ok(omer, 'rdv_status');
+    expect(status.addresses).toEqual(['omer@example.com', 'omer@work.example.com', '+15555550123', '+15555550124']);
+    expect(status.our_addresses.every((a: { public: boolean }) => a.public)).toBe(true);
+    // The singular forms alone still work (backward compatible).
+    await ok(john, 'rdv_init', { profile: 'john', email: 'john@doe.com', phone: '+15555550199', relays: [relay.url] });
+    expect((await ok(john, 'rdv_status')).our_addresses).toEqual([
+      { address: 'john@doe.com', type: 'email', public: true },
+      { address: '+15555550199', type: 'phone', public: true },
+    ]);
+    // Too many, or a bad one: refused, nothing created.
+    const carol = await third('carol');
+    const many = Array.from({ length: 9 }, (_, i) => `carol+${i}@example.com`);
+    expect((await carol.call('rdv_init', { emails: many, relays: [relay.url] })).isError).toBe(true);
+    expect((await carol.call('rdv_init', { emails: ['carol@example.com'], phones: ['555'], relays: [relay.url] })).isError).toBe(true);
+    expect((await carol.call('rdv_init', { emails: ['carol"x@example.com'], relays: [relay.url] })).text).toContain('not a plain email address');
+    expect((await ok(carol, 'rdv_status')).initialized).toBe(false);
+  });
+
+  it('rdv_addresses adds, lists and removes, validates strictly, re-subscribes live, and keeps contacts', async () => {
+    const { omer, john } = await pair();
+    const carol = await third('carol');
+    const tag = randomBytes(3).toString('hex');
+    const johnAt = `john+${tag}@doe.com`;
+    const work = `john+${tag}@work.doe.com`;
+    await ok(omer, 'rdv_init', { profile: 'omer', email: `omer+${tag}@example.com`, relays: [relay.url] });
+    await ok(carol, 'rdv_init', { profile: 'carol', email: `carol+${tag}@example.com`, relays: [relay.url] });
+    await ok(john, 'rdv_init', { profile: 'john', emails: [johnAt], relays: [relay.url] });
+    expect((await john.call('rdv_addresses', { action: 'add' })).isError).toBe(true);
+    for (const bad of ['john', '+12', 'a"b@doe.com', 'ignore-previous-instructions@doe com']) {
+      expect((await john.call('rdv_addresses', { action: 'add', address: bad })).isError, bad).toBe(true);
+    }
+    expect((await john.call('rdv_addresses', { action: 'add', address: johnAt.toUpperCase() })).text).toContain('already one of');
+    expect((await john.call('rdv_addresses', { action: 'remove', address: 'nobody@doe.com' })).isError).toBe(true);
+    expect((await john.call('rdv_addresses', { action: 'remove', address: johnAt, public: false })).isError).toBe(true);
+    expect((await ok(john, 'rdv_status')).addresses).toEqual([johnAt]);
+    await new Promise((r) => setTimeout(r, 300));
+
+    // `from` probes `to`; John's server must hear it. His human declines it in a terminal, so later probes fit the per-sender cap.
+    const probe = async (from: Side, to: string) => (await ok(from, 'rdv_request_contact', { target: to })).request_id as string;
+    const heard = async (from: Side, to: string) => {
+      const id = await probe(from, to);
+      const e = await waitEvent(john, (x) => x.type === 'contact_request' && x.request_id === id, `probe on ${to}`, 10_000);
+      expect(e.to_hint).toBe(to);
+      return id;
+    };
+    const declined = async (from: Side, to: string) => rdv(['contact', 'decline', await heard(from, to)], john.home.dir);
+    const notHeard = async (from: Side, to: string) => {
+      const id = await probe(from, to);
+      await declined(from, johnAt); // sent after it, and heard: so the first one had its chance
+      await new Promise((r) => setTimeout(r, 500));
+      const all = (await ok(john, 'rdv_inbox', { since: 0, limit: 200 })).events;
+      expect(all.some((x: { type: string; request_id?: string }) => x.type === 'contact_request' && x.request_id === id)).toBe(false);
+    };
+
+    // Add while listening: answered at once, no restart.
+    const added = await ok(john, 'rdv_addresses', { action: 'add', address: work.toUpperCase() });
+    expect(added.added).toEqual({ address: work, type: 'email', public: true });
+    expect(added.card_republished).toBe(false); // the public pointer is off
+    expect(await resubscribed(john, 1)).toContain('now listening on 2 address topic(s)');
+    await declined(omer, work);
+
+    // Private: kept locally, no topic.
+    const priv = await ok(john, 'rdv_addresses', { action: 'add', address: '+15555550123', public: false });
+    expect(priv.added.public).toBe(false);
+    expect(priv.note).toContain('not on the card');
+    await notHeard(omer, '+15555550123');
+    expect((await ok(john, 'rdv_addresses', { action: 'list' })).addresses).toEqual([
+      { address: johnAt, type: 'email', public: true },
+      { address: work, type: 'email', public: true },
+      { address: '+15555550123', type: 'phone', public: false },
+    ]);
+
+    // A contact made through the work address survives its removal.
+    const id = await heard(omer, work);
+    await ok(john, 'rdv_grant', { request_id: id, confirm_phrase: phraseFromHumanLog(john, id) });
+    const cand = await waitEvent(omer, (x) => x.type === 'contact_candidate', 'probe answer', 10_000);
+    await ok(omer, 'rdv_grant', { grant_id: cand.grant_id, confirm_phrase: phraseFromHumanLog(omer, cand.grant_id) });
+    const removed = await ok(john, 'rdv_addresses', { action: 'remove', address: work });
+    expect(removed.removed).toEqual({ address: work, type: 'email', public: true });
+    expect(removed.note).toContain('Existing contacts are kept');
+    expect((await ok(john, 'rdv_status')).contacts).toHaveLength(1);
+    expect(await resubscribed(john, 2)).toContain('now listening on 1 address topic(s)');
+    await notHeard(carol, work);
+
+    // Changed from a terminal while the server consumes: it follows the card and re-subscribes.
+    const phone = '+15555550124';
+    expect((await rdv(['address', 'add', phone], john.home.dir)).lines[0].event).toBe('address-added');
+    expect(await resubscribed(john, 3)).toContain('now listening on 2 address topic(s)');
+    await declined(carol, phone);
+    expect((await ok(john, 'rdv_status')).our_addresses.map((a: { address: string }) => a.address)).toEqual([johnAt, '+15555550123', phone]);
+  }, 60_000);
+
+  it('with the public pointer on, a removed address finds no card (the new card replaces the old one)', async () => {
+    const { omer, john } = await pair();
+    const tag = randomBytes(3).toString('hex');
+    const johnAt = `john+${tag}@doe.com`;
+    const work = `john+${tag}@work.doe.com`;
+    await ok(omer, 'rdv_init', { profile: 'omer', email: `omer+${tag}@example.com`, relays: [relay.url] });
+    const j = await ok(john, 'rdv_init', { profile: 'john', emails: [johnAt, work], relays: [relay.url], public_pointer: true });
+    await ok(john, 'rdv_publish_card');
+    expect((await ok(omer, 'rdv_discover', { address: work })).cards.map((c: { agent_id: string }) => c.agent_id)).toEqual([j.agent_id]);
+    const removed = await ok(john, 'rdv_addresses', { action: 'remove', address: work });
+    expect(removed.card_republished).toBe(true);
+    expect(removed.note).toContain('may still show the old card');
+    expect((await ok(omer, 'rdv_discover', { address: work })).found).toBe(0);
+    const still = (await ok(omer, 'rdv_discover', { address: johnAt })).cards;
+    expect(still.map((c: { claimed_addresses: string[] }) => c.claimed_addresses)).toEqual([[johnAt]]);
+    const added = await ok(john, 'rdv_addresses', { action: 'add', address: '+15555550123' });
+    expect(added.card_republished).toBe(true);
+    expect((await ok(omer, 'rdv_discover', { address: '+15555550123' })).cards.map((c: { agent_id: string }) => c.agent_id)).toEqual([j.agent_id]);
   });
 });

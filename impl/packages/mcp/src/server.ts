@@ -51,14 +51,18 @@ import {
   cleanLabel,
   LABEL_MAX,
   labelKey,
+  MAX_ADDRESSES,
+  parseAddress,
   type Payload,
   type PendingRequest,
   type Tier,
   type Transport,
 } from '@rendezvous/core';
 import {
+  addressViews,
   buildCtx,
   carryOut,
+  changeAddress,
   CliError,
   clean,
   type Config,
@@ -85,6 +89,7 @@ import {
   TIERS,
   tryLongLock,
   validateNegotiateOptions,
+  watchTopics,
 } from '@rendezvous/cli/lib';
 import { z } from 'zod';
 import {
@@ -358,6 +363,22 @@ function taskSummary(t: NegotiationTask) {
   };
 }
 
+/** Strict: a plain email or E.164 phone after canonicalization (the model types these), nothing that reads as prose. */
+function strictAddress(text: string): void {
+  let canon: string;
+  try {
+    canon = parseAddress(text).value;
+  } catch (err) {
+    throw new ToolError((err as Error).message);
+  }
+  if (!isPlain(asAddress(canon))) throw new ToolError(`not a plain email address or E.164 phone number: ${JSON.stringify(clean(text))}`);
+}
+
+/** One of our addresses as the model sees it. We wrote it (validated, canonical), so it is plain data. */
+function addressOut(a: { type: 'email' | 'phone'; value: string; public: boolean }) {
+  return { address: asAddress(a.value), type: a.type, public: a.public };
+}
+
 export class RdvMcpServer {
   readonly mcp: McpServer;
   readonly home: Home;
@@ -365,6 +386,8 @@ export class RdvMcpServer {
   private settings: { calendar?: string; window?: string; tz?: string };
   private real?: Transport;
   private unsubs: Array<() => void> = [];
+  /** The discovery-topic subscription while consuming; replaced when our addresses change. */
+  private topicUnsub?: () => void;
   private sweeper?: ReturnType<typeof setInterval>;
   private poller?: ReturnType<typeof setInterval>;
   /** `consumer` while holding listener.lock, `attached` while another process does. */
@@ -453,14 +476,43 @@ export class RdvMcpServer {
       real.onEnvelopes(boot.id, (raw) => {
         if (!isJunk(boot.key, { envelope: raw })) this.enqueue((t) => t.feedEnvelope(raw));
       }),
-      real.onTopics(boot.topics, (doc, topic) => {
-        if (!isJunk(boot.key, { doc })) this.enqueue((t) => t.feedTopic(doc, topic));
-      }),
+      () => {
+        this.topicUnsub?.();
+        this.topicUnsub = undefined;
+      },
+      // An address added or removed from a terminal (rdv address) while we run: re-subscribe.
+      watchTopics(this.home, boot.topics, (c) => this.resubscribe(c.topics), this.pollMs),
     ];
+    this.subscribeTopics();
     this.sweeper = setInterval(() => {
       if (this.negotiateOpts() && hasExpiring(this.home)) this.enqueue(() => {}, true);
     }, this.sweepMs);
     this.sweeper.unref?.();
+  }
+
+  private subscribeTopics(): void {
+    const real = this.real!;
+    const boot = this.boot!;
+    this.topicUnsub?.();
+    this.topicUnsub = real.onTopics(boot.topics, (doc, topic) => {
+      if (!isJunk(boot.key, { doc })) this.enqueue((t) => t.feedTopic(doc, topic));
+    });
+  }
+
+  /**
+   * Our addresses changed: listen on the card's new topics now (consumer only;
+   * an attached server has no subscriptions, and the consumer follows the
+   * card itself). Inbound items are judged against the card on disk either
+   * way, so a probe on a removed address is refused even before this runs.
+   */
+  private resubscribe(topics?: string[]): void {
+    if (!this.boot) return;
+    const next = topics ?? ((this.home.readAgentState() as AgentState).card.discovery?.addresses ?? []).map(dtopic);
+    if (next.length === this.boot.topics.length && next.every((t) => this.boot!.topics.includes(t))) return;
+    this.boot.topics = next;
+    if (this.mode !== 'consumer') return;
+    this.subscribeTopics();
+    this.humanLog(`addresses changed: now listening on ${next.length} address topic(s)`);
   }
 
   /** Follow the shared log; when attached, take over if the consumer has gone. */
@@ -469,6 +521,7 @@ export class RdvMcpServer {
       const lock = tryLongLock(this.home.listenerLockPath, 'rdv-mcp');
       if (lock.release) {
         this.humanLog(`the previous listener stopped; now receiving for ${this.home.dir}`);
+        this.resubscribe(); // our addresses may have changed meanwhile
         this.consume(lock.release);
       }
     }
@@ -681,12 +734,15 @@ export class RdvMcpServer {
 
     this.tool(
       'rdv_init',
-      'Create this agent: a new key and address card for the given email (and/or phone) on the given relays, then start listening. ' +
+      'Create this agent: a new key and address card for the given emails and/or phones on the given relays, then start listening. ' +
+        `Every address given here is public: listed on the card, so a probe for it finds this agent (add a private one later with rdv_addresses). At most ${MAX_ADDRESSES} addresses. ` +
         'If an agent already exists here it is kept and returned. Optional calendar/window/tz set the JSON calendar used for dinner negotiations.',
       {
         profile: z.string().max(64).optional().describe('Label for this agent, e.g. "omer"'),
-        email: z.string().max(320).optional(),
-        phone: z.string().max(32).optional().describe('E.164, with a leading +'),
+        emails: z.array(z.string().max(320)).max(MAX_ADDRESSES).optional().describe('Email addresses this agent can be found by'),
+        phones: z.array(z.string().max(32)).max(MAX_ADDRESSES).optional().describe('Phone numbers in E.164, with a leading +'),
+        email: z.string().max(320).optional().describe('One email (same as emails: [email])'),
+        phone: z.string().max(32).optional().describe('One phone, E.164 with a leading + (same as phones: [phone])'),
         relays: z.array(z.string().max(512)).max(8).optional().describe('Nostr relay URLs (ws:// or wss://); required for a new agent'),
         public_pointer: z.boolean().optional().describe('Also publish the card under the address so others can find it with rdv_discover'),
         calendar: z.string().optional().describe('Path to a JSON calendar file'),
@@ -698,11 +754,13 @@ export class RdvMcpServer {
         let created = false;
         if (!home.initialized()) {
           if (!a.relays?.length) throw new ToolError('relays are required to create an agent');
+          for (const x of [a.email, ...(a.emails ?? []), a.phone, ...(a.phones ?? [])]) if (x !== undefined) strictAddress(x);
           await initHome(home, {
             profile: a.profile ?? 'default',
             relays: a.relays,
-            emails: a.email ? [a.email] : [],
-            phones: a.phone ? [a.phone] : [],
+            // The singular forms are aliases; repeats collapse (initHome dedupes canonical forms).
+            emails: [...(a.email ? [a.email] : []), ...(a.emails ?? [])],
+            phones: [...(a.phone ? [a.phone] : []), ...(a.phones ?? [])],
             publicPointer: a.public_pointer,
           });
           created = true;
@@ -717,6 +775,42 @@ export class RdvMcpServer {
     });
 
     this.tool(
+      'rdv_addresses',
+      "Manage this agent's own email addresses and phone numbers (the owner's setup, not a decision about anyone else). " +
+        'list: all of them. add: a new one; public (the default) lists it on the card, so a probe or lookup for it finds this agent, and starts listening on it at once; ' +
+        'public: false keeps it in local config only, nobody can find the agent by it. remove: stop answering probes on it and republish the card without it; contacts are kept. ' +
+        `Only add an address your user gave you as theirs. At most ${MAX_ADDRESSES}.`,
+      {
+        action: z.enum(['list', 'add', 'remove']),
+        address: z.string().max(320).optional().describe('An email address, or a phone number in E.164 with a leading + (add, remove)'),
+        public: z.boolean().optional().describe('add: list it on the card so the agent is findable by it (default true)'),
+      },
+      async (a) => {
+        if (!home.initialized()) throw new ToolError(`no agent at ${home.dir} yet: call rdv_init first`);
+        if (a.action === 'list') return { addresses: addressViews(home.readConfig()).map(addressOut) };
+        if (!a.address) throw new ToolError(`address is required to ${a.action}`);
+        if (a.action === 'remove' && a.public !== undefined) throw new ToolError('public applies to add only');
+        if (a.action === 'add') strictAddress(a.address);
+        const r = await changeAddress(home, a.action === 'add' ? { add: a.address, public: a.public } : { remove: a.address });
+        this.resubscribe();
+        return {
+          [r.change]: addressOut(r.address),
+          addresses: r.addresses.map(addressOut),
+          card_republished: r.published.length > 0,
+          note: !r.address.public
+            ? 'Private: kept in local config only. It is not on the card and opens no probe topic.'
+            : r.change === 'added'
+              ? 'Listed on the card, and this agent now answers probes for it (approvals still go to your user).' +
+                (r.published.length ? ' The new card is published.' : ' The public pointer is off, so nothing was published.')
+              : 'Removed: probes for it are no longer answered. Existing contacts are kept. ' +
+                (r.published.length
+                  ? 'The new card replaced the old one on the relays; a relay that missed the update, or a copy someone kept, may still show the old card until it expires.'
+                  : 'Peers that already hold the old card (contacts, pending requests) still see it listed there.'),
+        };
+      },
+    );
+
+    this.tool(
       'rdv_publish_card',
       'Publish this agent\'s card on the discovery topics of its addresses (only if public_pointer was set at init).',
       {},
@@ -726,8 +820,7 @@ export class RdvMcpServer {
           if (!agent.card.discovery?.public_pointer || !agent.card.policy.public || addrs.length === 0) {
             throw new ToolError('public pointer is off for this agent (it was created without public_pointer)');
           }
-          await agent.publishPointers();
-          return addrs.map(dtopic);
+          return agent.publishPointers();
         });
         return { published: true, topics };
       },
@@ -1069,7 +1162,9 @@ export class RdvMcpServer {
       agent_id: id,
       fingerprint: fingerprint(id),
       profile: safe(config.profile),
+      // Ours: chosen by our user. Public ones are on the card and findable; private ones are kept locally.
       addresses: config.addresses.map((a) => a.value),
+      our_addresses: addressViews(config).map(addressOut),
       relays: config.relays,
       public_pointer: config.public_pointer,
       listening: this.listening,

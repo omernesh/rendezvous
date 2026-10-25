@@ -754,6 +754,77 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       own terminal or the server's stderr, which Claude Code only keeps in
       its MCP log, so the interactive form is the no-terminal path.
 
+## Several addresses per agent
+
+63. **Addresses change after setup** (**spec change**, §4.3, §4.4, §6.2;
+    GitHub issue #9). One agent holds up to 8 emails and phones (`MAX_ADDRESSES`),
+    canonicalized and deduplicated as `canonAddress` does (item 8: the whole
+    email lowercased, phones as `+` and digits). `rdv init` takes repeated
+    `--email` / `--phone`, MCP `rdv_init` takes `emails[]` / `phones[]`
+    (singular `email` / `phone` kept as aliases), and
+    `rdv address list|add|remove` / `rdv_addresses` change them later.
+    Choices:
+    - **Public or private, per address** (§4.3: listing is opt-in per
+      address). A public address is listed on the card and opens its probe
+      topic. A private one is kept in `config.json` (`private: true`) and
+      nowhere else: it is not on the card, opens no topic, and is not a
+      contact label either. It only records the address for the owner (and
+      can be made public later by removing and adding it). The spec has no
+      private field on the card, so none was added. Everything given at init
+      is public, as before.
+    - **Re-signing.** `v` is the card schema version, so a change re-signs
+      the card (`reissueCard`) with `created` one second past both the old
+      card and now. Lookup keeps, per agent ID, only the valid card with the
+      latest `created`, and returns it only if it still claims the address.
+      So an old card replayed on a topic loses to the newer one.
+    - **Replaceable pointer.** A public-pointer card was a topic event with
+      `d` = content hash, so every version stayed on the relays. Now its
+      `d` is `rdv1/card:<dtopic>` (kind 30417 is addressable: relays keep the
+      newest per pubkey, kind and `d`), and its `created_at` is
+      max(now, the card's `created`). The second's margin in `created` makes
+      every new version strictly later than any earlier publish, because a
+      NIP-01 relay breaks a `created_at` tie by the lower event ID, which
+      would keep a random version. A test caught this before the margin
+      (about one run in ten). Probes keep the content-hash `d`. After a
+      removal the new card is also published on the removed topic, where it
+      replaces the old card, and `lookup` finds a card that no longer claims
+      the address. The publish happens before the change is saved, so a
+      relay failure changes nothing and the command can be retried. With the
+      pointer off, nothing is published, and nothing on the relays listed
+      the address.
+    - **Honest limits.** A removal cannot recall copies of the old card:
+      contacts and pending requesters hold it (inside the request or grant
+      that carried it), a relay that missed the update keeps the old event,
+      and anyone may have saved it. A strict relay may also keep the
+      content-hash pointers published before this change. Lookup's
+      newest-card rule covers a replay only where the newer card is on the
+      same relay. There is no message that tells contacts about a new card;
+      it travels with the next request or grant. A request that arrived on an
+      address before its removal can still be granted, but the grant carries
+      the new card, which no longer claims the probed address, so the
+      requester refuses it (item 12).
+    - **Live re-subscribe.** `Agent.setAddresses` moves a started agent to
+      the new topics at once. `rdv listen` and a consuming `rdv-mcp` do not
+      share an `Agent` with the command that made the change, so they follow
+      the card on disk (`watchTopics`: a stat of the agent state every
+      second, a read only when it changed) and re-subscribe; `rdv listen`
+      prints a `topics` event. `rdv_addresses` re-subscribes its own server
+      straight away. Until then nothing is lost the wrong way: each inbound
+      item is judged against the card loaded under the lock, so a probe on
+      a removed address is refused, and one on a new address waits at most
+      the poll interval plus the relay's lookback replay.
+    - **Owner setup, not consent.** Adding an address decides nothing about
+      a peer, so `rdv address` is not on the consent guard's list and
+      `rdv_addresses` needs no approval form. It is still strict: the MCP
+      tool accepts only an address that is a plain email or E.164 phone
+      after canonicalization, and no peer-supplied field reaches it.
+      Removing an address never touches contacts.
+    - **Test relay.** `startTestRelay` now implements NIP-01 addressable
+      events (newest per pubkey, kind and `d`; a tie keeps the lower ID), as
+      real relays do. The L2 test re-posted a probe from the same carrier
+      key, which on such a relay replaces the original (same content, same
+      `d`); it now re-posts from another key, as an attacker would.
+
 ## Not implemented yet
 
 

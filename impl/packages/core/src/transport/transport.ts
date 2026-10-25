@@ -2,13 +2,24 @@
 // documents, and is never trusted with anything it carries.
 import type { Envelope } from '../envelope.js';
 
+export interface TopicPublishOptions {
+  /**
+   * The document replaces the one this sender published on the topic before
+   * (a public-pointer card): on Nostr, one addressable event per sender and
+   * topic instead of one per content.
+   */
+  replaceable?: boolean;
+  /** Unix seconds the document dates from; a replaceable event is never dated earlier. */
+  createdAt?: number;
+}
+
 export interface Transport {
   /** Deliver to the recipient; `recipientRelays` come from the peer's card. */
   sendEnvelope(e: Envelope, recipientRelays?: string[]): Promise<void>;
   /** Stream raw (unverified) envelopes addressed to `me`. Returns an unsubscribe. */
   onEnvelopes(me: string, handler: (envelope: unknown) => void): () => void;
   /** Post a signed document on a discovery topic (§4.4). */
-  publishTopic(topic: string, doc: object, extraRelays?: string[]): Promise<void>;
+  publishTopic(topic: string, doc: object, extraRelays?: string[], opts?: TopicPublishOptions): Promise<void>;
   onTopics(topics: string[], handler: (doc: unknown, topic: string) => void): () => void;
   fetchTopic(topic: string, maxWaitMs?: number): Promise<unknown[]>;
   close(): void;

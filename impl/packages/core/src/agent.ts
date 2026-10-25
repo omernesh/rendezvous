@@ -3,7 +3,7 @@
 // judgment calls — the owner (human, CLI script, or MCP host) decides on
 // pending requests through `grant` / `decline`.
 import { EventEmitter } from 'node:events';
-import { type AddressCard, type CardOptions, createCard, verifyCard } from './card.js';
+import { type AddressCard, type CardOptions, createCard, type DiscoveryAddress, newerCard, reissueCard, verifyCard } from './card.js';
 import {
   type Contact,
   ContactBook,
@@ -22,8 +22,8 @@ import {
   isReverseGrant,
   verifyContactRequest,
 } from './contact.js';
-import { type Binding, dtopic, topicForHint } from './discovery.js';
-import { b64decode, b64encode } from './encoding.js';
+import { type Binding, dtopic, normalizeAddresses, topicForHint } from './discovery.js';
+import { b64decode, b64encode, parseTimestamp } from './encoding.js';
 import {
   Channels,
   type ChannelState,
@@ -80,6 +80,8 @@ export class Agent extends EventEmitter<AgentEvents> {
   private outbox: Record<string, Envelope[]>;
   private buffer: Record<string, Envelope[]>;
   private unsubscribers: Array<() => void> = [];
+  /** The discovery-topic subscription, kept apart so `setAddresses` can replace it. */
+  private topicUnsub?: () => void;
   private queue: Promise<void> = Promise.resolve();
 
   /**
@@ -130,12 +132,46 @@ export class Agent extends EventEmitter<AgentEvents> {
   /** Listen for envelopes and on our own discovery topics (listen mode, §4.4). */
   start(): void {
     this.unsubscribers.push(this.transport.onEnvelopes(this.id, (raw) => this.enqueue(() => this.handleEnvelope(raw))));
-    const topics = (this.card.discovery?.addresses ?? []).map(dtopic);
-    this.unsubscribers.push(this.transport.onTopics(topics, (doc, topic) => this.enqueue(() => this.handleTopicDoc(doc, topic))));
+    this.subscribeTopics();
   }
 
   stop(): void {
     for (const u of this.unsubscribers.splice(0)) u();
+    this.topicUnsub?.();
+    this.topicUnsub = undefined;
+  }
+
+  /** The discovery topics we listen on: one per address listed on our card (§4.3, §4.4). */
+  topics(): string[] {
+    return (this.card.discovery?.addresses ?? []).map(dtopic);
+  }
+
+  private subscribeTopics(): void {
+    this.topicUnsub?.();
+    this.topicUnsub = this.transport.onTopics(this.topics(), (doc, topic) => this.enqueue(() => this.handleTopicDoc(doc, topic)));
+  }
+
+  /**
+   * Replace the addresses listed on our card (the owner's own setup, never a
+   * peer's): canonicalized, deduplicated, at most MAX_ADDRESSES. The card is
+   * re-signed with a later `created`; if the agent is listening, it moves to
+   * the new set of topics at once, and a probe on a dropped topic is refused
+   * from now on. Contacts are untouched. Call `publishPointers(removed)`
+   * afterwards to replace the card on the relays.
+   */
+  setAddresses(
+    addresses: DiscoveryAddress[],
+    opts: { publicPointer?: boolean; now?: Date } = {},
+  ): { card: AddressCard; added: DiscoveryAddress[]; removed: DiscoveryAddress[] } {
+    const next = normalizeAddresses(addresses);
+    const prev = this.card.discovery?.addresses ?? [];
+    const key = (a: DiscoveryAddress) => `${a.type}:${a.value}`;
+    const added = next.filter((a) => !prev.some((p) => key(p) === key(a)));
+    const removed = prev.filter((p) => !next.some((a) => key(p) === key(a)));
+    const publicPointer = opts.publicPointer ?? this.card.discovery?.public_pointer ?? false;
+    this.card = reissueCard(this.key, this.card, { addresses: next, public_pointer: publicPointer }, opts.now);
+    if (this.topicUnsub) this.subscribeTopics();
+    return { card: this.card, added, removed };
   }
 
   close(): void {
@@ -148,28 +184,38 @@ export class Agent extends EventEmitter<AgentEvents> {
     return this.queue;
   }
 
-  /** Public pointer mode: publish our card on each discovery topic (opt-in). */
-  async publishPointers(): Promise<void> {
-    if (!this.card.discovery?.public_pointer || !this.card.policy.public) return;
-    for (const addr of this.card.discovery.addresses) await this.transport.publishTopic(dtopic(addr), this.card);
+  /**
+   * Public pointer mode: publish our card on each discovery topic (opt-in),
+   * as a replaceable event, so it supersedes the card we published there
+   * before. `alsoOn` are addresses we no longer list (just removed): the
+   * current card goes there too, so a lookup for them finds a newer card that
+   * no longer claims them (NOTES 63). Returns the topics published on.
+   */
+  async publishPointers(alsoOn: DiscoveryAddress[] = []): Promise<string[]> {
+    if (!this.card.discovery?.public_pointer || !this.card.policy.public) return [];
+    const topics = [...new Set([...this.card.discovery.addresses, ...alsoOn].map(dtopic))];
+    const createdAt = Math.floor((parseTimestamp(this.card.created) ?? 0) / 1000);
+    for (const topic of topics) await this.transport.publishTopic(topic, this.card, [], { replaceable: true, createdAt });
+    return topics;
   }
 
-  /** Look up public pointers for an address. Only verified cards that claim the address come back. */
+  /**
+   * Look up public pointers for an address. Per agent only its newest valid
+   * card counts, and it comes back only if it still claims the address: an
+   * older card that did (replayed, or kept by a relay) loses to the newer one.
+   */
   async lookup(address: string): Promise<AddressCard[]> {
     const topic = topicForHint(address);
     if (!topic) return [];
     const docs = await this.transport.fetchTopic(topic);
-    const seen = new Set<string>();
-    const cards: AddressCard[] = [];
+    const newest = new Map<string, AddressCard>();
     for (const d of docs) {
       const check = verifyCard(d);
-      if (!check.ok || seen.has(check.card.id) || check.card.id === this.id) continue;
-      if (check.card.discovery?.addresses.some((a) => topicForHint(a.value) === topic)) {
-        seen.add(check.card.id);
-        cards.push(check.card);
-      }
+      if (!check.ok || check.card.id === this.id) continue;
+      const had = newest.get(check.card.id);
+      newest.set(check.card.id, had ? newerCard(had, check.card) : check.card);
     }
-    return cards;
+    return [...newest.values()].filter((c) => c.discovery?.addresses.some((a) => topicForHint(a.value) === topic));
   }
 
   /**
@@ -312,7 +358,7 @@ export class Agent extends EventEmitter<AgentEvents> {
     if (doc.from === this.id) return;
     // Bound to where it arrived (security review L2): a probe for someone else,
     // re-posted on our topic, is not a probe for us.
-    const ours = (this.card.discovery?.addresses ?? []).map(dtopic);
+    const ours = this.topics();
     if (!ours.includes(topic) || topicForHint(doc.to_hint) !== topic) return this.drop('topic doc is not a probe for this topic');
     await this.handleContactRequest(doc, 'claimed', 'topic');
   }

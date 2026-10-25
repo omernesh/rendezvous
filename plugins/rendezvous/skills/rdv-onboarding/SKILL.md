@@ -1,6 +1,6 @@
 ---
 name: rdv-onboarding
-description: Guided, step-by-step Rendezvous setup that asks one question at a time. Checks the install and the MCP tools, then asks for the profile name, email, optional phone, relays and public pointer, creates the agent, publishes its card, optionally makes a first contact, and verifies every step. Resumes where a previous run stopped. Use when the user types /rdv-onboarding, or asks to set up, onboard or get started with Rendezvous.
+description: Guided, step-by-step Rendezvous setup that asks one question at a time. Checks the install and the MCP tools, then asks for the profile name, one or more emails, optional phones, relays, which addresses are public and the public pointer, creates the agent, publishes its card, optionally makes a first contact, and verifies every step. Resumes where a previous run stopped. Use when the user types /rdv-onboarding, or asks to set up, onboard or get started with Rendezvous.
 license: Apache-2.0
 ---
 
@@ -20,7 +20,8 @@ never print a secret or a confirm phrase, and pick a recipient only by
 `local_label` or agent ID.
 
 **Ask ONE question per turn.** Never put two questions in one message, and
-never ask for the email, phone, relays and pointer together. Ask, stop, wait
+never ask for the emails, phones, relays and pointer together. "Add another
+email?" is a question of its own, and so is each address's "public?". Ask, stop, wait
 for the answer, act on it, then move on. Use the `AskUserQuestion` tool when
 it is available, with one question, a few sensible options, and the
 recommended option first (marked "(Recommended)"). Without it, ask a single
@@ -85,22 +86,29 @@ default `~/.rendezvous/default`; another folder needs `RDV_PROFILE` or
 Ask one question; the recommended answer is the user's first name in
 lowercase (for example `omer`). Verify: letters, digits, `-` or `_` only.
 
-## Step 4 of 11: email
+## Step 4 of 11: emails
 
-Why: the email is how other people's agents find this one. It is only
+Why: an email is how other people's agents find this one. It is only
 *claimed*, never verified: it is hashed into a discovery topic
 (`dtopic(address)`) that a probe or a card lookup for that address uses.
+One agent can hold several (a personal and a work email, for example), up to
+8 addresses in all.
 
 Ask one question: their email. Verify the format (one `@`, a dot in the
-domain, no spaces); if it fails, say why and ask again.
+domain, no spaces); if it fails, say why and ask again. Then ask, as the
+next question on its own: "Add another email?" with the options "No, that's
+all (Recommended)" and "Add another email". On "add", ask for it (one
+question), verify it, and ask "Add another email?" again. Repeat until the
+answer is no. Drop a repeat (the same address in another case) and say so.
 
-## Step 5 of 11: phone (optional)
+## Step 5 of 11: phones (optional)
 
-Why: a second address people can find them by.
+Why: more addresses people can find them by.
 
 Ask one question with the options "Skip (Recommended)" and "Add a phone".
 A phone must be E.164: `+`, country code, number, no spaces (for example
-`+15555550100`). Verify the format.
+`+15555550100`). Verify the format. After each phone, ask "Add another
+phone?" as a question of its own, and repeat until the answer is no.
 
 ## Step 6 of 11: relays
 
@@ -119,26 +127,37 @@ node -e "fetch('https://relay.nesher.co',{headers:{Accept:'application/nostr+jso
 Report each result (name and software, or the error). Drop a relay that
 fails only if the user says so.
 
-## Step 7 of 11: public pointer
+## Step 7 of 11: public addresses and pointer
 
-Why: with the pointer on, the agent's card is published on the relays under
-the discovery topic of each address. Anyone who knows the address can then
-find the card: its agent ID, fingerprint, relays and the addresses it claims.
-That makes a first contact easy. With it off, nothing is published under the
-address, and people reach the agent only if it is listening when they probe,
-or by its card from another channel. Contact always needs the user's approval
-either way.
+Why: each **public** address makes this agent findable by it: it is listed
+on the agent's card, and the agent answers probes for it. A **private**
+address is kept on this machine only; nobody can find the agent by it, and
+it is not on the card. Contact always needs the user's approval either way.
 
-Ask one question: "Publish (Recommended)" or "Keep private".
+Ask about each address in turn, one per question, until every one is
+answered: "Should <address> be public? Anyone who knows it can then find
+this agent." with the options "Public (Recommended)" and "Private". With
+only one address, skip the question and say it is public (a private one
+alone would leave the agent unfindable), unless the user objects.
+
+Then ask one more question, about the public pointer. With it on, the card is
+also published on the relays under each public address, so anyone who knows
+the address can fetch it: its agent ID, fingerprint, relays and the addresses
+it lists. That makes a first contact easy. With it off, nothing is published,
+and people reach the agent only if it is listening when they probe, or by its
+card from another channel. Options: "Publish (Recommended)" or "Keep private".
 
 ## Step 8 of 11: create the identity
 
 Why: this makes the agent's key (it stays on this machine) and its address
 card.
 
-Call `rdv_init` with `profile`, `email`, `phone` (if any), `relays` and
-`public_pointer` from steps 3 to 7. No question here; the user has answered
-them all. Verify: call `rdv_status` and show `agent_id` and `fingerprint`.
+Call `rdv_init` with `profile`, `emails` and `phones` (the **public**
+addresses only), `relays` and `public_pointer` from steps 3 to 7. Then add
+each private address with `rdv_addresses` (`action: "add"`,
+`public: false`). No question here; the user has answered them all. Verify:
+call `rdv_status` and show `agent_id`, `fingerprint` and `our_addresses`
+(each public or private).
 Explain that the fingerprint is what the other person compares, through
 another channel, before trusting a contact.
 
@@ -170,8 +189,12 @@ and go on to step 11; the user can say "check rendezvous" later.
 
 ## Step 11 of 11: wrap-up
 
-Summarize in a few lines: the agent ID and fingerprint, the addresses, the
-relays, whether the card is published, and any contact. Then tell the user:
+Summarize in a few lines: the agent ID and fingerprint, the addresses (each
+public or private), the relays, whether the card is published, and any
+contact. Then tell the user:
+
+- To add or remove an address later, say so ("add my work email to
+  rendezvous"); contacts are kept.
 
 - To read new messages and requests, say "check rendezvous".
 - To stay reachable when Claude Code is closed, run `rdv listen` in a

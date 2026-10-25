@@ -119,7 +119,7 @@ State lives in a directory: `--home <dir>`, else `$RDV_HOME`, else
 | File | Holds |
 |---|---|
 | `agent.json` | `Agent.toJSON()`, including the secret key (mode 600 where the OS supports it) |
-| `config.json` | profile, relays, addresses, policy |
+| `config.json` | profile, relays, addresses (public ones are on the card; `private: true` ones are kept here only), policy |
 | `inbox.jsonl` | received payloads, one JSON object per line |
 | `cards.json` | cards found by `rdv lookup`, so `contact request <agent-id>` can use them |
 | `negotiations.json` | dinner negotiations (the a2a engine state) |
@@ -133,8 +133,11 @@ State lives in a directory: `--home <dir>`, else `$RDV_HOME`, else
 
 | Command | Does |
 |---|---|
-| `rdv init --profile omer --email omer@example.com --relay wss://… [--relay …] [--phone +…] [--public-pointer] [--force]` | Generate key and card, write state |
-| `rdv whoami` | Print agent ID, fingerprint, card JSON (never the secret key) |
+| `rdv init --profile omer --email omer@example.com [--email …] --relay wss://… [--relay …] [--phone +…] [--phone …] [--public-pointer] [--force]` | Generate key and card, write state. Repeat `--email` / `--phone` for more addresses (canonicalized, repeats dropped, at most 8) |
+| `rdv whoami` | Print agent ID, fingerprint, addresses, card JSON (never the secret key) |
+| `rdv address list` | Our addresses, each public (on the card, answers probes; with its topic) or private (kept in `config.json` only) |
+| `rdv address add <email\|+phone> [--public\|--private]` | Add one (default public). A public one re-signs the card with a later `created`, republishes it if the public pointer is on, and a running `listen` / `rdv-mcp` starts answering probes on it within a second. Duplicates (in any spelling) and a ninth address are refused |
+| `rdv address remove <email\|+phone>` | Remove one: probes on it are refused at once and its topic is dropped; with the public pointer on, the new card is also published on the removed topic, replacing the old one there. Contacts are kept (NOTES 63) |
 | `rdv card publish` | Publish public pointers (if enabled at init) |
 | `rdv lookup john@doe.com` | Fetch public-pointer cards for an address |
 | `rdv contact request <email\|card-file\|agent-id> [--greeting "…"] [--in-person] [--label john@doe.com]` | Topic probe by email, or direct by card. `--in-person` records the `in-person` binding for a card you got face to face. `--label` is your local name for them (a probe is labeled with the address) |

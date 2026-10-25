@@ -12,6 +12,7 @@
 // runs (a second `rdv listen`, or an `rdv-mcp` that would consume, is
 // refused or attaches), and appends what it handles to `events.jsonl`.
 import { spawn } from 'node:child_process';
+import { statSync } from 'node:fs';
 import { expire, isA2APayload, isTerminal, receive, type Step } from '@rendezvous/a2a';
 import {
   Agent,
@@ -22,6 +23,7 @@ import {
   openEnvelope,
   type Tier,
   TIERS,
+  type TopicPublishOptions,
   type Transport,
   verifyContactRequest,
 } from '@rendezvous/core';
@@ -47,6 +49,55 @@ import { relayTransport } from './transport.js';
 /** How often `listen --negotiate` checks pending negotiations for expiry. */
 export const SWEEP_MS = 30_000;
 
+/** How often a listener checks the saved agent state for a new card (an address added or removed). */
+export const ADDRESS_POLL_MS = 1000;
+
+export interface TopicChange {
+  topics: string[];
+  added: string[];
+  removed: string[];
+}
+
+/**
+ * Follow the card on disk: when `rdv address` (or rdv-mcp) changes the
+ * addresses it lists, call `onChange` with the new discovery topics, so the
+ * listener re-subscribes without a restart. A cheap stat per tick; the state
+ * is read only when it changed. The listener needs no lock for it: the state
+ * file is replaced atomically, and every inbound item is still judged against
+ * the card loaded under the lock (a probe on a removed address is refused
+ * even before the re-subscribe).
+ */
+export function watchTopics(home: Home, initial: string[], onChange: (c: TopicChange) => void, everyMs = ADDRESS_POLL_MS): () => void {
+  let topics = initial;
+  const stamp = () => {
+    try {
+      const st = statSync(home.agentPath);
+      return `${st.mtimeMs}:${st.size}`;
+    } catch {
+      return '';
+    }
+  };
+  let seen = stamp();
+  const timer = setInterval(() => {
+    const now = stamp();
+    if (!now || now === seen) return;
+    seen = now;
+    let next: string[];
+    try {
+      next = (home.readAgentState().card.discovery?.addresses ?? []).map(dtopic);
+    } catch {
+      return; // unreadable for a moment: the next change retries
+    }
+    const added = next.filter((t) => !topics.includes(t));
+    const removed = topics.filter((t) => !next.includes(t));
+    if (added.length === 0 && removed.length === 0) return;
+    topics = next;
+    onChange({ topics, added, removed });
+  }, everyMs);
+  timer.unref?.();
+  return () => clearInterval(timer);
+}
+
 /** Passes sends through to the real transport; inbound items are fed in by hand. */
 export class FeedTransport implements Transport {
   private envHandler?: (e: unknown) => void;
@@ -57,8 +108,8 @@ export class FeedTransport implements Transport {
   sendEnvelope(e: Envelope, relays?: string[]) {
     return this.real.sendEnvelope(e, relays);
   }
-  publishTopic(topic: string, doc: object, extra?: string[]) {
-    return this.real.publishTopic(topic, doc, extra);
+  publishTopic(topic: string, doc: object, extra?: string[], opts?: TopicPublishOptions) {
+    return this.real.publishTopic(topic, doc, extra, opts);
   }
   fetchTopic(topic: string, maxWaitMs?: number) {
     return this.real.fetchTopic(topic, maxWaitMs);
@@ -293,7 +344,7 @@ export async function listen(home: Home, out: Output, opts: ListenOptions): Prom
   const config = home.readConfig();
   const boot = Agent.fromJSON(home.readAgentState(), (key) => relayTransport(key, config.relays));
   const real = boot.transport;
-  const topics = (boot.card.discovery?.addresses ?? []).map(dtopic);
+  let topics = (boot.card.discovery?.addresses ?? []).map(dtopic);
 
   const print = async (e: Emitted) => {
     out.emit(e.obj, e.human);
@@ -309,12 +360,25 @@ export async function listen(home: Home, out: Output, opts: ListenOptions): Prom
       .catch((err: Error) => out.emit({ event: 'error', message: err.message }, `error: ${clean(err.message)}`));
   };
 
+  const onTopics = (list: string[]) =>
+    real.onTopics(list, (doc, topic) => {
+      if (!isJunk(boot.key, { doc })) enqueue((t) => t.feedTopic(doc, topic));
+    });
+  let topicUnsub = onTopics(topics);
   const unsubs = [
     real.onEnvelopes(boot.id, (raw) => {
       if (!isJunk(boot.key, { envelope: raw })) enqueue((t) => t.feedEnvelope(raw));
     }),
-    real.onTopics(topics, (doc, topic) => {
-      if (!isJunk(boot.key, { doc })) enqueue((t) => t.feedTopic(doc, topic));
+    () => topicUnsub(),
+    // An address added or removed while we run: move to the card's new topics (live re-subscribe).
+    watchTopics(home, topics, (c) => {
+      topicUnsub();
+      topics = c.topics;
+      topicUnsub = onTopics(topics);
+      out.emit(
+        { event: 'topics', ...c },
+        `addresses changed: now listening on ${c.topics.length} address topic(s) (+${c.added.length} -${c.removed.length})`,
+      );
     }),
   ];
   out.emit(
