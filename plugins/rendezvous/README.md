@@ -27,7 +27,8 @@ What it contains:
 - `hooks/hooks.json`: a consent guard on every tool call. It stops Claude
   from running the `rdv` commands that grant consent or print confirm phrases
   (`rdv contact grant`, `rdv dinner confirm`, `rdv contact pending`,
-  `rdv dinner list`, …), however the command is quoted or wrapped (`npx`,
+  `rdv dinner list`, …) or name a contact (`rdv contact label`, or
+  `rdv contact request <agent-id> --label`), however the command is quoted or wrapped (`npx`,
   `bash -c`, `$(…)`), and from reading, editing, searching or globbing the
   agent's secret key and consent file with any tool. Those stay with you, in
   your own terminal.
@@ -39,9 +40,13 @@ What it contains:
   and the phrase is stored only as a hash. See "Threat model" in
   [`impl/packages/mcp/README.md`](../../impl/packages/mcp/README.md).
 
-Sending: Claude picks the recipient by the name you used when you asked for
-or approved the contact (its `local_label`), never by an address the other
-agent's card claims, and shows you the fingerprint before the first message.
+Sending: Claude picks the recipient by its `local_label`, never by an address
+the other agent's card claims, and shows you the fingerprint before the first
+message. Only you set a label: it is part of what you approve (the form shows
+it next to the fingerprint and you can change it; a confirm phrase approves
+only the label it was shown with), or you name a contact yourself with
+`rdv contact label <agent-id> <label>` in your own terminal. A card found by
+address is only a claim, so it never labels a contact.
 
 Approving a contact: Claude calls `rdv_grant`, and Claude Code shows you an
 approval form (MCP elicitation). Claude can't fill it in for you.

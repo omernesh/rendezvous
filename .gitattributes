@@ -3,3 +3,10 @@
 *.sh text eol=lf
 impl/deploy/** text eol=lf
 site/*.sh text eol=lf
+# Files that start with a shebang: with CRLF, `#!/usr/bin/env node\r` fails to
+# run, and vitest can't import the file (plugin.test.ts checks this).
+*.mjs text eol=lf
+*.py text eol=lf
+impl/packages/*/src/bin.ts text eol=lf
+# The plugin is installed from a checkout as is.
+plugins/** text eol=lf

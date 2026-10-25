@@ -23,6 +23,10 @@
 //   scope (`terms`). A model that presents it with another tier or scope is
 //   refused, and the human is shown a new phrase for the terms it asked for.
 // - A probe answer phrase is bound to that answer (id, grantor, probe).
+// - Both are bound to the local label the contact will get (`label`, NOTES
+//   62): a label decides who "tell John" reaches, so the model can't pick
+//   one the human never saw. Another label means another phrase, shown to
+//   the human with that label.
 import { createHash, randomBytes, randomInt, scryptSync, timingSafeEqual } from 'node:crypto';
 import { canonicalize, type GrantCandidate, type GrantScope, type PendingRequest, type Tier } from '@rendezvous/core';
 import { type ConsentAction, type ConsentEntry, type ConsentHash, type ConsentTerms, consentKey, type Home } from './home.js';
@@ -40,6 +44,8 @@ export interface PhraseTarget {
   subject?: string;
   /** request: the tier and scope the phrase approves, shown to the human. */
   terms?: ConsentTerms;
+  /** request, candidate: the local label the contact gets (none if absent), shown to the human. */
+  label?: string;
 }
 
 // 64 short, distinct, easy-to-say words: 6 bits each.
@@ -97,24 +103,44 @@ export function requestSubject(p: PendingRequest): string {
   return sha256('rdv1/request-consent', { id: p.request.id, from: p.request.from, binding: p.binding, direct: p.direct === true, received: p.received });
 }
 
-/** The digest a request phrase approves: the request and the tier and scope shown with it. */
-export function termsDigest(subject: string, terms: ConsentTerms): string {
-  return sha256('rdv1/grant-terms', { subject, tier: terms.tier, scope: terms.scope });
+/**
+ * The digest a request phrase approves: the request and the tier, scope and
+ * local label shown with it. Without a label it is the digest of rev 1.
+ */
+export function termsDigest(subject: string, terms: ConsentTerms, label?: string): string {
+  return sha256('rdv1/grant-terms', { subject, tier: terms.tier, scope: terms.scope, ...(label !== undefined ? { label } : {}) });
 }
 
-export function requestTarget(p: PendingRequest, tier: Tier, scope: GrantScope): PhraseTarget {
+export function requestTarget(p: PendingRequest, tier: Tier, scope: GrantScope, label?: string): PhraseTarget {
   const subject = requestSubject(p);
   const terms: ConsentTerms = { tier, scope };
-  return { action: 'request', id: p.request.id, subject, digest: termsDigest(subject, terms), terms };
+  return { action: 'request', id: p.request.id, subject, digest: termsDigest(subject, terms, label), terms, ...(label !== undefined ? { label } : {}) };
 }
 
-/** The digest a probe-answer phrase approves: this answer from this grantor to this probe. */
+/** What a probe-answer phrase is about, apart from the label: this answer from this grantor to this probe. */
 export function candidateDigest(c: GrantCandidate): string {
   return sha256('rdv1/candidate-consent', { id: c.grant.id, from: c.grant.from, request_ref: c.request_ref, to_hint: c.to_hint, received: c.received });
 }
 
-export function candidateTarget(c: GrantCandidate): PhraseTarget {
-  return { action: 'candidate', id: c.grant.id, digest: candidateDigest(c) };
+/** The digest a probe-answer phrase approves: the answer (`subject`, candidateDigest) and the local label shown with it. */
+export function candidateLabelDigest(subject: string, label: string | undefined): string {
+  return sha256('rdv1/candidate-label', { subject, label: label ?? null });
+}
+
+/**
+ * The label a confirmed probe answer gets unless the human names it otherwise:
+ * the one our human gave the probe, else the probed address (as
+ * ContactBook.confirmCandidate). `outstanding` is the book's open requests.
+ */
+export function candidateLabel(c: GrantCandidate, outstanding: Record<string, { label?: string }>): string {
+  const o = Object.hasOwn(outstanding, c.request_ref) ? outstanding[c.request_ref] : undefined;
+  return o?.label ?? c.to_hint;
+}
+
+/** The phrase target for confirming `c` as a contact labeled `label` (the probed address by default: candidateLabel). */
+export function candidateTarget(c: GrantCandidate, label: string | undefined): PhraseTarget {
+  const subject = candidateDigest(c);
+  return { action: 'candidate', id: c.grant.id, subject, digest: candidateLabelDigest(subject, label), ...(label !== undefined ? { label } : {}) };
 }
 
 const ACTIONS: readonly string[] = ['request', 'candidate', 'meeting', 'cancel'];
@@ -125,7 +151,8 @@ const isHash = (h: unknown): h is ConsentHash =>
 /**
  * A usable stored entry (its key is checked against its action by entryFor).
  * Anything else approves nothing and is dropped on the next write: a plaintext `phrase` from an older consent.json (issue #12),
- * a missing hash, or request terms that don't hash to the stored digest.
+ * a missing hash, request terms or a label that don't hash to the stored digest, or a probe-answer phrase from before labels
+ * were bound (no subject).
  */
 function valid(e: unknown): e is ConsentEntry {
   if (!e || typeof e !== 'object' || 'phrase' in e) return false;
@@ -133,13 +160,15 @@ function valid(e: unknown): e is ConsentEntry {
   if (!ACTIONS.includes(x.action)) return false;
   if (!isStr(x.salt) || !isStr(x.hash) || !Number.isInteger(x.attempts)) return false;
   if (x.previous !== undefined && (!isHash(x.previous) || 'phrase' in x.previous)) return false;
+  if (x.label !== undefined && !isStr(x.label)) return false;
+  if (x.action === 'candidate') return isStr(x.subject) && x.digest === candidateLabelDigest(x.subject, x.label);
   if (x.terms !== undefined) {
     try {
-      if (!isStr(x.subject) || x.digest !== termsDigest(x.subject, x.terms)) return false;
+      if (!isStr(x.subject) || x.digest !== termsDigest(x.subject, x.terms, x.label)) return false;
     } catch {
       return false; // terms that don't even canonicalize
     }
-  }
+  } else if (x.label !== undefined) return false;
   return true;
 }
 
@@ -172,6 +201,7 @@ function fresh(t: PhraseTarget, previous?: ConsentEntry): { entry: ConsentEntry;
     ...(t.digest !== undefined ? { digest: t.digest } : {}),
     ...(t.subject !== undefined && t.subject !== t.digest ? { subject: t.subject } : {}),
     ...(t.terms !== undefined ? { terms: t.terms } : {}),
+    ...(t.label !== undefined ? { label: t.label } : {}),
     salt,
     hash,
     ...(previous ? { previous: { salt: previous.salt, hash: previous.hash, ...(previous.digest !== undefined ? { digest: previous.digest } : {}) } } : {}),
@@ -230,22 +260,29 @@ export function issuePhrase(home: Home, t: PhraseTarget): IssuedPhrase {
  * The terminal's view (`rdv contact pending`, `rdv dinner list`, text mode):
  * the stored phrase can't be shown again, so each target that has a current
  * phrase gets a new one for the same digest and terms, which replaces it.
- * Targets give `subject` (requests) or `digest`; an entry for another subject
- * is stale and not shown. Call under the home lock.
+ * Targets give `subject` (requests, probe answers) or `digest`; an entry for
+ * another subject is stale and not shown. Call under the home lock.
  */
-export function reissueForDisplay(home: Home, targets: PhraseTarget[]): Map<string, { phrase: string; terms?: ConsentTerms }> {
+export function reissueForDisplay(home: Home, targets: PhraseTarget[]): Map<string, ShownPhrase> {
   const { consent, dirty } = load(home);
-  const shown = new Map<string, { phrase: string; terms?: ConsentTerms }>();
+  const shown = new Map<string, ShownPhrase>();
   for (const t of targets) {
     const have = entryFor(consent, t);
     if (!have || subjectOf(have) !== subjectOf(t)) continue;
-    const same: PhraseTarget = { action: have.action, id: t.id, digest: have.digest, subject: have.subject, terms: have.terms };
+    const same: PhraseTarget = { action: have.action, id: t.id, digest: have.digest, subject: have.subject, terms: have.terms, label: have.label };
     const { entry, phrase } = fresh(same, have);
     consent[consentKey(t.action, t.id)] = entry;
-    shown.set(consentKey(t.action, t.id), { phrase, ...(have.terms ? { terms: have.terms } : {}) });
+    shown.set(consentKey(t.action, t.id), { phrase, ...(have.terms ? { terms: have.terms } : {}), ...(have.label !== undefined ? { label: have.label } : {}) });
   }
   if (dirty || shown.size) home.writeConsent(consent);
   return shown;
+}
+
+/** A phrase the terminal shows, with what it approves. */
+export interface ShownPhrase {
+  phrase: string;
+  terms?: ConsentTerms;
+  label?: string;
 }
 
 export type PhraseCheck =
@@ -255,19 +292,21 @@ export type PhraseCheck =
       /**
        * no-phrase: none stored. changed: the target is not what the phrase was
        * issued for (re-sync, ask again). terms: the phrase approves other
-       * terms (`terms` says which). stale: a phrase replaced by a newer one
-       * for the same thing. wrong: not the phrase (counts as a try).
+       * terms or another label (`terms`, `label` say which). stale: a phrase
+       * replaced by a newer one for the same thing. wrong: not the phrase
+       * (counts as a try).
        */
       reason: 'no-phrase' | 'wrong' | 'changed' | 'terms' | 'stale';
       rotated?: string;
       terms?: ConsentTerms;
+      label?: string;
       left: number;
     };
 
 /**
  * Check a phrase for one action on one ID and digest (what the caller is
- * about to do: the meeting being confirmed, the request with the tier and
- * scope being granted). Call under the home lock. Only a phrase issued for
+ * about to do: the meeting being confirmed, the request with the tier,
+ * scope and label being granted, the probe answer with its label). Call under the home lock. Only a phrase issued for
  * that same action, subject and digest counts. A wrong guess counts;
  * MAX_ATTEMPTS replaces the phrase.
  */
@@ -277,7 +316,9 @@ export function checkPhrase(home: Home, target: PhraseTarget, given: string): Ph
   if (!entry) return { ok: false, reason: 'no-phrase', left: MAX_ATTEMPTS };
   const left = MAX_ATTEMPTS - entry.attempts;
   if (subjectOf(entry) !== subjectOf(target)) return { ok: false, reason: 'changed', left };
-  if (entry.digest !== target.digest) return { ok: false, reason: 'terms', ...(entry.terms ? { terms: entry.terms } : {}), left };
+  if (entry.digest !== target.digest) {
+    return { ok: false, reason: 'terms', ...(entry.terms ? { terms: entry.terms } : {}), ...(entry.label !== undefined ? { label: entry.label } : {}), left };
+  }
   if (matches(entry, target.action, target.id, given)) return { ok: true };
   if (entry.previous && matches(entry.previous, target.action, target.id, given)) {
     return { ok: false, reason: entry.previous.digest === entry.digest ? 'stale' : 'changed', left };
@@ -310,4 +351,17 @@ export function describeTerms(t: ConsentTerms): string {
     `calendar ${s.may_access_calendar ?? 'none'}`,
     ...(s.max_frequency ? [`up to ${s.max_frequency}`] : []),
   ].join(', ');
+}
+
+/** The local label a phrase approves, in words for the human. */
+export function describeLabel(label: string | undefined): string {
+  return label === undefined ? 'no local label' : `local label ${JSON.stringify(label)} (your assistant finds them by it: "tell ${label}")`;
+}
+
+/**
+ * Everything a phrase approves, in words: the terms (requests) and the local
+ * label (a request without one keeps the label an existing contact had).
+ */
+export function describeApproval(a: { terms?: ConsentTerms; label?: string }): string {
+  return [...(a.terms ? [describeTerms(a.terms)] : []), ...(a.label !== undefined || !a.terms ? [describeLabel(a.label)] : [])].join(', ');
 }

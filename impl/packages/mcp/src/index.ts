@@ -1,5 +1,6 @@
 export { INBOX_URI, PHRASE_TIERS, RdvMcpServer, type RdvMcpOptions } from './server.js';
 export {
+  candidateLabel,
   candidateTarget,
   checkPhrase,
   dropPhrase,

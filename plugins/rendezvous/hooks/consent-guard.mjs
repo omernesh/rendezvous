@@ -2,8 +2,9 @@
 // PreToolUse hook: keeps the assistant away from the Rendezvous commands and
 // files that belong to the human. Consent (granting a contact, confirming a
 // probe answer or a meeting, canceling an agreed one, auto-grant/auto-confirm
-// listeners), the commands that show confirm phrases (`rdv contact pending`,
-// `rdv dinner list`), re-keying (`rdv init --force`), and the secret key and
+// listeners), naming a contact (`rdv contact label`: a label decides who
+// "tell John" reaches), the commands that show confirm phrases (`rdv contact
+// pending`, `rdv dinner list`), re-keying (`rdv init --force`), and the secret key and
 // consent state (`agent.json`, `agent.json.bak`, `consent.json`) in the
 // Rendezvous home, through any tool.
 //
@@ -34,6 +35,10 @@ const HUMAN_ONLY =
   'That Rendezvous command is for the human, in their own terminal. Use the MCP tools: rdv_grant and rdv_negotiate ask the human through an approval form or a confirm phrase they type to you.';
 const PENDING =
   'rdv contact pending is for the human, in their own terminal (it shows confirm phrases meant only for them). Use the rdv_pending_requests tool.';
+const LABEL =
+  'rdv contact label is for the human, in their own terminal: a local label decides who "tell John" reaches. Ask your user to run it, or send by agent_id after showing them the fingerprint.';
+const LABEL_REQUEST =
+  'rdv contact request --label with an agent ID or card names a contact without the human ever seeing the label (a request by card needs no approval on your side). Leave out --label, or probe the address: the human then confirms the answer and its label.';
 const DINNER_LIST =
   'rdv dinner list is for the human, in their own terminal (it shows confirm phrases meant only for them). Use rdv_negotiate with action "status".';
 const OPAQUE =
@@ -239,7 +244,7 @@ const isRdv = (w) =>
 /** Programs that may name a home folder: they list it, enter it or print its path, but read no file in it. */
 const LISTING = new Set(['ls', 'dir', 'gci', 'get-childitem', 'cd', 'pushd', 'popd', 'chdir', 'set-location', 'sl', 'test-path', 'stat', 'mkdir', 'md', 'echo', 'write-output', 'rdv', 'rdv-mcp']);
 
-const CONTACT_SUBS = { grant: `rdv contact grant: ${HUMAN_ONLY}`, confirm: `rdv contact confirm: ${HUMAN_ONLY}`, resync: `rdv contact resync: ${HUMAN_ONLY}`, pending: PENDING };
+const CONTACT_SUBS = { grant: `rdv contact grant: ${HUMAN_ONLY}`, confirm: `rdv contact confirm: ${HUMAN_ONLY}`, resync: `rdv contact resync: ${HUMAN_ONLY}`, label: LABEL, pending: PENDING };
 const DINNER_SUBS = { confirm: `rdv dinner confirm: ${HUMAN_ONLY}`, cancel: `rdv dinner cancel: ${HUMAN_ONLY}`, list: DINNER_LIST };
 
 // --- paths ----------------------------------------------------------------------
@@ -364,6 +369,17 @@ function checkWords(words, ctx, depth) {
   const listenAt = words.findIndex((w) => couldBe(w, 'listen', ctx.cwd));
   if (listenAt >= 0 && words.slice(listenAt + 1).some((w) => braces(w).some((x) => /^--auto-(grant|confirm)/i.test(x)))) {
     throw new Refusal(`rdv listen --auto-grant/--auto-confirm approves without the human. ${HUMAN_ONLY}`);
+  }
+  // `rdv contact request <agent-id|card> --label x`: labeled with no step where the human sees it. A probe (an address)
+  // may carry a label: the human confirms the answer, label shown (NOTES 62).
+  const reqAt = words.findIndex((w, k) => k + 1 < words.length && couldBe(w, 'contact', ctx.cwd) && couldBe(words[k + 1], 'request', ctx.cwd));
+  if (reqAt >= 0 && words.slice(reqAt + 2).some((w) => braces(w).some((x) => /^--label(=|$)/i.test(x)))) {
+    let target;
+    for (let k = reqAt + 2; k < words.length && target === undefined; k++) {
+      if (/^--(greeting|label|home|profile)$/i.test(words[k])) k++;
+      else if (!words[k].startsWith('-')) target = words[k];
+    }
+    if (target === undefined || dynamic(target) || !/^[^\s{}*?]+@[^\s{}*?]+$|^\+[\d\s().-]+$/.test(target)) throw new Refusal(LABEL_REQUEST);
   }
   const rdvAt = words.findIndex((w, k) => isRdv(w) || (k === 0 && dynamic(w)));
   if (rdvAt >= 0) {
@@ -494,7 +510,7 @@ export function checkToolInput(toolName, input, cwd = process.cwd()) {
     }
   }
   // Searching with no path searches the working directory.
-  if (searching && input.path === undefined) return checkPath(cwd, { cwd, kind: 'file' });
+  if (searching && input.path === undefined) return checkPath(cwd, { cwd, kind: 'search' });
   return undefined;
 }
 

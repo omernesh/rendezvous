@@ -659,6 +659,11 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
         mode: the `--json` exemption was matched on raw text and could be
         spoofed (`rdv contact pending # --json`), and the assistant has
         `rdv_pending_requests` and `rdv_negotiate` "status" for them.
+      - Naming a contact: `rdv contact label` (in every form the other
+        subcommands are refused in), and `rdv contact request` with
+        `--label` unless the target is an address (a probe, whose answer the
+        human confirms with the label shown). Otherwise the model could
+        relabel an impostor as `john@doe.com` and redirect "tell John".
       - Any command naming `agent.json`, `agent.json.bak` or `consent.json`,
         in any directory.
       - Any path-like tool field (`file_path`, `notebook_path`, `path`,
@@ -666,9 +671,11 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
         that is or reaches into a Rendezvous home: `~/.rendezvous` and its
         profiles (not `~/.rendezvous/src`), `$RDV_HOME`, and any folder that
         looks like one on disk (`config.json` beside `agent.json` or
-        `consent.json`), which covers `--home` dirs. A search with no path
-        is checked against the working directory, and a search of a folder
-        above `~/.rendezvous` or `$RDV_HOME` is refused too. Shell words get
+        `consent.json`), which covers `--home` dirs. A search of a folder
+        above `~/.rendezvous` or `$RDV_HOME` is refused too. A search with
+        no path is checked as a search of the working directory, the same
+        rules (it used to be checked as a single file, so a path-less Grep
+        run from `~` or from inside a home got through). Shell words get
         the same check, including globs, `$RDV_HOME`, and `cd` earlier in
         the command; `ls`, `cd` and the like may name a home, `--home` may
         take one.
@@ -696,12 +703,9 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       version exposed `claimed_addresses` from the peer's card and the skill
       resolved "tell John" with them, so a contact whose card claimed
       `john@doe.com` could get John's messages. Now `Contact.label` (local
-      only, never sent) records what our human used: the address probed
-      (`OutstandingRequest.label`, default `to_hint`), the address looked up
-      with `rdv_discover` before requesting by card (kept in the server's
-      memory), or `label` given to `rdv_request_contact` / `rdv_grant`
-      (`--label` in the CLI). `rdv_status` shows it as `local_label`, the
-      card's addresses as `unverified_claims`, and `label_conflict` when two
+      only, never sent) records what our human called them (how it gets
+      there: next item). `rdv_status` shows it as `local_label`, the card's
+      addresses as `unverified_claims`, and `label_conflict` when two
       contacts share a label (compared as canonical addresses, else
       case-insensitively). `rdv_send` takes `to` = a label and refuses when
       no contact or more than one has it, naming their fingerprints; the
@@ -709,6 +713,41 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       and shows the fingerprint before the first message. Contacts made
       before this change have no label until the human names one
       (`rdv contact label <agent-id> <label>`). No wire change.
+    - **A label is part of what the human approves** (security review of
+      the first version, which took the label from the model or from
+      discovery and applied it unseen; the model could approve John's
+      request as `omer-bank@example.com`, or confirm an impostor as John).
+      A label gets onto a contact only through:
+      - the approval form of `rdv_grant` (request or probe answer): it
+        shows the label next to the fingerprint as an editable field,
+        prefilled with the model's `label` (a probe answer: the probed
+        address, `candidateLabel`); what the human leaves there is stored,
+        empty for none. A client that returns no `label` field leaves the
+        one the form showed.
+      - a confirm phrase: the label is hashed into its digest (`label` in
+        `termsDigest` for a request, `candidateLabelDigest` for a probe
+        answer) and shown with it, on stderr and in `rdv contact pending`
+        ("it approves: …, local label …"). A phrase approves that label
+        only: the model asking for another, or for none, is refused like
+        other terms, and the human is shown a new phrase for exactly what
+        it asked. The default request phrase has no label (rev 1 digest).
+        A probe-answer phrase stored before this change (no `subject`), or
+        any entry whose label no longer hashes to its digest, approves
+        nothing and is dropped.
+      - the human's CLI: `--label` on `rdv contact grant` / `request`, and
+        `rdv contact label`. The consent guard refuses these to the
+        assistant (above).
+      Discovery never labels anything: anyone can publish a card on any
+      address's topic, so `rdv_discover` only caches cards, and with one
+      card or many the contact made by agent ID has no label.
+      `rdv_request_contact` refuses `label` for a target that is not an
+      address, because a request by card becomes a contact the moment the
+      peer grants it, with no step where our human sees the label. A probe
+      keeps its label (the address, or the model's) only as the proposal the
+      confirm form or phrase shows. Same honest limit as consent: the guard
+      makes the label commands fail loudly for a drifting or injected
+      assistant, but a model with a same-user shell can still reach the
+      home some way the guard can't see; the MCP gate is the boundary.
     - **What the plugin can't do:** in `claude -p` there is no elicitation
       (Claude Code cancels it), so headless runs fall back to the phrase.
       The phrase reaches the human through `rdv contact pending` in their
@@ -727,3 +766,9 @@ and `rdv/forget`.
 - Node's built-in WebSocket (undici) overflows the stack inside nostr-tools
   when a relay connection fails, so the transport installs the `ws` package
   as the WebSocket implementation.
+- On a Windows checkout with `core.autocrlf=true`, a file that starts with a
+  shebang and has CRLF breaks: `#!/usr/bin/env node\r` doesn't run, and
+  vitest can't import `consent-guard.mjs` at all (SyntaxError, so
+  `plugin.test.ts` was not collected). `.gitattributes` keeps `*.mjs`,
+  `*.py`, the `bin.ts` entry points and `plugins/**` LF, and `plugin.test.ts`
+  checks every shebang file in the working tree.

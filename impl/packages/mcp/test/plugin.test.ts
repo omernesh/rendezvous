@@ -45,6 +45,27 @@ export function consentViolations(md: string): string[] {
   return bad;
 }
 
+/** Files in the repo: git's list when this is a checkout, else a walk that skips installs and builds. */
+function repoFiles(): string[] {
+  const git = spawnSync('git', ['-C', REPO, 'ls-files', '-z'], { encoding: 'utf8' });
+  if (git.status === 0 && git.stdout) return git.stdout.split('\0').filter(Boolean).map((f) => join(REPO, f));
+  const walk = (dir: string): string[] =>
+    readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
+      ['node_modules', 'dist', '.git', '.claude'].includes(e.name) ? [] : e.isDirectory() ? walk(join(dir, e.name)) : [join(dir, e.name)],
+    );
+  return walk(REPO);
+}
+
+describe('checkout', () => {
+  it('every file with a shebang has LF line endings in the working tree (.gitattributes)', () => {
+    // With CRLF, `#!/usr/bin/env node\r` does not run, and vitest fails to import the consent guard at all.
+    const shebang = repoFiles().filter((f) => existsSync(f) && readFileSync(f).subarray(0, 2).toString() === '#!');
+    expect(shebang).toEqual(expect.arrayContaining([GUARD, LAUNCHER]));
+    const crlf = shebang.filter((f) => readFileSync(f).includes(13));
+    expect(crlf, 'check .gitattributes, then: git add --renormalize . && git checkout -- <file>').toEqual([]);
+  });
+});
+
 describe('plugin manifests', () => {
   it('the marketplace lists the plugin, and names and versions agree', () => {
     const market = json(join(REPO, '.claude-plugin', 'marketplace.json'));
@@ -109,6 +130,10 @@ describe('the skill', () => {
     // No --json exemption any more: the assistant lists requests with the MCP tool.
     expect(consentViolations('List requests with `rdv contact pending --json`.')).toHaveLength(1);
     expect(consentViolations('List requests with `rdv_pending_requests`.')).toEqual([]);
+    // A local label decides who "tell John" reaches, so naming a contact is the human's too.
+    expect(consentViolations('Name them: run `rdv contact label rdv1:abc john@doe.com`.')).toHaveLength(1);
+    expect(consentViolations('```sh\nrdv contact label rdv1:abc john@doe.com\n```\n')).toHaveLength(1);
+    expect(consentViolations('The human names a contact with `rdv contact label <agent-id> <label>` in their own terminal.')).toEqual([]);
   });
 
   it('uses only the example personas', () => {
@@ -129,6 +154,8 @@ describe('consent guard hook', () => {
     'rdv dinner confirm t1 --hold 1234',
     'rdv dinner cancel t1',
     'rdv dinner list',
+    'rdv contact label rdv1:abc john@doe.com',
+    'rdv --profile omer contact label rdv1:abc john@doe.com',
     'rdv listen --auto-grant friend',
     'rdv listen --negotiate --calendar c.json --auto-confirm',
     'rdv init --force --email omer@example.com',
@@ -205,6 +232,34 @@ describe('consent guard hook', () => {
     'npx rdv listen --negotiate --calendar c.json --auto-confirm',
     'npx rdv init --force --email omer@example.com',
     'npm run rdv -- init --force',
+    // rdv contact label (a label picks the recipient of "tell John"), in the same forms
+    'rdv "contact" label rdv1:abc john@doe.com',
+    "rdv con''tact la\\bel rdv1:abc john@doe.com",
+    'rdv contact {label,list} rdv1:abc john@doe.com',
+    'echo "#"; rdv contact label rdv1:abc john@doe.com',
+    'npx rdv contact label rdv1:abc john@doe.com',
+    'npx -y @rendezvous/cli contact label rdv1:abc john@doe.com',
+    'npm run rdv -- contact label rdv1:abc john@doe.com',
+    'pnpm exec rdv contact label rdv1:abc john@doe.com',
+    'echo $(rdv contact label rdv1:abc john@doe.com)',
+    'echo `rdv contact label rdv1:abc john@doe.com`',
+    'bash -c "rdv contact label rdv1:abc john@doe.com"',
+    'cmd /c rdv contact label rdv1:abc john@doe.com',
+    'pwsh -NoProfile -Command "rdv contact label rdv1:abc john@doe.com"',
+    `pwsh -EncodedCommand ${Buffer.from('rdv contact label rdv1:abc john@doe.com', 'utf16le').toString('base64')}`,
+    'iex "rdv contact label rdv1:abc john@doe.com"',
+    `node -e "require('child_process').execFileSync('rdv', ['contact', 'label', 'rdv1:abc', 'john@doe.com'])"`,
+    `python -c "import subprocess; subprocess.run(['rdv','contact','label','rdv1:abc','john@doe.com'])"`,
+    'RDV_HOME=/tmp/h rdv contact label rdv1:abc john@doe.com',
+    'Start-Process rdv -ArgumentList contact,label,rdv1:abc,john@doe.com',
+    'node ~/.rendezvous/src/impl/packages/cli/dist/src/bin.js contact label rdv1:abc john@doe.com',
+    // a label on a request by card or agent ID: no step where the human sees it
+    'rdv contact request rdv1:abc --label john@doe.com',
+    'rdv contact request --greeting hi --label john@doe.com rdv1:abc',
+    'npx rdv contact request ./john-card.json --label=john@doe.com',
+    'rdv contact request rdv1:abc --l{abel,x} john@doe.com',
+    'rdv contact request $TARGET --label john@doe.com',
+    `node -e "require('child_process').execFileSync('rdv', ['contact', 'request', 'rdv1:abc', '--label', 'john@doe.com'])"`,
   ];
   it.each(bypasses)('refuses the bypass %s', (c) => expect(checkCommand(c)).toBeTruthy());
 
@@ -239,6 +294,8 @@ describe('consent guard hook', () => {
     'rdv contact request john@doe.com --greeting "please grant me contact"',
     'rdv contact list',
     'rdv contact request john@doe.com --label john@doe.com',
+    'rdv contact request +15555550100 --greeting "hi" --label john@doe.com',
+    'rdv contact request rdv1:abc --greeting "hi"',
     'rdv whoami --home ~/.rendezvous/omer',
     'rdv-mcp --home="$RDV_HOME"',
     'cat ~/.rendezvous/default/config.json',
@@ -289,6 +346,9 @@ describe('consent guard hook', () => {
       ['mcp__filesystem__search_files', { path: h, pattern: '*' }],
     ];
     for (const [tool, input] of denied) expect(checkToolInput(tool, input, '/work'), `${tool} ${JSON.stringify(input)}`).toBeTruthy();
+    // No path searches the working directory, checked like an explicit path (parity): from the user's home dir it reaches ~/.rendezvous.
+    for (const tool of ['Grep', 'Glob', 'mcp__filesystem__search_files']) expect(checkToolInput(tool, { pattern: 'seed' }, homedir()), tool).toBeTruthy();
+    expect(checkToolInput('Grep', { pattern: 'seed' }, '/work')).toBeUndefined();
     const allowed: Array<[string, Record<string, unknown>]> = [
       ['Grep', { pattern: 'agent\\.json', path: '/work/project' }], // searching code for the name is fine
       ['Glob', { pattern: '**/*.ts', path: '/work/project' }],
@@ -314,6 +374,11 @@ describe('consent guard hook', () => {
       expect(checkCommand('cat tmp/omer/config.json', { cwd: root })).toBeUndefined();
       expect(checkToolInput('Grep', { pattern: 'seed', path: home }, root)).toBeTruthy();
       expect(checkToolInput('Grep', { pattern: 'seed' }, home)).toBeTruthy(); // no path: the working directory
+      // ...checked as a search, like an explicit path: a cwd inside a home, or above one, is refused too.
+      mkdirSync(join(home, 'sub'));
+      expect(checkToolInput('Grep', { pattern: 'seed' }, join(home, 'sub'))).toBeTruthy();
+      expect(checkToolInput('Glob', { pattern: '*' }, join(home, 'sub'))).toBeTruthy();
+      expect(checkToolInput('Read', { file_path: join(home, 'sub', 'notes.md') }, root)).toBeUndefined(); // a file there, not a search
       expect(checkToolInput('Glob', { pattern: 'tmp/omer/*' }, root)).toBeTruthy();
       expect(checkPath(join(home, 'agent.json'))).toBeTruthy();
       const other = join(root, 'h2');
@@ -323,6 +388,11 @@ describe('consent guard hook', () => {
       expect(checkCommand('grep -r seed $RDV_HOME')).toBeTruthy();
       expect(checkCommand('grep -r seed $env:RDV_HOME')).toBeTruthy();
       expect(checkCommand('cat $RDV_HOME/config.json')).toBeUndefined();
+      // A search with no path in a folder above $RDV_HOME reaches it, exactly as one with path: root does.
+      process.env.RDV_HOME = join(root, 'tmp', 'omer');
+      expect(checkToolInput('Grep', { pattern: 'seed', path: root }, '/work')).toBeTruthy();
+      expect(checkToolInput('Grep', { pattern: 'seed' }, root)).toBeTruthy();
+      expect(checkToolInput('mcp__filesystem__search_files', { pattern: 'seed' }, root)).toBeTruthy();
     } finally {
       if (prev === undefined) delete process.env.RDV_HOME;
       else process.env.RDV_HOME = prev;
