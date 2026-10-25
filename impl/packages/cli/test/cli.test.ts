@@ -98,6 +98,13 @@ describe('rdv commands', () => {
     expect(usage.code).toBe(2);
   });
 
+  it('auto-grant above stranger needs --auto-grant-any-tier (security review L7)', async () => {
+    const home = join(root, 'cap');
+    await rdv(['init', '--email', 'cap@example.com', '--relay', 'ws://127.0.0.1:9'], home);
+    const r = await rdv(['listen', '--auto-grant', 'spouse'], home, { check: false });
+    expect([r.code, r.stderr]).toEqual([2, expect.stringContaining('--auto-grant-any-tier')]);
+  });
+
   it('public pointer, lookup, card-file request with --in-person, auto-grant, revoke', async () => {
     const omerHome = join(root, 'omer');
     const johnHome = join(root, 'john');
@@ -110,7 +117,7 @@ describe('rdv commands', () => {
     const cardFile = join(root, 'john-card.json');
     writeFileSync(cardFile, JSON.stringify(card));
 
-    const johnL = new Listener('john', johnHome, ['--auto-grant', 'colleague']);
+    const johnL = new Listener('john', johnHome, ['--auto-grant', 'colleague', '--auto-grant-any-tier']);
     const omerL = new Listener('omer', omerHome);
     try {
       await johnL.waitFor((l) => l.event === 'ready', 'ready', 10_000);

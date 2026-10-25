@@ -408,7 +408,19 @@ export async function listenCmd({ home, out, values }: Ctx): Promise<void> {
   } else if (values.calendar !== undefined || values.window !== undefined) {
     throw new CliError('--calendar and --window go with --negotiate', 2);
   }
-  await listen(home, out, { autoGrant: tierOf(values['auto-grant']), exec: str(values.exec), negotiate });
+  const autoGrant = tierOf(values['auto-grant']);
+  const anyTier = values['auto-grant-any-tier'] === true;
+  // Every inbound binding is `claimed` (anyone can claim an address): auto-granting closer than
+  // `stranger` hands that tier to whoever asks first, so it needs an explicit flag (security review L7).
+  if (autoGrant && autoGrant !== 'stranger' && !anyTier) {
+    throw new CliError(
+      `--auto-grant ${autoGrant} would give that tier to anyone who claims your address; requests are capped at "stranger" by default. ` +
+        'Pass --auto-grant-any-tier if you really mean it (demos only).',
+      2,
+    );
+  }
+  if (anyTier && !autoGrant) throw new CliError('--auto-grant-any-tier goes with --auto-grant <tier>', 2);
+  await listen(home, out, { autoGrant, autoGrantAnyTier: anyTier, exec: str(values.exec), negotiate });
 }
 
 export async function inbox({ home, out, values }: Ctx): Promise<void> {

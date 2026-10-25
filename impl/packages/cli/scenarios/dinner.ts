@@ -106,7 +106,7 @@ export async function runDinnerScenario(opts: DinnerScenarioOptions): Promise<Di
     });
 
     let johnL = await step('start listeners', async () => {
-      const jl = await listen('john', ['--auto-grant', 'friend', ...(v === 'cancel' ? [] : negotiate(cal.john))]);
+      const jl = await listen('john', ['--auto-grant', 'friend', '--auto-grant-any-tier', ...(v === 'cancel' ? [] : negotiate(cal.john))]);
       await listen('omer', negotiate(cal.omer));
       return jl;
     });

@@ -128,11 +128,12 @@ const COMMANDS: Record<string, Command> = {
   'dinner list': { usage: 'rdv dinner list', summary: 'List dinner negotiations and their state', args: 0, run: cmd.dinnerList },
   listen: {
     usage:
-      'rdv listen [--auto-grant <tier>] [--exec <script>] [--negotiate --calendar cal.json [--window "next week evenings"] [--tz +02:00]]',
+      'rdv listen [--auto-grant <tier> [--auto-grant-any-tier]] [--exec <script>] [--negotiate --calendar cal.json [--window "next week evenings"] [--tz +02:00]]',
     summary: 'Long-running: print events; optionally auto-grant (demo only), pipe events to a script, or negotiate dinner',
     args: 0,
     options: {
       'auto-grant': { type: 'string' },
+      'auto-grant-any-tier': { type: 'boolean' },
       exec: { type: 'string' },
       negotiate: { type: 'boolean' },
       calendar: { type: 'string' },

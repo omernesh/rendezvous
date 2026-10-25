@@ -351,6 +351,12 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
     `sealEnvelope` refuses a ttl over 7 days. The test vector envelope was
     regenerated with `ttl: "7d"` (it had `3650d`); nothing else in the
     vectors changed.
+53. **`listen --auto-grant` stops at the binding default** (L7). Every
+    inbound binding is `claimed`, so `--auto-grant friend` gave that tier to
+    whoever claimed the address first. A tier above `stranger` now needs
+    `--auto-grant-any-tier` (the demos pass it); library callers of
+    `handleInbound` get the tier capped at `defaultTier(binding)` unless
+    `autoGrantAnyTier`.
 
 ## Not implemented yet
 

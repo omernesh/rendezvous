@@ -38,7 +38,7 @@ Remote (John, bash):
 RDV="node ~/src/rendezvous-test/impl/packages/cli/dist/src/bin.js"
 $RDV init --profile john --email john@doe.com --relay ws://<relay-host>:7777 --home /tmp/john
 $RDV whoami --home /tmp/john                       # note the agent ID
-$RDV listen --auto-grant friend --home /tmp/john   # leave running
+$RDV listen --auto-grant friend --auto-grant-any-tier --home /tmp/john   # leave running (demo only)
 ```
 
 Local (Omer, PowerShell):

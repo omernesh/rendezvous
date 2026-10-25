@@ -12,10 +12,12 @@ import { expire, isA2APayload, isTerminal, receive, type Step } from '@rendezvou
 import {
   Agent,
   type AgentKey,
+  defaultTier,
   dtopic,
   type Envelope,
   openEnvelope,
   type Tier,
+  TIERS,
   type Transport,
   verifyContactRequest,
 } from '@rendezvous/core';
@@ -91,6 +93,8 @@ export interface Emitted {
 
 export interface ListenOptions {
   autoGrant?: Tier;
+  /** Without it, auto-grant never goes above the binding's default tier (`stranger` for `claimed`). */
+  autoGrantAnyTier?: boolean;
   exec?: string;
   /** Run the dinner negotiation engine on inbound a2a/* payloads (PLAN §5.3). */
   negotiate?: NegotiateOptions;
@@ -112,7 +116,7 @@ export async function handleInbound(
   home: Home,
   real: Transport,
   feed: (t: FeedTransport) => void,
-  opts: Pick<ListenOptions, 'autoGrant' | 'negotiate'>,
+  opts: Pick<ListenOptions, 'autoGrant' | 'autoGrantAnyTier' | 'negotiate'>,
   sweep = false,
 ): Promise<Emitted[]> {
   const events: Emitted[] = [];
@@ -133,7 +137,11 @@ export async function handleInbound(
       agent.on('request', (p) => {
         events.push({ obj: { event: 'request', ...requestView(p) }, human: `request ${requestText(p)}` });
         // Demo only: a human should normally decide (`rdv contact grant`).
-        if (opts.autoGrant) grants.push(agent.grant(p.request.id, { tier: opts.autoGrant }));
+        if (opts.autoGrant) {
+          const cap = defaultTier(p.binding);
+          const tier = opts.autoGrantAnyTier || TIERS.indexOf(opts.autoGrant) >= TIERS.indexOf(cap) ? opts.autoGrant : cap;
+          grants.push(agent.grant(p.request.id, { tier }));
+        }
       });
       agent.on('candidate', (c) => events.push({ obj: candidateView(c), human: `candidate ${candidateText(c)}` }));
       agent.on('pending-evicted', (total) =>

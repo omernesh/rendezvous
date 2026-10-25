@@ -1,5 +1,5 @@
 # Two-machine contact scenario (PLAN 4.5, run 2). PowerShell 7+, run on the Windows side.
-#   John  = remote host (default relay-host), `rdv listen --auto-grant friend`
+#   John  = remote host (default relay-host), `rdv listen --auto-grant friend --auto-grant-any-tier`
 #   Omer  = this machine
 # Both talk to the same relay. Exits 0 on PASS, 1 on FAIL. Cleans up its own processes and temp dirs.
 #   pwsh two-machine.ps1 [-Relay ws://<relay-host>:7777] [-Remote user@<relay-host>] [-RemoteRepo '~/src/rendezvous-test']
@@ -42,7 +42,7 @@ try {
   $omerId = ((Rdv whoami) | ConvertFrom-Json).id
 
   Write-Host '- start listeners (john on remote, omer here)'
-  Remote "mkdir -p $johnHome; cd /tmp; setsid nohup $rdvRemote listen --auto-grant friend --home $johnHome --json > $johnHome/listen.log 2>&1 < /dev/null &
+  Remote "mkdir -p $johnHome; cd /tmp; setsid nohup $rdvRemote listen --auto-grant friend --auto-grant-any-tier --home $johnHome --json > $johnHome/listen.log 2>&1 < /dev/null &
 echo `$! > $johnHome/listen.pid; exit 0"
   $omerLog = Join-Path $work 'omer-listen.log'
   $omerListen = Start-Process node -ArgumentList @($bin, 'listen', '--home', $omerHome, '--json') `

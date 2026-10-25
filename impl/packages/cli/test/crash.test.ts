@@ -37,7 +37,7 @@ it('a crash right after a send never reuses seq (listen grant path and rdv send)
     omerIdValue = (await omerL.waitFor((l) => l.event === 'ready', 'omer ready', 10_000)).id;
 
     // 1. John's listener auto-grants and dies right after the grant goes out.
-    const johnCrash = new Listener('john', johnHome, ['--auto-grant', 'friend'], CRASH);
+    const johnCrash = new Listener('john', johnHome, ['--auto-grant', 'friend', '--auto-grant-any-tier'], CRASH);
     listeners.push(johnCrash);
     await johnCrash.waitFor((l) => l.event === 'ready', 'john ready', 10_000);
     await rdv(['contact', 'request', 'john@doe.com', '--greeting', 'dinner?'], omerHome);
@@ -47,7 +47,7 @@ it('a crash right after a send never reuses seq (listen grant path and rdv send)
     expect(outSeq()).toBe(1);
 
     // Restart: the relay replays the request, which must not be granted again with seq 1.
-    const johnL = new Listener('john', johnHome, ['--auto-grant', 'friend']);
+    const johnL = new Listener('john', johnHome, ['--auto-grant', 'friend', '--auto-grant-any-tier']);
     listeners.push(johnL);
     await johnL.waitFor((l) => l.event === 'ready', 'john ready again', 10_000);
     await new Promise((r) => setTimeout(r, 1000)); // let the replay land
