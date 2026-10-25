@@ -63,6 +63,7 @@ export function sealEnvelope(
     created: (opts.now ?? new Date()).toISOString(),
     ttl: opts.ttl ?? '48h',
   };
+  if (parseTtl(header.ttl) > MAX_TTL_MS) throw new Error(`ttl ${header.ttl} exceeds 7 days`);
   const recipientPub = x25519PublicFromAgentId(to);
   const esk = x25519.utils.randomPrivateKey();
   const epk = x25519.getPublicKey(esk);
@@ -87,6 +88,9 @@ export function openEnvelope(recipient: AgentKey, input: unknown, now: Date = ne
   if (!e.content || e.content.alg !== ENVELOPE_ALG) return { ok: false, reason: 'unsupported alg' };
   if (!verifyDoc(e, e.from)) return { ok: false, reason: 'bad signature' };
   if (isExpired(e, now)) return { ok: false, reason: 'expired' };
+  // Replay protection must not rest on seq alone (security review L5).
+  if (parseTtl(e.ttl) > MAX_TTL_MS) return { ok: false, reason: 'ttl too long' };
+  if (Date.parse(e.created) > now.getTime() + MAX_CLOCK_SKEW_MS) return { ok: false, reason: 'created in the future' };
   try {
     const epk = b64decode(e.content.epk);
     const myPub = x25519PublicFromAgentId(recipient.id);
@@ -106,6 +110,10 @@ export function openEnvelope(recipient: AgentKey, input: unknown, now: Date = ne
 export function envelopeHash(e: Envelope): string {
   return bytesToHex(sha256(canonicalBytes(e)));
 }
+
+/** Longest envelope lifetime we accept, and how far ahead of our clock `created` may be. */
+export const MAX_TTL_MS = 7 * 86_400_000;
+export const MAX_CLOCK_SKEW_MS = 5 * 60_000;
 
 export function parseTtl(ttl: string): number {
   const m = /^(\d+)([smhd])$/.exec(ttl);

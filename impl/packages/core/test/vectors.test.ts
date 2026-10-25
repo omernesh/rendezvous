@@ -64,7 +64,7 @@ describe('test vectors', () => {
   const current = deterministic();
 
   if (process.env.UPDATE_VECTORS || !existsSync(FILE)) {
-    const envelope = sealEnvelope(omer, john.id, { type: 'a2a/message', text: 'Thursday 20:00?' }, { seq: 1, prev: null, now, ttl: '3650d' });
+    const envelope = sealEnvelope(omer, john.id, { type: 'a2a/message', text: 'Thursday 20:00?' }, { seq: 1, prev: null, now, ttl: '7d' });
     writeFileSync(FILE, JSON.stringify({ ...current, envelope: { recipient_seed_hex: '22'.repeat(32), doc: envelope } }, null, 2) + '\n');
   }
   const saved = JSON.parse(readFileSync(FILE, 'utf8'));

@@ -101,14 +101,14 @@
       "seq": 1,
       "prev": null,
       "created": "2026-10-24T00:00:00.000Z",
-      "ttl": "3650d",
+      "ttl": "7d",
       "content": {
         "alg": "x25519+aes256gcm",
-        "epk": "7eOw7pQII8ryavjOstDrVo2TXSyd0Hvt967vyhoifjI=",
-        "nonce": "UZSkdebLRoJo6LL0",
-        "ciphertext": "JxcgrLdntubZzHGP+lf78VzVaPWmFU0IHdrI3h+4c26HWD3GFI4zT0A19S2oP/n6tnRDE8Zhqd43F/pT7V1v"
+        "epk": "WyIl5GVnhD+zYp2rhbm3lJRoRtcAambHkZa3Xc3sqGo=",
+        "nonce": "7UgXqHwKv3viAhFJ",
+        "ciphertext": "7YYPpo+ppRm0uLAdOfXnwPaS7TQ7MrRPMpCKm959Gbh9fWUy0T/KNXT2/WFvy4pa6bEQt6uko1JJvAAS2+v+"
       },
-      "sig": "Yfq14SCObJUBife5kHsEKiHmQ+l+2ohk4XQgYQn3LEUVPQjNtB6bat193LJm136yX5haGvNF+kgHYS7ouLC7AA=="
+      "sig": "5Xi51YE0XLrcFAUULZBnPx775QW+c70Xq7ZTgBbNP9pfgC1tnrGRZFGthNcx97NBWNs2ep4covBzYG1NBzcBAw=="
     }
   }
 }

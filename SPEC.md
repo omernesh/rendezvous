@@ -698,7 +698,9 @@ where hole-punching fails (TURN relays carry the ciphertext).
   the previous envelope in the same direction.
 - `ttl` is `<n><s|m|h|d>` (default `48h`); an envelope is expired when
   `created + ttl` has passed. It lets relays garbage-collect and bounds replay
-  windows.
+  windows, so receivers MUST reject a `ttl` over 7 days and a `created` more
+  than 5 minutes ahead of their clock; otherwise a sender could make an
+  envelope replayable for years.
 - **No forward secrecy yet.** The recipient key is static, so a later key
   compromise exposes recorded envelopes (§11).
 

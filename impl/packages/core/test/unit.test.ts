@@ -105,6 +105,19 @@ describe('envelope', () => {
     expect(openEnvelope(bob, old)).toMatchObject({ ok: false, reason: 'expired' });
   });
 
+  it('rejects an over-long ttl and a created date from the future (security review L5)', () => {
+    const a = generateKey();
+    const b = generateKey();
+    const now = new Date('2026-10-25T10:00:00Z');
+    expect(() => sealEnvelope(a, b.id, { type: 'x' }, { seq: 1, prev: null, ttl: '99999d', now })).toThrow(/7 days/);
+    const long = signDoc({ ...sealEnvelope(a, b.id, { type: 'x' }, { seq: 1, prev: null, now }), sig: undefined, ttl: '99999d' }, a);
+    expect(openEnvelope(b, long, now)).toMatchObject({ ok: false, reason: 'ttl too long' });
+    const future = sealEnvelope(a, b.id, { type: 'x' }, { seq: 1, prev: null, now: new Date(now.getTime() + 10 * 60_000) });
+    expect(openEnvelope(b, future, now)).toMatchObject({ ok: false, reason: 'created in the future' });
+    const skewed = sealEnvelope(a, b.id, { type: 'x' }, { seq: 1, prev: null, now: new Date(now.getTime() + 2 * 60_000) });
+    expect(openEnvelope(b, skewed, now).ok).toBe(true);
+  });
+
   it('orders per direction and detects gaps, duplicates and forks', () => {
     const out = new Channels();
     const inn = new Channels();

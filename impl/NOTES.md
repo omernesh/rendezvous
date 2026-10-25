@@ -346,6 +346,11 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
     not revoked). For a finished task the engine keeps at most 64
     `messageId`s and answers with a status update at most 8 times
     (`FINISHED_REPLIES`); later replays are ignored silently.
+52. **Envelope lifetime is bounded** (L5, **spec change**, §6.4). `openEnvelope`
+    rejects `ttl` over 7 days and `created` more than 5 min in the future;
+    `sealEnvelope` refuses a ttl over 7 days. The test vector envelope was
+    regenerated with `ttl: "7d"` (it had `3650d`); nothing else in the
+    vectors changed.
 
 ## Not implemented yet
 
