@@ -117,7 +117,9 @@ consent concept changed; see <strong>Changes in rev 3</strong> below.</p>
 <li><strong>Consent, §5:</strong> the grant carries the grantor's card (§5.3); who may answer
   a request; document IDs are UUIDs; grant direction and <code>max_frequency</code>
   format; scope defaults. New §5.5 (consent stays with the human) and §5.6
-  (peer text is untrusted data).</li>
+  (peer text is untrusted data). Amended: the reverse grant (§5.3, a grant
+  with <code>grant_ref</code>) tells a contact what its peer's owner allows it, so the
+  grantor side can propose meetings too (§7.4).</li>
 <li><strong>A2A, §7:</strong> which A2A objects are sent, the meeting verbs, task states,
   slots, deduplication by <code>messageId</code>, cancellation, resend bounds, and
   persisting state before send. Amended: agreement is an accept → confirm
@@ -621,6 +623,30 @@ capped.</p>
   (reference: <code>50/day</code>). The grantor's <code>tier</code> is likewise only how the grantor
   classifies the requester; the requester's own tier for the grantor starts at
   <code>stranger</code>.
+- <strong>Reverse grant.</strong> When an owner grants an existing contact rights towards
+  it (§5.5), typically the requester granting the grantor back, its agent
+  sends the peer a reverse grant: the same <code>rdv/contact-grant</code> document with
+  <code>grant_ref</code> instead of <code>request_ref</code>. <code>grant_ref</code> is the <code>id</code> of the grant
+  that founded the contact, which both sides keep. A grant with both fields,
+  or neither, is invalid, so the two kinds can never be confused:</p>
+<p><code>json
+  { "v": 1, "type": "rdv/contact-grant", "id": "&lt;uuid&gt;",
+    "from": "rdv1:&lt;requester key&gt;", "to": "rdv1:&lt;grantor key&gt;",
+    "grant_ref": "&lt;id of the grant that founded the contact&gt;",
+    "card": "&lt;sender's card&gt;", "tier": "friend",
+    "scope": { "may_initiate": true, "may_propose_meetings": true, "max_frequency": "100/day" },
+    "expires": null, "ts": "…", "sig": "…" }</code></p>
+<p>The receiver applies it exactly like any received grant: it sets only what
+  the receiver may do towards the sender, never the sender's rights over the
+  receiver. It MUST be accepted only from a current contact whose founding
+  grant is <code>grant_ref</code>, addressed to the receiver, verified like a grant
+  (signature, card, tier, timestamps), not expired, with a <code>ts</code> newer than
+  the grant it replaces (and not far ahead of the receiver's clock;
+  reference: 5 minutes) and an unseen <code>id</code>. Anything else is dropped without
+  changing state. Its <code>expires</code> may shorten the contact, never extend it. A
+  receiver MAY rate-limit them per contact (reference: 10 an hour).
+  Revocation (§5.4) removes whatever a reverse grant set. Only the owner's
+  own grant triggers one; an agent never sends one on its own.
 - <strong><code>max_frequency</code></strong> is <code>"&lt;n&gt;/&lt;minute|hour|day&gt;"</code>; exceeding it revokes the
   grant (§10).
 - Scope defaults for meetings are in §7.4.</p>
@@ -653,7 +679,9 @@ peer's decision, not its owner's: it sets only what the agent may do towards
 the peer (§5.3), and choosing which answer to a topic probe is the real peer
 needs one of the approvals above. Widening what a peer may do towards the
 agent (meetings, calendar, a higher rate) is always the agent's own owner's
-grant.</p>
+grant. That grant, approved the same way, is what the agent then sends the
+peer as a reverse grant (§5.3); receiving one widens only what the agent may
+do towards the peer, and needs no approval of its own.</p>
 <p>A grant that allows meetings lets the agents negotiate, not book. Before an
 agent accepts a specific meeting, or confirms a peer's accept, the host
 SHOULD get its human's confirmation of that meeting through one of the same
@@ -897,7 +925,9 @@ update giving its real end state.</p>
 <p>Meeting verbs require <code>may_propose_meetings: true</code> in the grant that covers
 the direction (§5.3): proposing to a peer, and answering on a negotiation we
 proposed, need the peer's grant to us; a peer proposing to us needs the grant
-our owner gave the peer. If <code>may_access_calendar</code> is absent it
+our owner gave the peer. For the agent that granted the contact, "the peer's
+grant to us" is the peer's reverse grant (§5.3): until the requester's owner
+grants back, the grantor cannot propose. If <code>may_access_calendar</code> is absent it
 counts as <code>free_busy</code>, because proposing a slot is a free/busy disclosure;
 <code>none</code> blocks negotiation. At every level, including <code>full</code>, meeting messages
 carry slots only, never event titles.</p>

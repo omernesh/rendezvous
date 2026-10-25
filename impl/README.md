@@ -138,7 +138,7 @@ State lives in a directory: `--home <dir>`, else `$RDV_HOME`, else
 | `rdv contact request <email\|card-file\|agent-id> [--greeting "…"] [--in-person]` | Topic probe by email, or direct by card. `--in-person` records the `in-person` binding for a card you got face to face |
 | `rdv contact pending` | Pending inbound requests with binding, fingerprint, greeting; answers to your topic probes awaiting confirmation |
 | `rdv contact grant <request-id> [--tier friend] [--scope-file s.json]` | Approve |
-| `rdv contact grant <agent-id> [--tier …] [--scope-file …]` | Give a contact you requested rights towards you (by default it may write, not propose meetings) |
+| `rdv contact grant <agent-id> [--tier …] [--scope-file …]` | Give a contact you requested rights towards you (by default it may write, not propose meetings); the contact gets a reverse grant, so it can then propose (NOTES 60) |
 | `rdv contact confirm <grant-id>` / `rdv contact reject <grant-id> [--block]` | Accept or turn down an answer to your topic probe (anyone who saw the probe can answer; check the fingerprint) |
 | `rdv contact decline <request-id> [--block]` | Decline |
 | `rdv contact list` / `rdv contact revoke <agent-id>` | Manage contacts |
@@ -192,7 +192,9 @@ PowerShell quoting for `send`: `rdv send <id> --json '{\"type\":\"a2a/message\",
 proposes and cancels; both `canceled`), `cancel-hold` (Omer cancels while
 John's agent holds a slot for John; the hold is released), `duplicate`
 (`--auto-confirm` bots, then every envelope replayed and a message re-sent;
-nothing changes). All five run in `npm test`; `overlap` runs in
+nothing changes), `reverse` (John, who granted the contact, proposes: refused
+until Omer runs `rdv contact grant <john-id>`, which sends John a reverse
+grant; then both confirm and complete). All six run in `npm test`; `overlap` runs in
 `npm run test:live`; by hand:
 
 `node packages/cli/dist/scenarios/dinner.js --relay ws://… [--variant overlap] [--variant …]`.

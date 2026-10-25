@@ -183,6 +183,9 @@ async function handleLocked(
       );
       agent.on('probe-overflow', (o) => events.push({ obj: overflowView(o), human: overflowText(o) }));
       agent.on('contact', (c) => events.push({ obj: { event: 'contact', ...contactView(c) }, human: `contact ${contactText(c)}` }));
+      agent.on('reverse-grant', (c) =>
+        events.push({ obj: { event: 'reverse-grant', ...contactView(c) }, human: `reverse grant: ${contactText(c)}` }),
+      );
       agent.on('message', (from, payload, env) => {
         const entry: InboxEntry = { ts: new Date().toISOString(), from, seq: env.seq, payload };
         inbox.push(entry);

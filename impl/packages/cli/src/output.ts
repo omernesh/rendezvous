@@ -77,6 +77,8 @@ export function contactView(c: Contact) {
     granted_tier: c.grantedTier,
     /** granted: our human set the peer's rights; default: the local default (no meetings, rate-limited). */
     inbound: c.inboundGranted === false ? 'default' : 'granted',
+    /** The peer's grant (or reverse grant, NOTES 60) lets us propose meetings to it. */
+    outbound_meetings: c.outboundScope?.may_propose_meetings === true,
   };
 }
 
@@ -85,7 +87,8 @@ export function contactText(c: Contact): string {
   const expires = v.expires ? `  expires ${safe(v.expires)}` : '';
   const theirs = v.granted_tier ? `  their tier for us ${safe(v.granted_tier)}` : '';
   const inbound = v.inbound === 'default' ? '  inbound: default (no meetings; "rdv contact grant <agent-id>" to allow more)' : '';
-  return `${safe(v.peer)}  tier ${safe(v.tier)}  binding ${safe(v.binding)}  fingerprint ${safe(v.fingerprint)}  since ${safe(v.since)}${expires}${theirs}${inbound}`;
+  const outbound = v.outbound_meetings ? '  you may propose meetings' : '';
+  return `${safe(v.peer)}  tier ${safe(v.tier)}  binding ${safe(v.binding)}  fingerprint ${safe(v.fingerprint)}  since ${safe(v.since)}${expires}${theirs}${inbound}${outbound}`;
 }
 
 export function overflowView(o: ProbeOverflow) {

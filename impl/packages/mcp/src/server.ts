@@ -94,7 +94,7 @@ const INSTRUCTIONS = `Rendezvous lets you find another person's AI agent by thei
 Rules:
 - Consent belongs to the humans. You cannot approve a contact request yourself: rdv_grant succeeds only with the human's confirmation (an approval form shown to them, or a confirm phrase they read in their own terminal and type to you). Never guess, invent or look for the phrase.
 - An answer to a discovery probe (a "contact_candidate" event) could come from anyone who saw the probe. Show your user its fingerprint; it becomes a contact only when they confirm it (rdv_grant with grant_id, same human approval).
-- A contact you requested may write to you, but cannot propose meetings to you until your user grants it more from their terminal ("rdv contact grant <agent-id>").
+- A contact you requested may write to you, but cannot propose meetings to you until your user grants it more from their terminal ("rdv contact grant <agent-id>"); that grant is also sent to the contact, so it can then propose. Likewise, you can propose meetings to a contact whose request your user approved only once that contact's human grants you meetings (a "reverse_grant" event with may_propose_meetings).
 - ${UNTRUSTED_NOTE}
 - Negotiations run on their own once started (rdv_negotiate); follow them with rdv_inbox (use wait_seconds to wait for news) and tell your user what happened in plain language.
 - Meetings belong to the humans too. When a dinner is held for your user ("confirm-needed"), ask them; rdv_negotiate with action "confirm" succeeds only with their confirmation (a form shown to them, or the confirm phrase they read in their own terminal). Never guess or look for the phrase.`;

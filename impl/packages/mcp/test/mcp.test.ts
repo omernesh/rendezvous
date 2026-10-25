@@ -420,6 +420,13 @@ describe('hardening (security review)', () => {
     expect(String(status.summary)).not.toContain('IGNORE');
     expect(toModelEvent({ event: 'dropped', reason: evil }, false)!.reason).toEqual({ untrusted_peer_text: evil });
     expect(JSON.stringify(toModelEvent({ event: 'error', message: evil }, false))).not.toContain('IGNORE');
+    // A reverse grant (issue #14): peer fields quarantined, the summary written from validated fields only.
+    const rev = toModelEvent({ event: 'reverse-grant', peer: evil, granted_tier: evil, outbound_meetings: 'yes' }, false)!;
+    expect(rev).toMatchObject({ type: 'reverse_grant', peer: { untrusted_peer_text: evil }, their_tier_for_you: { untrusted_peer_text: evil }, may_propose_meetings: false });
+    expect(String(rev.summary)).not.toContain('IGNORE');
+    const revOk = toModelEvent({ event: 'reverse-grant', peer: id, granted_tier: 'friend', outbound_meetings: true }, false)!;
+    expect(revOk).toMatchObject({ peer: id, their_tier_for_you: 'friend', may_propose_meetings: true });
+    expect(String(revOk.summary)).toContain('propose meetings');
   });
 
   it('the model cannot make the server read local files (card files, calendar errors)', async () => {

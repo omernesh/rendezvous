@@ -92,6 +92,99 @@
       "sig": "LvsoXgQSeDXfD+YQVLt5tFDdoh0b93DnQSmt76vcrK75oedDjIq2uMmsPFYFue0Q9aowOej3+OsT5S5AQmp6Ag=="
     }
   },
+  "contact_grant": {
+    "canonical": "{\"card\":{\"capabilities\":[\"rdv/v1\",\"a2a/0.3\"],\"created\":\"2026-10-24T00:00:00.000Z\",\"discovery\":{\"addresses\":[{\"type\":\"email\",\"value\":\"john@doe.com\"}],\"public_pointer\":false},\"expires\":null,\"id\":\"rdv1:ucnkl5d2m5myal7zkx4nyljkcss4thjdx2l7qzasp74tqncvutya\",\"policy\":{\"inbound\":\"prompt\",\"public\":false},\"rendezvous\":[{\"pref\":1,\"relay\":\"wss://relay.example\",\"type\":\"nostr\"}],\"sig\":\"wfQ2sZXLZpOkZxX/TTdkbfQK0KbKgQ3ye5BNzk26PsN76p3LyCXAZFfKMxVdYV7lF5mtQhR2ERIPOdPi7wLkAg==\",\"v\":1},\"expires\":null,\"from\":\"rdv1:ucnkl5d2m5myal7zkx4nyljkcss4thjdx2l7qzasp74tqncvutya\",\"id\":\"00000000-0000-4000-8000-000000000002\",\"request_ref\":\"00000000-0000-4000-8000-000000000001\",\"scope\":{\"max_frequency\":\"100/day\",\"may_initiate\":true,\"may_propose_meetings\":true},\"sig\":\"1VlPaJQ/vD1yc/7mG6YeBTGLgjr9Vk2DeWOahUhzj2CBgGq/0NX5xzDVT773qWTniVS9os4q7N+PQB0B51CWBw==\",\"tier\":\"friend\",\"to\":\"rdv1:2bflemtufo2kwoqtnc6umfpe43icesvxdiawxl4fecrtfslxq43q\",\"ts\":\"2026-10-24T00:00:00.000Z\",\"type\":\"rdv/contact-grant\",\"v\":1}",
+    "doc": {
+      "v": 1,
+      "type": "rdv/contact-grant",
+      "id": "00000000-0000-4000-8000-000000000002",
+      "from": "rdv1:ucnkl5d2m5myal7zkx4nyljkcss4thjdx2l7qzasp74tqncvutya",
+      "to": "rdv1:2bflemtufo2kwoqtnc6umfpe43icesvxdiawxl4fecrtfslxq43q",
+      "request_ref": "00000000-0000-4000-8000-000000000001",
+      "tier": "friend",
+      "scope": {
+        "may_initiate": true,
+        "may_propose_meetings": true,
+        "max_frequency": "100/day"
+      },
+      "expires": null,
+      "ts": "2026-10-24T00:00:00.000Z",
+      "card": {
+        "v": 1,
+        "id": "rdv1:ucnkl5d2m5myal7zkx4nyljkcss4thjdx2l7qzasp74tqncvutya",
+        "created": "2026-10-24T00:00:00.000Z",
+        "expires": null,
+        "capabilities": [
+          "rdv/v1",
+          "a2a/0.3"
+        ],
+        "discovery": {
+          "addresses": [
+            {
+              "type": "email",
+              "value": "john@doe.com"
+            }
+          ],
+          "public_pointer": false
+        },
+        "rendezvous": [
+          {
+            "type": "nostr",
+            "relay": "wss://relay.example",
+            "pref": 1
+          }
+        ],
+        "policy": {
+          "inbound": "prompt",
+          "public": false
+        },
+        "sig": "wfQ2sZXLZpOkZxX/TTdkbfQK0KbKgQ3ye5BNzk26PsN76p3LyCXAZFfKMxVdYV7lF5mtQhR2ERIPOdPi7wLkAg=="
+      },
+      "sig": "1VlPaJQ/vD1yc/7mG6YeBTGLgjr9Vk2DeWOahUhzj2CBgGq/0NX5xzDVT773qWTniVS9os4q7N+PQB0B51CWBw=="
+    }
+  },
+  "reverse_grant": {
+    "canonical": "{\"card\":{\"capabilities\":[\"rdv/v1\",\"a2a/0.3\"],\"created\":\"2026-10-24T00:00:00.000Z\",\"expires\":null,\"id\":\"rdv1:2bflemtufo2kwoqtnc6umfpe43icesvxdiawxl4fecrtfslxq43q\",\"policy\":{\"inbound\":\"prompt\",\"public\":false},\"rendezvous\":[{\"pref\":1,\"relay\":\"wss://relay.example\",\"type\":\"nostr\"}],\"sig\":\"niJCMBvJgQsdJYafxu5MBMO70S90QTqrjtNhYv6aXIK6Ollg2jqjHtTXFyDolc/q+Icmb5OV1A+vH7sTkHe+CQ==\",\"v\":1},\"expires\":null,\"from\":\"rdv1:2bflemtufo2kwoqtnc6umfpe43icesvxdiawxl4fecrtfslxq43q\",\"grant_ref\":\"00000000-0000-4000-8000-000000000002\",\"id\":\"00000000-0000-4000-8000-000000000003\",\"scope\":{\"max_frequency\":\"100/day\",\"may_initiate\":true,\"may_propose_meetings\":true},\"sig\":\"0Lg5FpgmVilBflXFqJK6OTrvSwCjYndeuoJwFkHJd/IgH4OaekAzbmx3fN/GHLqu10QhHsQqU10KcsnD/u1QCA==\",\"tier\":\"friend\",\"to\":\"rdv1:ucnkl5d2m5myal7zkx4nyljkcss4thjdx2l7qzasp74tqncvutya\",\"ts\":\"2026-10-24T00:00:00.000Z\",\"type\":\"rdv/contact-grant\",\"v\":1}",
+    "doc": {
+      "v": 1,
+      "type": "rdv/contact-grant",
+      "id": "00000000-0000-4000-8000-000000000003",
+      "from": "rdv1:2bflemtufo2kwoqtnc6umfpe43icesvxdiawxl4fecrtfslxq43q",
+      "to": "rdv1:ucnkl5d2m5myal7zkx4nyljkcss4thjdx2l7qzasp74tqncvutya",
+      "grant_ref": "00000000-0000-4000-8000-000000000002",
+      "tier": "friend",
+      "scope": {
+        "may_initiate": true,
+        "may_propose_meetings": true,
+        "max_frequency": "100/day"
+      },
+      "expires": null,
+      "ts": "2026-10-24T00:00:00.000Z",
+      "card": {
+        "v": 1,
+        "id": "rdv1:2bflemtufo2kwoqtnc6umfpe43icesvxdiawxl4fecrtfslxq43q",
+        "created": "2026-10-24T00:00:00.000Z",
+        "expires": null,
+        "capabilities": [
+          "rdv/v1",
+          "a2a/0.3"
+        ],
+        "rendezvous": [
+          {
+            "type": "nostr",
+            "relay": "wss://relay.example",
+            "pref": 1
+          }
+        ],
+        "policy": {
+          "inbound": "prompt",
+          "public": false
+        },
+        "sig": "niJCMBvJgQsdJYafxu5MBMO70S90QTqrjtNhYv6aXIK6Ollg2jqjHtTXFyDolc/q+Icmb5OV1A+vH7sTkHe+CQ=="
+      },
+      "sig": "0Lg5FpgmVilBflXFqJK6OTrvSwCjYndeuoJwFkHJd/IgH4OaekAzbmx3fN/GHLqu10QhHsQqU10KcsnD/u1QCA=="
+    }
+  },
   "envelope": {
     "recipient_seed_hex": "2222222222222222222222222222222222222222222222222222222222222222",
     "doc": {

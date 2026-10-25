@@ -134,6 +134,20 @@ export function toModelEvent(e: Raw, negotiating: boolean): Omit<McpEvent, 'n' |
       };
     case 'contact':
       return { type: 'contact', peer: agentId(e.peer), fingerprint: fp(e.peer), tier: oneOf(TIERS)(e.tier), binding: oneOf(BINDINGS)(e.binding) };
+    case 'reverse-grant': {
+      // The peer's human granted us rights towards it (NOTES 60). It changes only what we may do; tell the user.
+      const meetings = e.outbound_meetings === true;
+      return {
+        type: 'reverse_grant',
+        peer: agentId(e.peer),
+        fingerprint: fp(e.peer),
+        their_tier_for_you: oneOf(TIERS)(e.granted_tier),
+        may_propose_meetings: meetings,
+        summary: meetings
+          ? `${who(e.peer)} now lets you propose meetings to them (rdv_negotiate).`
+          : `${who(e.peer)} updated what you may do towards them; meetings are not allowed.`,
+      };
+    }
     case 'message': {
       const payload = (e.payload ?? {}) as Record<string, unknown>;
       if (negotiating && isA2APayload(payload)) return null; // the engine's dinner events cover these

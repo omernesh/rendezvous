@@ -6,8 +6,11 @@ import {
   createCard,
   createContactRequest,
   createGrant,
+  createReverseGrant,
   createRevoke,
   CANDIDATES_PER_PROBE,
+  REVERSE_GRANT_SKEW_MS,
+  verifyReverseGrant,
   DEFAULT_INBOUND_SCOPE,
   PENDING_LIMIT,
   PENDING_PER_SENDER,
@@ -460,6 +463,138 @@ describe('document ids (security regression)', () => {
     expect(verifyGrant(grant)).toBe(true);
     expect(verifyGrant(signDoc({ ...grant, sig: undefined, id: evilId }, john))).toBe(false);
     expect(verifyGrant(signDoc({ ...grant, sig: undefined, request_ref: evilId }, john))).toBe(false);
+  });
+});
+
+describe('reverse grants (issue #14, NOTES 60)', () => {
+  const card = (k: ReturnType<typeof generateKey>) => createCard(k, { rendezvous: hints });
+  const meet = { may_initiate: true, may_propose_meetings: true, max_frequency: '100/day' };
+  const loud = { may_initiate: true, may_propose_meetings: true, may_access_calendar: 'full' as const };
+  /** Omer requested John by card and John granted: both books hold the contact under John's grant id. */
+  const setup = () => {
+    const omer = generateKey();
+    const john = generateKey();
+    const mallory = generateKey();
+    const req = createContactRequest(omer, card(omer), { toHint: john.id, greeting: 'hi' });
+    const omerBook = new ContactBook();
+    const johnBook = new ContactBook();
+    omerBook.trackOutstanding(req, 'claimed', john.id);
+    expect(johnBook.receiveRequest(req, 'claimed').status).toBe('pending');
+    const grant = createGrant(john, card(john), req, { tier: 'friend', scope: { may_initiate: true, may_propose_meetings: true } });
+    johnBook.recordIssuedGrant(grant, req, 'claimed');
+    expect(omerBook.receiveGrant(grant, omer.id)).not.toBeNull();
+    const reverse = (opts: { from?: ReturnType<typeof generateKey>; scope?: object; ts?: Date; expires?: string | null; ref?: string } = {}) =>
+      createReverseGrant(opts.from ?? omer, card(opts.from ?? omer), { peer: john.id, grantId: opts.ref ?? grant.id }, {
+        tier: 'friend',
+        scope: opts.scope ?? meet,
+        now: opts.ts,
+        expires: opts.expires,
+      });
+    return { omer, john, mallory, req, grant, omerBook, johnBook, reverse };
+  };
+
+  it('the grantor applies it to its outbound scope only, and can then propose meetings', () => {
+    const { john, omer, johnBook, reverse } = setup();
+    const before = structuredClone(johnBook.contact(omer.id)!);
+    expect(before.outboundScope?.may_propose_meetings).not.toBe(true); // the gap issue #14 closes
+    const rev = reverse({ scope: loud });
+    expect(verifyReverseGrant(rev)).toBe(true);
+    expect(verifyGrant(rev)).toBe(false); // never mistaken for a forward grant
+    const got = johnBook.receiveReverseGrant(rev, john.id);
+    expect('contact' in got && got.contact.outboundScope).toEqual(loud);
+    const c = johnBook.contact(omer.id)!;
+    expect(c).toMatchObject({ grantedTier: 'friend', reverseGrantId: rev.id, grantId: before.grantId });
+    // What Omer may do towards John is still John's own grant: a received grant never sets it.
+    expect([c.tier, c.inboundScope, c.inboundGranted]).toEqual([before.tier, before.inboundScope, true]);
+  });
+
+  it('works the other way too, and never widens the receiver’s inbound default', () => {
+    const { john, omer, omerBook, grant } = setup();
+    // John's human re-grants Omer: Omer applies it to outbound; its inbound for John stays the local default.
+    const rev = createReverseGrant(john, card(john), { peer: omer.id, grantId: grant.id }, { tier: 'spouse', scope: loud });
+    const got = omerBook.receiveReverseGrant(rev, omer.id);
+    expect('contact' in got && got.contact.outboundScope).toEqual(loud);
+    expect(omerBook.contact(john.id)).toMatchObject({ tier: 'stranger', inboundGranted: false, inboundScope: DEFAULT_INBOUND_SCOPE });
+  });
+
+  it('rejects reverse grants from non-contacts or for another relationship', () => {
+    const { john, mallory, johnBook, reverse, omer } = setup();
+    const seen = johnBook.state.seenIds.length;
+    // Mallory is no contact of John's, even naming the real grant id.
+    expect(johnBook.receiveReverseGrant(reverse({ from: mallory }), john.id)).toEqual({ rejected: 'not-contact' });
+    // Omer's, but naming a grant that did not found this contact.
+    expect(johnBook.receiveReverseGrant(reverse({ ref: crypto.randomUUID() }), john.id)).toEqual({ rejected: 'not-contact' });
+    // Addressed to someone else.
+    const toOther = createReverseGrant(omer, card(omer), { peer: mallory.id, grantId: johnBook.contact(omer.id)!.grantId }, { tier: 'friend', scope: meet });
+    expect(johnBook.receiveReverseGrant(toOther, john.id)).toEqual({ rejected: 'invalid' });
+    // A blocked contact.
+    const blocked = new ContactBook(structuredClone(johnBook.state));
+    blocked.state.blocked.push(omer.id);
+    expect(blocked.receiveReverseGrant(reverse(), john.id)).toEqual({ rejected: 'not-contact' });
+    // A book with no contacts at all.
+    expect(new ContactBook().receiveReverseGrant(reverse(), john.id)).toEqual({ rejected: 'not-contact' });
+    expect(johnBook.contact(omer.id)?.outboundScope?.may_propose_meetings).not.toBe(true);
+    expect(johnBook.state.seenIds.length).toBe(seen); // refused grants leave no trace
+  });
+
+  it('rejects forged and malformed reverse grants', () => {
+    const { john, mallory, johnBook, reverse, omer } = setup();
+    const rev = reverse();
+    expect(johnBook.receiveReverseGrant({ ...rev, scope: loud }, john.id)).toEqual({ rejected: 'invalid' }); // tampered
+    // Signed by Mallory but claiming to be from Omer.
+    expect(johnBook.receiveReverseGrant(signDoc({ ...rev, sig: undefined }, mallory), john.id)).toEqual({ rejected: 'invalid' });
+    // Both refs, or a grant_ref that is not a UUID: ambiguous, refused by both verifiers.
+    const both = signDoc({ ...rev, sig: undefined, request_ref: crypto.randomUUID() }, omer);
+    expect([verifyReverseGrant(both), verifyGrant(both)]).toEqual([false, false]);
+    expect(verifyReverseGrant(signDoc({ ...rev, sig: undefined, grant_ref: '\u001b[2J' }, omer))).toBe(false);
+    expect(verifyReverseGrant(signDoc({ ...rev, sig: undefined, tier: 'overlord' }, omer))).toBe(false);
+    expect(verifyReverseGrant(signDoc({ ...rev, sig: undefined, scope: [] }, omer))).toBe(false);
+    expect(johnBook.contact(omer.id)?.outboundScope?.may_propose_meetings).not.toBe(true);
+  });
+
+  it('rejects replayed, stale, future-dated and expired reverse grants', () => {
+    const { john, johnBook, reverse, omer } = setup();
+    const t0 = Date.now();
+    const old = reverse({ scope: loud, ts: new Date(t0 - 60_000) });
+    const narrow = reverse({ scope: { may_initiate: true }, ts: new Date(t0) });
+    expect('contact' in johnBook.receiveReverseGrant(narrow, john.id)).toBe(true);
+    expect(johnBook.receiveReverseGrant(narrow, john.id)).toMatchObject({ rejected: expect.stringMatching(/stale|replay/) });
+    // An older, wider grant can't undo Omer's narrowing, even once its id has left seenIds.
+    for (let i = 0; i < 5001; i++) johnBook.markSeen(crypto.randomUUID());
+    expect(johnBook.receiveReverseGrant(old, john.id)).toEqual({ rejected: 'stale' });
+    expect(johnBook.contact(omer.id)?.outboundScope).toEqual({ may_initiate: true });
+    // Too far ahead of our clock (it would make every later update stale).
+    const future = reverse({ ts: new Date(t0 + REVERSE_GRANT_SKEW_MS + 60_000) });
+    expect(johnBook.receiveReverseGrant(future, john.id)).toEqual({ rejected: 'stale' });
+    expect(johnBook.receiveReverseGrant(reverse({ expires: new Date(t0 - 1000).toISOString() }), john.id)).toEqual({ rejected: 'expired' });
+    // A replay that is not stale (same doc, outboundTs gone) is still caught by seenIds.
+    const fresh = reverse({ ts: new Date(t0 + 1000) });
+    expect('contact' in johnBook.receiveReverseGrant(fresh, john.id)).toBe(true);
+    delete johnBook.state.contacts[omer.id].outboundTs;
+    expect(johnBook.receiveReverseGrant(fresh, john.id)).toEqual({ rejected: 'replay' });
+  });
+
+  it('an expiring reverse grant can shorten the contact, never extend it', () => {
+    const { john, johnBook, reverse, omer } = setup();
+    const soon = new Date(Date.now() + 3_600_000).toISOString();
+    expect('contact' in johnBook.receiveReverseGrant(reverse({ expires: soon }), john.id)).toBe(true);
+    expect(johnBook.contact(omer.id)?.expires).toBe(soon);
+    const later = new Date(Date.now() + 7 * 86_400_000).toISOString();
+    expect('contact' in johnBook.receiveReverseGrant(reverse({ expires: later, ts: new Date(Date.now() + 1000) }), john.id)).toBe(true);
+    expect(johnBook.contact(omer.id)?.expires).toBe(soon);
+  });
+
+  it('revocation removes what a reverse grant set, and the reverse grant cannot bring it back', () => {
+    const { john, johnBook, reverse, omer, grant } = setup();
+    expect('contact' in johnBook.receiveReverseGrant(reverse(), john.id)).toBe(true);
+    expect(johnBook.receiveRevoke(createRevoke(omer, john.id, grant.id), john.id)).toBe(true);
+    expect(johnBook.contact(omer.id)).toBeUndefined();
+    expect(johnBook.receiveReverseGrant(reverse({ ts: new Date(Date.now() + 1000) }), john.id)).toEqual({ rejected: 'not-contact' });
+    // Our own revoke too.
+    const s2 = setup();
+    expect('contact' in s2.johnBook.receiveReverseGrant(s2.reverse(), s2.john.id)).toBe(true);
+    s2.johnBook.revoke(s2.omer.id);
+    expect(s2.johnBook.contact(s2.omer.id)).toBeUndefined();
   });
 });
 

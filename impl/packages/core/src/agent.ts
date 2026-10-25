@@ -16,8 +16,10 @@ import {
   type Tier,
   createContactRequest,
   createGrant,
+  createReverseGrant,
   createRevoke,
   defaultTier,
+  isReverseGrant,
   verifyContactRequest,
 } from './contact.js';
 import { type Binding, dtopic, topicForHint } from './discovery.js';
@@ -33,6 +35,8 @@ const BUFFER_PEER_LIMIT = 16;
 export const DEFAULT_GRANT_SCOPE: Readonly<GrantScope> = Object.freeze({ may_initiate: true, may_propose_meetings: true, max_frequency: '100/day' });
 /** `rdv/resend` requests we honor per contact (each can make us republish up to OUTBOX_LIMIT envelopes). */
 export const RESEND_LIMIT = { count: 10, windowMs: 3_600_000 };
+/** Reverse grants we process per contact (each one rewrites the contact; NOTES 60). */
+export const REVERSE_GRANT_LIMIT = { count: 10, windowMs: 3_600_000 };
 const CONTROL_TYPES = new Set(['rdv/contact-request', 'rdv/contact-grant', 'rdv/revoke', 'rdv/resend']);
 
 export interface AgentState {
@@ -54,7 +58,9 @@ export interface AgentEvents {
   /** The pending list was full and a request was dropped; `total` counts all such drops (someone may be flooding us). */
   'pending-evicted': [total: number];
   contact: [Contact];
-  message: [peer: string, payload: Payload, envelope: Envelope];
+  /** A contact's human granted us rights towards it: `outboundScope` changed (NOTES 60). */
+  'reverse-grant': [Contact];
+  message:[peer: string, payload: Payload, envelope: Envelope];
   revoked: [peer: string];
   dropped: [reason: string, detail?: unknown];
   error: [Error];
@@ -220,11 +226,22 @@ export class Agent extends EventEmitter<AgentEvents> {
     return this.book.rejectCandidate(grantId, opts.block);
   }
 
-  /** Owner grants an existing contact rights towards us (local; see ContactBook.allowInbound). */
-  allowInbound(peer: string, opts: { tier?: Tier; scope?: GrantScope } = {}): Contact {
+  /**
+   * Owner grants an existing contact rights towards us (ContactBook.allowInbound),
+   * then tells the peer with a signed reverse grant, so it may use them, e.g.
+   * propose a meeting (NOTES 60). Only the owner calls this; nothing in the
+   * library does on a peer's behalf.
+   */
+  async allowInbound(peer: string, opts: { tier?: Tier; scope?: GrantScope } = {}): Promise<Contact> {
     const c = this.book.contact(peer);
     if (!c) throw new Error(`no active contact ${peer}`);
-    return this.book.allowInbound(peer, { tier: opts.tier ?? defaultTier(c.binding), scope: opts.scope ?? { ...DEFAULT_GRANT_SCOPE } });
+    const tier = opts.tier ?? defaultTier(c.binding);
+    const scope = opts.scope ?? { ...DEFAULT_GRANT_SCOPE };
+    const contact = this.book.allowInbound(peer, { tier, scope });
+    // Our rights for the peer end with the contact itself.
+    const grant = createReverseGrant(this.key, this.card, contact, { tier, scope: { ...scope }, expires: contact.expires });
+    await this.deliver(peer, grant, relaysOf(contact.card));
+    return contact;
   }
 
   async revoke(peer: string): Promise<void> {
@@ -385,6 +402,16 @@ export class Agent extends EventEmitter<AgentEvents> {
       }
       case 'rdv/contact-grant': {
         if ((payload as { from?: unknown }).from !== from) return this.drop('grant signer differs from envelope sender');
+        if (isReverseGrant(payload)) {
+          // Rate-limited per contact only: a stranger's grant is refused below without touching state.
+          if (this.book.contact(from) && !this.book.admitControl('reverse-grant', from, REVERSE_GRANT_LIMIT)) {
+            return this.drop('reverse grant rate-limited', from);
+          }
+          const rev = this.book.receiveReverseGrant(payload, this.id);
+          if ('rejected' in rev) return this.drop('unexpected or invalid grant', `reverse grant: ${rev.rejected}`);
+          this.emit('reverse-grant', rev.contact);
+          return;
+        }
         const got = this.book.receiveGrant(payload, this.id);
         if (!got) return this.drop('unexpected or invalid grant');
         if ('candidate' in got) {

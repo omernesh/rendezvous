@@ -63,7 +63,7 @@ const COMMANDS: Record<string, Command> = {
   },
   'contact grant': {
     usage: 'rdv contact grant <request-id|agent-id> [--tier friend] [--scope-file s.json]',
-    summary: 'Approve a pending request, or give a contact you requested rights towards you (meetings etc.)',
+    summary: 'Approve a pending request, or give a contact rights towards you (meetings etc.; the contact is told)',
     args: 1,
     options: { tier: { type: 'string' }, 'scope-file': { type: 'string' } },
     run: cmd.contactGrant,

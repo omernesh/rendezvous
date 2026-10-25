@@ -51,6 +51,18 @@ export interface ContactGrantBody {
 }
 export type ContactGrant = Signed<ContactGrantBody>;
 
+/**
+ * Reverse grant (NOTES 60): the same `rdv/contact-grant` document, sent to an
+ * existing contact when our human grants it rights towards us. It answers no
+ * request, so it has `grant_ref` (the grant that founded the contact, which
+ * both sides store as `Contact.grantId`) instead of `request_ref`. A document
+ * with both fields, or neither, is invalid.
+ */
+export interface ReverseGrantBody extends Omit<ContactGrantBody, 'request_ref'> {
+  grant_ref: string;
+}
+export type ReverseGrant = Signed<ReverseGrantBody>;
+
 export interface RevokeBody {
   v: 1;
   type: 'rdv/revoke';
@@ -109,6 +121,31 @@ export function createGrant(
   );
 }
 
+/** Our human granted `contact.peer` rights towards us: tell the peer, so it knows what it may do (NOTES 60). */
+export function createReverseGrant(
+  key: AgentKey,
+  card: AddressCard,
+  contact: Pick<Contact, 'peer' | 'grantId'>,
+  opts: { tier: Tier; scope: GrantScope; expires?: string | null; now?: Date },
+): ReverseGrant {
+  return signDoc<ReverseGrantBody>(
+    {
+      v: 1,
+      type: 'rdv/contact-grant',
+      id: uuid(),
+      from: key.id,
+      to: contact.peer,
+      grant_ref: contact.grantId,
+      tier: opts.tier,
+      scope: opts.scope,
+      expires: opts.expires ?? null,
+      ts: (opts.now ?? new Date()).toISOString(),
+      card,
+    },
+    key,
+  );
+}
+
 export function createRevoke(key: AgentKey, peer: string, grantRef: string | null, now = new Date()): Revoke {
   return signDoc<RevokeBody>(
     { v: 1, type: 'rdv/revoke', id: uuid(), from: key.id, to: peer, grant_ref: grantRef, ts: now.toISOString() },
@@ -128,14 +165,31 @@ export function verifyContactRequest(input: unknown, now = new Date()): input is
   return card.ok && card.card.id === r.from;
 }
 
-export function verifyGrant(input: unknown, now = new Date()): input is ContactGrant {
-  const g = input as ContactGrant;
-  if (!g || g.v !== 1 || g.type !== 'rdv/contact-grant' || !isDocId(g.id) || !isDocId(g.request_ref)) return false;
+/** Checks shared by forward and reverse grants: shape, tier, scope, dates, signature, and the grantor's card. */
+function verifyGrantDoc(g: ContactGrant | ReverseGrant, now: Date): boolean {
+  if (g.v !== 1 || g.type !== 'rdv/contact-grant' || !isDocId(g.id)) return false;
   if (!isTier(g.tier) || !g.scope || typeof g.scope !== 'object' || Array.isArray(g.scope)) return false;
   if (parseTimestamp(g.ts) === null || (g.expires !== null && parseTimestamp(g.expires) === null)) return false;
   if (!isAgentId(g.from) || !isAgentId(g.to) || !verifyDoc(g, g.from)) return false;
   const card = verifyCard(g.card, now);
   return card.ok && card.card.id === g.from;
+}
+
+/** A forward grant: answers one of our requests (`request_ref`) and never carries `grant_ref`. */
+export function verifyGrant(input: unknown, now = new Date()): input is ContactGrant {
+  const g = input as ContactGrant;
+  if (!g || typeof g !== 'object' || Object.hasOwn(g, 'grant_ref') || !isDocId(g.request_ref)) return false;
+  return verifyGrantDoc(g, now);
+}
+
+/** A grant document that claims to be a reverse grant (it has `grant_ref`). Says nothing about validity. */
+export const isReverseGrant = (doc: unknown): boolean => !!doc && typeof doc === 'object' && Object.hasOwn(doc, 'grant_ref');
+
+/** A reverse grant: refers to an existing relationship (`grant_ref`) and never carries `request_ref`. */
+export function verifyReverseGrant(input: unknown, now = new Date()): input is ReverseGrant {
+  const g = input as ReverseGrant;
+  if (!g || typeof g !== 'object' || Object.hasOwn(g, 'request_ref') || !isDocId(g.grant_ref)) return false;
+  return verifyGrantDoc(g, now);
 }
 
 export function verifyRevoke(input: unknown): input is Revoke {
@@ -168,10 +222,14 @@ export interface Contact {
   inboundScope: GrantScope | null;
   /** True once our human granted the peer (issued grant or allowInbound); false while inbound is the local default. */
   inboundGranted?: boolean;
-  /** What we may do towards the peer (the grant we received). */
+  /** What we may do towards the peer: the grant we received, or the peer's latest reverse grant (NOTES 60). */
   outboundScope: GrantScope | null;
   /** The tier the peer's grant put us in (display only). */
   grantedTier?: Tier;
+  /** `ts` of the peer's grant behind `outboundScope`; a reverse grant that is not newer is stale. */
+  outboundTs?: string;
+  /** Id of the last reverse grant from the peer that we applied. */
+  reverseGrantId?: string;
   binding: Binding;
   grantId: string;
   expires: string | null;
@@ -274,6 +332,8 @@ const DECLINED_LIMIT = 1000;
  * shown to the human, who should redo that contact by card or in person.
  */
 export const CANDIDATES_PER_PROBE = 16;
+/** How far ahead of our clock a reverse grant's `ts` may be, so a peer can't make later updates look stale. */
+export const REVERSE_GRANT_SKEW_MS = 5 * 60_000;
 
 export class ContactBook {
   state: ContactBookState;
@@ -390,6 +450,8 @@ export class ContactBook {
       inboundGranted: true,
       outboundScope: prev?.outboundScope ?? { may_initiate: true },
       ...(prev?.grantedTier ? { grantedTier: prev.grantedTier } : {}),
+      ...(prev?.outboundTs ? { outboundTs: prev.outboundTs } : {}),
+      ...(prev?.reverseGrantId ? { reverseGrantId: prev.reverseGrantId } : {}),
       binding,
       grantId: grant.id,
       expires: grant.expires,
@@ -473,7 +535,8 @@ export class ContactBook {
 
   /**
    * Our human's own grant to an existing contact (e.g. one we requested):
-   * sets what the peer may do towards us. Local only; nothing is sent.
+   * sets what the peer may do towards us. The book only records it;
+   * `Agent.allowInbound` also sends the peer a reverse grant (NOTES 60).
    */
   allowInbound(peer: string, opts: { tier: Tier; scope: GrantScope }): Contact {
     const c = this.state.contacts[peer];
@@ -484,6 +547,42 @@ export class ContactBook {
     c.inboundGranted = true;
     delete this.state.rate[peer];
     return c;
+  }
+
+  /**
+   * A reverse grant from a contact (NOTES 60): its human granted us rights
+   * towards it. Like any received grant it sets only what *we* may do towards
+   * the peer (`outboundScope`), never what the peer may do towards us.
+   *
+   * Accepted only from a current, unblocked contact, addressed to us, naming
+   * the grant that founded that contact (`grant_ref` = `Contact.grantId`),
+   * not expired, newer than the grant behind `outboundScope` and at most
+   * REVERSE_GRANT_SKEW_MS ahead of our clock, and not seen before. Its
+   * `expires` can shorten the contact (it ends when either side's grant
+   * does), never extend it.
+   */
+  receiveReverseGrant(
+    input: unknown,
+    me: string,
+    now = new Date(),
+  ): { contact: Contact } | { rejected: 'invalid' | 'not-contact' | 'expired' | 'stale' | 'replay' } {
+    if (!verifyReverseGrant(input, now) || input.to !== me) return { rejected: 'invalid' };
+    const g = input;
+    const c = this.contact(g.from, now);
+    if (!c || this.isBlocked(g.from) || c.grantId !== g.grant_ref) return { rejected: 'not-contact' };
+    if (isPast(g.expires, now)) return { rejected: 'expired' };
+    const ts = parseTimestamp(g.ts)!;
+    const prior = c.outboundTs === undefined ? null : parseTimestamp(c.outboundTs);
+    if (ts > now.getTime() + REVERSE_GRANT_SKEW_MS || (prior !== null && ts <= prior)) return { rejected: 'stale' };
+    if (!this.markSeen(g.id)) return { rejected: 'replay' };
+    c.outboundScope = { ...g.scope };
+    c.grantedTier = g.tier;
+    c.outboundTs = g.ts;
+    c.reverseGrantId = g.id;
+    const ends = g.expires === null ? null : parseTimestamp(g.expires)!;
+    const current = c.expires === null ? null : parseTimestamp(c.expires);
+    if (ends !== null && (current === null || ends < current)) c.expires = g.expires;
+    return { contact: c };
   }
 
   private addReceivedGrant(g: ContactGrant, binding: Binding, now: Date): Contact {
@@ -497,6 +596,7 @@ export class ContactBook {
       inboundGranted: granted,
       outboundScope: { ...g.scope },
       grantedTier: g.tier,
+      outboundTs: g.ts,
       binding,
       grantId: g.id,
       expires: g.expires,

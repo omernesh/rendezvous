@@ -42,7 +42,9 @@
 - **Consent, §5:** the grant carries the grantor's card (§5.3); who may answer
   a request; document IDs are UUIDs; grant direction and `max_frequency`
   format; scope defaults. New §5.5 (consent stays with the human) and §5.6
-  (peer text is untrusted data).
+  (peer text is untrusted data). Amended: the reverse grant (§5.3, a grant
+  with `grant_ref`) tells a contact what its peer's owner allows it, so the
+  grantor side can propose meetings too (§7.4).
 - **A2A, §7:** which A2A objects are sent, the meeting verbs, task states,
   slots, deduplication by `messageId`, cancellation, resend bounds, and
   persisting state before send. Amended: agreement is an accept → confirm
@@ -546,6 +548,33 @@ Rules:
   (reference: `50/day`). The grantor's `tier` is likewise only how the grantor
   classifies the requester; the requester's own tier for the grantor starts at
   `stranger`.
+- **Reverse grant.** When an owner grants an existing contact rights towards
+  it (§5.5), typically the requester granting the grantor back, its agent
+  sends the peer a reverse grant: the same `rdv/contact-grant` document with
+  `grant_ref` instead of `request_ref`. `grant_ref` is the `id` of the grant
+  that founded the contact, which both sides keep. A grant with both fields,
+  or neither, is invalid, so the two kinds can never be confused:
+
+  ```json
+  { "v": 1, "type": "rdv/contact-grant", "id": "<uuid>",
+    "from": "rdv1:<requester key>", "to": "rdv1:<grantor key>",
+    "grant_ref": "<id of the grant that founded the contact>",
+    "card": "<sender's card>", "tier": "friend",
+    "scope": { "may_initiate": true, "may_propose_meetings": true, "max_frequency": "100/day" },
+    "expires": null, "ts": "…", "sig": "…" }
+  ```
+
+  The receiver applies it exactly like any received grant: it sets only what
+  the receiver may do towards the sender, never the sender's rights over the
+  receiver. It MUST be accepted only from a current contact whose founding
+  grant is `grant_ref`, addressed to the receiver, verified like a grant
+  (signature, card, tier, timestamps), not expired, with a `ts` newer than
+  the grant it replaces (and not far ahead of the receiver's clock;
+  reference: 5 minutes) and an unseen `id`. Anything else is dropped without
+  changing state. Its `expires` may shorten the contact, never extend it. A
+  receiver MAY rate-limit them per contact (reference: 10 an hour).
+  Revocation (§5.4) removes whatever a reverse grant set. Only the owner's
+  own grant triggers one; an agent never sends one on its own.
 - **`max_frequency`** is `"<n>/<minute|hour|day>"`; exceeding it revokes the
   grant (§10).
 - Scope defaults for meetings are in §7.4.
@@ -581,7 +610,9 @@ peer's decision, not its owner's: it sets only what the agent may do towards
 the peer (§5.3), and choosing which answer to a topic probe is the real peer
 needs one of the approvals above. Widening what a peer may do towards the
 agent (meetings, calendar, a higher rate) is always the agent's own owner's
-grant.
+grant. That grant, approved the same way, is what the agent then sends the
+peer as a reverse grant (§5.3); receiving one widens only what the agent may
+do towards the peer, and needs no approval of its own.
 
 A grant that allows meetings lets the agents negotiate, not book. Before an
 agent accepts a specific meeting, or confirms a peer's accept, the host
@@ -816,7 +847,9 @@ update giving its real end state.
 Meeting verbs require `may_propose_meetings: true` in the grant that covers
 the direction (§5.3): proposing to a peer, and answering on a negotiation we
 proposed, need the peer's grant to us; a peer proposing to us needs the grant
-our owner gave the peer. If `may_access_calendar` is absent it
+our owner gave the peer. For the agent that granted the contact, "the peer's
+grant to us" is the peer's reverse grant (§5.3): until the requester's owner
+grants back, the grantor cannot propose. If `may_access_calendar` is absent it
 counts as `free_busy`, because proposing a slot is a free/busy disclosure;
 `none` blocks negotiation. At every level, including `full`, meeting messages
 carry slots only, never event titles.

@@ -35,6 +35,14 @@ describe('dinner scenarios (in-memory relay)', () => {
     expect(r.john.hold).toBeUndefined();
   });
 
+  it('reverse grant: the grantor proposes once the requester’s human grants it back (issue #14)', async () => {
+    const r = await runDinnerScenario({ relays: [relay.url], variant: 'reverse' });
+    expect([r.omer.state, r.john.state]).toEqual(['completed', 'completed']);
+    expect(r.omer.agreed).toEqual(r.john.agreed);
+    expect(r.john.role).toBe('proposer');
+    expect(r.steps.map((s) => s.step)).toContain('john cannot propose yet: omer has not granted him meetings');
+  });
+
   it('duplicate deliveries change nothing', async () => {
     const r = await runDinnerScenario({ relays: [relay.url], variant: 'duplicate', settleMs: 1_500 });
     expect(r.steps.map((s) => s.step)).toContain('re-send a negotiation message in a new envelope');

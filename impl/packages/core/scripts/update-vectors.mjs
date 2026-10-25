@@ -6,6 +6,7 @@ import { spawnSync } from 'node:child_process';
 const r = spawnSync('npx vitest run test/vectors.test.ts', {
   stdio: 'inherit',
   shell: true,
-  env: { ...process.env, UPDATE_VECTORS: '1' },
+  // UPDATE_VECTORS=envelope also re-seals the sample envelope (sealing is randomized, so it is kept otherwise).
+  env: { ...process.env, UPDATE_VECTORS: process.env.UPDATE_VECTORS || '1' },
 });
 process.exit(r.status ?? 1);

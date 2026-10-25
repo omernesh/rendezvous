@@ -347,7 +347,8 @@ export async function contactGrant({ home, out, values, positionals }: Ctx): Pro
   }
   const target = positionals[0];
   const contact = await withAgent(home, async (agent) => {
-    // An agent ID: the owner grants an existing contact (one we requested) rights towards us.
+    // An agent ID: the owner grants an existing contact (one we requested) rights towards us,
+    // and the agent sends the peer a reverse grant so it can use them (NOTES 60).
     if (isAgentId(target)) {
       if (!agent.book.contact(target)) throw new CliError(`no active contact ${target}`);
       return agent.allowInbound(target, { tier, scope });

@@ -3,11 +3,14 @@ import {
   Agent,
   type AgentKey,
   createCard,
+  createReverseGrant,
   dtopic,
   type Envelope,
   generateKey,
   NostrTransport,
+  openEnvelope,
   type Payload,
+  REVERSE_GRANT_LIMIT,
   sealEnvelope,
   type Transport,
 } from '../src/index.js';
@@ -352,6 +355,122 @@ describe('requester-side binding and restart safety', () => {
     await new Promise((r) => setTimeout(r, 20));
     await restored.idle();
     expect(texts).toEqual(['two', 'three']);
+  });
+});
+
+describe('reverse grant (issue #14)', () => {
+  const card = { rendezvous: [{ type: 'nostr' as const, relay: 'ws://unused', pref: 1 }] };
+  function bus() {
+    const handlers = new Map<string, (e: unknown) => void>();
+    const t = (): Transport => ({
+      async sendEnvelope(e) {
+        queueMicrotask(() => handlers.get(e.to)?.(structuredClone(e)));
+      },
+      onEnvelopes(me, h) {
+        handlers.set(me, h);
+        return () => handlers.delete(me);
+      },
+      async publishTopic() {},
+      onTopics: () => () => {},
+      fetchTopic: async () => [],
+      close() {},
+    });
+    return { t, deliver: (e: Envelope) => handlers.get(e.to)?.(structuredClone(e)) };
+  }
+  const settle = async (...agents: Agent[]) => {
+    await new Promise((r) => setTimeout(r, 20));
+    for (const a of agents) await a.idle();
+  };
+
+  it("the requester's human grants back: the grantor learns it may propose meetings; strangers and revocation can't keep it", async () => {
+    const { t, deliver } = bus();
+    const omer = Agent.create(t, card);
+    const john = Agent.create(t, card);
+    omer.start();
+    john.start();
+    const pending = waitFor<{ request: { id: string } }>(john, 'request');
+    await omer.requestContact(john.card, 'hi');
+    const contact = waitFor(omer, 'contact');
+    await john.grant((await pending).request.id, { tier: 'friend' });
+    await contact;
+    // John granted; nothing tells him yet what Omer allows back.
+    expect(john.book.contact(omer.id)?.outboundScope?.may_propose_meetings).not.toBe(true);
+    const johnInbound = structuredClone(john.book.contact(omer.id)!.inboundScope);
+
+    const reversed: Array<{ peer: string }> = [];
+    john.on('reverse-grant', (c) => reversed.push(c));
+    const dropped: Array<[string, unknown]> = [];
+    john.on('dropped', (r, d) => dropped.push([r, d]));
+
+    // Omer's human approves the reverse direction.
+    const mine = await omer.allowInbound(john.id, { tier: 'friend' });
+    expect(mine).toMatchObject({ tier: 'friend', inboundGranted: true });
+    await settle(omer, john);
+    expect(reversed.map((c) => c.peer)).toEqual([omer.id]);
+    const c = john.book.contact(omer.id)!;
+    expect(c.outboundScope?.may_propose_meetings).toBe(true);
+    expect(c.inboundScope).toEqual(johnInbound); // Omer's grant never touches what Omer may do towards John
+
+    // A stranger's reverse grant (well signed, naming the real grant) is dropped and changes nothing.
+    const mallory = generateKey();
+    const forged = createReverseGrant(mallory, createCard(mallory, card), { peer: john.id, grantId: c.grantId }, {
+      tier: 'spouse',
+      scope: { may_propose_meetings: true },
+    });
+    deliver(sealEnvelope(mallory, john.id, forged, { seq: 1, prev: null }));
+    await settle(john);
+    expect(dropped).toContainEqual(['unexpected or invalid grant', 'reverse grant: not-contact']);
+    expect(john.book.contact(mallory.id)).toBeUndefined();
+    expect(reversed).toHaveLength(1);
+
+    // Revocation removes it.
+    const revoked = waitFor(john, 'revoked');
+    await omer.revoke(john.id);
+    await revoked;
+    expect(john.book.contact(omer.id)).toBeUndefined();
+  });
+
+  it('re-sending the same reverse grant in a fresh envelope changes nothing', async () => {
+    const { t, deliver } = bus();
+    const omer = Agent.create(t, card);
+    const john = Agent.create(t, card);
+    omer.start();
+    john.start();
+    const pending = waitFor<{ request: { id: string } }>(john, 'request');
+    await omer.requestContact(john.card, 'hi');
+    const contact = waitFor(omer, 'contact');
+    await john.grant((await pending).request.id);
+    await contact;
+    let sent: unknown;
+    const realSend = omer.transport.sendEnvelope.bind(omer.transport);
+    omer.transport.sendEnvelope = async (e, relays) => {
+      sent = e;
+      return realSend(e, relays);
+    };
+    await omer.allowInbound(john.id, { scope: { may_initiate: true, may_propose_meetings: true } });
+    await settle(omer, john);
+    const before = JSON.stringify(john.book.contact(omer.id));
+    const doc = openEnvelope(john.key, sent);
+    expect(doc.ok).toBe(true);
+    const reasons: Array<[string, unknown]> = [];
+    john.on('dropped', (r, d) => reasons.push([r, d]));
+    // Only Omer can seal as Omer: re-seal the same grant under the next seq, as a peer replaying it would.
+    const { seq, prev } = omer.channels.nextOutbound(john.id);
+    const again = sealEnvelope(omer.key, john.id, doc.ok ? doc.payload : {}, { seq, prev });
+    omer.channels.commitOutbound(john.id, again);
+    deliver(again);
+    await settle(john);
+    expect(reasons).toContainEqual(['unexpected or invalid grant', 'reverse grant: stale']);
+    expect(JSON.stringify(john.book.contact(omer.id))).toBe(before);
+    // A contact that keeps sending them is rate-limited (each one would rewrite the contact).
+    for (let i = 0; i < REVERSE_GRANT_LIMIT.count; i++) {
+      const n = omer.channels.nextOutbound(john.id);
+      const e = sealEnvelope(omer.key, john.id, doc.ok ? doc.payload : {}, n);
+      omer.channels.commitOutbound(john.id, e);
+      deliver(e);
+    }
+    await settle(john);
+    expect(reasons.map((r) => r[0])).toContain('reverse grant rate-limited');
   });
 });
 

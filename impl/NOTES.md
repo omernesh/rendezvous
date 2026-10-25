@@ -104,10 +104,10 @@ the marker (CLI behavior, live-run logs, calendar settings) stay here only.
     `rdv contact grant <agent-id>` (`Agent.allowInbound`). Otherwise a peer
     picked its own rights over us, and a model could be talked into
     requesting contact with a pending requester and so let it drive dinner
-    negotiation with no human. Limitation: the grantor's own
-    `outboundScope` is just `may_initiate` (nothing tells it what we
-    allow), so the grantor side cannot start a negotiation; the requester
-    proposes. A reverse grant message would fix that (v0.2). (**spec change**,
+    negotiation with no human. Limitation (fixed by item 60, issue #14): the
+    grantor's own `outboundScope` was just `may_initiate` (nothing told it
+    what we allow), so the grantor side could not start a negotiation. Our
+    human's grant now also goes to the peer as a reverse grant. (**spec change**,
     folded into SPEC §5.3, §5.5, §7.4)
 16. **`max_frequency`** is `"<n>/<minute|hour|day>"`; exceeding it revokes the
     grant (§10). (folded into SPEC rev 3 §5.3)
@@ -469,6 +469,59 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
     `--hold <code>`, the first 12 hex digits of the digest, shown by
     `rdv dinner list` (text and `hold_code` in JSON) and in the server's
     phrase notice; a code that no longer matches is refused.
+
+## Contact flow, continued
+
+60. **Reverse grant** (**spec change**, §5.3, §5.5, §7.4, issue #14; closes
+    the limitation in item 15). When a human grants an existing contact
+    rights towards us (`rdv contact grant <agent-id>`, `Agent.allowInbound`),
+    the agent applies it locally as before and also sends the peer a signed
+    reverse grant, so the peer learns what it may do; the grantor of the
+    original contact can then propose a dinner. Wire format: the same
+    `rdv/contact-grant` document and signing path, with `grant_ref` (the id
+    of the grant that founded the contact, which both sides store as
+    `Contact.grantId`) **instead of** `request_ref`. A document with both
+    fields, or with neither, is invalid; `verifyGrant` refuses anything with
+    `grant_ref` and `verifyReverseGrant` anything with `request_ref`, so a
+    peer-chosen grant id that happens to equal one of our open probe ids
+    (probes are public) can't turn one kind into the other. Older peers drop
+    a reverse grant (no `request_ref`), which is the safe failure. A
+    separate document type was not needed. Rules, in
+    `ContactBook.receiveReverseGrant`:
+    - It sets only our `outboundScope` (and `grantedTier`, display only),
+      never the sender's `inboundScope` or our tier for it: same invariant as
+      item 15. Only the human's `allowInbound` sends one; nothing in the
+      library does it on its own (an allowlist auto-grant is a forward grant).
+    - Accepted only from a current, unblocked contact, addressed to us,
+      with `grant_ref` equal to that contact's `grantId` (so: we granted it,
+      or it granted us, in this relationship). Otherwise dropped as
+      `unexpected or invalid grant` (detail `reverse grant: not-contact` /
+      `invalid`), before any state is touched; that reason is in
+      `STRANGER_DROPS`, so strangers can't fill the event log with it.
+    - Replay and staleness: its `ts` must be newer than the grant behind our
+      current `outboundScope` (`Contact.outboundTs`, set from the forward
+      grant on the requester side) and at most 5 minutes ahead of our clock
+      (`REVERSE_GRANT_SKEW_MS`; a far-future `ts` would make every later
+      update look stale), and its id must be unseen. The `ts` check holds
+      even after a flood evicts the id from `seenIds`, so an older, wider
+      grant can't undo a narrowing. Expired ones are refused.
+    - `expires` can only shorten the contact (it ends when either side's
+      grant does), never extend it. The library sends `expires` = the
+      contact's own expiry.
+    - Per contact, at most 10 an hour are processed (`REVERSE_GRANT_LIMIT`,
+      `admitControl`; over the limit dropped, not revoked); the counter is
+      kept only for existing contacts.
+    - Revocation is unchanged: `rdv/revoke` (either side) deletes the
+      contact, and with it whatever a reverse grant set; a later reverse
+      grant then finds no contact and is dropped.
+    Events: core `reverse-grant`, CLI `listen` `{event: "reverse-grant"}`
+    with the contact view (`outbound_meetings` is new in every contact
+    view), MCP `reverse_grant` (peer fields through `untrusted.ts`,
+    summary built from validated fields). The MCP server still has no tool
+    to grant an existing contact; that stays `rdv contact grant` in a
+    terminal. Test vectors gained `contact_grant` and `reverse_grant`
+    (deterministic ids, no other vector changed; regenerating now keeps the
+    saved sample envelope unless `UPDATE_VECTORS=envelope`).
 
 ## Not implemented yet
 
