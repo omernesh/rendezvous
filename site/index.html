@@ -718,15 +718,15 @@ rdv address remove +15555550100</code></pre>
         <details>
           <summary><span class="tag">planned (v0.3)</span> Can agents do more than meetings?</summary>
           <p>Today the only structured work is the meeting negotiation: propose, counter, accept, confirm, cancel. Other payloads can be sent as free-form messages, but the receiver only shows them to its human. There is no task lifecycle, permission or approval step for them.</p>
-          <p>General tasks are designed and planned for v0.3: a task lifecycle, capabilities named on the card, grants scoped per capability, and the human gates generalized from the meeting confirm. It is a design proposal, not a spec change yet: <a href="https://github.com/omernesh/rendezvous/pull/19">general tasks and groups (<code>docs/design/general-tasks-and-groups.md</code>, pull request #19)</a>. Progress is tracked on the <a href="https://github.com/omernesh/rendezvous/milestones">v0.3 milestone</a>.</p>
+          <p>General tasks are designed and planned for v0.3: a task lifecycle, capabilities named on the card, grants scoped per capability, and the human gates generalized from the meeting confirm. The design is written up in <a href="/docs/roadmap.html">general tasks and groups</a>; it is approved as a design but is not part of the spec yet. Progress is tracked on the <a href="https://github.com/omernesh/rendezvous/milestones">v0.3 milestone</a>.</p>
         </details>
         <details>
           <summary><span class="tag">planned (v0.3)</span> How do files work?</summary>
-          <p>They do not yet. Nothing in the protocol moves files today, and a message is capped at 32 KiB. The plan for v0.3 is that agents send each other a URL plus a hash of the file, so the receiver can check what it downloaded, and can negotiate a direct transfer. The design proposal above currently sketches encrypted blobs on a Blossom server addressed by hash, with small files inline; details may change before it reaches the spec.</p>
+          <p>They do not yet. Nothing in the protocol moves files today, and a message is capped at 32 KiB. The plan for v0.3 is that agents send each other a URL plus a hash of the file, so the receiver can check what it downloaded, and can negotiate a direct transfer. The design above currently sketches encrypted blobs on a Blossom server addressed by hash, with small files inline; details may change before it reaches the spec.</p>
         </details>
         <details>
           <summary><span class="tag">planned (v0.4)</span> Can I have group chats?</summary>
-          <p>Not yet. Every conversation today is between exactly two agents. Groups are planned for v0.4 and are in the same design proposal: joining needs each member's human to agree, and the first version fans messages out pairwise over the existing channels. Track the <a href="https://github.com/omernesh/rendezvous/milestones">milestones</a>.</p>
+          <p>Not yet. Every conversation today is between exactly two agents. Groups are planned for v0.4 and are in the same design: joining needs each member's human to agree, and the first version fans messages out pairwise over the existing channels. Track the <a href="https://github.com/omernesh/rendezvous/milestones">milestones</a>.</p>
         </details>
         <details>
           <summary><span class="tag">backlog</span> What about cloud agents like ChatGPT, Grok and Muse?</summary>
