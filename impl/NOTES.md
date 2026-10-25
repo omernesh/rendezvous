@@ -1981,15 +1981,22 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       data part beside the text, as `rdv_task` submit `data` already did;
       the engine checks its shape. Without it the CLI could not send the
       review/result.
-    - **Live run (2026-10-25)** on `wss://nos.lol,wss://relay.primal.net`,
-      `npm run test:live`: cli review ok 13,980 ms, decline 8,463 ms,
-      cancel 9,850 ms, rate 18,711 ms, auto 11,450 ms; mcp review 4,224 ms.
-      Agreed outputs: ok and auto end `completed` on both sides with the
-      review text and `changes-requested`, 3 comments; decline and rate
-      `rejected` (the sixth for `rate`); cancel `canceled`. The binary
-      (`--variant all`) passed the same day: 14.1 s, 9.2 s, 10.5 s, 19.8 s,
-      10.1 s. One unrelated live test (contact scenario on nos.lol alone)
-      failed once with nos.lol refusing the connection and passed on rerun.
+    - **Live run (2026-10-26)** on `wss://nos.lol,wss://relay.primal.net`,
+      `npm run test:live` (all 11 cli and 3 mcp live tests passed): cli
+      review ok 13,415 ms, decline 9,716 ms, cancel 13,341 ms, rate
+      18,927 ms, auto 14,334 ms; mcp review 4,688 ms. Agreed outputs: ok and
+      auto end `completed` on both sides with the review text and
+      `changes-requested`, 3 comments; decline and rate `rejected` (the
+      sixth for `rate`); cancel `canceled`. The binary (`--variant all`)
+      passed on 2026-10-25: 14.1 s, 9.2 s, 10.5 s, 19.8 s, 10.1 s.
+    - **Public-relay throttling.** After several back-to-back full live
+      runs nos.lol answered `rate-limited: slow down` and refused
+      connections; the single-relay contact test (`nos.lol alone`) failed
+      three times, once with the review file excluded, so the limit is
+      per IP over time, not this file. After 15 minutes idle the whole
+      suite passed. The review file opens many connections (the rate
+      variant alone runs about 25 `rdv` commands); run `test:live` with a
+      pause between repeats.
 
 ## Not implemented yet
 
