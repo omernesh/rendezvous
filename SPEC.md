@@ -29,7 +29,8 @@
   it out, so a genuine header could carry a substituted ciphertext). The
   encryption (ephemeral key `epk`, HKDF, AES-GCM) is now described. A peer
   that forks or rolls back its chain is refused until the receiving human
-  re-syncs it.
+  re-syncs it. Amended: channel state is kept only for admitted senders, so
+  fresh keys cannot fill a receiver's memory (was §11.10).
 - **Wire format, new §4.6:** canonical JSON (RFC 8785 subset), base32 alphabet
   and case, `sig` encoding and domain separation, `canon(address)`. §4.2 and
   §4.4 point to it.
@@ -791,6 +792,13 @@ where hole-punching fails (TURN relays carry the ciphertext).
   reused `seq` below that window is detected by its `created` being newer than
   everything accepted; one that is also older is indistinguishable from a
   replay and is dropped as one.
+- **Channel state is kept only for admitted senders.** A receiver keeps
+  `seq`/`prev` state for contacts, pending requesters it keeps, agents it
+  asked for contact, and peers it has written to. For any other sender it
+  keeps none: such a sender's chain starts at the first envelope the
+  receiver sees from it, whatever its `seq`, because it may have written
+  before and been refused. Minting keys is free, so state per unknown sender
+  would let anyone fill the receiver's memory (was §11.10).
 - `ttl` is `<n><s|m|h|d>` (default `48h`); an envelope is expired when
   `created + ttl` has passed. It lets relays garbage-collect and bounds replay
   windows, so receivers MUST reject a `ttl` over 7 days and a `created` more
@@ -1025,10 +1033,10 @@ prune finished tasks (reference: after 30 days).
 
 9. **No forward secrecy.** Envelopes are encrypted to a static recipient key
    (§6.4). Conversation-scoped keys from the handshake are future work.
-10. **Channel state for strangers.** A receiver advances `seq` state for any
-    validly signed envelope before deciding whether to admit the sender. A
-    stranger cannot spoof another sender, so the cost is memory per stranger
-    ID, to be bounded.
+10. **Channel state for strangers** (resolved). A receiver used to advance
+    `seq` state for any validly signed envelope before deciding whether to
+    admit the sender, so every fresh key cost it memory. It now keeps channel
+    state only for senders it admits or asked (§6.4).
 11. **Extending the meeting verbs.** Validation is strict (§7.2); whether
     extensions use a version field or an A2A extension URI is undecided.
 

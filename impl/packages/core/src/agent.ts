@@ -103,6 +103,7 @@ export class Agent extends EventEmitter<AgentEvents> {
     this.channels = new Channels(state?.channels ?? {});
     this.outbox = state?.outbox ?? {};
     this.buffer = state?.buffer ?? {};
+    this.pruneChannels(); // state saved before NOTES 64 may hold strangers' channels
   }
 
   static create(transport: (key: AgentKey) => Transport, card: CardOptions, key: AgentKey = generateKey()): Agent {
@@ -119,7 +120,7 @@ export class Agent extends EventEmitter<AgentEvents> {
       secretKey: b64encode(this.key.secretKey),
       card: this.card,
       book: this.book.toJSON(),
-      channels: this.channels.state,
+      channels: this.channelsToPersist(),
       outbox: this.outbox,
       buffer: this.bufferToPersist(),
     };
@@ -387,7 +388,16 @@ export class Agent extends EventEmitter<AgentEvents> {
     const env = opened.envelope;
     if (this.book.isBlocked(env.from)) return this.drop('blocked sender');
 
-    const order = this.channels.acceptInbound(env);
+    try {
+      await this.handleOpened(env, opened.payload);
+    } finally {
+      // Only admitted senders keep channel state; a stranger's goes with its envelope (NOTES 64).
+      this.pruneChannels();
+    }
+  }
+
+  private async handleOpened(env: Envelope, payload: Payload): Promise<void> {
+    const order = this.channels.acceptInbound(env, { adopt: !this.keepsChannel(env.from) });
     if (order.kind === 'duplicate') return;
     if (order.kind === 'fork' || order.kind === 'rollback' || order.kind === 'refused') return this.dropForked(env, order);
     if (order.kind === 'gap') {
@@ -400,8 +410,41 @@ export class Agent extends EventEmitter<AgentEvents> {
       return;
     }
 
-    await this.dispatch(env, opened.payload);
+    await this.dispatch(env, payload);
     await this.drainBuffer(env.from);
+  }
+
+  /**
+   * Senders whose channel state we keep (NOTES 64): contacts (expired ones
+   * too), allowlisted agents, pending requesters, probe candidates, agents we
+   * asked by card, and anyone we have sent to. Every entry but the pending
+   * requests (capped, NOTES 46) and probe candidates (capped per probe, and
+   * probes are our own) stems from our human's actions, so a flood of fresh
+   * keys can't grow this.
+   */
+  private keepsChannel(peer: string, kept = this.keptPeers()): boolean {
+    return kept.has(peer) || (this.channels.state[peer]?.outSeq ?? 0) > 0;
+  }
+
+  private keptPeers(): Set<string> {
+    const b = this.book.state;
+    const kept = this.book.outstandingTargets();
+    for (const peer of Object.keys(b.contacts)) kept.add(peer);
+    for (const peer of Object.keys(b.allowlist)) kept.add(peer);
+    for (const p of Object.values(b.pending)) kept.add(p.request.from);
+    for (const c of Object.values(b.candidates)) kept.add(c.grant.from);
+    return kept;
+  }
+
+  /** Forget the channels of senders we don't keep (a declined or evicted requester, a stranger). */
+  private pruneChannels(): void {
+    const kept = this.keptPeers();
+    for (const peer of Object.keys(this.channels.state)) if (!this.keepsChannel(peer, kept)) this.channels.forget(peer);
+  }
+
+  private channelsToPersist(): Record<string, ChannelState> {
+    const kept = this.keptPeers();
+    return Object.fromEntries(Object.entries(this.channels.state).filter(([peer]) => this.keepsChannel(peer, kept)));
   }
 
   /** Only contacts (or agents we asked by card) may park envelopes with us. */

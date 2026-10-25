@@ -5,9 +5,11 @@ import {
   type ChannelState,
   Channels,
   createCard,
+  createContactRequest,
   createReverseGrant,
   dtopic,
   type Envelope,
+  envelopeHash,
   generateKey,
   NostrTransport,
   openEnvelope,
@@ -590,12 +592,22 @@ describe('gap buffer bounds (security regression)', () => {
     const { t, feed } = feedable();
     const john = Agent.create(t, card);
     john.start();
+    // A pending requester has a channel (NOTES 64), but may not park envelopes with us.
     const stranger = generateKey();
     const reasons: string[] = [];
     john.on('dropped', (r) => reasons.push(r));
-    feed(sealEnvelope(stranger, john.id, { type: 'a2a/message' }, { seq: 3, prev: null }));
+    const req = createContactRequest(stranger, createCard(stranger, card), { toHint: john.id, greeting: 'hi' });
+    const first = sealEnvelope(stranger, john.id, req, { seq: 1, prev: null });
+    feed(first);
+    feed(sealEnvelope(stranger, john.id, { type: 'a2a/message' }, { seq: 3, prev: envelopeHash(first) }));
     await john.idle();
+    expect(john.pendingRequests()).toHaveLength(1);
     expect(reasons).toContain('out-of-order envelope from a non-contact');
+    expect(john.toJSON().buffer).toEqual({});
+    // A sender we hold nothing for starts its chain where it is (NOTES 64): nothing to buffer either.
+    feed(sealEnvelope(generateKey(), john.id, { type: 'a2a/message' }, { seq: 3, prev: null }));
+    await john.idle();
+    expect(reasons.at(-1)).toBe('no grant for sender');
     expect(john.toJSON().buffer).toEqual({});
   });
 
@@ -752,11 +764,21 @@ describe('peer rollback (issue #13)', () => {
     const reasons: string[] = [];
     john.on('dropped', (r) => reasons.push(r));
     john.start();
+    // A pending requester keeps a channel (NOTES 64), so it can fork it, quietly.
+    const requester = generateKey();
+    const req = createContactRequest(requester, createCard(requester, card), { toHint: john.id, greeting: 'hi' });
+    feed(sealEnvelope(requester, john.id, req, { seq: 1, prev: null }));
+    feed(sealEnvelope(requester, john.id, { type: 'a2a/message', other: true }, { seq: 1, prev: null }));
+    await john.idle();
+    expect(reasons).toEqual(['envelope chain fork from a non-contact']);
+    // A stranger keeps none: every envelope starts its chain afresh and is refused for want of a grant.
     const stranger = generateKey();
     feed(sealEnvelope(stranger, john.id, { type: 'a2a/message' }, { seq: 1, prev: null }));
     feed(sealEnvelope(stranger, john.id, { type: 'a2a/message', other: true }, { seq: 1, prev: null }));
     await john.idle();
-    expect(reasons).toEqual(['no grant for sender', 'envelope chain fork from a non-contact']);
+    expect(reasons).toEqual(['envelope chain fork from a non-contact', 'no grant for sender', 'no grant for sender']);
+    expect(john.refusedChannels()).toEqual([{ peer: requester.id, kind: 'rollback', seq: 1, hash: expect.any(String), created: expect.any(Number), accepted: 1 }]);
+    expect(john.channels.state[stranger.id]).toBeUndefined();
   });
 });
 
@@ -876,3 +898,217 @@ describe('relay drops', () => {
   });
 });
 
+
+describe('channel state for strangers (issue #3, NOTES 64)', () => {
+  const card = { rendezvous: [{ type: 'nostr' as const, relay: 'ws://unused', pref: 1 }] };
+  function feedable() {
+    let handler: (e: unknown) => void = () => {};
+    const sent: Envelope[] = [];
+    const t = (): Transport => ({
+      async sendEnvelope(e) {
+        sent.push(e);
+      },
+      onEnvelopes: (_me, h) => ((handler = h), () => {}),
+      async publishTopic() {},
+      onTopics: () => () => {},
+      fetchTopic: async () => [],
+      close() {},
+    });
+    return { t, feed: (e: unknown) => handler(e), sent };
+  }
+  const contactOf = (p: AgentKey) => ({
+    peer: p.id,
+    card: createCard(p, card),
+    tier: 'friend' as const,
+    inboundScope: { may_initiate: true },
+    outboundScope: { may_initiate: true },
+    binding: 'claimed' as const,
+    grantId: 'g',
+    expires: null,
+    since: new Date().toISOString(),
+  });
+  /** A sender's side of one channel: seals the next envelope in its chain. */
+  function chainOf(key: AgentKey, to: string) {
+    const out = new Channels();
+    return (payload: Payload): Envelope => {
+      const e = sealEnvelope(key, to, payload, out.nextOutbound(to));
+      out.commitOutbound(to, e);
+      return e;
+    };
+  }
+  const requestTo = (key: AgentKey, to: string) => createContactRequest(key, createCard(key, card), { toHint: to, greeting: 'hi' });
+  function watch(agent: Agent) {
+    const texts: unknown[] = [];
+    const drops: string[] = [];
+    agent.on('message', (_p, payload) => texts.push(payload.text));
+    agent.on('dropped', (r) => drops.push(r));
+    return { texts, drops };
+  }
+
+  it('keeps memory and the saved state bounded under envelopes from 10k fresh IDs', async () => {
+    const { t, feed } = feedable();
+    const john = Agent.create(t, card);
+    const omer = generateKey();
+    john.book.state.contacts[omer.id] = contactOf(omer);
+    const fromOmer = chainOf(omer, john.id);
+    const { texts } = watch(john);
+    john.start();
+    feed(fromOmer({ type: 'chat', text: 1 }));
+    await john.idle();
+    // The saved state without seenIds, which has its own cap (SEEN_LIMIT) and only grows with request ids.
+    const sizeOf = () => {
+      const st = john.toJSON();
+      return JSON.stringify({ ...st, book: { ...st.book, seenIds: [] } }).length;
+    };
+    let early = 0;
+    for (let i = 0; i < 10_000; i++) {
+      const k = generateKey();
+      // Every tenth one asks for contact (kept, but the pending list is capped, NOTES 46); the rest just write, some mid-chain.
+      const payload = i % 10 === 0 ? requestTo(k, john.id) : { type: 'chat', text: 'spam' };
+      feed(sealEnvelope(k, john.id, payload, { seq: 1 + (i % 3), prev: null }));
+      if (i % 500 === 499) {
+        await john.idle();
+        expect(Object.keys(john.channels.state).length).toBeLessThanOrEqual(1 + 64);
+      }
+      if (i === 999) early = sizeOf();
+    }
+    await john.idle();
+    const state = john.toJSON();
+    expect(Object.keys(john.channels.state).length).toBeLessThanOrEqual(1 + 64);
+    expect(Object.keys(state.channels).length).toBeLessThanOrEqual(1 + 64);
+    expect(Object.keys(state.book.pending)).toHaveLength(64);
+    expect(state.buffer).toEqual({});
+    // Past the first thousand, 9000 more fresh IDs leave the saved state the same size.
+    expect(sizeOf()).toBeLessThanOrEqual(early * 1.05);
+    expect(state.book.seenIds.length).toBeLessThanOrEqual(5000);
+    // The contact's channel came through untouched.
+    expect(state.channels[omer.id]).toMatchObject({ inSeq: 1 });
+    feed(fromOmer({ type: 'chat', text: 2 }));
+    await john.idle();
+    expect(texts).toEqual([1, 2]);
+  }, 300_000);
+
+  it("can't evict a contact's state: replay, gap/resend and rollback detection still hold", async () => {
+    const { t, feed, sent } = feedable();
+    const john = Agent.create(t, card);
+    const omer = generateKey();
+    john.book.state.contacts[omer.id] = contactOf(omer);
+    const fromOmer = chainOf(omer, john.id);
+    const { texts, drops } = watch(john);
+    john.start();
+    const early = [1, 2, 3].map((n) => fromOmer({ type: 'chat', text: n }));
+    for (const e of early) feed(e);
+    await john.idle();
+    // More strangers than any table we keep (64 pending requests), half of them asking for contact.
+    for (let i = 0; i < 500; i++) {
+      const k = generateKey();
+      feed(sealEnvelope(k, john.id, i % 2 ? requestTo(k, john.id) : { type: 'chat', text: 'spam' }, { seq: 1, prev: null }));
+    }
+    await john.idle();
+    expect(john.channels.state[omer.id]).toMatchObject({ inSeq: 3, inPrev: envelopeHash(early[2]) });
+    for (const e of early) feed(structuredClone(e)); // relay replays: silent duplicates
+    const [e4, e5] = [4, 5].map((n) => fromOmer({ type: 'chat', text: n }));
+    feed(e5); // a gap: buffered, and a resend goes out
+    await john.idle();
+    expect(texts).toEqual([1, 2, 3]);
+    expect(sent.map((e) => openEnvelope(omer, e)).map((o) => (o.ok ? o.payload : o))).toEqual([{ type: 'rdv/resend', from_seq: 4, to_seq: 4 }]);
+    feed(e4);
+    await john.idle();
+    expect(texts).toEqual([1, 2, 3, 4, 5]);
+    // A different envelope reusing seq 5 is still a rollback (NOTES 56).
+    feed(sealEnvelope(omer, john.id, { type: 'chat', text: 'old' }, { seq: 5, prev: envelopeHash(e4) }));
+    await john.idle();
+    expect(drops.filter((r) => r !== 'no grant for sender')).toEqual(['envelope chain fork (rollback)']);
+    expect(john.refusedChannels()).toMatchObject([{ peer: omer.id, kind: 'rollback', seq: 5 }]);
+  });
+
+  it('persists only kept channels across toJSON/fromJSON, and they work after it', async () => {
+    const { t, feed } = feedable();
+    let john = Agent.create(t, card);
+    const omer = generateKey();
+    const asker = generateKey();
+    john.book.state.contacts[omer.id] = contactOf(omer);
+    const fromOmer = chainOf(omer, john.id);
+    const fromAsker = chainOf(asker, john.id);
+    john.start();
+    feed(fromOmer({ type: 'chat', text: 1 }));
+    feed(fromAsker(requestTo(asker, john.id)));
+    for (let i = 0; i < 200; i++) feed(sealEnvelope(generateKey(), john.id, { type: 'chat', text: 'spam' }, { seq: 1, prev: null }));
+    await john.idle();
+    const saved = JSON.parse(JSON.stringify(john.toJSON()));
+    expect(Object.keys(saved.channels).sort()).toEqual([omer.id, asker.id].sort());
+    john.stop();
+    // State saved before NOTES 64 may still hold strangers' channels: they go on load.
+    const legacy = structuredClone(saved);
+    legacy.channels[generateKey().id] = { outSeq: 0, outPrev: null, inSeq: 4, inPrev: 'ab' };
+    john = Agent.fromJSON(legacy, t);
+    expect(Object.keys(john.channels.state).sort()).toEqual([omer.id, asker.id].sort());
+    expect(john.toJSON().channels).toEqual(saved.channels);
+    const { texts, drops } = watch(john);
+    john.start();
+    const pending = john.pendingRequests();
+    expect(pending.map((p) => p.request.from)).toEqual([asker.id]);
+    await john.grant(pending[0].request.id);
+    feed(fromOmer({ type: 'chat', text: 2 }));
+    feed(fromAsker({ type: 'chat', text: 'asker 2' }));
+    await john.idle();
+    expect(texts).toEqual([2, 'asker 2']);
+    expect(drops).toEqual([]);
+  });
+
+  it('a pending requester that becomes a contact keeps its chain from the request on', async () => {
+    const { t, feed, sent } = feedable();
+    const john = Agent.create(t, card);
+    const { texts, drops } = watch(john);
+    john.start();
+    const asker = generateKey();
+    const fromAsker = chainOf(asker, john.id);
+    // It wrote before asking: that envelope is refused and leaves nothing behind.
+    feed(fromAsker({ type: 'chat', text: 'too early' }));
+    await john.idle();
+    expect(drops).toEqual(['no grant for sender']);
+    expect(john.channels.state[asker.id]).toBeUndefined();
+    // Its request comes at seq 2: the chain starts there (NOTES 64), and the request is kept.
+    const reqEnv = fromAsker(requestTo(asker, john.id));
+    feed(reqEnv);
+    await john.idle();
+    expect(john.channels.state[asker.id]).toMatchObject({ inSeq: 2, inPrev: envelopeHash(reqEnv) });
+    feed(structuredClone(reqEnv)); // a relay replay of the request stays a duplicate
+    await john.idle();
+    expect(john.pendingRequests()).toHaveLength(1);
+    const contact = await john.grant(john.pendingRequests()[0].request.id);
+    expect(contact.peer).toBe(asker.id);
+    // After the grant its chain goes on from the request: in order, and a gap is resent.
+    const [m3, m4, m5] = [3, 4, 5].map((n) => fromAsker({ type: 'chat', text: n }));
+    feed(m3);
+    feed(m5);
+    await john.idle();
+    expect(texts).toEqual([3]);
+    const resends = sent.filter((e) => e.to === asker.id).map((e) => openEnvelope(asker, e)).flatMap((o) => (o.ok && o.payload.type === 'rdv/resend' ? [o.payload] : []));
+    expect(resends).toEqual([{ type: 'rdv/resend', from_seq: 4, to_seq: 4 }]);
+    feed(m4);
+    await john.idle();
+    expect(texts).toEqual([3, 4, 5]);
+    expect(drops).toEqual(['no grant for sender']);
+  });
+
+  it('a declined requester can ask again later', async () => {
+    const { t, feed } = feedable();
+    const john = Agent.create(t, card);
+    john.start();
+    const asker = generateKey();
+    const fromAsker = chainOf(asker, john.id);
+    feed(fromAsker(requestTo(asker, john.id)));
+    await john.idle();
+    john.decline(john.pendingRequests()[0].request.id);
+    expect(john.toJSON().channels[asker.id]).toBeUndefined(); // declined: nothing kept for it
+    feed(fromAsker({ type: 'chat', text: 'still there?' })); // seq 2
+    await john.idle();
+    expect(john.channels.state[asker.id]).toBeUndefined();
+    const again = requestTo(asker, john.id); // a new request, at seq 3
+    feed(fromAsker(again));
+    await john.idle();
+    expect(john.pendingRequests().map((p) => p.request.id)).toEqual([again.id]);
+    expect(john.channels.state[asker.id]).toMatchObject({ inSeq: 3 });
+  });
+});
