@@ -342,7 +342,7 @@ export function claimListener(home: Home): () => void {
 export async function listen(home: Home, out: Output, opts: ListenOptions): Promise<void> {
   const releaseListener = claimListener(home);
   const config = home.readConfig();
-  const boot = Agent.fromJSON(home.readAgentState(), (key) => relayTransport(key, config.relays));
+  const boot = Agent.fromJSON(home.readAgentState(), (key) => relayTransport(key, config.relays, home));
   const real = boot.transport;
   let topics = (boot.card.discovery?.addresses ?? []).map(dtopic);
 

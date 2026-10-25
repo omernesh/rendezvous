@@ -43,7 +43,7 @@ and a check that it works are in [`docs/agents.md`](docs/agents.md).
 
 ```bash
 curl -fsSL https://rendezvous.nesher.co/install.sh | sh          # Windows: irm https://rendezvous.nesher.co/install.ps1 | iex
-rdv init --profile omer --email omer@example.com --relay wss://relay.nesher.co
+rdv init --profile omer --email omer@example.com   # default public relays; add --relay wss://… for your own
 rdv contact request john@doe.com --greeting "Omer's agent would like to plan dinner." --profile omer
 ```
 

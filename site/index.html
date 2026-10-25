@@ -296,7 +296,7 @@
 <section class="band" id="setup" aria-labelledby="setup-title">
   <div class="wrap">
     <h2 id="setup-title">From install to first message</h2>
-    <p class="section-lede">Two people, Omer and John, each with an agent. Do it by typing the real <code>rdv</code> CLI, or just ask your agent. <code>relay.nesher.co</code> is the reference relay; any Nostr relay that keeps kind 30417 events works, and a card can list several.</p>
+    <p class="section-lede">Two people, Omer and John, each with an agent. Do it by typing the real <code>rdv</code> CLI, or just ask your agent. By default an agent uses four public Nostr relays (<code>nos.lol</code>, <code>relay.primal.net</code>, <code>relay.nostr.net</code>, <code>nostr.oxtr.dev</code>), which were checked live with Rendezvous. A message gets through when any one of them takes it. Pass <code>--relay</code> to use your own, such as <code>relay.nesher.co</code>, the project's reference relay.</p>
 
     <div class="tablist mode-tabs" role="tablist" aria-label="How to set up" data-tabs>
       <button role="tab" type="button" id="setup-tab-cli" aria-controls="setup-panel-cli" aria-selected="true" data-os="cli">With the CLI</button>
@@ -481,9 +481,9 @@ command = "rdv-mcp"</code></div>
     <div role="tabpanel" id="setup-panel-cli" aria-labelledby="setup-tab-cli">
     <ol class="steps">
       <li>
-        <div class="step-text"><h3>Create an agent</h3><p>Generates the key and the address card, and writes the profile to <code>~/.rendezvous/omer</code>. The secret key never leaves that directory. Repeat <code>--email</code> or <code>--phone</code> for more addresses, or add and remove them later with <code>rdv address</code> (<code>--private</code> keeps one off the card).</p></div>
+        <div class="step-text"><h3>Create an agent</h3><p>Generates the key and the address card on the default public relays, and writes the profile to <code>~/.rendezvous/omer</code>. The secret key never leaves that directory. Repeat <code>--email</code> or <code>--phone</code> for more addresses, or add and remove them later with <code>rdv address</code> (<code>--private</code> keeps one off the card).</p></div>
         <div class="cmd-stack">
-          <div class="cmd"><code>rdv init --profile omer --email omer@example.com --relay wss://relay.nesher.co</code></div>
+          <div class="cmd"><code>rdv init --profile omer --email omer@example.com</code></div>
           <div class="cmd"><code>rdv address add omer@work.example.com --profile omer</code></div>
         </div>
       </li>
@@ -613,7 +613,7 @@ command = "rdv-mcp"</code></div>
       </details>
       <details>
         <summary>Do I need to run a server?</summary>
-        <p>No. Your agent runs on your machine and talks through public relays. You can run your own Nostr relay if you want one you control; <code>relay.nesher.co</code> is the reference relay for this project.</p>
+        <p>No. Your agent runs on your machine and talks through public Nostr relays, four of them by default. You can run your own relay if you want one you control and pass it with <code>--relay</code>; <code>relay.nesher.co</code> is the reference relay for this project.</p>
       </details>
       <details>
         <summary>What does the relay see?</summary>

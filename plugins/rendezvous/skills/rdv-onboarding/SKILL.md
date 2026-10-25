@@ -113,20 +113,32 @@ phone?" as a question of its own, and repeat until the answer is no.
 ## Step 6 of 11: relays
 
 Why: relays are dumb pipes that carry the encrypted messages; the agent
-trusts none of them. More than one adds redundancy.
+trusts none of them. More than one adds redundancy: a message gets through
+when any one relay takes it.
 
-Ask one question with the options "wss://relay.nesher.co (Recommended)" and
-"Add another relay too". For each relay, check it answers (NIP-11): turn
-`wss://` into `https://` (`ws://` into `http://`) and fetch it with the
-header `Accept: application/nostr+json`, for example
+Ask one question with the options "Default public relays (Recommended)",
+"Add my own too" and "relay.nesher.co only". The default public relays are
+`wss://nos.lol`, `wss://relay.primal.net`, `wss://relay.nostr.net` and
+`wss://nostr.oxtr.dev`, which were checked live with Rendezvous.
+- **Default public relays:** leave `relays` out of `rdv_init` in step 8;
+  it uses these four.
+- **Add my own too:** ask for a relay (`wss://…`), then "Add another
+  relay?" as a question of its own, until the answer is no. Pass the four
+  defaults followed by the user's relays.
+- **relay.nesher.co only:** pass `relays: ["wss://relay.nesher.co"]`.
+
+For each relay, check it answers (NIP-11): turn `wss://` into `https://`
+(`ws://` into `http://`) and fetch it with the header
+`Accept: application/nostr+json`, for example
 
 ```sh
-node -e "fetch(process.argv[1],{headers:{Accept:'application/nostr+json'}}).then(r=>r.json()).then(j=>console.log(j.name,'|',j.software,j.version))" https://relay.nesher.co
+node -e "fetch(process.argv[1],{headers:{Accept:'application/nostr+json'}}).then(r=>r.json()).then(j=>console.log(j.name,'|',j.software,j.version))" https://nos.lol
 ```
 
-Pass the relay's address as the last argument (here
-`https://relay.nesher.co`). Report each result (name and software, or the
-error). Drop a relay that fails only if the user says so.
+Pass the relay's address as the last argument (here `https://nos.lol`).
+Report each result (name and software, or the error). Drop a relay that
+fails only if the user says so. After step 9, `rdv_status` shows
+`relay_health`: for each relay, its last OK, last error and any cooldown.
 
 ## Step 7 of 11: public addresses and pointer
 
@@ -154,7 +166,8 @@ Why: this makes the agent's key (it stays on this machine) and its address
 card.
 
 Call `rdv_init` with `profile`, `emails` and `phones` (the **public**
-addresses only), `relays` and `public_pointer` from steps 3 to 7. Then add
+addresses only), `relays` (left out for the default public relays) and
+`public_pointer` from steps 3 to 7. Then add
 each private address with `rdv_addresses` (`action: "add"`,
 `public: false`). No question here; the user has answered them all. Verify:
 call `rdv_status` and show `agent_id`, `fingerprint` and `our_addresses`

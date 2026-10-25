@@ -29,7 +29,7 @@ inbound loop), so `rdv` and `rdv-mcp` share profiles.
 | `discovery` | §4.4 | `dtopic()`, address canonicalization, binding levels |
 | `contact` | §5 | Contact request / grant / revoke, and the contact book (policy, replay, rate limits) |
 | `envelope` | §6.4, §7 | Encrypted, signed envelopes; `seq`/`prev` ordering with gap detection |
-| `transport/nostr` | §6.2 | Nostr relay transport (kind 30417), re-subscribes when a relay drops |
+| `transport/nostr` | §6.2 | Nostr relay transport (kind 30417): re-subscribes when a relay drops; publishes with retries, per-relay pacing and cooldowns, and per-relay status (`relayStatus()`); `DEFAULT_RELAYS` |
 | `agent` | — | Ties it together: listen, discover, request, grant, send, receive |
 | `testing/relay` | — | In-memory Nostr relay on a localhost WebSocket, for tests and local demos |
 
@@ -49,6 +49,15 @@ john.start();
 await omer.requestContact('john@doe.com', "Omer's agent would like to plan dinner.");
 omer.once('contact', () => omer.send(john.id, { type: 'a2a/message', text: 'Thursday 20:00?' }));
 ```
+
+**Relays.** `DEFAULT_RELAYS` is the public set `rdv init` uses when no relay
+is given: `wss://nos.lol`, `wss://relay.primal.net`, `wss://relay.nostr.net`,
+`wss://nostr.oxtr.dev` (checked live, NOTES 11a). A publish counts as
+delivered when one relay answers `OK true`. Transient failures are retried
+twice with jittered backoff. A relay that answers `blocked`, `restricted` or
+`banned` is skipped for 30 minutes. Events are paced per relay (a burst of 6,
+then 3 per second). Each tunable is a `NostrTransportOptions` field (NOTES 69).
+An envelope's plaintext is at most 32 KiB (`MAX_PLAINTEXT_BYTES`, SPEC §6.4).
 
 Agent state serializes with `agent.toJSON()` and loads with `Agent.fromJSON()`.
 `packages/core/vectors/v1.json` holds interop test vectors: fixed keys, IDs,
@@ -120,6 +129,7 @@ State lives in a directory: `--home <dir>`, else `$RDV_HOME`, else
 |---|---|
 | `agent.json` | `Agent.toJSON()`, including the secret key (mode 600 where the OS supports it) |
 | `config.json` | profile, relays, addresses (public ones are on the card; `private: true` ones are kept here only), policy |
+| `relays.json` | per-relay diagnostics and cooldowns (last OK, last error), written after each publish and read by `rdv whoami` / `rdv_status` |
 | `inbox.jsonl` | received payloads, one JSON object per line |
 | `cards.json` | cards found by `rdv lookup`, so `contact request <agent-id>` can use them |
 | `negotiations.json` | dinner negotiations (the a2a engine state) |
@@ -133,8 +143,8 @@ State lives in a directory: `--home <dir>`, else `$RDV_HOME`, else
 
 | Command | Does |
 |---|---|
-| `rdv init --profile omer --email omer@example.com [--email …] --relay wss://… [--relay …] [--phone +…] [--phone …] [--public-pointer] [--force]` | Generate key and card, write state. Repeat `--email` / `--phone` for more addresses (canonicalized, repeats dropped, at most 8) |
-| `rdv whoami` | Print agent ID, fingerprint, addresses, card JSON (never the secret key) |
+| `rdv init --profile omer --email omer@example.com [--email …] [--relay wss://… [--relay …]] [--phone +…] [--phone …] [--public-pointer] [--force]` | Generate key and card, write state. Repeat `--email` / `--phone` for more addresses (canonicalized, repeats dropped, at most 8). Without `--relay`: `DEFAULT_RELAYS` (below). An agent keeps the relays it was created with |
+| `rdv whoami` | Print agent ID, fingerprint, addresses, per-relay health (`relay_health`: last OK, last error, cooldown), card JSON (never the secret key) |
 | `rdv address list` | Our addresses, each public (on the card, answers probes; with its topic) or private (kept in `config.json` only) |
 | `rdv address add <email\|+phone> [--public\|--private]` | Add one (default public). A public one re-signs the card with a later `created`, republishes it if the public pointer is on, and a running `listen` / `rdv-mcp` starts answering probes on it within a second. Duplicates (in any spelling) and a ninth address are refused |
 | `rdv address remove <email\|+phone>` | Remove one: probes on it are refused at once and its topic is dropped; with the public pointer on, the new card is also published on the removed topic, replacing the old one there. Contacts are kept (NOTES 63) |
@@ -254,12 +264,15 @@ CLI tests spawn the built `rdv`, so the CLI's `test` script builds first.
 
 **Live relays.** `npm run test:live` runs only `*.live.test.ts`, and those skip
 unless `RDV_LIVE_RELAYS` lists relays. They are never part of `npm test`.
+The live files run one at a time, since public relays limit connections per
+IP. Keep the volume modest: relay.damus.io banned the test pubkey after a few
+runs.
 
 ```bash
-RDV_LIVE_RELAYS=wss://nos.lol,wss://relay.damus.io npm run test:live
+RDV_LIVE_RELAYS=wss://nos.lol,wss://relay.primal.net,wss://relay.nostr.net,wss://nostr.oxtr.dev npm run test:live
 ```
 ```powershell
-$env:RDV_LIVE_RELAYS='wss://nos.lol,wss://relay.damus.io'; npm run test:live; Remove-Item Env:RDV_LIVE_RELAYS
+$env:RDV_LIVE_RELAYS='wss://nos.lol,wss://relay.primal.net,wss://relay.nostr.net,wss://nostr.oxtr.dev'; npm run test:live; Remove-Item Env:RDV_LIVE_RELAYS
 ```
 
 **Pre-push hook (replaces CI).** Enable it once per clone, from the repo root:

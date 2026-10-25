@@ -7,6 +7,7 @@
 //   negotiations.json  dinner negotiations (@rendezvous/a2a engine state)
 //   consent.json  confirm phrases for pending requests and meetings (written by the MCP server)
 //   holds.json   which calendar file holds each dinner hold, tentative or agreed (to release or finalize it)
+//   relays.json  per-relay diagnostics and cooldowns (last OK, last error), written after each publish
 //   events.jsonl  inbound events written by the home's one listener, plus rdv-mcp's own (behind rdv_inbox)
 //   events.lock  held while appending to events.jsonl
 //   lock         held while a command reads and writes state
@@ -15,7 +16,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync } from 'nod
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { emptyState, type NegotiationState } from '@rendezvous/a2a';
-import type { AddressCard, AgentState, DiscoveryAddress, GrantScope, InboundPolicy, Payload, Tier } from '@rendezvous/core';
+import type { AddressCard, AgentState, DiscoveryAddress, GrantScope, InboundPolicy, Payload, RelayStatus, Tier } from '@rendezvous/core';
 import { acquireLock, writeAtomic } from './fsutil.js';
 
 /**
@@ -137,6 +138,9 @@ export class Home {
   }
   get holdsPath() {
     return join(this.dir, 'holds.json');
+  }
+  get relaysPath() {
+    return join(this.dir, 'relays.json');
   }
   get lockPath() {
     return join(this.dir, 'lock');
@@ -261,6 +265,35 @@ export class Home {
     return parseJsonLines(readFileSync(this.inboxPath, 'utf8'));
   }
 
+  /** Relay diagnostics saved by earlier processes; empty when missing or unreadable (they are diagnostics only). */
+  readRelayStatus(): RelayStatus[] {
+    try {
+      const s = JSON.parse(readFileSync(this.relaysPath, 'utf8')) as unknown;
+      return Array.isArray(s) ? s.filter((x): x is RelayStatus => !!x && typeof (x as RelayStatus).url === 'string') : [];
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Merge `status` into relays.json: per relay, the newer record wins (another
+   * process, e.g. the listener, may have published since). Never throws: a
+   * lost diagnostic must not fail a send.
+   */
+  saveRelayStatus(status: RelayStatus[]): void {
+    const stamp = (r: RelayStatus) => Math.max(Date.parse(r.last_ok ?? '') || 0, Date.parse(r.last_error?.at ?? '') || 0);
+    try {
+      const merged = new Map(this.readRelayStatus().map((r) => [r.url, r]));
+      for (const r of status) {
+        const old = merged.get(r.url);
+        if (!old || stamp(r) >= stamp(old)) merged.set(r.url, r);
+      }
+      writeAtomic(this.relaysPath, JSON.stringify([...merged.values()].slice(-64), null, 2) + '\n', 0o644);
+    } catch {
+      // diagnostics only
+    }
+  }
+
   /** `rdv init --force`: drop everything derived from the old key. */
   reset(): void {
     for (const p of [
@@ -273,6 +306,7 @@ export class Home {
       this.consentPath,
       this.eventsPath,
       this.holdsPath,
+      this.relaysPath, // bans and cooldowns were earned by the old key's carrier pubkey
     ]) {
 
       rmSync(p, { force: true });

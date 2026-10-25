@@ -45,8 +45,10 @@ import {
   Agent,
   type AgentState,
   type Contact,
+  DEFAULT_RELAYS,
   defaultTier,
   dtopic,
+  EnvelopeTooLargeError,
   fingerprint,
   type GrantCandidate,
   type GrantScope,
@@ -59,6 +61,7 @@ import {
   type Payload,
   topicForHint,
   type PendingRequest,
+  RELAY_ERROR_KINDS,
   type Tier,
   type Transport,
 } from '@rendezvous/core';
@@ -87,6 +90,7 @@ import {
   meetingDigest,
   meetingScope,
   type NegotiateOptions,
+  relayHealth,
   relayTransport,
   requestContactTo,
   SWEEP_MS,
@@ -158,6 +162,8 @@ export interface RdvMcpOptions {
    * can't point the server at any other file.
    */
   calendarDirs?: string[];
+  /** Relays `rdv_init` uses when the model names none. Default: DEFAULT_RELAYS (the public set, NOTES 69). */
+  defaultRelays?: readonly string[];
 }
 
 class ToolError extends Error {}
@@ -421,6 +427,7 @@ export class RdvMcpServer {
   private subscribed = false;
   private readonly humanLog: (line: string) => void;
   private readonly sweepMs: number;
+  private readonly defaultRelays: string[];
   private readonly pollMs: number;
   private readonly elicitTimeoutMs: number;
   private readonly calendarDirs: string[];
@@ -438,6 +445,7 @@ export class RdvMcpServer {
     // Lines can quote peer text: clean() keeps terminal escapes out of the human's console.
     this.humanLog = opts.humanLog ?? ((line) => process.stderr.write(`[rdv-mcp] ${clean(line)}\n`));
     this.sweepMs = opts.sweepMs ?? SWEEP_MS;
+    this.defaultRelays = [...(opts.defaultRelays ?? DEFAULT_RELAYS)];
     this.pollMs = opts.pollMs ?? 1000;
     this.elicitTimeoutMs = opts.elicitTimeoutMs ?? 10 * 60_000;
     this.events = new EventLog(this.home, (raw) => this.beforeVisible(raw));
@@ -469,7 +477,7 @@ export class RdvMcpServer {
   startListening(): void {
     if (this.real || !this.home.initialized()) return;
     const config = this.home.readConfig();
-    const boot = Agent.fromJSON(this.home.readAgentState(), (key) => relayTransport(key, config.relays));
+    const boot = Agent.fromJSON(this.home.readAgentState(), (key) => relayTransport(key, config.relays, this.home));
     this.real = boot.transport; // sends go out over it in both modes
     this.boot = { id: boot.id, key: boot.key, topics: (boot.card.discovery?.addresses ?? []).map(dtopic) };
     this.home.ensureDir();
@@ -739,7 +747,7 @@ export class RdvMcpServer {
    */
   private modelSafeError(tool: string, err: unknown): string {
     const msg = err instanceof Error ? err.message : String(err);
-    if (err instanceof ToolError || err instanceof NegotiationError) return msg;
+    if (err instanceof ToolError || err instanceof NegotiationError || err instanceof EnvelopeTooLargeError) return msg;
     if (err instanceof CliError && !msg.startsWith('cannot read ')) return msg;
     this.humanLog(`error in ${tool}: ${msg}`);
     return `${tool} failed; the details are in the rdv-mcp server log (stderr).`;
@@ -789,7 +797,7 @@ export class RdvMcpServer {
 
     this.tool(
       'rdv_init',
-      'Create this agent: a new key and address card for the given emails and/or phones on the given relays, then start listening. ' +
+      'Create this agent: a new key and address card for the given emails and/or phones on the given relays (none: the default public relays), then start listening. ' +
         `Every address given here is public: listed on the card, so a probe for it finds this agent (add a private one later with rdv_addresses). At most ${MAX_ADDRESSES} addresses. ` +
         'If an agent already exists here it is kept and returned. Optional calendar/window/tz set the JSON calendar used for dinner negotiations.',
       {
@@ -798,7 +806,11 @@ export class RdvMcpServer {
         phones: z.array(z.string().max(32)).max(MAX_ADDRESSES).optional().describe('Phone numbers in E.164, with a leading +'),
         email: z.string().max(320).optional().describe('One email (same as emails: [email])'),
         phone: z.string().max(32).optional().describe('One phone, E.164 with a leading + (same as phones: [phone])'),
-        relays: z.array(z.string().max(512)).max(8).optional().describe('Nostr relay URLs (ws:// or wss://); required for a new agent'),
+        relays: z
+          .array(z.string().max(512))
+          .max(8)
+          .optional()
+          .describe(`Nostr relay URLs (ws:// or wss://). Omit for the default public relays: ${this.defaultRelays.join(', ')}`),
         public_pointer: z.boolean().optional().describe('Also publish the card under the address so others can find it with rdv_discover'),
         calendar: z.string().optional().describe('Path to a JSON calendar file'),
         window: z.string().optional().describe('When you are willing to meet, e.g. "next week evenings"'),
@@ -808,11 +820,10 @@ export class RdvMcpServer {
         await this.applySettings(a);
         let created = false;
         if (!home.initialized()) {
-          if (!a.relays?.length) throw new ToolError('relays are required to create an agent');
           for (const x of [a.email, ...(a.emails ?? []), a.phone, ...(a.phones ?? [])]) if (x !== undefined) strictAddress(x);
           await initHome(home, {
             profile: a.profile ?? 'default',
-            relays: a.relays,
+            relays: a.relays?.length ? a.relays : this.defaultRelays,
             // The singular forms are aliases; repeats collapse (initHome dedupes canonical forms).
             emails: [...(a.email ? [a.email] : []), ...(a.emails ?? [])],
             phones: [...(a.phone ? [a.phone] : []), ...(a.phones ?? [])],
@@ -825,9 +836,13 @@ export class RdvMcpServer {
       },
     );
 
-    this.tool('rdv_status', 'This agent: ID, fingerprint, relays, contacts, pending request count, negotiation settings.', {}, async () => this.status(), {
-      readOnlyHint: true,
-    });
+    this.tool(
+      'rdv_status',
+      'This agent: ID, fingerprint, relays (relay_health: per relay the last OK, the last error and any cooldown), contacts, pending request count, negotiation settings.',
+      {},
+      async () => this.status(),
+      { readOnlyHint: true },
+    );
 
     this.tool(
       'rdv_addresses',
@@ -1234,6 +1249,16 @@ export class RdvMcpServer {
       addresses: config.addresses.map((a) => a.value),
       our_addresses: addressViews(config).map(addressOut),
       relays: config.relays,
+      // Relay text (an OK-false message, a connection error), never peer text; quarantined all the same.
+      relay_health: relayHealth(this.home, config).map((r) => ({
+        url: safe(r.url),
+        last_ok: r.last_ok === null ? null : safe(r.last_ok),
+        last_error:
+          r.last_error === null
+            ? null
+            : { at: safe(r.last_error.at), kind: oneOf(RELAY_ERROR_KINDS)(r.last_error.kind), detail: untrusted(r.last_error.message) },
+        cooldown_until: r.cooldown_until === null ? null : safe(r.cooldown_until),
+      })),
       public_pointer: config.public_pointer,
       listening: this.listening,
       inbound: this.mode,

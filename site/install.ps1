@@ -133,7 +133,7 @@
   Write-Host @"
 
 Next steps:
-  rdv init --profile omer --email omer@example.com --relay wss://relay.nesher.co
+  rdv init --profile omer --email omer@example.com   # the default public relays; --relay wss://... for your own
   rdv whoami --profile omer
   rdv listen --profile omer
 

@@ -23,8 +23,8 @@ const COMMON: Options = {
 
 const COMMANDS: Record<string, Command> = {
   init: {
-    usage: 'rdv init --profile omer --email omer@example.com [--email …] --relay wss://… [--relay …] [--phone +…] [--phone …] [--public-pointer] [--force]',
-    summary: 'Generate a key and card, write state',
+    usage: 'rdv init --profile omer --email omer@example.com [--email …] [--relay wss://… [--relay …]] [--phone +…] [--phone …] [--public-pointer] [--force]',
+    summary: 'Generate a key and card, write state (no --relay: the default public relays)',
     args: 0,
     options: {
       email: { type: 'string', multiple: true },

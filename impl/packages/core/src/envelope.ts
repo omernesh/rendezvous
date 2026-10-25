@@ -17,6 +17,24 @@ import { type Signed, signDoc, verifyDoc } from './sign.js';
 
 export const ENVELOPE_ALG = 'x25519+aes256gcm';
 
+/**
+ * Largest envelope plaintext (the payload's canonical JSON, UTF-8), SPEC §6.4.
+ * Sealed, such an envelope is about 45 KB as a Nostr event, well under the
+ * 128 KB message cap of the smallest relay we use (NOTES 70).
+ */
+export const MAX_PLAINTEXT_BYTES = 32 * 1024;
+
+/** AES-GCM adds a 16-byte tag; base64 of the largest ciphertext we accept. */
+const MAX_CIPHERTEXT_B64 = Math.ceil((MAX_PLAINTEXT_BYTES + 16) / 3) * 4;
+
+/** Thrown by `sealEnvelope` for a payload over MAX_PLAINTEXT_BYTES. Holds no payload content. */
+export class EnvelopeTooLargeError extends Error {
+  constructor(readonly bytes: number) {
+    super(`payload is ${bytes} bytes; an envelope carries at most ${MAX_PLAINTEXT_BYTES} bytes of plaintext (SPEC §6.4)`);
+    this.name = 'EnvelopeTooLargeError';
+  }
+}
+
 export interface EnvelopeHeader {
   v: 1;
   from: string;
@@ -68,8 +86,10 @@ export function sealEnvelope(
   const esk = x25519.utils.randomPrivateKey();
   const epk = x25519.getPublicKey(esk);
   const key = deriveKey(x25519.getSharedSecret(esk, recipientPub), epk, recipientPub);
+  const plain = canonicalBytes(payload);
+  if (plain.length > MAX_PLAINTEXT_BYTES) throw new EnvelopeTooLargeError(plain.length);
   const nonce = randomBytes(12);
-  const ciphertext = gcm(key, nonce, canonicalBytes(header)).encrypt(canonicalBytes(payload));
+  const ciphertext = gcm(key, nonce, canonicalBytes(header)).encrypt(plain);
   return signDoc<EnvelopeBody>(
     {
       ...header,
@@ -86,6 +106,10 @@ export function openEnvelope(recipient: AgentKey, input: unknown, now: Date = ne
   if (!e || e.v !== 1 || !isAgentId(e.from) || !Number.isSafeInteger(e.seq) || e.seq < 1) return { ok: false, reason: 'malformed' };
   if (e.to !== recipient.id) return { ok: false, reason: 'not addressed to us' };
   if (!e.content || e.content.alg !== ENVELOPE_ALG) return { ok: false, reason: 'unsupported alg' };
+  // Before the signature check and decryption: a length is cheap (SPEC §6.4).
+  if (typeof e.content.ciphertext !== 'string' || e.content.ciphertext.length > MAX_CIPHERTEXT_B64) {
+    return { ok: false, reason: 'too large' };
+  }
   if (!verifyDoc(e, e.from)) return { ok: false, reason: 'bad signature' };
   const created = parseTimestamp(e.created);
   if (created === null) return { ok: false, reason: 'bad created' };
@@ -100,6 +124,7 @@ export function openEnvelope(recipient: AgentKey, input: unknown, now: Date = ne
     const plain = gcm(key, b64decode(e.content.nonce), canonicalBytes(headerOf(e))).decrypt(
       b64decode(e.content.ciphertext),
     );
+    if (plain.length > MAX_PLAINTEXT_BYTES) return { ok: false, reason: 'too large' };
     const payload = JSON.parse(new TextDecoder().decode(plain)) as Payload;
     if (!payload || typeof payload.type !== 'string') return { ok: false, reason: 'payload without type' };
     return { ok: true, payload, envelope: e };
