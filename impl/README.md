@@ -141,6 +141,11 @@ State lives in a directory: `--home <dir>`, else `$RDV_HOME`, else
 | `negotiations.json` | dinner negotiations (the a2a engine state) |
 | `tasks.json` | general tasks (the tasks/v1 engine state) and, per task, the draft waiting for your release |
 | `audit.jsonl` | each task gate passed: by the grant (`auto`, `notify`) or by you (bounded to its last 1000 lines) |
+| `files.json` | files you prepared (their keys and nonces; mode 600), for the release view and for sending |
+| `files/outgoing/`, `files/incoming/<task>/` | the encrypted copies to upload, and files fetched from peers (quarantine: mode 600, `.quarantine` after active extensions) |
+| `autoapprove.json` | contacts on auto-approve, each entry MACed with the agent key and bound to the contact's grant (mode 600; never edit it, a hand-written file approves nothing) |
+| `owner-secret.json` | the owner passphrase as salted scrypt, and its lockout counters (mode 600) |
+| `owner.json` | the owner's settings (`direct_transfer`), MACed with the agent key; a hand-written file is ignored |
 | `consent.json` | salted scrypt hashes of the confirm phrases for pending requests, probe answers and held dinners, each bound to what the human was shown (written by `rdv-mcp`; `contact pending` and `dinner list` issue and show a fresh phrase in text mode) |
 | `holds.json` | which calendar file holds each tentative dinner hold, so `dinner confirm`/`cancel` can finalize or release it |
 | `events.jsonl` | shared event log: what the home's listener handled, plus `rdv-mcp`'s own events; `rdv_inbox` is a view of it |
@@ -177,8 +182,13 @@ State lives in a directory: `--home <dir>`, else `$RDV_HOME`, else
 | `rdv task list` | Tasks both ways, with what waits for you: the `--code` for `approve` and `release` (and, in text mode, the MCP server's confirm phrases). Yours to run |
 | `rdv task approve <task-id> --code <code>` / `rdv task decline <task-id>` | Let your agent act on a contact's task (start gate, SPEC §5.5), or refuse it. `--code` is refused if the task changed since you reviewed it. `approve` is yours to run |
 | `rdv task submit <task-id> --text "…" [--name …] [--complete]` / `rdv task ask <task-id> --text "…"` / `rdv task finish <task-id> [--failed] [--text …]` | Draft a result, a question or the end of a contact's task; a draft leaves only when released |
+| `rdv task submit <task-id> --file <sha256>=<https-url>… [--inline <path>…]` | Attach files by reference (or up to 16 KiB inline) to the draft. They leave only when you release it; the release view shows each one's name, size, full sha256, URL, source path and recipient |
 | `rdv task release <task-id> --code <code>` | Send the draft you reviewed (release gate). Yours to run |
 | `rdv task cancel <task-id>` / `rdv task input <task-id> --text "…"` | Withdraw a task you requested, or answer its executor's question |
+| `rdv file prepare <path> [--name …] [--mime …] [--plain]` | Encrypt one of your files under a fresh key and write the copy (`files/outgoing/<sha256>.bin`) for you to upload anywhere a peer can fetch over https. Nothing is sent. Refuses anything inside a Rendezvous home (NOTES 77) |
+| `rdv file list` | Prepared files, files peers sent for your tasks (not fetched), direct-transfer requests and the setting |
+| `rdv file fetch <task-id> [--file <n\|sha256>]` | Fetch one file a peer sent, only for a task you started (or a result of a task you requested): https only, no credentials, no private addresses, 25 MiB cap, hash and decryption checked. Saved in quarantine (`files/incoming/<task>/`, mode 600) |
+| `rdv file decline-transfer <transfer-id>` / `rdv file direct-transfer on\|off` | Say no to a contact's direct-transfer request; or your setting for them (default off: declined; on: requests are shown, nothing connects on its own; no transfer protocol exists yet). The setting is yours to run |
 | `rdv contact auto-approve <agent-id\|label> all [--until 7d]` / `… off` | Let one trusted contact's tasks start and their results leave without asking you (SPEC §5.5.1, "dangerous mode"): needs your own terminal, shows a warning, asks for your owner passphrase. Ends on expiry, `off`, a revoke, block or new grant, or a fork (NOTES 77). Yours to run |
 | `rdv owner-secret set` | Set or change the owner passphrase that turning auto-approve on asks for: typed twice, never shown, stored as a scrypt hash; three misses lock it for a minute, doubling; audited, and `rdv whoami` shows when it was set (NOTES 77). `rdv init` in a terminal offers it too. Yours to run, in your own terminal |
 | `rdv owner-secret reset` | Forgot it, or `rdv whoami` shows a time you didn't set it: turns auto-approve off for every contact and forgets the passphrase (audited; refused while locked). Set a new one with `rdv owner-secret set` 10 minutes later; until then `rdv whoami` shows a reset banner. Yours to run, in your own terminal |
@@ -216,6 +226,34 @@ peer's text parts and decline reasons are shown as untrusted and cleaned.
 
 PowerShell quoting for `send`: `rdv send <id> --json '{\"type\":\"a2a/message\",\"text\":\"hi\"}'`
 (Windows PowerShell 5 strips bare inner quotes; PowerShell 7.3+ accepts the bash form).
+
+### Tasks and files: an example (user guide: [`docs/tasks.md`](../docs/tasks.md))
+
+Omer asks John's agent for a document review; John's side runs `rdv listen`.
+
+```bash
+# Omer: ask (John's grant to Omer must allow request/v1)
+rdv task request rdv1:… --text "Please review the attached Q4 plan"
+
+# John, in his own terminal: see what waits, with the codes
+rdv task list
+rdv task approve <task-id> --code <code>          # start gate: now his agent may act
+
+# John's agent drafts; John prepares a file, uploads the .bin, and attaches it
+rdv file prepare ./q4-review.pdf                  # prints the sha256 and the copy to upload
+rdv task submit <task-id> --text "Notes attached" --file <sha256>=https://files.example.com/q4 --complete
+rdv task list                                     # shows the draft and the file in full
+rdv task release <task-id> --code <code>          # release gate: only now does it leave
+
+# Omer: fetch it (only for a task he requested, or one he started)
+rdv file fetch <task-id> --file 1
+
+# Later: what passed without asking, and a trusted contact on auto-approve
+rdv audit --since 7d
+rdv owner-secret set                              # once, in your own terminal
+rdv contact auto-approve john@doe.com all --until 7d
+rdv contact auto-approve john@doe.com off
+```
 
 ### The dinner scenarios (PLAN §5.3)
 

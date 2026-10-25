@@ -50,7 +50,7 @@
 
 <main id="main">
 <div class="wrap docs-layout">
-  <div class="docs-aside"><nav class="docs-side" aria-label="Documentation"><ul><li><a href="/docs/">Docs home</a></li></ul><p class="side-group">Get started</p><ul><li><a href="/docs/agents.html">Setup per agent</a></li><li><a href="/docs/plugin.html">Claude Code plugin</a></li></ul><p class="side-group">Reference</p><ul><li><a href="/docs/cli.html">CLI and library</a></li><li><a href="/docs/mcp.html" aria-current="page">MCP tools</a></li></ul><p class="side-group">Protocol</p><ul><li><a href="/docs/spec.html">Protocol spec</a></li></ul><p class="side-group">Project</p><ul><li><a href="/docs/roadmap.html">Roadmap: tasks and groups</a></li><li><a href="/docs/contributing.html">Contributing</a></li></ul><p class="side-group">For LLMs</p><ul><li><a href="/llms.txt">llms.txt</a></li><li><a href="/llms-full.txt">llms-full.txt</a></li></ul></nav><details class="docs-menu"><summary>Docs menu</summary><nav aria-label="Documentation menu"><ul><li><a href="/docs/">Docs home</a></li></ul><p class="side-group">Get started</p><ul><li><a href="/docs/agents.html">Setup per agent</a></li><li><a href="/docs/plugin.html">Claude Code plugin</a></li></ul><p class="side-group">Reference</p><ul><li><a href="/docs/cli.html">CLI and library</a></li><li><a href="/docs/mcp.html" aria-current="page">MCP tools</a></li></ul><p class="side-group">Protocol</p><ul><li><a href="/docs/spec.html">Protocol spec</a></li></ul><p class="side-group">Project</p><ul><li><a href="/docs/roadmap.html">Roadmap: tasks and groups</a></li><li><a href="/docs/contributing.html">Contributing</a></li></ul><p class="side-group">For LLMs</p><ul><li><a href="/llms.txt">llms.txt</a></li><li><a href="/llms-full.txt">llms-full.txt</a></li></ul></nav></details></div>
+  <div class="docs-aside"><nav class="docs-side" aria-label="Documentation"><ul><li><a href="/docs/">Docs home</a></li></ul><p class="side-group">Get started</p><ul><li><a href="/docs/agents.html">Setup per agent</a></li><li><a href="/docs/plugin.html">Claude Code plugin</a></li><li><a href="/docs/tasks.html">Tasks and files</a></li></ul><p class="side-group">Reference</p><ul><li><a href="/docs/cli.html">CLI and library</a></li><li><a href="/docs/mcp.html" aria-current="page">MCP tools</a></li></ul><p class="side-group">Protocol</p><ul><li><a href="/docs/spec.html">Protocol spec</a></li></ul><p class="side-group">Project</p><ul><li><a href="/docs/roadmap.html">Roadmap: tasks and groups</a></li><li><a href="/docs/contributing.html">Contributing</a></li></ul><p class="side-group">For LLMs</p><ul><li><a href="/llms.txt">llms.txt</a></li><li><a href="/llms-full.txt">llms-full.txt</a></li></ul></nav><details class="docs-menu"><summary>Docs menu</summary><nav aria-label="Documentation menu"><ul><li><a href="/docs/">Docs home</a></li></ul><p class="side-group">Get started</p><ul><li><a href="/docs/agents.html">Setup per agent</a></li><li><a href="/docs/plugin.html">Claude Code plugin</a></li><li><a href="/docs/tasks.html">Tasks and files</a></li></ul><p class="side-group">Reference</p><ul><li><a href="/docs/cli.html">CLI and library</a></li><li><a href="/docs/mcp.html" aria-current="page">MCP tools</a></li></ul><p class="side-group">Protocol</p><ul><li><a href="/docs/spec.html">Protocol spec</a></li></ul><p class="side-group">Project</p><ul><li><a href="/docs/roadmap.html">Roadmap: tasks and groups</a></li><li><a href="/docs/contributing.html">Contributing</a></li></ul><p class="side-group">For LLMs</p><ul><li><a href="/llms.txt">llms.txt</a></li><li><a href="/llms-full.txt">llms-full.txt</a></li></ul></nav></details></div>
   <article class="docs-content">
     <p class="crumbs"><a href="/docs/">Docs</a> / Reference</p>
     <h1>MCP server and tools</h1>
@@ -192,6 +192,16 @@ the human reads in their own terminal (<code>rdv contact pending</code>), below.
 <td>action propose / confirm / cancel / status; agent_id, intent <code>dinner</code>, window, calendar, tz, minutes, place, area, expires, task_id, reason, confirm_phrase</td>
 <td>task ID and state; progress via <code>rdv_inbox</code>; <code>confirm</code> needs the human (below)</td>
 </tr>
+<tr>
+<td><code>rdv_task</code></td>
+<td>action <code>list</code> / <code>status</code> / <code>read</code> / <code>request</code> / <code>input</code> / <code>cancel</code> / <code>approve-start</code> / <code>decline</code> / <code>submit</code> / <code>approve-release</code>; task_id, agent_id or to, capability (default <code>request/v1</code>), text, input, data, expires, reason, kind (<code>result</code> / <code>question</code> / <code>finish</code>), name, files, inline_files, complete, outcome, confirm_phrase</td>
+<td>tasks with state (peer text as <code>untrusted_peer_text</code>); <code>read</code> adds the rules for handling a peer's task and changes nothing; <code>approve-start</code> and <code>approve-release</code> need the human (below). No result carries a phrase or a file key</td>
+</tr>
+<tr>
+<td><code>rdv_file</code></td>
+<td>action <code>prepare</code> / <code>list</code> / <code>fetch</code> / <code>decline-transfer</code>; path, name, mime_type, plain (prepare); task_id, file or sha256 (fetch); transfer_id</td>
+<td><code>prepare</code>: the encrypted copy for the human to upload (nothing is sent); <code>list</code>: prepared files, files peers sent (never fetched on arrival), transfer requests; <code>fetch</code>: path and metadata of a quarantined file; <code>decline-transfer</code>. There is no tool to accept a transfer or to set the direct-transfer setting</td>
+</tr>
 </tbody>
 </table></div>
 <p>Resource <code>rdv://inbox</code> holds the latest 50 events; the server supports
@@ -269,6 +279,27 @@ mode), or the human runs <code>rdv task approve &lt;task-id&gt; --code &lt;code&
 <code>rdv task release &lt;task-id&gt; --code &lt;code&gt;</code> in their own terminal. Each is
 bound to a digest of what the human saw: a re-request under the same task
 ID, or a changed draft, approves nothing (NOTES 76).</p>
+<p><strong>Files (issue #26, NOTES 77).</strong> Two gates and a quarantine, all in <code>rdv_task</code>
+and <code>rdv_file</code>:</p>
+<ul>
+<li><em>Attach:</em> <code>rdv_file</code> "prepare" encrypts a file the human named and writes
+    the copy to upload; nothing is sent. <code>rdv_task</code> "submit" attaches it by
+    <code>files</code> (sha256 and https URL) or <code>inline_files</code> (up to 16 KiB each). It
+    leaves only through "approve-release", and the form, the server's log and
+    <code>rdv task list</code> show each file's name, size, full sha256, URL, source path
+    and recipient. Paths inside a Rendezvous home and the secret files are
+    refused.</li>
+<li><em>Fetch:</em> "fetch" never runs on arrival. It needs a task whose start gate
+    the human passed (or a result of a task we requested), https only, no
+    credentials, no private or metadata addresses, 25 MiB, hash and
+    decryption checked, saved under <code>files/incoming/&lt;task&gt;/</code> (mode 600,
+    <code>.quarantine</code> after active extensions). The tool returns the path and
+    metadata; short text comes back only as <code>untrusted_peer_text</code>.</li>
+<li><em>Direct transfer</em> (<code>rdv/transfer</code>) is the human's setting (<code>rdv file
+    direct-transfer</code>, default off, in the MACed <code>owner.json</code>). A request is
+    shown, <code>decline-transfer</code> says no, and no transfer protocol is
+    implemented, so nothing connects.</li>
+</ul>
 <p><strong>Auto-approve (issue #25).</strong> The human can put one trusted contact on
 <code>auto_approve: all</code> from their own terminal (<code>rdv contact auto-approve
 &lt;contact&gt; all [--until 7d]</code>); that contact's tasks then start and their
@@ -328,8 +359,9 @@ need approval) and add deny rules for the home dir and <code>rdv contact pending
 (<code>plugins/rendezvous/hooks/consent-guard.mjs</code>) on every tool that refuses the
 consent and phrase-showing <code>rdv</code> commands (<code>contact grant</code>/<code>confirm</code>/<code>resync</code>/
 <code>label</code>/<code>pending</code>, <code>contact request &lt;agent-id&gt; --label</code>, <code>dinner confirm</code>/
-<code>cancel</code>/<code>list</code>, <code>listen --auto-grant</code>/<code>--auto-confirm</code>, <code>init --force</code>), any command naming <code>agent.json</code>,
-<code>agent.json.bak</code> or <code>consent.json</code>, and any read, edit, search or glob of a
+<code>cancel</code>/<code>list</code>, <code>task approve</code>/<code>release</code>/<code>list</code>, <code>contact auto-approve</code>, <code>owner-secret set</code>/<code>reset</code>, <code>file direct-transfer</code>,
+<code>listen --auto-grant</code>/<code>--auto-confirm</code>, <code>init --force</code>), any command naming <code>agent.json</code>,
+<code>agent.json.bak</code>, <code>consent.json</code>, <code>autoapprove.json</code>, <code>owner.json</code> or <code>owner-secret.json</code>, any pseudo-terminal, and any read, edit, search or glob of a
 Rendezvous home. It parses commands like a shell before matching. It is
 defence in depth, <strong>not a security boundary</strong>: a model with a shell can still
 get a command past it (NOTES 62). The boundary is the consent gate above. The strongest setup runs <code>rdv-mcp</code> as a

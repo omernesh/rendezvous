@@ -102,6 +102,8 @@ the human reads in their own terminal (`rdv contact pending`), below.
 | `rdv_send` | agent_id or to (a `local_label`), payload `{type, …}` (not `a2a/*`, `rdv/*`) | agent ID, fingerprint, envelope seq; `to` is refused when no contact, or more than one, has that label |
 | `rdv_inbox` | since cursor, limit, wait_seconds (≤ 60) | events + next_cursor |
 | `rdv_negotiate` | action propose / confirm / cancel / status; agent_id, intent `dinner`, window, calendar, tz, minutes, place, area, expires, task_id, reason, confirm_phrase | task ID and state; progress via `rdv_inbox`; `confirm` needs the human (below) |
+| `rdv_task` | action `list` / `status` / `read` / `request` / `input` / `cancel` / `approve-start` / `decline` / `submit` / `approve-release`; task_id, agent_id or to, capability (default `request/v1`), text, input, data, expires, reason, kind (`result` / `question` / `finish`), name, files, inline_files, complete, outcome, confirm_phrase | tasks with state (peer text as `untrusted_peer_text`); `read` adds the rules for handling a peer's task and changes nothing; `approve-start` and `approve-release` need the human (below). No result carries a phrase or a file key |
+| `rdv_file` | action `prepare` / `list` / `fetch` / `decline-transfer`; path, name, mime_type, plain (prepare); task_id, file or sha256 (fetch); transfer_id | `prepare`: the encrypted copy for the human to upload (nothing is sent); `list`: prepared files, files peers sent (never fetched on arrival), transfer requests; `fetch`: path and metadata of a quarantined file; `decline-transfer`. There is no tool to accept a transfer or to set the direct-transfer setting |
 
 Resource `rdv://inbox` holds the latest 50 events; the server supports
 `resources/subscribe` and sends `notifications/resources/updated` when events
@@ -184,6 +186,26 @@ mode), or the human runs `rdv task approve <task-id> --code <code>` /
 bound to a digest of what the human saw: a re-request under the same task
 ID, or a changed draft, approves nothing (NOTES 76).
 
+**Files (issue #26, NOTES 77).** Two gates and a quarantine, all in `rdv_task`
+and `rdv_file`:
+- *Attach:* `rdv_file` "prepare" encrypts a file the human named and writes
+  the copy to upload; nothing is sent. `rdv_task` "submit" attaches it by
+  `files` (sha256 and https URL) or `inline_files` (up to 16 KiB each). It
+  leaves only through "approve-release", and the form, the server's log and
+  `rdv task list` show each file's name, size, full sha256, URL, source path
+  and recipient. Paths inside a Rendezvous home and the secret files are
+  refused.
+- *Fetch:* "fetch" never runs on arrival. It needs a task whose start gate
+  the human passed (or a result of a task we requested), https only, no
+  credentials, no private or metadata addresses, 25 MiB, hash and
+  decryption checked, saved under `files/incoming/<task>/` (mode 600,
+  `.quarantine` after active extensions). The tool returns the path and
+  metadata; short text comes back only as `untrusted_peer_text`.
+- *Direct transfer* (`rdv/transfer`) is the human's setting (`rdv file
+  direct-transfer`, default off, in the MACed `owner.json`). A request is
+  shown, `decline-transfer` says no, and no transfer protocol is
+  implemented, so nothing connects.
+
 **Auto-approve (issue #25).** The human can put one trusted contact on
 `auto_approve: all` from their own terminal (`rdv contact auto-approve
 <contact> all [--until 7d]`); that contact's tasks then start and their
@@ -249,8 +271,9 @@ need approval) and add deny rules for the home dir and `rdv contact pending`
 (`plugins/rendezvous/hooks/consent-guard.mjs`) on every tool that refuses the
 consent and phrase-showing `rdv` commands (`contact grant`/`confirm`/`resync`/
 `label`/`pending`, `contact request <agent-id> --label`, `dinner confirm`/
-`cancel`/`list`, `listen --auto-grant`/`--auto-confirm`, `init --force`), any command naming `agent.json`,
-`agent.json.bak` or `consent.json`, and any read, edit, search or glob of a
+`cancel`/`list`, `task approve`/`release`/`list`, `contact auto-approve`, `owner-secret set`/`reset`, `file direct-transfer`,
+`listen --auto-grant`/`--auto-confirm`, `init --force`), any command naming `agent.json`,
+`agent.json.bak`, `consent.json`, `autoapprove.json`, `owner.json` or `owner-secret.json`, any pseudo-terminal, and any read, edit, search or glob of a
 Rendezvous home. It parses commands like a shell before matching. It is
 defence in depth, **not a security boundary**: a model with a shell can still
 get a command past it (NOTES 62). The boundary is the consent gate above. The strongest setup runs `rdv-mcp` as a

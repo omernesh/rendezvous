@@ -67,6 +67,12 @@ meeting. `rdv_grant` and `rdv_negotiate` succeed only when the human decides:
   `confirm_phrase`. Phrases are single-use and no tool result ever contains one.
 - Or approve in your own terminal with `rdv contact grant`.
 
+Tasks (asking a contact's agent for something, with files) work in every MCP
+client, because `rdv_task` and `rdv_file` are ordinary tools. A client without
+elicitation approves a task's start and its release with a phrase from `rdv task list`
+or with `rdv task approve` / `rdv task release` in your own terminal. See
+[Tasks and files](tasks.md).
+
 Elicitation support, as far as it could be checked:
 
 | Agent | Elicitation | Source |

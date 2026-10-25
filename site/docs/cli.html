@@ -50,12 +50,12 @@
 
 <main id="main">
 <div class="wrap docs-layout">
-  <div class="docs-aside"><nav class="docs-side" aria-label="Documentation"><ul><li><a href="/docs/">Docs home</a></li></ul><p class="side-group">Get started</p><ul><li><a href="/docs/agents.html">Setup per agent</a></li><li><a href="/docs/plugin.html">Claude Code plugin</a></li></ul><p class="side-group">Reference</p><ul><li><a href="/docs/cli.html" aria-current="page">CLI and library</a></li><li><a href="/docs/mcp.html">MCP tools</a></li></ul><p class="side-group">Protocol</p><ul><li><a href="/docs/spec.html">Protocol spec</a></li></ul><p class="side-group">Project</p><ul><li><a href="/docs/roadmap.html">Roadmap: tasks and groups</a></li><li><a href="/docs/contributing.html">Contributing</a></li></ul><p class="side-group">For LLMs</p><ul><li><a href="/llms.txt">llms.txt</a></li><li><a href="/llms-full.txt">llms-full.txt</a></li></ul></nav><details class="docs-menu"><summary>Docs menu</summary><nav aria-label="Documentation menu"><ul><li><a href="/docs/">Docs home</a></li></ul><p class="side-group">Get started</p><ul><li><a href="/docs/agents.html">Setup per agent</a></li><li><a href="/docs/plugin.html">Claude Code plugin</a></li></ul><p class="side-group">Reference</p><ul><li><a href="/docs/cli.html" aria-current="page">CLI and library</a></li><li><a href="/docs/mcp.html">MCP tools</a></li></ul><p class="side-group">Protocol</p><ul><li><a href="/docs/spec.html">Protocol spec</a></li></ul><p class="side-group">Project</p><ul><li><a href="/docs/roadmap.html">Roadmap: tasks and groups</a></li><li><a href="/docs/contributing.html">Contributing</a></li></ul><p class="side-group">For LLMs</p><ul><li><a href="/llms.txt">llms.txt</a></li><li><a href="/llms-full.txt">llms-full.txt</a></li></ul></nav></details></div>
+  <div class="docs-aside"><nav class="docs-side" aria-label="Documentation"><ul><li><a href="/docs/">Docs home</a></li></ul><p class="side-group">Get started</p><ul><li><a href="/docs/agents.html">Setup per agent</a></li><li><a href="/docs/plugin.html">Claude Code plugin</a></li><li><a href="/docs/tasks.html">Tasks and files</a></li></ul><p class="side-group">Reference</p><ul><li><a href="/docs/cli.html" aria-current="page">CLI and library</a></li><li><a href="/docs/mcp.html">MCP tools</a></li></ul><p class="side-group">Protocol</p><ul><li><a href="/docs/spec.html">Protocol spec</a></li></ul><p class="side-group">Project</p><ul><li><a href="/docs/roadmap.html">Roadmap: tasks and groups</a></li><li><a href="/docs/contributing.html">Contributing</a></li></ul><p class="side-group">For LLMs</p><ul><li><a href="/llms.txt">llms.txt</a></li><li><a href="/llms-full.txt">llms-full.txt</a></li></ul></nav><details class="docs-menu"><summary>Docs menu</summary><nav aria-label="Documentation menu"><ul><li><a href="/docs/">Docs home</a></li></ul><p class="side-group">Get started</p><ul><li><a href="/docs/agents.html">Setup per agent</a></li><li><a href="/docs/plugin.html">Claude Code plugin</a></li><li><a href="/docs/tasks.html">Tasks and files</a></li></ul><p class="side-group">Reference</p><ul><li><a href="/docs/cli.html" aria-current="page">CLI and library</a></li><li><a href="/docs/mcp.html">MCP tools</a></li></ul><p class="side-group">Protocol</p><ul><li><a href="/docs/spec.html">Protocol spec</a></li></ul><p class="side-group">Project</p><ul><li><a href="/docs/roadmap.html">Roadmap: tasks and groups</a></li><li><a href="/docs/contributing.html">Contributing</a></li></ul><p class="side-group">For LLMs</p><ul><li><a href="/llms.txt">llms.txt</a></li><li><a href="/llms-full.txt">llms-full.txt</a></li></ul></nav></details></div>
   <article class="docs-content">
     <p class="crumbs"><a href="/docs/">Docs</a> / Reference</p>
     <h1>CLI and library</h1>
     <p class="doc-meta">Rendered from <a href="https://github.com/omernesh/rendezvous/blob/main/impl/README.md">impl/README.md</a> on GitHub. <a href="/docs/cli.md">Markdown version</a> for LLMs.</p>
-    <details class="toc-m"><summary>On this page</summary><ul><li><a href="#rendezvouscore">@rendezvous/core</a></li><li><a href="#rendezvousa2a">@rendezvous/a2a</a></li><li><a href="#rdv-the-cli">rdv (the CLI)</a><ul><li><a href="#the-dinner-scenarios-plan-53">The dinner scenarios (PLAN §5.3)</a></li><li><a href="#the-contact-scenario-plan-45">The contact scenario (PLAN §4.5)</a></li></ul></li><li><a href="#rdv-mcp-the-mcp-server">rdv-mcp (the MCP server)</a></li><li><a href="#develop">Develop</a></li></ul></details>
+    <details class="toc-m"><summary>On this page</summary><ul><li><a href="#rendezvouscore">@rendezvous/core</a></li><li><a href="#rendezvousa2a">@rendezvous/a2a</a></li><li><a href="#rdv-the-cli">rdv (the CLI)</a><ul><li><a href="#tasks-and-files-an-example-user-guide-docstasksmd">Tasks and files: an example (user guide: docs/tasks.md)</a></li><li><a href="#the-dinner-scenarios-plan-53">The dinner scenarios (PLAN §5.3)</a></li><li><a href="#the-contact-scenario-plan-45">The contact scenario (PLAN §4.5)</a></li></ul></li><li><a href="#rdv-mcp-the-mcp-server">rdv-mcp (the MCP server)</a></li><li><a href="#develop">Develop</a></li></ul></details>
     <div class="prose">
 <p>TypeScript packages for the <a href="/docs/spec.html">Rendezvous</a> agent-to-agent contact
 protocol, built toward the two-agent dinner demo in <a href="https://github.com/omernesh/rendezvous/blob/main/PLAN.md">PLAN.md</a>.
@@ -344,6 +344,26 @@ npm run rdv -- --help                     # or: node packages/cli/dist/src/bin.j
 <td>each task gate passed: by the grant (<code>auto</code>, <code>notify</code>) or by you (bounded to its last 1000 lines)</td>
 </tr>
 <tr>
+<td><code>files.json</code></td>
+<td>files you prepared (their keys and nonces; mode 600), for the release view and for sending</td>
+</tr>
+<tr>
+<td><code>files/outgoing/</code>, <code>files/incoming/&lt;task&gt;/</code></td>
+<td>the encrypted copies to upload, and files fetched from peers (quarantine: mode 600, <code>.quarantine</code> after active extensions)</td>
+</tr>
+<tr>
+<td><code>autoapprove.json</code></td>
+<td>contacts on auto-approve, each entry MACed with the agent key and bound to the contact's grant (mode 600; never edit it, a hand-written file approves nothing)</td>
+</tr>
+<tr>
+<td><code>owner-secret.json</code></td>
+<td>the owner passphrase as salted scrypt, and its lockout counters (mode 600)</td>
+</tr>
+<tr>
+<td><code>owner.json</code></td>
+<td>the owner's settings (<code>direct_transfer</code>), MACed with the agent key; a hand-written file is ignored</td>
+</tr>
+<tr>
 <td><code>consent.json</code></td>
 <td>salted scrypt hashes of the confirm phrases for pending requests, probe answers and held dinners, each bound to what the human was shown (written by <code>rdv-mcp</code>; <code>contact pending</code> and <code>dinner list</code> issue and show a fresh phrase in text mode)</td>
 </tr>
@@ -476,12 +496,32 @@ npm run rdv -- --help                     # or: node packages/cli/dist/src/bin.j
 <td>Draft a result, a question or the end of a contact's task; a draft leaves only when released</td>
 </tr>
 <tr>
+<td><code>rdv task submit &lt;task-id&gt; --file &lt;sha256&gt;=&lt;https-url&gt;… [--inline &lt;path&gt;…]</code></td>
+<td>Attach files by reference (or up to 16 KiB inline) to the draft. They leave only when you release it; the release view shows each one's name, size, full sha256, URL, source path and recipient</td>
+</tr>
+<tr>
 <td><code>rdv task release &lt;task-id&gt; --code &lt;code&gt;</code></td>
 <td>Send the draft you reviewed (release gate). Yours to run</td>
 </tr>
 <tr>
 <td><code>rdv task cancel &lt;task-id&gt;</code> / <code>rdv task input &lt;task-id&gt; --text "…"</code></td>
 <td>Withdraw a task you requested, or answer its executor's question</td>
+</tr>
+<tr>
+<td><code>rdv file prepare &lt;path&gt; [--name …] [--mime …] [--plain]</code></td>
+<td>Encrypt one of your files under a fresh key and write the copy (<code>files/outgoing/&lt;sha256&gt;.bin</code>) for you to upload anywhere a peer can fetch over https. Nothing is sent. Refuses anything inside a Rendezvous home (NOTES 77)</td>
+</tr>
+<tr>
+<td><code>rdv file list</code></td>
+<td>Prepared files, files peers sent for your tasks (not fetched), direct-transfer requests and the setting</td>
+</tr>
+<tr>
+<td><code>rdv file fetch &lt;task-id&gt; [--file &lt;n\|sha256&gt;]</code></td>
+<td>Fetch one file a peer sent, only for a task you started (or a result of a task you requested): https only, no credentials, no private addresses, 25 MiB cap, hash and decryption checked. Saved in quarantine (<code>files/incoming/&lt;task&gt;/</code>, mode 600)</td>
+</tr>
+<tr>
+<td><code>rdv file decline-transfer &lt;transfer-id&gt;</code> / <code>rdv file direct-transfer on\|off</code></td>
+<td>Say no to a contact's direct-transfer request; or your setting for them (default off: declined; on: requests are shown, nothing connects on its own; no transfer protocol exists yet). The setting is yours to run</td>
 </tr>
 <tr>
 <td><code>rdv contact auto-approve &lt;agent-id\|label&gt; all [--until 7d]</code> / <code>… off</code></td>
@@ -533,6 +573,30 @@ duplicate, ignored, invalid). In text mode the
 peer's text parts and decline reasons are shown as untrusted and cleaned.</p>
 <p>PowerShell quoting for <code>send</code>: <code>rdv send &lt;id&gt; --json '{\"type\":\"a2a/message\",\"text\":\"hi\"}'</code>
 (Windows PowerShell 5 strips bare inner quotes; PowerShell 7.3+ accepts the bash form).</p>
+<h3 id="tasks-and-files-an-example-user-guide-docstasksmd">Tasks and files: an example (user guide: <a href="/docs/tasks.html"><code>docs/tasks.md</code></a>)<a class="anchor" href="#tasks-and-files-an-example-user-guide-docstasksmd" title="Link to this section" aria-label="Link to this section">#</a></h3>
+<p>Omer asks John's agent for a document review; John's side runs <code>rdv listen</code>.</p>
+<div class="codeblock"><pre tabindex="0"><code class="language-bash"># Omer: ask (John's grant to Omer must allow request/v1)
+rdv task request rdv1:… --text &quot;Please review the attached Q4 plan&quot;
+
+# John, in his own terminal: see what waits, with the codes
+rdv task list
+rdv task approve &lt;task-id&gt; --code &lt;code&gt;          # start gate: now his agent may act
+
+# John's agent drafts; John prepares a file, uploads the .bin, and attaches it
+rdv file prepare ./q4-review.pdf                  # prints the sha256 and the copy to upload
+rdv task submit &lt;task-id&gt; --text &quot;Notes attached&quot; --file &lt;sha256&gt;=https://files.example.com/q4 --complete
+rdv task list                                     # shows the draft and the file in full
+rdv task release &lt;task-id&gt; --code &lt;code&gt;          # release gate: only now does it leave
+
+# Omer: fetch it (only for a task he requested, or one he started)
+rdv file fetch &lt;task-id&gt; --file 1
+
+# Later: what passed without asking, and a trusted contact on auto-approve
+rdv audit --since 7d
+rdv owner-secret set                              # once, in your own terminal
+rdv contact auto-approve john@doe.com all --until 7d
+rdv contact auto-approve john@doe.com off
+</code></pre></div>
 <h3 id="the-dinner-scenarios-plan-53">The dinner scenarios (PLAN §5.3)<a class="anchor" href="#the-dinner-scenarios-plan-53" title="Link to this section" aria-label="Link to this section">#</a></h3>
 <p><code>packages/cli/scenarios/dinner.ts</code>: Omer and John each run
 <code>rdv listen --negotiate</code> with their own JSON calendar; Omer runs
@@ -600,7 +664,7 @@ the push if either fails.</p>
 implementation departs from or fills gaps in SPEC.md.</p>
     </div>
   </article>
-  <div class="docs-toc"><nav class="page-toc" aria-label="On this page"><p class="side-group">On this page</p><ul><li><a href="#rendezvouscore">@rendezvous/core</a></li><li><a href="#rendezvousa2a">@rendezvous/a2a</a></li><li><a href="#rdv-the-cli">rdv (the CLI)</a><ul><li><a href="#the-dinner-scenarios-plan-53">The dinner scenarios (PLAN §5.3)</a></li><li><a href="#the-contact-scenario-plan-45">The contact scenario (PLAN §4.5)</a></li></ul></li><li><a href="#rdv-mcp-the-mcp-server">rdv-mcp (the MCP server)</a></li><li><a href="#develop">Develop</a></li></ul></nav></div>
+  <div class="docs-toc"><nav class="page-toc" aria-label="On this page"><p class="side-group">On this page</p><ul><li><a href="#rendezvouscore">@rendezvous/core</a></li><li><a href="#rendezvousa2a">@rendezvous/a2a</a></li><li><a href="#rdv-the-cli">rdv (the CLI)</a><ul><li><a href="#tasks-and-files-an-example-user-guide-docstasksmd">Tasks and files: an example (user guide: docs/tasks.md)</a></li><li><a href="#the-dinner-scenarios-plan-53">The dinner scenarios (PLAN §5.3)</a></li><li><a href="#the-contact-scenario-plan-45">The contact scenario (PLAN §4.5)</a></li></ul></li><li><a href="#rdv-mcp-the-mcp-server">rdv-mcp (the MCP server)</a></li><li><a href="#develop">Develop</a></li></ul></nav></div>
 </div>
 </main>
 

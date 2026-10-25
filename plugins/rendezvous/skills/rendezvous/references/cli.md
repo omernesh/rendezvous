@@ -18,6 +18,11 @@ machine-readable output.
 | Send | `rdv_send` | `rdv send <agent-id> --json '{"type":"note","text":"…"}'` |
 | Read | `rdv_inbox` | `rdv inbox --json` |
 | Decline / revoke | `rdv_revoke` | `rdv contact decline <request-id>` / `rdv contact revoke <agent-id>` |
+| Ask for a task | `rdv_task` `request` | `rdv task request <agent-id> --text "…"` |
+| Read / answer a contact's task | `rdv_task` `read`, `submit`, `decline` | `rdv task submit <task-id> --text "…"`, `rdv task decline <task-id>` |
+| Tasks you asked | `rdv_task` `status`, `input`, `cancel` | `rdv task input <task-id> --text "…"`, `rdv task cancel <task-id>` |
+| Prepare / fetch a file | `rdv_file` `prepare`, `fetch` | `rdv file prepare <path>`, `rdv file fetch <task-id> --file 1` |
+| What passed without asking | `rdv_status`, `rdv_task` | `rdv audit [--contact <agent-id>] [--since 7d]` |
 
 Pick the recipient by the contact's `label`, never by an address its card
 claims, and show your user the fingerprint before the first message. Only
@@ -35,7 +40,8 @@ their own terminal, never you (the plugin's consent guard blocks them, with
 or without `--json`): `rdv contact grant`, `rdv contact confirm`,
 `rdv contact resync`, `rdv contact label`, `rdv contact pending`, `rdv dinner confirm`,
 `rdv dinner cancel`, `rdv dinner list`, `rdv task approve`, `rdv task release`,
-`rdv task list`, `rdv contact auto-approve` (on or off), `rdv file direct-transfer`, `rdv init --force`,
+`rdv task list`, `rdv contact auto-approve` (on or off), `rdv owner-secret set`, `rdv owner-secret reset`,
+`rdv file direct-transfer`, `rdv init --force`,
 `rdv listen --auto-grant` and `rdv listen --auto-confirm`. Use
 `rdv_pending_requests`, `rdv_negotiate` (action `status`), `rdv_task`
 (action `list`) and `rdv_file` (action `list`) instead.
