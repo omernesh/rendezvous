@@ -632,6 +632,27 @@ describe('peer rollback (issue #13)', () => {
     await john.idle();
     expect(texts).toEqual([1, 2, 3, 4, 5, 6, 8, 9]);
     expect(drops).toHaveLength(3);
+
+    // The relay replays the old chain around the new head (seq 4): old 4 reads as a rollback, old 5 as a fork, old 6 as a gap.
+    // no re-refusal, no buffering, no resend, before or after a restart.
+    const replayAll = async () => {
+      for (const e of sent) feed(structuredClone(e));
+      await john.idle();
+    };
+    await replayAll();
+    const again = JSON.parse(JSON.stringify(john.toJSON()));
+    john.stop();
+    john = Agent.fromJSON(again, t);
+    watch(john);
+    john.start();
+    await replayAll();
+    expect(drops).toHaveLength(3);
+    expect(john.refusedChannels()).toEqual([]);
+    expect(john.toJSON().buffer).toEqual({});
+    expect(john.toJSON().outbox[omer.id] ?? []).toEqual([]); // no rdv/resend went out
+    feed(sendFrom(omerState, 10, base + 33_000));
+    await john.idle();
+    expect(texts).toEqual([1, 2, 3, 4, 5, 6, 8, 9, 10]);
   });
 
   it("keeps a stranger's forks out of the owner's view", async () => {

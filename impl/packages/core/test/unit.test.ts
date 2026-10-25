@@ -289,6 +289,33 @@ describe('peer rollback (issue #13)', () => {
     expect(inn.acceptInbound(structuredClone(e)).kind).toBe('duplicate');
   });
 
+  it('after a re-sync, replays of the old chain stay duplicates on the gap and fork paths too, across a restart', () => {
+    const { sent, states, inn } = history(80);
+    const { ch, e } = rolledBack(states, 5); // seq 76
+    expect(inn.acceptInbound(e).kind).toBe('rollback');
+    inn.resync(omer.id);
+    expect(inn.acceptInbound(structuredClone(e)).kind).toBe('in-order');
+    // Old 77 has a prev that isn't our head (fork path); old 78..80 are past it (gap path).
+    for (const old of sent.slice(76)) expect(inn.acceptInbound(structuredClone(old)).kind).toBe('duplicate');
+    expect(inn.refused(omer.id)).toBeUndefined();
+    const restarted = new Channels(JSON.parse(JSON.stringify(inn.state)));
+    for (const old of sent) expect(restarted.acceptInbound(structuredClone(old)).kind).toBe('duplicate');
+    expect(restarted.refused(omer.id)).toBeUndefined();
+    const { seq, prev } = ch.nextOutbound(john.id);
+    const next = sealEnvelope(omer, john.id, { type: 'note' }, { seq, prev, now: new Date(t0 + 11_000_000) });
+    expect(restarted.acceptInbound(next).kind).toBe('in-order');
+  });
+
+  it('a re-sync of state saved before inNewest existed still never adopts the old chain', () => {
+    const { sent, inn } = history(5);
+    const legacy = new Channels({ [omer.id]: { outSeq: 0, outPrev: null, inSeq: 5, inPrev: inn.state[omer.id].inPrev } });
+    const twin = sealEnvelope(omer, john.id, { type: 'note' }, { seq: 5, prev: sent[4].prev, now: new Date(t0 + 60_000) });
+    expect(legacy.acceptInbound(twin).kind).toBe('rollback');
+    legacy.resync(omer.id);
+    for (const old of sent) expect(legacy.acceptInbound(structuredClone(old)).kind).toBe('duplicate');
+    expect(legacy.acceptInbound(structuredClone(twin)).kind).toBe('in-order');
+  });
+
   it('keeps refusal and re-sync across toJSON/fromJSON', () => {
     const { states, inn } = history(80);
     const { e } = rolledBack(states, 70);

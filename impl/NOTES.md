@@ -423,7 +423,14 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
     the MCP model never do (the MCP event carries a `next_step` that hands it
     to the human). A re-sync adopts the next envelope newer than `inNewest`
     as the chain head, so replays of the old chain can never take over;
-    envelopes refused in between are not replayed. `refused`/`resync`
+    envelopes refused in between are not replayed. The re-sync also sets
+    `inFloor` (the old chain's `inNewest`; for state without one, the
+    forking envelope's `created` − 1 ms): any envelope not newer than it is
+    a duplicate on every path. Without it a relay replaying the old chain
+    past a lower new head hit the gap or fork path and refused the channel
+    again with no human involved (security hook, MEDIUM). Without a re-sync
+    the same replays can't fork: they are the one chain we hold, so they
+    either match `prev` or fill a real gap. `refused`/`resync`/`inFloor`
     persist in `agent.json`. A stranger can fork only its own channel, so
     its drops read `envelope chain fork from a non-contact` and stay out of
     the event log (`STRANGER_DROPS`). `openEnvelope` now also rejects a

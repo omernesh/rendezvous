@@ -149,6 +149,12 @@ export interface ChannelState {
   refused?: RefusedChannel;
   /** The owner allowed a re-sync: the next inbound envelope newer than `inNewest` becomes the chain head. */
   resync?: true;
+  /**
+   * Set by a re-sync: the newest `created` of the chain it replaced. Anything
+   * not newer is a replay of that chain and stays a duplicate on every path
+   * (gap and fork included), so a relay can't re-refuse the channel.
+   */
+  inFloor?: number;
 }
 
 export interface RefusedChannel {
@@ -156,6 +162,8 @@ export interface RefusedChannel {
   /** The offending envelope's seq and hash (a relay replay of it stays silent). */
   seq: number;
   hash: string;
+  /** Its `created` (ms): the re-sync floor when the channel has no `inNewest` (state saved before it existed). */
+  created?: number;
   /** Our `inSeq` when it arrived. */
   accepted: number;
 }
@@ -206,6 +214,10 @@ export class Channels {
   resync(peer: string): void {
     const c = this.state[peer];
     if (!c?.refused) throw new Error(`channel with ${peer} is not refused`);
+    // Everything of the replaced chain is at or below this: it can never come back as a gap or fork.
+    const floor = c.inNewest ?? (c.refused.created === undefined ? undefined : c.refused.created - 1);
+    if (floor !== undefined) c.inFloor = Math.max(c.inFloor ?? floor, floor);
+    if (c.inNewest === undefined && floor !== undefined) c.inNewest = floor; // so only something newer is adopted
     delete c.refused;
     c.resync = true;
   }
@@ -226,7 +238,8 @@ export class Channels {
   }
 
   private refuse(c: ChannelState, kind: 'fork' | 'rollback', e: Envelope, hash: string): InboundOrder {
-    c.refused = { kind, seq: e.seq, hash, accepted: c.inSeq };
+    const created = parseTimestamp(e.created);
+    c.refused = { kind, seq: e.seq, hash, accepted: c.inSeq, ...(created === null ? {} : { created }) };
     return { kind, seq: e.seq, accepted: c.inSeq };
   }
 
@@ -236,6 +249,8 @@ export class Channels {
     const hash = envelopeHash(e);
     const created = parseTimestamp(e.created) ?? Number.NEGATIVE_INFINITY;
     const newer = c.inNewest === undefined || created > c.inNewest;
+    // A replay of a chain the owner re-synced away from (before gap or fork can be reported).
+    if (c.inFloor !== undefined && !(created > c.inFloor)) return { kind: 'duplicate' };
     if (c.resync) {
       // Only something newer than all we accepted can be the peer's current chain.
       if (!newer) return { kind: 'duplicate' };

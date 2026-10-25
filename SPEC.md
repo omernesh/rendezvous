@@ -756,6 +756,9 @@ where hole-punching fails (TURN relays carry the ciphertext).
   envelopes until the human re-syncs. A re-sync adopts the next envelope that
   is newer (`created`) than every envelope accepted from that peer; relay
   replays of the old chain are never newer, so they cannot become the head.
+  After a re-sync the receiver treats any envelope from that peer that is not
+  newer than the old chain's newest as a duplicate, whatever its `seq` or
+  `prev`, so replays cannot reopen a gap or refuse the peer again.
   Detection keeps bounded state: the hashes of the last few accepted envelopes
   (8 in the reference implementation) plus the newest accepted `created`. A
   reused `seq` below that window is detected by its `created` being newer than
