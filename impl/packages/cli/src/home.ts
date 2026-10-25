@@ -8,6 +8,8 @@
 //   tasks.json   general tasks (tasks/v1 engine state) and results waiting for release (mode 600)
 //   audit.jsonl  gates passed without asking the human (an `auto` start, a `notify`, auto-approve), every approval,
 //                and every auto-approve set/extend/off (bounded)
+//   files.json   files the owner prepared to send (key, upload copy, source path) and direct-transfer requests (mode 600)
+//   files/       outgoing/: upload copies (ciphertext); incoming/<task>/: fetched peer files, quarantined (mode 600)
 //   autoapprove.json  contacts our human put on auto-approve (issue #25; mode 600, MACed with the agent key, local only)
 //   consent.json  confirm phrases for pending requests and meetings (written by the MCP server)
 //   holds.json   which calendar file holds each dinner hold, tentative or agreed (to release or finalize it)
@@ -19,8 +21,8 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { emptyState, emptyTaskState, type NegotiationState, type TaskEngineState, type TaskPart } from '@rendezvous/a2a';
-import type { AddressCard, AgentState, DiscoveryAddress, GrantScope, InboundPolicy, Payload, RelayStatus, Tier } from '@rendezvous/core';
+import { emptyState, emptyTaskState, type FilePart, type NegotiationState, type TaskEngineState, type TaskPart } from '@rendezvous/a2a';
+import type { AddressCard, AgentState, DiscoveryAddress, FileEnc, GrantScope, InboundPolicy, Payload, RelayStatus, Tier, TransferState } from '@rendezvous/core';
 import { acquireLock, writeAtomic } from './fsutil.js';
 
 /**
@@ -39,6 +41,12 @@ export interface Config {
   addresses: ConfigAddress[];
   policy: { inbound: InboundPolicy; public: boolean };
   public_pointer: boolean;
+  /**
+   * The owner's setting for direct transfers (SPEC §7.7, `rdv/transfer`): off
+   * (absent) by default. Off, a peer's request for one is declined at once;
+   * on, it is shown to the owner, who decides. Nothing ever connects on its own.
+   */
+  direct_transfer?: boolean;
 }
 
 export interface InboxEntry {
@@ -56,6 +64,22 @@ export interface InboxEntry {
 export type ConsentAction = 'request' | 'candidate' | 'meeting' | 'cancel' | 'inbound' | 'task-start' | 'task-release';
 
 /**
+ * One of the owner's files in a draft, as the release gate shows it: what
+ * leaves (name, size, the hash of the bytes the peer fetches, where it is
+ * stored) and where it was read from. `source` is local only, never sent.
+ */
+export interface FileNote {
+  sha256: string;
+  size: number;
+  name?: string;
+  mimeType?: string;
+  source: string;
+  uri?: string;
+  encrypted: boolean;
+  inline?: true;
+}
+
+/**
  * What our side wants to send for a peer's task, held until our human
  * releases it (the release gate, SPEC §5.5): exactly the arguments the engine
  * is called with again once released.
@@ -66,6 +90,8 @@ export type ReleaseContent =
       artifact: { artifactId: string; name?: string; description?: string; parts: TaskPart[]; append?: boolean; lastChunk?: boolean };
       /** Also end the task `completed` once the artifact has left. */
       complete?: boolean;
+      /** The owner's files among its parts, as the human is shown them (covered by the release digest). */
+      files?: FileNote[];
     }
   | { kind: 'question'; text?: string; data?: Record<string, unknown> }
   | { kind: 'finish'; outcome: 'completed' | 'failed'; text?: string; data?: Record<string, unknown> };
@@ -82,6 +108,44 @@ export interface TaskHostState {
   v: 1;
   engine: TaskEngineState;
   releases: Record<string, PendingRelease>;
+  /**
+   * File parts the executor sent in artifacts for tasks we requested, by task
+   * ID, so the owner's agent can fetch them later (never on arrival). Pruned
+   * with their task.
+   */
+  received?: Record<string, { peer: string; files: FilePart[] }>;
+}
+
+/** A file the owner prepared to send (`rdv file prepare`): encrypted under a fresh key unless sent plain. */
+export interface OutgoingFile {
+  /** SHA-256 of the bytes a peer fetches (the ciphertext when encrypted). */
+  sha256: string;
+  size: number;
+  name?: string;
+  mimeType?: string;
+  /** Where the owner's file was read from: shown at the release gate, never sent. */
+  source: string;
+  /** The copy to upload wherever the owner likes (under files/outgoing/). */
+  upload: string;
+  /** Key, nonce and plaintext hash. The key leaves only inside an envelope. */
+  enc?: FileEnc;
+  plain_sha256: string;
+  created: string;
+}
+
+/** A peer's request to transfer one of our files directly (`rdv/transfer`). */
+export interface TransferRecord {
+  peer: string;
+  state: TransferState;
+  created: string;
+  updated: string;
+}
+
+/** files.json. */
+export interface FilesState {
+  v: 1;
+  outgoing: Record<string, OutgoingFile>;
+  transfers: Record<string, TransferRecord>;
 }
 
 /** Why auto-approve for a contact ended (issue #25). `owner`: our human turned it off. */
@@ -218,6 +282,15 @@ export class Home {
   get tasksPath() {
     return join(this.dir, 'tasks.json');
   }
+  get filesPath() {
+    return join(this.dir, 'files.json');
+  }
+
+  /** Upload copies (outgoing/) and quarantined downloads (incoming/). */
+  get filesDir() {
+    return join(this.dir, 'files');
+  }
+
   get auditPath() {
     return join(this.dir, 'audit.jsonl');
   }
@@ -332,9 +405,23 @@ export class Home {
     if (!existsSync(this.tasksPath)) return { v: 1, engine: emptyTaskState(), releases: {} };
     const s = readJson<TaskHostState>(this.tasksPath);
     const ok = (o: unknown) => typeof o === 'object' && o !== null && !Array.isArray(o);
-    if (s?.v !== 1 || !ok(s.engine) || s.engine.v !== 1 || !ok(s.engine.tasks) || !ok(s.releases)) throw new CliError(`unrecognized ${this.tasksPath}`);
+    if (s?.v !== 1 || !ok(s.engine) || s.engine.v !== 1 || !ok(s.engine.tasks) || !ok(s.releases) || (s.received !== undefined && !ok(s.received))) {
+      throw new CliError(`unrecognized ${this.tasksPath}`);
+    }
     s.engine.dropped ??= {};
     return s;
+  }
+
+  readFiles(): FilesState {
+    if (!existsSync(this.filesPath)) return { v: 1, outgoing: {}, transfers: {} };
+    const s = readJson<FilesState>(this.filesPath);
+    const ok = (o: unknown) => typeof o === 'object' && o !== null && !Array.isArray(o);
+    if (s?.v !== 1 || !ok(s.outgoing) || !ok(s.transfers)) throw new CliError(`unrecognized ${this.filesPath}`);
+    return s;
+  }
+
+  writeFiles(state: FilesState): void {
+    writeAtomic(this.filesPath, JSON.stringify(state, null, 2) + '\n', 0o600);
   }
 
   writeTasks(state: TaskHostState): void {
@@ -439,6 +526,7 @@ export class Home {
       this.cardsPath,
       this.negotiationsPath,
       this.tasksPath,
+      this.filesPath, // keys of files prepared under the old identity; downloads in files/ are kept
       this.auditPath,
       this.autoApprovePath,
       this.consentPath,

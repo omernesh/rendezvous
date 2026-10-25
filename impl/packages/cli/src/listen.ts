@@ -46,6 +46,7 @@ import {
   requestView,
 } from './output.js';
 import { subjectOf, sweepAutoApprove } from './autoapprove.js';
+import { isTransferPayload, transferEventText, transfersInbound } from './files.js';
 import { cardRefreshText, hostCardCapabilities, hostRegistry, refreshHostCard, taskEventText, taskEventView, tasksExpiring, tasksInbound, tasksRoute } from './tasks.js';
 import { relayTransport } from './transport.js';
 
@@ -312,6 +313,21 @@ async function routeInbound(
   sweep: boolean,
   events: Emitted[],
 ): Promise<void> {
+  // Direct-transfer requests (SPEC §7.7): declined, or shown to the owner; nothing connects.
+  const transfers = inbox.filter((e) => isTransferPayload(e.payload));
+  if (transfers.length) {
+    for (const e of transfers) {
+      const m = messageEvents.get(e);
+      if (m) m.obj.routed = 'files';
+    }
+    try {
+      const r = await transfersInbound(home, agent, transfers, home.readConfig().direct_transfer === true);
+      for (const ev of r.events) events.push({ obj: { ...ev }, human: transferEventText(ev, clean) });
+      for (const message of r.errors) events.push({ obj: { event: 'error', message }, human: `error: ${clean(message)}` });
+    } catch (err) {
+      events.push({ obj: { event: 'error', message: (err as Error).message }, human: `error: ${clean((err as Error).message)}` });
+    }
+  }
   let route: { tasks: InboxEntry[]; rest: InboxEntry[] } | undefined;
   try {
     route = tasksRoute(home, inbox);

@@ -11,12 +11,16 @@
 // shape of `input` and of result `data` parts) is checked by the engine, which
 // knows the task's capability (capabilities.ts).
 //
-// File parts are accepted as opaque here (inline bytes up to 16 KiB, or a
-// URI), and never fetched: the files slice (SPEC §7.7) adds the hash rules.
+// File parts are bounded but opaque here (inline bytes up to 16 KiB, a URI, or
+// a reference offered only by direct transfer), and never fetched. The files
+// extension's rules (SPEC §7.7: hash, size, encryption, URL checks) are core's
+// (`parseFilePart`), applied by the host before a payload reaches the engine.
 import { isCapabilityUri, MAX_URI_CHARS } from './capabilities.js';
 import { EXTENSIONS, isUuid, UNSUPPORTED_KEY, type UnsupportedMessage, type UnsupportedNotice, verbName } from './model.js';
 import { parseInstant } from './time.js';
 
+/** The files extension (SPEC §7.7): its metadata key on a file part, and listed in `extensions` with file parts. */
+export const FILES_URI = 'https://rendezvous.nesher.co/ext/files/v1';
 /** The tasks lifecycle extension (SPEC §7.6). */
 export const TASKS_URI = 'https://rendezvous.nesher.co/ext/tasks/v1';
 /** Status-update metadata: `"human"` while a gate waits for the executor's human (ignorable). */
@@ -231,7 +235,11 @@ function dataPart(p: Record<string, unknown>, what: string): TaskDataPart {
   return p as unknown as TaskDataPart;
 }
 
-/** Opaque but bounded: exactly one of inline `bytes` (base64, at most 16 KiB decoded) or `uri`. */
+/**
+ * Opaque but bounded: exactly one of inline `bytes` (base64, at most 16 KiB
+ * decoded) or `uri`, or neither when the files metadata offers the file by
+ * direct transfer only (SPEC §7.7: `uri` omitted, `p2p` present).
+ */
 function filePart(p: Record<string, unknown>, what: string): FilePart {
   keys(p, ['kind', 'file'], ['metadata'], what);
   metadata(p.metadata, what);
@@ -242,7 +250,9 @@ function filePart(p: Record<string, unknown>, what: string): FilePart {
   if (f.mimeType !== undefined) shortString(f.mimeType, `${what}.file.mimeType`);
   const hasBytes = f.bytes !== undefined;
   const hasUri = f.uri !== undefined;
-  if (hasBytes === hasUri) fail(`${what}.file needs exactly one of bytes or uri`);
+  const md = p.metadata as Record<string, unknown> | undefined;
+  const refOnly = !hasBytes && !hasUri && isObject(md) && Object.hasOwn(md, FILES_URI) && isObject(md[FILES_URI]);
+  if (hasBytes === hasUri && !refOnly) fail(`${what}.file needs exactly one of bytes or uri`);
   if (hasBytes && (typeof f.bytes !== 'string' || f.bytes.length > INLINE_B64_CHARS || f.bytes.length % 4 !== 0 || !B64_RE.test(f.bytes))) {
     fail(`${what}.file.bytes must be base64 of at most ${TASK_LIMITS.inlineFileBytes} bytes`);
   }

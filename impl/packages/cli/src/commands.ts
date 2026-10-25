@@ -67,6 +67,7 @@ import {
   type TaskRun,
 } from './tasks.js';
 
+import { type Attachment, attachFiles, declineTransfer, describeFile, fetchIncoming, fileSummaries, outgoingView, prepareFile, transferEventText, transferView } from './files.js';
 import { listen } from './listen.js';
 import { relayTransport } from './transport.js';
 import {
@@ -1050,13 +1051,24 @@ function codeArg(v: unknown, cmd: string): string {
   return code;
 }
 
+/** `--file <sha256>=<https-url>` (repeatable): a prepared file and where the owner uploaded its copy. */
+function fileArgs(v: unknown): Attachment[] {
+  return list(v).map((x) => {
+    const i = x.indexOf('=');
+    if (i <= 0) throw new CliError(`--file takes <sha256>=<https-url> (prepare the file first with rdv file prepare): ${JSON.stringify(x)}`, 2);
+    return { sha256: x.slice(0, i), uri: x.slice(i + 1) };
+  });
+}
+
 /** `rdv task request <agent-id>`: ask a contact's agent for a task (default capability request/v1). */
 export async function taskRequest({ home, out, values, positionals }: Ctx): Promise<void> {
   const capability = str(values.capability) ?? REQUEST_URI;
   const input = jsonArg(values.input, '--input');
-  const run = await withAgent(home, (agent) =>
-    requestPeer(home, agent, hostRegistry(), positionals[0], capability, { text: list(values.text), input, expires: str(values.expires) }),
-  );
+  const run = await withAgent(home, (agent) => {
+    // The human runs this command: what they attach is theirs to send.
+    const { parts } = attachFiles(home, fileArgs(values.file), list(values.inline));
+    return requestPeer(home, agent, hostRegistry(), positionals[0], capability, { text: list(values.text), input, expires: str(values.expires), ...(parts.length ? { files: parts } : {}) });
+  });
   emitRun(out, run);
 }
 
@@ -1134,16 +1146,21 @@ function draftOut(out: Output, id: string, r: { held?: PendingRelease; digest?: 
 export async function taskSubmit({ home, out, values, positionals }: Ctx): Promise<void> {
   const id = positionals[0];
   const text = list(values.text);
-  if (text.length === 0) throw new CliError('give the result with --text "…" (repeatable)', 2);
+  const refs = fileArgs(values.file);
+  const inline = list(values.inline);
+  if (text.length === 0 && refs.length === 0 && inline.length === 0) throw new CliError('give the result with --text "…", --file <sha256>=<url> or --inline <path> (each repeatable)', 2);
   const name = str(values.name);
-  const r = await withAgent(home, (agent) =>
-    submitDraft(home, agent, hostRegistry(), id, {
+  const r = await withAgent(home, (agent) => {
+    // The owner's files leave only in a draft the human releases, shown with their name, size, hash, URL and source.
+    const files = attachFiles(home, refs, inline);
+    return submitDraft(home, agent, hostRegistry(), id, {
       kind: 'artifact',
-      parts: text.map((t) => ({ kind: 'text' as const, text: t })),
+      parts: [...text.map((t) => ({ kind: 'text' as const, text: t })), ...files.parts],
       ...(name !== undefined ? { name } : {}),
       complete: values.complete === true,
-    }),
-  );
+      ...(files.notes.length ? { files: files.notes } : {}),
+    });
+  });
   draftOut(out, id, r);
 }
 
@@ -1188,4 +1205,86 @@ export async function taskCancel({ home, out, values, positionals }: Ctx): Promi
 export async function taskInput({ home, out, values, positionals }: Ctx): Promise<void> {
   const input = jsonArg(values.input, '--input');
   emitRun(out, await withAgent(home, (agent) => answerPeer(home, agent, hostRegistry(), positionals[0], { text: list(values.text), ...(input !== undefined ? { input } : {}) })));
+}
+
+// --- files (SPEC §7.7, issue #26) --------------------------------------------------------
+
+/** `rdv file prepare <path>`: encrypt one of your files for a peer (nothing is sent). */
+export async function filePrepare({ home, out, values, positionals }: Ctx): Promise<void> {
+  home.requireInit();
+  const f = await home.locked(async () => prepareFile(home, positionals[0], { name: str(values.name), mimeType: str(values.mime), plain: values.plain === true }));
+  out.emit(
+    { event: 'file-prepared', ...outgoingView(f) },
+    [
+      `prepared ${clean(JSON.stringify(f.name ?? 'unnamed'))} (${f.size} bytes${f.enc ? ', encrypted under a fresh key' : ', NOT encrypted'}), sha256 ${f.sha256}`,
+      `  upload this file anywhere the peer can fetch over https (it is ${f.enc ? 'ciphertext' : 'the plain file'}): ${clean(f.upload)}`,
+      `  then attach it: rdv task submit <task-id> --file ${f.sha256.slice(0, 12)}=<https-url>  (it leaves only when you release it${f.enc ? '; the key goes only inside the message' : ''})`,
+    ].join('\n'),
+  );
+}
+
+/** `rdv file list`: prepared files, files peers sent for your tasks, direct-transfer requests, and the setting. */
+export async function fileList({ home, out }: Ctx): Promise<void> {
+  home.requireInit();
+  const { files, tasks, direct } = await home.locked(async () => ({ files: home.readFiles(), tasks: home.readTasks(), direct: home.readConfig().direct_transfer === true }));
+  out.emit({ event: 'direct-transfer', enabled: direct }, `direct transfer: ${direct ? 'on (requests are shown to you; this agent implements no transfer protocol, so nothing connects)' : 'off (requests are declined)'}`);
+  for (const f of Object.values(files.outgoing).sort((a, b) => a.created.localeCompare(b.created))) {
+    out.emit({ event: 'file-prepared', ...outgoingView(f) }, `prepared ${f.sha256}  ${clean(JSON.stringify(f.name ?? 'unnamed'))}  ${f.size} bytes  ${f.enc ? 'encrypted' : 'plain'}  from ${clean(f.source)}  upload ${clean(f.upload)}`);
+  }
+  for (const t of Object.values(tasks.engine.tasks).sort((a, b) => a.created.localeCompare(b.created))) {
+    const got = t.role === 'executor' ? t.files : tasks.received && Object.hasOwn(tasks.received, t.id) ? tasks.received[t.id].files : undefined;
+    for (const f of fileSummaries(got) ?? []) {
+      out.emit(
+        { event: 'file-received', task: t.id, peer: t.peer, role: t.role, state: t.state, ...f },
+        `task ${clean(t.id)} (${t.role}, ${clean(t.state)}) from ${clean(t.peer)}: ${clean(describeFile(f))}  [untrusted; fetch: rdv file fetch ${clean(t.id)} --file ${f.index}]`,
+      );
+    }
+  }
+  for (const [id, r] of Object.entries(files.transfers)) {
+    out.emit(
+      { event: 'transfer-request', ...transferView(id, r) },
+      `direct transfer ${clean(id)} with ${clean(r.peer)}: file ${clean(r.state.file)}  ${clean(r.state.phase)}${r.state.phase === 'proposed' ? `  (decline: rdv file decline-transfer ${clean(id)})` : ''}`,
+    );
+  }
+}
+
+/** `rdv file fetch <task-id> [--file <n|sha256>]`: fetch, verify and quarantine one file a peer sent (after the start gate). */
+export async function fileFetch({ home, out, values, positionals }: Ctx): Promise<void> {
+  const which = str(values.file);
+  const sel = which === undefined ? {} : /^\d{1,3}$/.test(which) ? { index: Number(which) } : { sha256: which };
+  const v = await fetchIncoming(home, positionals[0], sel);
+  out.emit(
+    { event: 'file-fetched', ...v },
+    [
+      `fetched and verified file #${v.index} of task ${clean(v.task)} from ${clean(v.peer)}: ${v.size} bytes, sha256 ${v.sha256}${v.encrypted ? ' (decrypted)' : ''}`,
+      `  saved in quarantine (untrusted content written by the peer; do not run it): ${clean(v.path)}`,
+      ...(v.name ? [`  the peer calls it (untrusted): ${clean(JSON.stringify(v.name))}${v.mimeType ? ` ${clean(v.mimeType)}` : ''}`] : []),
+    ].join('\n'),
+  );
+}
+
+/** `rdv file decline-transfer <transfer-id>`: say no to a peer's direct-transfer request. */
+export async function fileDeclineTransfer({ home, out, positionals }: Ctx): Promise<void> {
+  const r = await withAgent(home, (agent) => declineTransfer(home, agent, positionals[0]));
+  for (const e of r.events) out.emit(e, transferEventText(e, clean));
+  for (const message of r.errors) out.emit({ event: 'error', message }, `error: ${clean(message)}`);
+}
+
+/** `rdv file direct-transfer <on|off>`: the owner's setting (off by default). On shows requests to the owner; nothing connects on its own. */
+export async function fileDirectTransfer({ home, out, positionals }: Ctx): Promise<void> {
+  const v = positionals[0].toLowerCase();
+  if (v !== 'on' && v !== 'off') throw new CliError('rdv file direct-transfer takes on or off', 2);
+  home.requireInit();
+  await home.locked(async () => {
+    const config = home.readConfig();
+    if (v === 'on') config.direct_transfer = true;
+    else delete config.direct_transfer;
+    home.writeConfig(config);
+  });
+  out.emit(
+    { event: 'direct-transfer', enabled: v === 'on' },
+    v === 'on'
+      ? 'direct transfer on: a contact asking to receive a file directly is shown to you (it would see your network address). This agent implements no transfer protocol yet, so nothing connects; you can decline.'
+      : 'direct transfer off: requests for one are declined.',
+  );
 }

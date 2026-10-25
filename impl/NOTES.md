@@ -1669,6 +1669,104 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
     the relay). **Not here:** sending the new card to contacts, who keep
     the one from the handshake (`rdv/card-update`, design C.1; issue #45).
 
+## Files in tasks (v0.3, issue #26, hosts)
+
+77. **File parts in tasks, the gates on files, the quarantine and the
+    direct-transfer setting** (**spec change**, §5.5, §7.7; design A.8; the
+    rest of issue #26 after item 72). The glue is
+    `packages/cli/src/files.ts`, shared by `rdv` and `rdv-mcp`:
+    - **Incoming parts.** `tasksInbound` runs every file part of a tasks/v1
+      payload through core's `parseFilePart` (`normalizeTaskFiles`) before
+      the engine sees it, and keeps the part in its wire form as core
+      rebuilds it (`fileRefPart`, `inlineFilePart`): names sanitized, MIME
+      types lowercased, other extensions' metadata dropped. One bad part
+      refuses the whole payload (an `invalid` task event, no state). `a2a`
+      stays free of core: its `filePart` check only bounds the shape, and
+      now accepts a part with neither `bytes` nor `uri` when it carries the
+      files metadata (a `p2p`-only offer). A message or artifact with file
+      parts lists `FILES_URI` in `extensions` (`artifactExtensions`); the
+      host sends file parts only to a peer whose card lists it, and its own
+      card now does (`hostCardCapabilities`).
+    - **Never on arrival; only after the start gate** (`fetchableFiles`).
+      An executor's task: refused while the start gate is open or before it
+      (`submitted`), allowed in `working` and `input-required`, gone once
+      the task ends (the engine drops `files`). A task we requested: the
+      files of its artifacts, kept in `tasks.json` `received` (at most 64
+      per task, pruned with the task), at any time; our side started it.
+      `rdv file fetch <task-id> [--file <n|sha256>]` and `rdv_file` "fetch"
+      run `fetchFileRef` with the receiver cap (25 MiB) and every rule of
+      item 72, outside the home lock. Errors carry core's `FileRefError`
+      code, never peer text. A `p2p`-only file is refused: no transfer
+      protocol is implemented.
+    - **Quarantine.** `files/incoming/<taskId>/<first 12 hex of the
+      plaintext hash>-<name>`: `quarantineName` applies core's sanitizing,
+      then keeps ASCII letters, digits, `.`, `_`, `-` and spaces, strips
+      leading dots and trailing dots and spaces, prefixes Windows device
+      names, caps at 100 characters, and appends `.quarantine` to
+      extensions that run or render active content (exe, ps1, sh, js, html,
+      svg, lnk, …). Written `wx` (never follows or replaces a file) mode
+      600, so no exec bit; on Windows a Mark of the Web stream is added.
+      The same verified file fetched again is reused; other bytes under
+      the same name are refused. The tool returns the path and metadata; the
+      content only when it is text of at most 2,000 characters, as
+      `untrusted_peer_text`.
+    - **Outgoing files** (`files.json`, mode 600). `rdv file prepare <path>`
+      / `rdv_file` "prepare" reads one of the owner's files (at most
+      25 MiB), encrypts it with `encryptFile` (fresh key and nonce; `--plain`
+      skips it) and writes the ciphertext to `files/outgoing/<sha256>.bin`
+      for the owner to upload anywhere; nothing is sent and no result
+      carries the key. `rdv task submit --file <sha256>=<https-url>` /
+      `rdv_task` "submit" `files` attach it by reference (`checkFileUri`:
+      https, a host, no userinfo), `--inline` / `inline_files` up to 16 KiB
+      inline. The draft keeps a `FileNote` per file (name, size, `sha256`,
+      URL, encrypted, and the local path it was read from), so the release
+      gate (form, server log, `rdv task list`) shows exactly that, and the
+      release digest covers it: a model that names `~/.ssh/id_ed25519`
+      `q4-plan.pdf` is caught by the path. `rdv task request --file`
+      attaches files from the owner's own terminal; the MCP `request` takes
+      none (the design's requester-side release gate is not built).
+    - **No key in a view.** Task events, `rdv_inbox`, `rdv_task` views,
+      `rdv task list` (text and `--json`) and `rdv file list` show
+      `FileSummary` (name, type, size, `sha256`, encryption, URL, host,
+      mirrors, `p2p`, `expires`) or a draft with `key` and `nonce`
+      redacted. The digests still cover the whole part. Not showing a key
+      or nonce at a gate approves nothing hidden that a human could judge:
+      they only decide whether decryption works.
+    - **`untrusted.ts`.** `fileView`: a name passes only as a short ASCII
+      file name (else quarantined, so a sentence aimed at the model is
+      peer text), a MIME type only in `type/subtype` form, the hash only as
+      64 hex, the host in host form; the URL always as
+      `untrusted_peer_text`.
+    - **Direct transfer** (`rdv/transfer`). `config.json`
+      `direct_transfer` is off (absent) by default; `rdv file
+      direct-transfer on|off` is the human's (on the consent guard's list;
+      no MCP tool changes it). `handleInbound` routes `rdv/transfer` from
+      contacts to `transfersInbound` (the raw message event is marked
+      `routed: "files"` and hidden from the model): off, a `propose` is
+      answered with an `abort` ("direct transfer is off") and shown; on, it
+      is held and shown, nothing sent; `rdv file decline-transfer` /
+      `rdv_file` "decline-transfer" sends the abort. An abort ends a held
+      transfer; any other step for a held one aborts it (core's
+      `stepTransfer`, no protocol supported); a message for an unknown or
+      finished transfer is ignored. At most 64 transfers are kept. No step
+      is ever answered with `accept`, and a `p2p` list in a received
+      reference is only displayed.
+    - **Test-only fetch options.** `RdvMcpOptions.fileFetch` (`ca`,
+      `unsafeAllowAddresses`) lets the tests fetch from a local HTTPS
+      server (`startTestFileServer` in `@rendezvous/core/testing`, its
+      certificate generated per run). `bin.ts` never sets it and no
+      environment variable or config does, so the CLI command always runs
+      with the default block list.
+    - **Not here:** a `BlobStore` uploader (the owner uploads), the
+      requester-side release gate for files the model attaches to a request,
+      and any direct-transfer protocol (WebRTC). Tests:
+      `cli/test/files.test.ts` (hostile names, part validation, the gate,
+      quarantine, prepare and the release view, the commands),
+      `mcp/test/files.test.ts` (the doc review end to end, a tampered file,
+      fetch before the start gate, SSRF through the tool, hostile names and
+      malformed parts, the transfer offer and request), `a2a` (p2p-only
+      parts, `extensions`) and the consent guard.
+
 ## Not implemented yet
 
 

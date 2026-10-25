@@ -804,7 +804,11 @@ passes the release gate, whatever the class. Its CLI gates are `rdv task
 approve <task-id> --code <code>` and `rdv task release <task-id> --code
 <code>`, where the code is the first 12 hex digits of the digest shown by
 `rdv task list`; its MCP server asks through elicitation or a confirm phrase
-(`rdv_task` "approve-start", "approve-release").
+(`rdv_task` "approve-start", "approve-release"). A file of the owner's
+reaches a peer through the same release gate (`rdv task submit --file`,
+`rdv_task` "submit" with `files`), or in a request the owner sends from their
+own terminal (`rdv task request --file`); the MCP server attaches none to a
+request (§7.7, NOTES 77).
 
 ### 5.5.1 Auto-approve-all per contact
 
@@ -1503,9 +1507,11 @@ free text, where the executor's model reads it as prose.
 > **Spec change (v0.3, issue #26).** New section, from the approved design
 > (`docs/design/general-tasks-and-groups.md` A.8). The reference implements
 > the reference format, its encryption, the fetch rules and the
-> `rdv/transfer` messages (`@rendezvous/core`, NOTES 72). Carrying file parts
-> inside tasks, and fetching only after a task's start gate, land with the
-> tasks and gates sections.
+> `rdv/transfer` messages (`@rendezvous/core`, NOTES 72). **Spec change
+> (issue #26, hosts):** file parts in tasks and artifacts, fetching only
+> after a task's start gate, the release gate on outgoing files, the
+> quarantine and the owner's direct-transfer setting ("In tasks" and "Direct
+> transfer, the owner's setting" below; NOTES 77).
 
 Files are A2A `FilePart`s. Up to 16 KiB a file MAY travel inline
 (`file.bytes`, base64), inside the encrypted envelope. Anything larger is a
@@ -1594,6 +1600,33 @@ sense: it adds required structure to `FilePart`.
   transfer, 16 KiB of `data` each (canonical JSON), nested at most 16 deep.
 - **Lifetime.** A sender that uploaded a copy SHOULD remove it when the task
   ends or `expires` passes; receivers MUST NOT rely on it later.
+- **In tasks** (**spec change**, issue #26). A tasks/v1 message or artifact
+  (§7.6.1) MAY carry file parts, and then lists the files URI in its
+  `extensions`; an agent sends them only to a peer whose card lists it. A
+  receiver validates every file part by the rules above before its task
+  engine sees the payload, and refuses the whole payload when one fails; it
+  keeps the part in its validated form (display name and type sanitized,
+  other extensions' metadata dropped). Fetching follows the start gate
+  (§5.5): an executor fetches a request's files only once its human
+  approved the start, and the start gate shows each file's name, type, size,
+  `sha256`, encryption and URL; a requester fetches the files of its
+  results when it chooses (its side started the task). A file of the
+  owner's in an artifact is owner data, so it leaves only through the
+  release gate, which shows the human each file's name, size, `sha256`, the
+  URL it is stored at, the local file it was read from and the recipient;
+  the sender encrypts it before the gate, so the key exists only in the
+  held draft and then inside the envelope. A receiver saves what it fetched
+  under a name it derives (never the peer's path), without execute
+  permission, apart from its other files, and hands its model the saved
+  path and metadata rather than the content (short text MAY be returned,
+  marked as peer text, §5.6). The content stays untrusted whatever its hash.
+- **Direct transfer, the owner's setting** (**spec change**, issue #26). A
+  host offers or accepts a direct transfer only under an owner setting, off
+  by default and never changed by a model or a peer. With it off, a host
+  answers a `propose` with `abort`; with it on, the `propose` is shown to the
+  owner, who decides. No step of a transfer is answered with `accept`
+  automatically, and a `p2p` list in a reference is only shown: nothing
+  connects because an offer arrived.
 - A `FilePart` with neither inline `bytes` nor this metadata (at least
   `sha256` and `size`) is refused: an agent never fetches a URL without a
   hash to check. Under §7.5 this metadata is the one case that is not

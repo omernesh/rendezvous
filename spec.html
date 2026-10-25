@@ -866,7 +866,11 @@ passes the release gate, whatever the class. Its CLI gates are <code>rdv task
 approve &lt;task-id&gt; --code &lt;code&gt;</code> and <code>rdv task release &lt;task-id&gt; --code
 &lt;code&gt;</code>, where the code is the first 12 hex digits of the digest shown by
 <code>rdv task list</code>; its MCP server asks through elicitation or a confirm phrase
-(<code>rdv_task</code> "approve-start", "approve-release").</p>
+(<code>rdv_task</code> "approve-start", "approve-release"). A file of the owner's
+reaches a peer through the same release gate (<code>rdv task submit --file</code>,
+<code>rdv_task</code> "submit" with <code>files</code>), or in a request the owner sends from their
+own terminal (<code>rdv task request --file</code>); the MCP server attaches none to a
+request (§7.7, NOTES 77).</p>
 <h3 id="551-auto-approve-all-per-contact">5.5.1 Auto-approve-all per contact</h3>
 <p>(<strong>spec change</strong>, issue #25.) Approving every task by hand is safe and
 tiring. For a contact the owner trusts as much as their own agent, the owner
@@ -1604,9 +1608,11 @@ free text, where the executor's model reads it as prose.</p>
 <p><strong>Spec change (v0.3, issue #26).</strong> New section, from the approved design
 (<code>docs/design/general-tasks-and-groups.md</code> A.8). The reference implements
 the reference format, its encryption, the fetch rules and the
-<code>rdv/transfer</code> messages (<code>@rendezvous/core</code>, NOTES 72). Carrying file parts
-inside tasks, and fetching only after a task's start gate, land with the
-tasks and gates sections.</p>
+<code>rdv/transfer</code> messages (<code>@rendezvous/core</code>, NOTES 72). <strong>Spec change
+(issue #26, hosts):</strong> file parts in tasks and artifacts, fetching only
+after a task's start gate, the release gate on outgoing files, the
+quarantine and the owner's direct-transfer setting ("In tasks" and "Direct
+transfer, the owner's setting" below; NOTES 77).</p>
 </blockquote>
 <p>Files are A2A <code>FilePart</code>s. Up to 16 KiB a file MAY travel inline
 (<code>file.bytes</code>, base64), inside the encrypted envelope. Anything larger is a
@@ -1691,6 +1697,33 @@ sense: it adds required structure to <code>FilePart</code>.</p>
   transfer, 16 KiB of <code>data</code> each (canonical JSON), nested at most 16 deep.
 - <strong>Lifetime.</strong> A sender that uploaded a copy SHOULD remove it when the task
   ends or <code>expires</code> passes; receivers MUST NOT rely on it later.
+- <strong>In tasks</strong> (<strong>spec change</strong>, issue #26). A tasks/v1 message or artifact
+  (§7.6.1) MAY carry file parts, and then lists the files URI in its
+  <code>extensions</code>; an agent sends them only to a peer whose card lists it. A
+  receiver validates every file part by the rules above before its task
+  engine sees the payload, and refuses the whole payload when one fails; it
+  keeps the part in its validated form (display name and type sanitized,
+  other extensions' metadata dropped). Fetching follows the start gate
+  (§5.5): an executor fetches a request's files only once its human
+  approved the start, and the start gate shows each file's name, type, size,
+  <code>sha256</code>, encryption and URL; a requester fetches the files of its
+  results when it chooses (its side started the task). A file of the
+  owner's in an artifact is owner data, so it leaves only through the
+  release gate, which shows the human each file's name, size, <code>sha256</code>, the
+  URL it is stored at, the local file it was read from and the recipient;
+  the sender encrypts it before the gate, so the key exists only in the
+  held draft and then inside the envelope. A receiver saves what it fetched
+  under a name it derives (never the peer's path), without execute
+  permission, apart from its other files, and hands its model the saved
+  path and metadata rather than the content (short text MAY be returned,
+  marked as peer text, §5.6). The content stays untrusted whatever its hash.
+- <strong>Direct transfer, the owner's setting</strong> (<strong>spec change</strong>, issue #26). A
+  host offers or accepts a direct transfer only under an owner setting, off
+  by default and never changed by a model or a peer. With it off, a host
+  answers a <code>propose</code> with <code>abort</code>; with it on, the <code>propose</code> is shown to the
+  owner, who decides. No step of a transfer is answered with <code>accept</code>
+  automatically, and a <code>p2p</code> list in a reference is only shown: nothing
+  connects because an offer arrived.
 - A <code>FilePart</code> with neither inline <code>bytes</code> nor this metadata (at least
   <code>sha256</code> and <code>size</code>) is refused: an agent never fetches a URL without a
   hash to check. Under §7.5 this metadata is the one case that is not

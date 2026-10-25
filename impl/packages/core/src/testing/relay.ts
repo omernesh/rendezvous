@@ -156,3 +156,5 @@ export async function startTestRelay(port = 0, faults: RelayFaults = {}): Promis
       }),
   };
 }
+
+export { selfSignedCert, startTestFileServer, type TestFileServer } from './fileserver.js';

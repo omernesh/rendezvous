@@ -95,6 +95,27 @@ export {
   taskPhraseTargets,
   type TaskRun,
 } from './tasks.js';
+export {
+  type Attachment,
+  attachFiles,
+  declineTransfer,
+  describeFile,
+  type FetchedFileView,
+  type FetchTestOptions,
+  fetchableFiles,
+  fetchIncoming,
+  type FileSummary,
+  fileSummaries,
+  fileSummary,
+  normalizeTaskFiles,
+  outgoingView,
+  prepareFile,
+  quarantineName,
+  SMALL_TEXT_CHARS,
+  type TransferEvent,
+  transferView,
+} from './files.js';
+export { type FileNote, type FilesState, type OutgoingFile, type TransferRecord } from './home.js';
 export { relayTransport } from './transport.js';
 export {
   type AutoApproveSubject,

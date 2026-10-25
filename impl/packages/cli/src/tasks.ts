@@ -24,12 +24,14 @@
 // passes the release gate, whatever the class (`rdv task release`).
 import { randomUUID } from 'node:crypto';
 import {
+  artifactExtensions,
   askInput,
   type Capability,
   CapabilityRegistry,
   cancelTask,
   cardCapabilities,
   expireTasks,
+  FILES_URI,
   finishTask,
   inputTask,
   isFinished,
@@ -52,7 +54,8 @@ import {
 } from '@rendezvous/a2a';
 import { Agent, type Contact, effectiveInvoke, fingerprint, type Payload, type Transport } from '@rendezvous/core';
 import type { PhraseTarget } from './consent.js';
-import { type AuditEntry, CliError, type Home, type InboxEntry, type PendingRelease, type ReleaseContent, type TaskHostState } from './home.js';
+import { describeFile, describeNote, fileSummaries, fileSummary, normalizeTaskFiles, pruneReceived, redactFilePart, rememberReceived } from './files.js';
+import { type AuditEntry, CliError, type FileNote, type Home, type InboxEntry, type PendingRelease, type ReleaseContent, type TaskHostState } from './home.js';
 import { clean } from './output.js';
 import { sha, sha256, stable } from './hash.js';
 import { autoApproved, subjectOf } from './autoapprove.js';
@@ -67,7 +70,7 @@ export function hostRegistry(extra: readonly Capability[] = []): CapabilityRegis
 
 /** The card's `capabilities` for a host that routes tasks/v1 to `registry` (SPEC §4.3: advertise what we do). */
 export function hostCardCapabilities(registry: CapabilityRegistry = hostRegistry()): string[] {
-  return cardCapabilities([...SUPPORTED_EXTENSIONS, TASKS_URI, ...registry.uris()]);
+  return cardCapabilities([...SUPPORTED_EXTENSIONS, TASKS_URI, FILES_URI, ...registry.uris()]);
 }
 
 export interface CardRefresh {
@@ -192,8 +195,9 @@ export class TaskChangedError extends CliError {}
 
 // --- state -----------------------------------------------------------------------
 
-/** Drop drafts whose task ended, vanished or went back to a start gate: they approve nothing now. */
+/** Drop drafts whose task ended, vanished or went back to a start gate: they approve nothing now (and received files whose task is gone). */
 export function pruneReleases(s: TaskHostState): void {
+  pruneReceived(s);
   for (const [id, r] of Object.entries(s.releases)) {
     const t = Object.hasOwn(s.engine.tasks, id) ? s.engine.tasks[id] : undefined;
     if (!t || t.role !== 'executor' || isFinished(t.state) || t.gate || r.taskId !== id || r.peer !== t.peer) delete s.releases[id];
@@ -257,11 +261,19 @@ export async function tasksInbound(home: Home, registry: CapabilityRegistry, age
   const autoSteps = new Set<TaskStep>();
   const autoStarted = new Set<string>();
   for (const e of entries) {
-    const ctx = inboundTaskCtx(registry, agent.book.contact(e.from), s.engine, e.payload, now);
+    // Files (SPEC §7.7): every file part is validated with core's parseFilePart and kept in its sanitized form. Never fetched here.
+    const files = normalizeTaskFiles(e.payload);
+    if (!files.ok) {
+      run.events.push({ kind: 'invalid', taskId: files.taskId, peer: e.from, reason: files.reason });
+      continue;
+    }
+    const ctx = inboundTaskCtx(registry, agent.book.contact(e.from), s.engine, files.payload, now);
     // Core's per-capability limiter (issue #28): max_open and max_frequency from our grant; gross abuse revokes.
-    const step = receiveTask(s.engine, e.from, e.payload, { ...ctx, limit: (cap, o) => agent.admitTask(e.from, cap, o, now) });
+    const step = receiveTask(s.engine, e.from, files.payload, { ...ctx, limit: (cap, o) => agent.admitTask(e.from, cap, o, now) });
     applyEffects(s, step, now, 'grant', audits);
     s.engine = step.state;
+    // A result's files, for a task we requested: kept so our agent can fetch them later, if it chooses.
+    for (const ev of step.events) if (ev.kind === 'artifact' && ev.files?.length && ev.taskId) rememberReceived(s, ev.taskId, e.from, ev.files);
     run.steps.push(step);
     // auto_approve: all (SPEC §5.5.1, issue #25): our human's standing approval for this contact passes its start gates.
     // Checked here, under the lock, for each gate: off, expired or no longer bound to the grant, and the gate stays shut.
@@ -405,7 +417,7 @@ export async function declineStart(home: Home, agent: Agent, registry: Capabilit
 }
 
 export type DraftInput =
-  | { kind: 'artifact'; parts: TaskPart[]; name?: string; description?: string; complete?: boolean }
+  | { kind: 'artifact'; parts: TaskPart[]; name?: string; description?: string; complete?: boolean; files?: FileNote[] }
   | { kind: 'question'; text?: string; data?: Record<string, unknown> }
   | { kind: 'finish'; outcome: 'completed' | 'failed'; text?: string; data?: Record<string, unknown> };
 
@@ -430,8 +442,9 @@ export async function submitDraft(
   let content: ReleaseContent;
   let step: TaskStep;
   if (draft.kind === 'artifact') {
+    if (draft.parts.some((p) => p.kind === 'file')) needsFilesExtension(agent, t.peer);
     const artifact = { artifactId: randomUUID(), parts: draft.parts, ...(draft.name !== undefined ? { name: draft.name } : {}), ...(draft.description !== undefined ? { description: draft.description } : {}), lastChunk: true };
-    content = { kind: 'artifact', artifact, ...(draft.complete ? { complete: true } : {}) };
+    content = { kind: 'artifact', artifact, ...(draft.complete ? { complete: true } : {}), ...(draft.files?.length ? { files: draft.files } : {}) };
     step = engine(() => sendArtifact(s.engine, taskId, ctx, artifact, { ownerData: true }));
   } else if (draft.kind === 'question') {
     content = { kind: 'question', ...(draft.text !== undefined ? { text: draft.text } : {}), ...(draft.data !== undefined ? { data: draft.data } : {}) };
@@ -496,7 +509,7 @@ async function releaseHeld(
     step = engine(() => sendArtifact(s.engine, taskId, ctx(), c.artifact, released));
     // The payload that leaves is the one the human saw.
     const sent = step.outgoing.find((o) => o.payload.type === 'a2a/artifact-update');
-    if (sent && stable((sent.payload as { update: { artifact: unknown } }).update.artifact) !== stable({ ...c.artifact, extensions: [t.capability], append: undefined, lastChunk: undefined }))
+    if (sent && stable((sent.payload as { update: { artifact: unknown } }).update.artifact) !== stable({ ...c.artifact, extensions: artifactExtensions(t.capability, c.artifact.parts), append: undefined, lastChunk: undefined }))
       throw new CliError(`internal: the artifact for task ${taskId} is not the draft that was shown. Nothing was sent.`);
     steps.push(step);
     if (c.complete && step.outgoing.length && !isFinished(step.state.tasks[taskId]?.state ?? 'completed')) {
@@ -540,21 +553,29 @@ export async function requestPeer(
   registry: CapabilityRegistry,
   peer: string,
   capability: string,
-  opts: { text?: string[]; input?: unknown; expires?: string },
+  opts: { text?: string[]; input?: unknown; expires?: string; files?: TaskPart[] },
 ): Promise<TaskRun & { taskId: string }> {
   const contact = agent.book.contact(peer);
   if (!contact) throw new CliError(`no active contact ${peer}`);
+  if (opts.files?.length) needsFilesExtension(agent, peer);
   const s = home.readTasks();
   const step = engine(() =>
     requestTask(s.engine, peer, capability, taskCtx(registry, contact, 'outbound'), {
       ...(opts.text?.length ? { text: opts.text } : {}),
       ...(opts.input !== undefined ? { input: opts.input } : {}),
       ...(opts.expires !== undefined ? { expires: opts.expires } : {}),
+      ...(opts.files?.length ? { files: opts.files.filter((p) => p.kind === 'file') } : {}),
       peerCapabilities: contact.card?.capabilities ?? [],
     }),
   );
   s.engine = step.state;
   return { ...(await commit(home, agent, s, [step], [])), taskId: step.taskId };
+}
+
+/** File parts go only to a peer whose card lists the files extension (SPEC §7.7: one that does not answers unsupported). */
+function needsFilesExtension(agent: Agent, peer: string): void {
+  const caps = agent.book.contact(peer)?.card?.capabilities;
+  if (!Array.isArray(caps) || !caps.includes(FILES_URI)) throw new CliError(`the peer's card does not list ${FILES_URI}, so it cannot take files; nothing was sent`);
 }
 
 /** Answer an executor's `input-required` on a task we requested. */
@@ -588,7 +609,8 @@ export function taskEventView(e: TaskEvent) {
     reason: e.reason,
     peer_text: e.peerText,
     data: e.data,
-    files: e.files,
+    // What the files are, never their keys: the event log is read by every host on the home.
+    files: fileSummaries(e.files),
     artifact: e.artifactId,
     last_chunk: e.lastChunk,
   };
@@ -604,7 +626,7 @@ export function taskEventText(e: TaskEvent): string | undefined {
   if (e.reason) lines.push(`  reason (untrusted if from peer): ${safe(JSON.stringify(e.reason))}`);
   for (const t of e.peerText ?? []) lines.push(`  peer says (untrusted): ${safe(JSON.stringify(t))}`);
   for (const d of e.data ?? []) lines.push(`  peer data (untrusted): ${safe(JSON.stringify(d))}`);
-  for (const f of e.files ?? []) lines.push(`  peer file (untrusted, not fetched): ${safe(JSON.stringify(f.file.name ?? f.file.uri ?? 'inline'))}`);
+  for (const f of fileSummaries(e.files) ?? []) lines.push(`  peer file (untrusted, not fetched): ${safe(describeFile(f))}`);
   if (e.kind === 'start-needed') lines.push(`  waiting for YOUR approval: rdv task list, then rdv task approve ${safe(e.taskId)} --code <code> (or rdv task decline ${safe(e.taskId)})`);
   return lines.join('\n');
 }
@@ -612,7 +634,13 @@ export function taskEventText(e: TaskEvent): string | undefined {
 /** A draft in words: exactly what would leave. */
 export function describeDraft(c: ReleaseContent): string {
   if (c.kind === 'artifact') {
-    const parts = c.artifact.parts.map((p) => (p.kind === 'text' ? `text: ${JSON.stringify(p.text)}` : p.kind === 'data' ? `data: ${JSON.stringify(p.data)}` : `file: ${JSON.stringify(p.file.name ?? 'unnamed')}`));
+    // A file shows its name, size, full hash, encryption, URL and the local file it was read from.
+    const file = (p: TaskPart & { kind: 'file' }) => {
+      const sum = fileSummary(p, 0);
+      const note = c.files?.find((n) => n.sha256 === sum.sha256);
+      return `file: ${note ? describeNote(note) : describeFile({ ...sum, index: undefined })}`;
+    };
+    const parts = c.artifact.parts.map((p) => (p.kind === 'text' ? `text: ${JSON.stringify(p.text)}` : p.kind === 'data' ? `data: ${JSON.stringify(p.data)}` : file(p)));
     return `result${c.artifact.name ? ` ${JSON.stringify(c.artifact.name)}` : ''}: ${parts.join('; ')}${c.complete ? ' (then the task ends completed)' : ''}`;
   }
   const body = [...(c.text !== undefined ? [`text: ${JSON.stringify(c.text)}`] : []), ...(c.data !== undefined ? [`data: ${JSON.stringify(c.data)}`] : [])].join('; ');
@@ -624,13 +652,18 @@ export function taskListView(t: TaskRecord, s: TaskHostState) {
   const start = startDigest(t);
   const r = Object.hasOwn(s.releases, t.id) ? s.releases[t.id] : undefined;
   const rel = releaseDigest(t, r);
-  const { seen: _seen, ...rest } = t;
+  const { seen: _seen, files, ...rest } = t;
+  const got = s.received && Object.hasOwn(s.received, t.id) ? s.received[t.id].files : undefined;
+  // Files as summaries and drafts with their file keys redacted: never a key in a listing.
+  const draft = r && r.content.kind === 'artifact' ? { ...r.content, artifact: { ...r.content.artifact, parts: r.content.artifact.parts.map((p) => (p.kind === 'file' ? redactFilePart(p) : p)) } } : r?.content;
   return {
     event: 'task',
     ...rest,
+    ...(files?.length ? { files: fileSummaries(files) } : {}),
+    ...(got?.length ? { received_files: fileSummaries(got) } : {}),
     fingerprint: fingerprint(t.peer),
     ...(start ? { start_code: gateCode(start) } : {}),
-    ...(rel && r ? { draft: r.content, release_code: gateCode(rel) } : {}),
+    ...(rel && r ? { draft, release_code: gateCode(rel) } : {}),
   };
 }
 
@@ -640,11 +673,13 @@ export function taskListText(t: TaskRecord, s: TaskHostState): string {
   for (const x of t.text ?? []) lines.push(`  request (untrusted, written by the peer): ${safe(JSON.stringify(x))}`);
   if (t.input !== undefined) lines.push(`  input (untrusted): ${safe(JSON.stringify(t.input))}`);
   if (t.answer !== undefined) lines.push(`  answer (untrusted): ${safe(JSON.stringify(t.answer))}`);
-  for (const f of t.files ?? []) lines.push(`  file (untrusted, not fetched; all of it, as approved): ${safe(JSON.stringify(f))}`);
+  for (const f of fileSummaries(t.files) ?? []) lines.push(`  file (untrusted, fetched only after you approve the start): ${safe(describeFile(f))}`);
+  const got = s.received && Object.hasOwn(s.received, t.id) ? s.received[t.id].files : undefined;
+  for (const f of fileSummaries(got) ?? []) lines.push(`  result file (untrusted, not fetched; rdv file fetch ${safe(t.id)} --file ${f.index}): ${safe(describeFile(f))}`);
   if (t.reason) lines.push(`  reason: ${safe(JSON.stringify(t.reason))}${t.code ? ` (${safe(t.code)})` : ''}`);
   if (v.start_code) lines.push(`  waiting for YOUR approval to start: rdv task approve ${safe(t.id)} --code ${v.start_code}  (or rdv task decline ${safe(t.id)})`);
   if (v.release_code && v.draft) {
-    lines.push(`  waiting for YOUR release: ${safe(describeDraft(v.draft))}`);
+    lines.push(`  waiting for YOUR release: ${safe(describeDraft(s.releases[t.id].content))}`);
     lines.push(`  to send it: rdv task release ${safe(t.id)} --code ${v.release_code}`);
   }
   return lines.join('\n');

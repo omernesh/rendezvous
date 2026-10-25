@@ -3,6 +3,7 @@
 // compatibility with the meeting engine and older peers.
 import { describe, expect, it } from 'vitest';
 import {
+  artifactExtensions,
   AWAITING_KEY,
   askInput,
   type Capability,
@@ -12,6 +13,7 @@ import {
   emptyTaskState,
   EXTENSIONS,
   expireTasks,
+  FILES_URI,
   finishTask,
   inputTask,
   type MeetingScope,
@@ -741,6 +743,27 @@ describe('artifact-update validation', () => {
     expect(john.recv(OMER, art([{ kind: 'file', file: { bytes: 'AAAA', uri: 'https://x.example/' } }])).events[0]).toMatchObject({ kind: 'invalid' });
     expect(john.recv(OMER, art([{ kind: 'video', video: {} }])).events[0]).toMatchObject({ kind: 'invalid' });
     expect(john.recv(OMER, art([{ kind: 'text', text: 'x' }], { extra: 1 })).events[0]).toMatchObject({ kind: 'invalid' });
+  });
+
+  it('a file offered only by direct transfer (no uri, files metadata) is carried; a bare file part is not (SPEC §7.7)', () => {
+    const { john, omer, art, taskId } = working();
+    const p2p = { kind: 'file', file: { name: 'big.iso' }, metadata: { [FILES_URI]: { sha256: 'ab', size: 2, p2p: ['webrtc-datachannel/1'] } } };
+    expect(john.recv(OMER, art([p2p])).events[0]).toMatchObject({ kind: 'artifact', files: [p2p] });
+    for (const bad of [{ kind: 'file', file: { name: 'x' } }, { kind: 'file', file: { name: 'x' }, metadata: { other: {} } }, { kind: 'file', file: {}, metadata: { [FILES_URI]: 'x' } }]) {
+      expect(john.recv(OMER, art([bad])).events[0], JSON.stringify(bad)).toMatchObject({ kind: 'invalid' });
+    }
+    // Our own: an artifact with a file part lists the files extension, one without does not.
+    const withFile = sendArtifact(omer.state, taskId, omer.ctx(), { parts: [p2p as never] }, { released: true });
+    expect((withFile.outgoing[0].payload as { update: { artifact: { extensions: string[] } } }).update.artifact.extensions).toEqual([FREEBUSY, FILES_URI]);
+    expect(artifactExtensions(REVIEW, [{ kind: 'text', text: 'x' }])).toEqual([REVIEW]);
+  });
+
+  it('a task/request with file parts lists the files extension in `extensions`', () => {
+    const file = { kind: 'file' as const, file: { uri: 'https://files.example.com/a', name: 'a.txt' }, metadata: { [FILES_URI]: { sha256: 'ab', size: 2 } } };
+    const r = requestTask(emptyTaskState(), JOHN, REVIEW, { now: NOW, registry: registry(), invoke: INVOKE, newId: ids(9) }, { input: { focus: ['x'] }, files: [file] });
+    expect((r.outgoing[0].payload as { message: { extensions: string[] } }).message.extensions).toEqual([TASKS_URI, REVIEW, FILES_URI]);
+    const plain = requestTask(emptyTaskState(), JOHN, REVIEW, { now: NOW, registry: registry(), invoke: INVOKE, newId: ids(10) }, { input: { focus: ['x'] } });
+    expect((plain.outgoing[0].payload as { message: { extensions: string[] } }).message.extensions).toEqual([TASKS_URI, REVIEW]);
   });
 
   it('only the executor sends artifacts: from anyone else, or to the executor, they are ignored', () => {

@@ -47,6 +47,7 @@ import {
   AWAITING_KEY,
   type TaskDataPart,
   type FilePart,
+  FILES_URI,
   isFinished,
   parseTaskPayload,
   REASON_KEY,
@@ -364,7 +365,7 @@ class Run {
       contextId: task.contextId,
       role: 'agent',
       parts: [{ kind: 'data', data: data as unknown as Record<string, unknown> }, ...extra],
-      extensions: task.capability ? [TASKS_URI, task.capability] : [TASKS_URI],
+      extensions: [TASKS_URI, ...(task.capability ? [task.capability] : []), ...(extra.some((x) => x.kind === 'file') ? [FILES_URI] : [])],
       ...(data.rdv === 'task/request' && task.referenceTaskIds?.length ? { referenceTaskIds: task.referenceTaskIds } : {}),
     };
     this.send(task.peer, { type: 'a2a/message', message });
@@ -843,7 +844,7 @@ export interface RequestOptions {
   input?: unknown;
   /** Human-readable request (text parts). */
   text?: string[];
-  /** File parts, sent as given (opaque in this slice). */
+  /** File parts, sent as given (the host validates them, SPEC §7.7); the message then lists the files extension. */
   files?: FilePart[];
   expires?: string;
   contextId?: string;
@@ -1089,7 +1090,7 @@ export function sendArtifact(
     ...(artifact.name !== undefined ? { name: artifact.name } : {}),
     ...(artifact.description !== undefined ? { description: artifact.description } : {}),
     parts: artifact.parts,
-    extensions: [cap.uri],
+    extensions: artifactExtensions(cap.uri, artifact.parts),
   };
   const payload: TaskPayload = {
     type: 'a2a/artifact-update',
@@ -1113,6 +1114,11 @@ export function sendArtifact(
   run.send(task.peer, payload);
   run.event({ kind: 'artifact', taskId, peer: task.peer, state: task.state, capability: task.capability, artifactId, lastChunk: rec.done });
   return { ...run.result(), artifactId };
+}
+
+/** An artifact's `extensions`: its capability, and the files extension when it carries file parts (SPEC §7.6.1). */
+export function artifactExtensions(capability: string, parts: readonly TaskPart[]): string[] {
+  return parts.some((p) => p.kind === 'file') ? [capability, FILES_URI] : [capability];
 }
 
 /** End a started task: `completed` or `failed`, optionally with a message (release-gated when it has content). */

@@ -12,7 +12,7 @@ import {
   ResourceUpdatedNotificationSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 import { type Capability, parseWindow, type Slot, toSlot, toSpan } from '@rendezvous/a2a';
-import { Home } from '@rendezvous/cli/lib';
+import { type FetchTestOptions, Home } from '@rendezvous/cli/lib';
 import { expect } from 'vitest';
 import { RdvMcpServer } from '../src/index.js';
 
@@ -53,12 +53,12 @@ export function parseResult(text: string): unknown {
 export async function makeSide(
   name: string,
   dir: string,
-  opts: { elicit?: ElicitHandler; defaultRelays?: string[]; capabilities?: Capability[] } = {},
+  opts: { elicit?: ElicitHandler; defaultRelays?: string[]; capabilities?: Capability[]; fileFetch?: FetchTestOptions } = {},
 ): Promise<Side> {
   const home = new Home(dir);
   const humanLog: string[] = [];
   // The flows keep calendars next to the homes: the human allows that directory (--calendar-dir).
-  const server = new RdvMcpServer({ home, humanLog: (l) => humanLog.push(l), sweepMs: 3_600_000, calendarDirs: [dirname(dir)], defaultRelays: opts.defaultRelays, capabilities: opts.capabilities });
+  const server = new RdvMcpServer({ home, humanLog: (l) => humanLog.push(l), sweepMs: 3_600_000, calendarDirs: [dirname(dir)], defaultRelays: opts.defaultRelays, capabilities: opts.capabilities, fileFetch: opts.fileFetch });
   const [clientT, serverT] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: `${name}-claude`, version: '0.0.0' }, { capabilities: opts.elicit ? { elicitation: {} } : {} });
   if (opts.elicit) client.setRequestHandler(ElicitRequestSchema, async (req) => opts.elicit!(req.params));

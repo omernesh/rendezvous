@@ -10,6 +10,7 @@ import {
   receiveTask,
   REQUEST_URI,
   TASK_BOUNDS,
+  FILES_URI,
   TASKS_URI,
   type TaskEngineState,
   type TaskPayload,
@@ -130,7 +131,7 @@ describe('the engine context (issue #39)', () => {
   });
 
   it('the card advertises tasks/v1 and what the host routes, nothing it does not', () => {
-    expect(hostCardCapabilities()).toEqual(['rdv/v1', 'a2a/0.3', 'https://rendezvous.nesher.co/ext/meetings/v1', 'https://rendezvous.nesher.co/ext/meeting-cancel/v1', TASKS_URI, REQUEST_URI]);
+    expect(hostCardCapabilities()).toEqual(['rdv/v1', 'a2a/0.3', 'https://rendezvous.nesher.co/ext/meetings/v1', 'https://rendezvous.nesher.co/ext/meeting-cancel/v1', TASKS_URI, FILES_URI, REQUEST_URI]);
     expect(hostCardCapabilities(hostRegistry([CAP]))).toContain(CAP.uri);
   });
 });
