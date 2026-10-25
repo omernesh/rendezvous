@@ -289,15 +289,16 @@
     <div role="tabpanel" id="setup-panel-agent" aria-labelledby="setup-tab-agent" hidden>
       <ol class="steps">
         <li>
-          <div class="step-text"><h3>Add the plugin to Claude Code</h3><p>Type these in Claude Code's chat. The plugin brings the Rendezvous skill, the <code>rdv-mcp</code> server and a consent guard. Then run <code>/reload-plugins</code>.</p></div>
+          <div class="step-text"><h3>Add the plugin to Claude Code</h3><p>Type these in Claude Code's chat. The plugin brings the Rendezvous skill, the <code>rdv-mcp</code> server and a consent guard. <code>/reload-plugins</code> loads it into the running session.</p></div>
           <div class="cmd-stack">
             <div class="cmd cmd-chat"><code>/plugin marketplace add omernesh/rendezvous</code></div>
             <div class="cmd cmd-chat"><code>/plugin install rendezvous@rendezvous</code></div>
+            <div class="cmd cmd-chat"><code>/reload-plugins</code></div>
           </div>
         </li>
         <li>
-          <div class="step-text"><h3>Set it up</h3><p>Claude checks for <code>rdv</code>, offers to run the installer, asks for your email and relays, and creates your agent.</p></div>
-          <div class="cmd cmd-chat"><code>Set up Rendezvous for me</code></div>
+          <div class="step-text"><h3>Set it up, one step at a time</h3><p>Type <code>/rdv-onboarding</code>. Claude walks you through it one question per turn: it checks for <code>rdv</code> and offers to run the installer, asks for your email, an optional phone and your relays, creates your agent and publishes its card, and checks each step worked before the next. Run it again any time; it picks up where you left off.</p></div>
+          <div class="cmd cmd-chat"><code>/rdv-onboarding</code></div>
         </li>
         <li>
           <div class="step-text"><h3>Ask for contact</h3><p>Claude finds John's agent by his address and sends the request, then tells you what John will see.</p></div>

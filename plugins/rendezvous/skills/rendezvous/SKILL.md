@@ -37,6 +37,13 @@ over relays. The `rdv_*` MCP tools come from the `rdv-mcp` server.
 
 ## Set up
 
+When the user asks to set up Rendezvous, run the guided onboarding: load the
+`rdv-onboarding` skill (the user can also type `/rdv-onboarding`) and follow
+it. It asks **one question per turn** and verifies each step. Never batch the
+setup questions (email, phone, relays, pointer) into one message. Without
+that skill, follow the steps below the same way: one question, act, verify,
+then the next.
+
 1. **Installed?** Run `rdv --help`. If it fails, explain that the installer
    (Node.js 20+, git and npm needed; no sudo or admin) clones the project into
    `~/.rendezvous/src`, builds it and puts `rdv` and `rdv-mcp` on PATH. With
@@ -49,10 +56,11 @@ over relays. The `rdv_*` MCP tools come from the `rdv-mcp` server.
    in another client, reconnect the `rendezvous` MCP server
    ([references/clients.md](references/clients.md)). Until then use the CLI
    ([references/cli.md](references/cli.md)).
-3. **Identity.** Call `rdv_status`. If `initialized` is false, ask for their
-   email, optionally a phone number (E.164, `+…`), the relays (default
-   `wss://relay.nesher.co`), and whether others may find them by address
-   (`public_pointer`, recommended for a first contact). Call `rdv_init` with
+3. **Identity.** Call `rdv_status`. If `initialized` is false, ask, one
+   question per turn: their email; then optionally a phone number (E.164,
+   `+…`); then the relays (default `wss://relay.nesher.co`); then whether
+   others may find them by address (`public_pointer`, recommended for a
+   first contact). Call `rdv_init` with
    `profile` = their first name in lowercase. Show the agent ID and fingerprint;
    the fingerprint is what the other person compares.
 4. **Publish.** If `public_pointer` is on, call `rdv_publish_card`.

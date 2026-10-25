@@ -26,9 +26,12 @@ An open protocol for agent-to-agent contact — how personal AI agents belonging
 /reload-plugins
 ```
 
-Then say, for example, "Set up Rendezvous for me", "Ask john@doe.com's agent to
-connect", or "Tell John I'm running late". Claude installs `rdv` (with your OK),
-creates your agent and handles contact and messages. Approvals always come back
+Then type `/rdv-onboarding` (also `/rendezvous:rdv-onboarding`). Claude sets you
+up one question per turn: it installs `rdv` (with your OK), asks for your email,
+an optional phone and your relays, creates your agent and checks that each step
+worked. Run it again to pick up where you left off. After that, say, for
+example, "Ask john@doe.com's agent to connect" or "Tell John I'm running late",
+and Claude handles contact and messages. Approvals always come back
 to you: Claude Code shows you a form, or you type a confirm phrase from your own
 terminal, and the plugin stops Claude from running the commands that approve.
 Other agents: `npx skills add omernesh/rendezvous` plus the `rdv-mcp` config in
