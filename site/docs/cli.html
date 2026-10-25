@@ -1,0 +1,549 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CLI and library | Rendezvous docs</title>
+<meta name="description" content="The rdv command line, the TypeScript packages, relay behaviour, the dinner scenarios and how to develop and test.">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#232a7a">
+<link rel="canonical" href="https://rendezvous.nesher.co/docs/cli.html">
+<link rel="alternate" type="text/markdown" href="/docs/cli.md">
+<link rel="alternate" type="text/plain" href="/llms.txt" title="llms.txt">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/docs.css">
+<script src="/theme.js"></script>
+<script src="/app.js" defer></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="site-header">
+  <div class="wrap header-row">
+    <a class="brand" href="/" aria-label="Rendezvous, home">
+      <svg class="mark" viewBox="0 0 32 32" aria-hidden="true" focusable="false"><path class="mk-a" d="M18.98 27.11A11.5 11.5 0 0 1 4.89 13.02"/><path class="mk-a" d="M13.02 4.89A11.5 11.5 0 0 1 27.11 18.98"/><path class="mk-d" d="M16 10.6Q16.6 10.6 17 11L21 15Q21.4 15.4 21.4 16Q21.4 16.6 21 17L17 21Q16.6 21.4 16 21.4Q15.4 21.4 15 21L11 17Q10.6 16.6 10.6 16Q10.6 15.4 11 15L15 11Q15.4 10.6 16 10.6Z"/></svg>
+      <span class="brand-word">rendezvous</span>
+    </a>
+    <nav class="site-nav" aria-label="Sections">
+      <ul>
+        <li><a href="/#how">How it works</a></li>
+        <li><a href="/#privacy">Privacy</a></li>
+        <li><a href="/#setup">Setup</a></li>
+        <li><a href="/#install">Install</a></li>
+        <li><a href="/docs/" aria-current="page">Docs</a></li>
+        <li><a href="/#faq">FAQ</a></li>
+        <li><a href="/#contribute">Contribute</a></li>
+      </ul>
+    </nav>
+    <div class="header-actions">
+      <a class="docs-chip" href="/docs/">Docs</a>
+      <a class="gh-link" href="https://github.com/omernesh/rendezvous" aria-label="Rendezvous on GitHub">
+        <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+      </a>
+      <button class="theme-toggle" type="button" aria-label="Color theme: system" title="Color theme"><svg class="ti ti-system" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 0 1 0 16z" class="fill"/></svg><svg class="ti ti-light" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg><svg class="ti ti-dark" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/></svg></button>
+    </div>
+  </div>
+</header>
+
+<main id="main">
+<div class="wrap docs-layout">
+  <div class="docs-aside"><nav class="docs-side" aria-label="Documentation"><ul><li><a href="/docs/">Docs home</a></li></ul><p class="side-group">Get started</p><ul><li><a href="/docs/agents.html">Setup per agent</a></li><li><a href="/docs/plugin.html">Claude Code plugin</a></li></ul><p class="side-group">Reference</p><ul><li><a href="/docs/cli.html" aria-current="page">CLI and library</a></li><li><a href="/docs/mcp.html">MCP tools</a></li></ul><p class="side-group">Protocol</p><ul><li><a href="/docs/spec.html">Protocol spec</a></li></ul><p class="side-group">Project</p><ul><li><a href="/docs/contributing.html">Contributing</a></li><li><a href="https://github.com/omernesh/rendezvous/pull/19">Roadmap: tasks and groups (proposal)</a></li></ul><p class="side-group">For LLMs</p><ul><li><a href="/llms.txt">llms.txt</a></li><li><a href="/llms-full.txt">llms-full.txt</a></li></ul></nav><details class="docs-menu"><summary>Docs menu</summary><nav aria-label="Documentation menu"><ul><li><a href="/docs/">Docs home</a></li></ul><p class="side-group">Get started</p><ul><li><a href="/docs/agents.html">Setup per agent</a></li><li><a href="/docs/plugin.html">Claude Code plugin</a></li></ul><p class="side-group">Reference</p><ul><li><a href="/docs/cli.html" aria-current="page">CLI and library</a></li><li><a href="/docs/mcp.html">MCP tools</a></li></ul><p class="side-group">Protocol</p><ul><li><a href="/docs/spec.html">Protocol spec</a></li></ul><p class="side-group">Project</p><ul><li><a href="/docs/contributing.html">Contributing</a></li><li><a href="https://github.com/omernesh/rendezvous/pull/19">Roadmap: tasks and groups (proposal)</a></li></ul><p class="side-group">For LLMs</p><ul><li><a href="/llms.txt">llms.txt</a></li><li><a href="/llms-full.txt">llms-full.txt</a></li></ul></nav></details></div>
+  <article class="docs-content">
+    <p class="crumbs"><a href="/docs/">Docs</a> / Reference</p>
+    <h1>CLI and library</h1>
+    <p class="doc-meta">Rendered from <a href="https://github.com/omernesh/rendezvous/blob/main/impl/README.md">impl/README.md</a> on GitHub. <a href="/docs/cli.md">Markdown version</a> for LLMs.</p>
+    <details class="toc-m"><summary>On this page</summary><ul><li><a href="#rendezvouscore">@rendezvous/core</a></li><li><a href="#rendezvousa2a">@rendezvous/a2a</a></li><li><a href="#rdv-the-cli">rdv (the CLI)</a><ul><li><a href="#the-dinner-scenarios-plan-53">The dinner scenarios (PLAN §5.3)</a></li><li><a href="#the-contact-scenario-plan-45">The contact scenario (PLAN §4.5)</a></li></ul></li><li><a href="#rdv-mcp-the-mcp-server">rdv-mcp (the MCP server)</a></li><li><a href="#develop">Develop</a></li></ul></details>
+    <div class="prose">
+<p>TypeScript packages for the <a href="/docs/spec.html">Rendezvous</a> agent-to-agent contact
+protocol, built toward the two-agent dinner demo in <a href="https://github.com/omernesh/rendezvous/blob/main/PLAN.md">PLAN.md</a>.
+<code>impl/</code> is an npm workspace:</p>
+<div class="tablewrap" tabindex="0"><table>
+<thead>
+<tr>
+<th>Package</th>
+<th>Path</th>
+<th>What it is</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>@rendezvous/core</code></td>
+<td><code>packages/core</code></td>
+<td>The protocol library (keys, cards, discovery, consent, envelopes, Nostr transport)</td>
+</tr>
+<tr>
+<td><code>@rendezvous/a2a</code></td>
+<td><code>packages/a2a</code></td>
+<td>A2A task semantics: the dinner-negotiation message model, engine, calendar adapter</td>
+</tr>
+<tr>
+<td><code>@rendezvous/cli</code></td>
+<td><code>packages/cli</code></td>
+<td><code>rdv</code>, a command-line agent; also the scripted bots and interop scenarios</td>
+</tr>
+<tr>
+<td><code>@rendezvous/mcp</code></td>
+<td><code>packages/mcp</code></td>
+<td><code>rdv-mcp</code>, a stdio MCP server so Claude (or any MCP client) can find, contact and book dinner with other agents</td>
+</tr>
+</tbody>
+</table></div>
+<p><code>demo/</code> holds the showpiece script (<a href="https://github.com/omernesh/rendezvous/blob/main/impl/demo/SCRIPT.md">demo/SCRIPT.md</a>), a
+calendar generator and <code>relay-dump.mjs</code> (what the relay stores: ciphertext).</p>
+<p>Core never depends on the CLI, the A2A layer, MCP or LLM code. <code>a2a</code> has no
+runtime dependencies at all; the CLI glues the two together. The MCP server
+builds on the CLI's library entry (<code>@rendezvous/cli/lib</code>: home dir, lock,
+inbound loop), so <code>rdv</code> and <code>rdv-mcp</code> share profiles.</p>
+<h2 id="rendezvouscore">@rendezvous/core<a class="anchor" href="#rendezvouscore" title="Link to this section" aria-label="Link to this section">#</a></h2>
+<div class="tablewrap" tabindex="0"><table>
+<thead>
+<tr>
+<th>Module</th>
+<th>Spec</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>identity</code></td>
+<td>§4.1–4.2</td>
+<td>Ed25519 agent keys, <code>rdv1:</code> IDs, fingerprints</td>
+</tr>
+<tr>
+<td><code>sign</code></td>
+<td>—</td>
+<td>Signed JSON documents (canonical JSON + Ed25519)</td>
+</tr>
+<tr>
+<td><code>card</code></td>
+<td>§4.3</td>
+<td>Create and verify address cards</td>
+</tr>
+<tr>
+<td><code>discovery</code></td>
+<td>§4.4</td>
+<td><code>dtopic()</code>, address canonicalization, binding levels</td>
+</tr>
+<tr>
+<td><code>contact</code></td>
+<td>§5</td>
+<td>Contact request / grant / revoke, and the contact book (policy, replay, rate limits)</td>
+</tr>
+<tr>
+<td><code>envelope</code></td>
+<td>§6.4, §7</td>
+<td>Encrypted, signed envelopes; <code>seq</code>/<code>prev</code> ordering with gap detection</td>
+</tr>
+<tr>
+<td><code>transport/nostr</code></td>
+<td>§6.2</td>
+<td>Nostr relay transport (kind 30417): re-subscribes when a relay drops; publishes with retries, per-relay pacing and cooldowns, and per-relay status (<code>relayStatus()</code>); <code>DEFAULT_RELAYS</code></td>
+</tr>
+<tr>
+<td><code>agent</code></td>
+<td>—</td>
+<td>Ties it together: listen, discover, request, grant, send, receive</td>
+</tr>
+<tr>
+<td><code>testing/relay</code></td>
+<td>—</td>
+<td>In-memory Nostr relay on a localhost WebSocket, for tests and local demos</td>
+</tr>
+</tbody>
+</table></div>
+<div class="codeblock"><pre tabindex="0"><code class="language-ts">import { Agent, NostrTransport } from '@rendezvous/core';
+
+const relays = ['wss://relay.example'];
+const john = Agent.create((key) =&gt; new NostrTransport({ key, relays }), {
+  rendezvous: [{ type: 'nostr', relay: relays[0], pref: 1 }],
+  discovery: { addresses: [{ type: 'email', value: 'john@doe.com' }], public_pointer: false },
+});
+john.on('request', (p) =&gt; john.grant(p.request.id, { tier: 'friend' })); // the human decides here
+john.on('message', (from, payload) =&gt; console.log(from, payload));
+john.start();
+
+// On another machine:
+await omer.requestContact('john@doe.com', &quot;Omer's agent would like to plan dinner.&quot;);
+omer.once('contact', () =&gt; omer.send(john.id, { type: 'a2a/message', text: 'Thursday 20:00?' }));
+</code></pre></div>
+<p><strong>Relays.</strong> <code>DEFAULT_RELAYS</code> is the public set <code>rdv init</code> uses when no relay
+is given: <code>wss://nos.lol</code>, <code>wss://relay.primal.net</code>, <code>wss://relay.nostr.net</code>,
+<code>wss://nostr.oxtr.dev</code> (checked live, NOTES 11a). A publish counts as
+delivered when one relay answers <code>OK true</code>. Transient failures are retried
+twice with jittered backoff. A relay that answers <code>blocked</code>, <code>restricted</code> or
+<code>banned</code> is skipped for 30 minutes. Events are paced per relay (a burst of 6,
+then 3 per second). Each tunable is a <code>NostrTransportOptions</code> field (NOTES 69).
+An envelope's plaintext is at most 32 KiB (<code>MAX_PLAINTEXT_BYTES</code>, SPEC §6.4).</p>
+<p>Agent state serializes with <code>agent.toJSON()</code> and loads with <code>Agent.fromJSON()</code>.
+<code>packages/core/vectors/v1.json</code> holds interop test vectors: fixed keys, IDs,
+discovery topics, a signed card and contact request, and a sample envelope
+that another implementation should be able to open.</p>
+<h2 id="rendezvousa2a">@rendezvous/a2a<a class="anchor" href="#rendezvousa2a" title="Link to this section" aria-label="Link to this section">#</a></h2>
+<p>PLAN.md §5.1–5.2, SPEC.md §7. Payloads <code>a2a/message</code> (an A2A v0.3 <code>Message</code>)
+and <code>a2a/task-update</code> (a <code>TaskStatusUpdateEvent</code>) travel inside envelopes.
+The verb sits in the message's <code>data</code> part (<code>data.rdv</code>): <code>meeting/propose</code>,
+<code>meeting/counter</code>, <code>meeting/accept</code>, <code>meeting/confirm</code>, <code>meeting/decline</code>, <code>meeting/cancel</code>, <code>rdv/cancel</code>.</p>
+<div class="tablewrap" tabindex="0"><table>
+<thead>
+<tr>
+<th>Module</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>model</code></td>
+<td>Types and <code>parsePayload</code>: strict validation of peer input (known keys only, UUIDs, 1–3 RFC 3339 slots with offsets, bounded text)</td>
+</tr>
+<tr>
+<td><code>engine</code></td>
+<td>Pure state machine: <code>propose</code>, <code>receive</code>, <code>confirmMeeting</code>, <code>cancel</code>, <code>cancelMeeting</code>, <code>expire</code> return <code>{ state, outgoing, effects, events }</code>; no I/O, no clock</td>
+</tr>
+<tr>
+<td><code>calendar</code></td>
+<td><code>CalendarAdapter</code> (<code>freeBusy(range)</code>, <code>hold(slot)</code>, <code>release(slot, note)</code>), <code>MemoryCalendar</code>, <code>JsonFileCalendar</code> (titles never leave the file)</td>
+</tr>
+<tr>
+<td><code>window</code></td>
+<td><code>parseWindow</code>: RFC 3339 ranges and a few phrases, with <code>now</code> and the UTC offset passed in</td>
+</tr>
+<tr>
+<td><code>time</code></td>
+<td>Instants, fixed offsets, slot formatting</td>
+</tr>
+</tbody>
+</table></div>
+<p>Policy: an offer carries up to 3 free slots (one per day first); the receiver
+accepts the first offered slot that is free and inside its window, else
+counters with 3 of its own; after 3 offers the task ends <code>rejected</code>. Task
+states: submitted → input-required / working → completed | rejected |
+canceled. Agreement is a handshake: the accepter holds the slot tentatively
+and sends <code>meeting/accept</code>; the offerer checks it is still free, sends
+<code>meeting/confirm</code> and completes; the accepter completes on the confirm. A
+tentative hold is released when the task is canceled, declined or expires,
+and every hold is busy for all other tasks. Unless <code>ctx.autoConfirm</code>, the
+engine waits for its human before each of those two steps (<code>confirmMeeting</code>).
+Messages are deduplicated by <code>messageId</code>; <code>rdv/cancel</code> is honored
+while pending; an agreed meeting is called off with <code>meeting/cancel</code>
+(<code>cancelMeeting</code>, our human only), which the peer honors only for that
+completed task and slot, freeing it in both calendars; meeting verbs need <code>may_propose_meetings</code> in the grant, and
+<code>may_access_calendar: none</code> blocks them. A peer can hold at most 32 tasks
+with us. Details and open questions: <a href="https://github.com/omernesh/rendezvous/blob/main/impl/NOTES.md">NOTES.md</a> items 28–37, 58, 61.</p>
+<p><strong><code>--window</code></strong> (local time = a fixed offset; weeks run Monday–Sunday; an
+evening is 19:00–23:00; everything is clipped to start no earlier than now):</p>
+<div class="tablewrap" tabindex="0"><table>
+<thead>
+<tr>
+<th>Window</th>
+<th>Means</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>tonight</code> / <code>tomorrow evening</code></td>
+<td>that one evening</td>
+</tr>
+<tr>
+<td><code>this week evenings</code></td>
+<td>every evening from today to Sunday</td>
+</tr>
+<tr>
+<td><code>next week evenings</code></td>
+<td>every evening Monday–Sunday of next week</td>
+</tr>
+<tr>
+<td><code>this weekend</code> / <code>next weekend</code></td>
+<td>Saturday and Sunday evenings</td>
+</tr>
+<tr>
+<td><code>2026-11-05T19:00:00+02:00/2026-11-05T23:00:00+02:00[,…]</code></td>
+<td>explicit ranges</td>
+</tr>
+</tbody>
+</table></div>
+<p>Calendar file: <code>{ "timezone": "+02:00", "busy": [ { "start": "…", "end": "…", "title": "optional" } ] }</code>.
+Held slots are added to <code>busy</code>: <code>Dinner (tentative, rdv &lt;task&gt;)</code> while the
+handshake runs, then <code>Dinner (rdv &lt;task&gt;)</code>; a tentative hold that falls
+through is removed.</p>
+<h2 id="rdv-the-cli">rdv (the CLI)<a class="anchor" href="#rdv-the-cli" title="Link to this section" aria-label="Link to this section">#</a></h2>
+<div class="codeblock"><pre tabindex="0"><code class="language-bash">npm install &amp;&amp; npm run build              # from impl/
+npm run rdv -- --help                     # or: node packages/cli/dist/src/bin.js --help
+</code></pre></div>
+<p><code>npx rdv …</code> also works once <code>npm install</code> has run after the first build
+(npm links the binary only when <code>dist/</code> exists).</p>
+<p>State lives in a directory: <code>--home &lt;dir&gt;</code>, else <code>$RDV_HOME</code>, else
+<code>~/.rendezvous/&lt;profile&gt;</code> (<code>--profile</code>, default <code>default</code>).</p>
+<div class="tablewrap" tabindex="0"><table>
+<thead>
+<tr>
+<th>File</th>
+<th>Holds</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>agent.json</code></td>
+<td><code>Agent.toJSON()</code>, including the secret key (mode 600 where the OS supports it)</td>
+</tr>
+<tr>
+<td><code>config.json</code></td>
+<td>profile, relays, addresses (public ones are on the card; <code>private: true</code> ones are kept here only), policy</td>
+</tr>
+<tr>
+<td><code>relays.json</code></td>
+<td>per-relay diagnostics and cooldowns (last OK, last error), written after each publish and read by <code>rdv whoami</code> / <code>rdv_status</code></td>
+</tr>
+<tr>
+<td><code>inbox.jsonl</code></td>
+<td>received payloads, one JSON object per line</td>
+</tr>
+<tr>
+<td><code>cards.json</code></td>
+<td>cards found by <code>rdv lookup</code>, so <code>contact request &lt;agent-id&gt;</code> can use them</td>
+</tr>
+<tr>
+<td><code>negotiations.json</code></td>
+<td>dinner negotiations (the a2a engine state)</td>
+</tr>
+<tr>
+<td><code>consent.json</code></td>
+<td>salted scrypt hashes of the confirm phrases for pending requests, probe answers and held dinners, each bound to what the human was shown (written by <code>rdv-mcp</code>; <code>contact pending</code> and <code>dinner list</code> issue and show a fresh phrase in text mode)</td>
+</tr>
+<tr>
+<td><code>holds.json</code></td>
+<td>which calendar file holds each tentative dinner hold, so <code>dinner confirm</code>/<code>cancel</code> can finalize or release it</td>
+</tr>
+<tr>
+<td><code>events.jsonl</code></td>
+<td>shared event log: what the home's listener handled, plus <code>rdv-mcp</code>'s own events; <code>rdv_inbox</code> is a view of it</td>
+</tr>
+<tr>
+<td><code>events.lock</code></td>
+<td>held while appending to <code>events.jsonl</code></td>
+</tr>
+</tbody>
+</table></div>
+<p>| <code>lock</code> | held while a command reads and writes state |
+| <code>listener.lock</code> | held for its lifetime by the home's one inbound consumer (<code>rdv listen</code> or <code>rdv-mcp</code>) |</p>
+<div class="tablewrap" tabindex="0"><table>
+<thead>
+<tr>
+<th>Command</th>
+<th>Does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>rdv init --profile omer --email omer@example.com [--email …] [--relay wss://… [--relay …]] [--phone +…] [--phone …] [--public-pointer] [--force]</code></td>
+<td>Generate key and card, write state. Repeat <code>--email</code> / <code>--phone</code> for more addresses (canonicalized, repeats dropped, at most 8). Without <code>--relay</code>: <code>DEFAULT_RELAYS</code> (below). An agent keeps the relays it was created with</td>
+</tr>
+<tr>
+<td><code>rdv whoami</code></td>
+<td>Print agent ID, fingerprint, addresses, per-relay health (<code>relay_health</code>: last OK, last error, cooldown), card JSON (never the secret key)</td>
+</tr>
+<tr>
+<td><code>rdv address list</code></td>
+<td>Our addresses, each public (on the card, answers probes; with its topic) or private (kept in <code>config.json</code> only)</td>
+</tr>
+<tr>
+<td><code>rdv address add &lt;email\|+phone&gt; [--public\|--private]</code></td>
+<td>Add one (default public). A public one re-signs the card with a later <code>created</code>, republishes it if the public pointer is on, and a running <code>listen</code> / <code>rdv-mcp</code> starts answering probes on it within a second. Duplicates (in any spelling) and a ninth address are refused</td>
+</tr>
+<tr>
+<td><code>rdv address remove &lt;email\|+phone&gt;</code></td>
+<td>Remove one: probes on it are refused at once and its topic is dropped; with the public pointer on, the new card is also published on the removed topic, replacing the old one there. Contacts are kept (NOTES 63)</td>
+</tr>
+<tr>
+<td><code>rdv card publish</code></td>
+<td>Publish public pointers (if enabled at init)</td>
+</tr>
+<tr>
+<td><code>rdv lookup john@doe.com</code></td>
+<td>Fetch public-pointer cards for an address</td>
+</tr>
+<tr>
+<td><code>rdv contact request &lt;email\|card-file\|agent-id&gt; [--greeting "…"] [--in-person] [--label john@doe.com]</code></td>
+<td>Topic probe by email, or direct by card. <code>--in-person</code> records the <code>in-person</code> binding for a card you got face to face. <code>--label</code> is your local name for them (a probe is labeled with the address)</td>
+</tr>
+<tr>
+<td><code>rdv contact pending</code></td>
+<td>Pending inbound requests with binding, fingerprint, greeting; answers to your topic probes awaiting confirmation</td>
+</tr>
+<tr>
+<td><code>rdv contact grant &lt;request-id&gt; [--tier friend] [--scope-file s.json] [--label john@doe.com]</code></td>
+<td>Approve (<code>--label</code>: your local name for them)</td>
+</tr>
+<tr>
+<td><code>rdv contact label &lt;agent-id&gt; &lt;label&gt;</code></td>
+<td>Name a contact locally; sending by name (<code>rdv_send</code> <code>to</code>) resolves through this, never through the addresses its card claims. Yours to run: an assistant may only suggest a label, which you approve with the contact (NOTES 62)</td>
+</tr>
+<tr>
+<td><code>rdv contact grant &lt;agent-id&gt; [--tier …] [--scope-file …]</code></td>
+<td>Give a contact you requested rights towards you (by default it may write, not propose meetings); the contact gets a reverse grant, so it can then propose (NOTES 60)</td>
+</tr>
+<tr>
+<td><code>rdv contact confirm &lt;grant-id&gt;</code> / <code>rdv contact reject &lt;grant-id&gt; [--block]</code></td>
+<td>Accept or turn down an answer to your topic probe (anyone who saw the probe can answer; check the fingerprint)</td>
+</tr>
+<tr>
+<td><code>rdv contact decline &lt;request-id&gt; [--block]</code></td>
+<td>Decline</td>
+</tr>
+<tr>
+<td><code>rdv contact list</code> / <code>rdv contact revoke &lt;agent-id&gt;</code></td>
+<td>Manage contacts</td>
+</tr>
+<tr>
+<td><code>rdv contact resync &lt;agent-id&gt;</code></td>
+<td>After <code>listen</code> reports an <code>envelope chain fork</code> (the contact restored an old backup), accept its current chain once you have checked with them; until then its messages are refused</td>
+</tr>
+<tr>
+<td><code>rdv send &lt;agent-id&gt; --json '{"type":"a2a/message","text":"hi"}'</code></td>
+<td>Send any payload (<code>--payload '…'</code> is the same without JSON output)</td>
+</tr>
+<tr>
+<td><code>rdv listen [--auto-grant &lt;tier&gt; [--auto-grant-any-tier]] [--exec &lt;script&gt;] [--negotiate --calendar cal.json [--window "…"] [--tz +02:00]]</code></td>
+<td>Long-running: print events; auto-grant is for demos only and stops at <code>stranger</code> unless <code>--auto-grant-any-tier</code>; <code>--exec</code> gets each event as a JSON line on stdin (<code>RDV_EVENT</code>, <code>RDV_HOME</code> set); <code>--negotiate</code> answers dinner proposals from the calendar (window default <code>next week evenings</code>) and holds a slot for you to confirm; <code>--auto-confirm</code> skips the human (bots, demos)</td>
+</tr>
+<tr>
+<td><code>rdv dinner propose &lt;agent-id&gt; --calendar cal.json --window "next week evenings" [--tz +02:00] [--minutes 120] [--place …] [--area …] [--expires &lt;rfc3339&gt;]</code></td>
+<td>Offer up to 3 free slots; run <code>listen --negotiate</code> to handle the replies</td>
+</tr>
+<tr>
+<td><code>rdv dinner confirm &lt;task-id&gt; --hold &lt;code&gt;</code></td>
+<td>Confirm the dinner a negotiation holds for you: sends <code>meeting/accept</code> (their offer) or <code>meeting/confirm</code> (they accepted yours). <code>--hold</code> is the code <code>rdv dinner list</code> shows; it is refused if the meeting changed since</td>
+</tr>
+<tr>
+<td><code>rdv dinner cancel &lt;task-id&gt; [--reason …]</code></td>
+<td>Send <code>rdv/cancel</code> for a pending negotiation and release its hold; for an agreed (completed) dinner, send <code>meeting/cancel</code>: it leaves your calendar and the peer's agent removes it from theirs</td>
+</tr>
+<tr>
+<td><code>rdv dinner list</code></td>
+<td>Negotiations with state, round, agreed or held slot (and what it waits for)</td>
+</tr>
+<tr>
+<td><code>rdv inbox [--follow]</code></td>
+<td>Show received payloads</td>
+</tr>
+</tbody>
+</table></div>
+<p>Output is human text by default and one JSON object per line with <code>--json</code>.
+Exit codes: 0 ok, 1 error, 2 usage error. Every command except <code>listen</code> and
+<code>inbox --follow</code> loads state under the lock, runs, saves, and exits. <code>listen</code>
+takes the lock only while it handles one inbound item, so a bot can run
+<code>rdv contact grant</code> against the same home while <code>listen</code> is running; it prints
+an event only after the state behind it is saved.</p>
+<p><strong>One inbound consumer per home.</strong> Two processes subscribed for the same home
+would split inbound events between them (whichever handles an envelope first
+wins; the other never sees it). So whoever consumes holds <code>listener.lock</code>
+(O_EXCL file with pid, host and role, mtime touched every minute; broken when
+its pid is gone on this host, or after 10 minutes without a touch from another
+host) and appends every event it handles to <code>events.jsonl</code>, after the state
+behind it is saved. A second <code>rdv listen</code> exits 1 naming the holder. A second
+<code>rdv-mcp</code> runs <strong>attached</strong>: it opens no subscriptions, still sends (grant,
+send, negotiate), and its <code>rdv_inbox</code> follows <code>events.jsonl</code> by cursor, so every
+server on the home sees each event once with the same cursor. When the holder
+exits, an attached server takes the lock within a second and starts
+consuming; the relays' lookback replays what arrived meanwhile, and the
+channels drop what was already handled. Negotiation follows the consumer:
+run <code>rdv listen --negotiate</code> (or give the consuming <code>rdv-mcp</code> a calendar) if
+an attached server should get answers to its dinner proposals.</p>
+<p>With <code>--json</code>, negotiation steps print as <code>{"event":"dinner","kind":…,"task":…,"peer":…,"state":…}</code>
+(kinds: proposed, offer-received, countered, confirm-needed, accepted,
+completed, meeting-canceled, released, rejected, canceled, expired, status,
+duplicate, ignored, invalid). In text mode the
+peer's text parts and decline reasons are shown as untrusted and cleaned.</p>
+<p>PowerShell quoting for <code>send</code>: <code>rdv send &lt;id&gt; --json '{\"type\":\"a2a/message\",\"text\":\"hi\"}'</code>
+(Windows PowerShell 5 strips bare inner quotes; PowerShell 7.3+ accepts the bash form).</p>
+<h3 id="the-dinner-scenarios-plan-53">The dinner scenarios (PLAN §5.3)<a class="anchor" href="#the-dinner-scenarios-plan-53" title="Link to this section" aria-label="Link to this section">#</a></h3>
+<p><code>packages/cli/scenarios/dinner.ts</code>: Omer and John each run
+<code>rdv listen --negotiate</code> with their own JSON calendar; Omer runs
+<code>rdv dinner propose</code>. Variants: <code>overlap</code> (John, then Omer, confirms with
+<code>rdv dinner confirm</code>; both <code>completed</code> on the same slot, one hold each),
+<code>no-overlap</code> (<code>rejected</code> after 3 rounds), <code>cancel</code> (John offline while Omer
+proposes and cancels; both <code>canceled</code>), <code>cancel-hold</code> (Omer cancels while
+John's agent holds a slot for John; the hold is released), <code>duplicate</code>
+(<code>--auto-confirm</code> bots, then every envelope replayed and a message re-sent;
+nothing changes), <code>reverse</code> (John, who granted the contact, proposes: refused
+until Omer runs <code>rdv contact grant &lt;john-id&gt;</code>, which sends John a reverse
+grant; then both confirm and complete), <code>cancel-agreed</code> (<code>--auto-confirm</code>
+bots agree, then John runs <code>rdv dinner cancel</code>; both calendars free the
+evening and both end <code>canceled</code>). All seven run in <code>npm test</code>; <code>overlap</code> runs in
+<code>npm run test:live</code>; by hand:</p>
+<p><code>node packages/cli/dist/scenarios/dinner.js --relay ws://… [--variant overlap] [--variant …]</code>.</p>
+<h3 id="the-contact-scenario-plan-45">The contact scenario (PLAN §4.5)<a class="anchor" href="#the-contact-scenario-plan-45" title="Link to this section" aria-label="Link to this section">#</a></h3>
+<p><code>packages/cli/scenarios/contact.ts</code> drives real <code>rdv</code> processes with separate
+homes: John listens, Omer requests by email, John grants, Omer sends, John's
+inbox shows it, each step asserted with a timeout. It runs:</p>
+<ul>
+<li>against the in-memory relay as part of <code>npm test</code>;</li>
+<li>against real relays with <code>npm run test:live</code> (below);</li>
+<li>by hand against any relays, e.g. from two machines' worth of setup:
+    <code>node packages/cli/dist/scenarios/contact.js --relay wss://relay.example [--relay …] [--timeout 30000] [--keep]</code>.</li>
+</ul>
+<p>Crash safety: state is saved right before each envelope leaves (<code>Agent.beforeSend</code>),
+so a crash after a send never reuses a <code>seq</code> (issue #4).</p>
+<h2 id="rdv-mcp-the-mcp-server">rdv-mcp (the MCP server)<a class="anchor" href="#rdv-mcp-the-mcp-server" title="Link to this section" aria-label="Link to this section">#</a></h2>
+<p>PLAN §6.1. Tools <code>rdv_init</code>, <code>rdv_status</code>, <code>rdv_publish_card</code>, <code>rdv_discover</code>,
+<code>rdv_request_contact</code>, <code>rdv_pending_requests</code>, <code>rdv_grant</code>, <code>rdv_revoke</code>,
+<code>rdv_send</code>, <code>rdv_inbox</code>, <code>rdv_negotiate</code>, and the <code>rdv://inbox</code> resource
+(subscribable). <code>rdv_grant</code> needs the human: an MCP elicitation form, or a
+confirm phrase shown only in their terminal. Peer text comes back only as
+<code>untrusted_peer_text</code>. Details, consent threat model and client config:
+<a href="/docs/mcp.html">packages/mcp/README.md</a>, <a href="https://github.com/omernesh/rendezvous/blob/main/impl/demo/SCRIPT.md">demo/SCRIPT.md</a>.</p>
+<div class="codeblock"><pre tabindex="0"><code class="language-bash">node packages/mcp/dist/src/bin.js --home ~/.rendezvous/omer --calendar cal.json --tz +02:00
+</code></pre></div>
+<h2 id="develop">Develop<a class="anchor" href="#develop" title="Link to this section" aria-label="Link to this section">#</a></h2>
+<p>Run from <code>impl/</code> (works the same in PowerShell and bash):</p>
+<div class="codeblock"><pre tabindex="0"><code class="language-bash">npm install
+npm run typecheck        # every workspace
+npm test                 # core, a2a, cli (commands + scenarios), mcp (two servers end to end); local relay, no network
+npm run build            # tsc -b -&gt; packages/*/dist
+npm run test:vectors:update   # regenerate vectors (deliberate wire-format changes only)
+</code></pre></div>
+<p>One package or one file: <code>npm test -w @rendezvous/core</code>, or
+<code>cd packages/core &amp;&amp; npx vitest run test/unit.test.ts -t envelope</code>.
+CLI tests spawn the built <code>rdv</code>, so the CLI's <code>test</code> script builds first.</p>
+<p><strong>Live relays.</strong> <code>npm run test:live</code> runs only <code>*.live.test.ts</code>, and those skip
+unless <code>RDV_LIVE_RELAYS</code> lists relays. They are never part of <code>npm test</code>.
+The live files run one at a time, since public relays limit connections per
+IP. Keep the volume modest: relay.damus.io banned the test pubkey after a few
+runs.</p>
+<div class="codeblock"><pre tabindex="0"><code class="language-bash">RDV_LIVE_RELAYS=wss://nos.lol,wss://relay.primal.net,wss://relay.nostr.net,wss://nostr.oxtr.dev npm run test:live
+</code></pre></div>
+<div class="codeblock"><pre tabindex="0"><code class="language-powershell">$env:RDV_LIVE_RELAYS='wss://nos.lol,wss://relay.primal.net,wss://relay.nostr.net,wss://nostr.oxtr.dev'; npm run test:live; Remove-Item Env:RDV_LIVE_RELAYS
+</code></pre></div>
+<p><strong>Pre-push hook (replaces CI).</strong> Enable it once per clone, from the repo root:</p>
+<div class="codeblock"><pre tabindex="0"><code class="language-bash">git config core.hooksPath .githooks
+</code></pre></div>
+<p><code>.githooks/pre-push</code> runs <code>npm run typecheck &amp;&amp; npm test</code> in <code>impl/</code> and blocks
+the push if either fails.</p>
+<p>See <a href="https://github.com/omernesh/rendezvous/blob/main/impl/NOTES.md">NOTES.md</a> for wire-format decisions and the places where this
+implementation departs from or fills gaps in SPEC.md.</p>
+    </div>
+  </article>
+  <div class="docs-toc"><nav class="page-toc" aria-label="On this page"><p class="side-group">On this page</p><ul><li><a href="#rendezvouscore">@rendezvous/core</a></li><li><a href="#rendezvousa2a">@rendezvous/a2a</a></li><li><a href="#rdv-the-cli">rdv (the CLI)</a><ul><li><a href="#the-dinner-scenarios-plan-53">The dinner scenarios (PLAN §5.3)</a></li><li><a href="#the-contact-scenario-plan-45">The contact scenario (PLAN §4.5)</a></li></ul></li><li><a href="#rdv-mcp-the-mcp-server">rdv-mcp (the MCP server)</a></li><li><a href="#develop">Develop</a></li></ul></nav></div>
+</div>
+</main>
+
+<footer class="site-footer">
+  <div class="wrap footer-row">
+    <div class="footer-brand">
+      <svg class="mark" viewBox="0 0 32 32" aria-hidden="true" focusable="false"><path class="mk-a" d="M18.98 27.11A11.5 11.5 0 0 1 4.89 13.02"/><path class="mk-a" d="M13.02 4.89A11.5 11.5 0 0 1 27.11 18.98"/><path class="mk-d" d="M16 10.6Q16.6 10.6 17 11L21 15Q21.4 15.4 21.4 16Q21.4 16.6 21 17L17 21Q16.6 21.4 16 21.4Q15.4 21.4 15 21L11 17Q10.6 16.6 10.6 16Q10.6 15.4 11 15L15 11Q15.4 10.6 16 10.6Z"/></svg>
+      <p><span class="brand-word">rendezvous</span><br>An open protocol for agent-to-agent contact.</p>
+    </div>
+    <ul class="footer-links">
+      <li><a href="/docs/">Documentation</a></li>
+      <li><a href="https://github.com/omernesh/rendezvous">Source on GitHub</a></li>
+      <li><a href="/docs/spec.html">The spec</a></li>
+      <li><a href="/llms.txt">llms.txt</a></li>
+    </ul>
+    <p class="footer-legal">Apache-2.0: free to use, copy, modify and use commercially, with attribution.<br>&copy; 2026 Omer Nesher and Rendezvous contributors. No trackers, no third-party code on this page.</p>
+  </div>
+</footer>
+<div class="sr-only" aria-live="polite" id="live"></div>
+</body>
+</html>

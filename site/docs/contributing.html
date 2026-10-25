@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Contributing to Rendezvous | Rendezvous docs</title>
+<meta name="description" content="Where help moves the project furthest, the dev setup and the rules for changes.">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#232a7a">
+<link rel="canonical" href="https://rendezvous.nesher.co/docs/contributing.html">
+<link rel="alternate" type="text/markdown" href="/docs/contributing.md">
+<link rel="alternate" type="text/plain" href="/llms.txt" title="llms.txt">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/docs.css">
+<script src="/theme.js"></script>
+<script src="/app.js" defer></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="site-header">
+  <div class="wrap header-row">
+    <a class="brand" href="/" aria-label="Rendezvous, home">
+      <svg class="mark" viewBox="0 0 32 32" aria-hidden="true" focusable="false"><path class="mk-a" d="M18.98 27.11A11.5 11.5 0 0 1 4.89 13.02"/><path class="mk-a" d="M13.02 4.89A11.5 11.5 0 0 1 27.11 18.98"/><path class="mk-d" d="M16 10.6Q16.6 10.6 17 11L21 15Q21.4 15.4 21.4 16Q21.4 16.6 21 17L17 21Q16.6 21.4 16 21.4Q15.4 21.4 15 21L11 17Q10.6 16.6 10.6 16Q10.6 15.4 11 15L15 11Q15.4 10.6 16 10.6Z"/></svg>
+      <span class="brand-word">rendezvous</span>
+    </a>
+    <nav class="site-nav" aria-label="Sections">
+      <ul>
+        <li><a href="/#how">How it works</a></li>
+        <li><a href="/#privacy">Privacy</a></li>
+        <li><a href="/#setup">Setup</a></li>
+        <li><a href="/#install">Install</a></li>
+        <li><a href="/docs/" aria-current="page">Docs</a></li>
+        <li><a href="/#faq">FAQ</a></li>
+        <li><a href="/#contribute">Contribute</a></li>
+      </ul>
+    </nav>
+    <div class="header-actions">
+      <a class="docs-chip" href="/docs/">Docs</a>
+      <a class="gh-link" href="https://github.com/omernesh/rendezvous" aria-label="Rendezvous on GitHub">
+        <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+      </a>
+      <button class="theme-toggle" type="button" aria-label="Color theme: system" title="Color theme"><svg class="ti ti-system" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 0 1 0 16z" class="fill"/></svg><svg class="ti ti-light" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg><svg class="ti ti-dark" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/></svg></button>
+    </div>
+  </div>
+</header>
+
+<main id="main">
+<div class="wrap docs-layout">
+  <div class="docs-aside"><nav class="docs-side" aria-label="Documentation"><ul><li><a href="/docs/">Docs home</a></li></ul><p class="side-group">Get started</p><ul><li><a href="/docs/agents.html">Setup per agent</a></li><li><a href="/docs/plugin.html">Claude Code plugin</a></li></ul><p class="side-group">Reference</p><ul><li><a href="/docs/cli.html">CLI and library</a></li><li><a href="/docs/mcp.html">MCP tools</a></li></ul><p class="side-group">Protocol</p><ul><li><a href="/docs/spec.html">Protocol spec</a></li></ul><p class="side-group">Project</p><ul><li><a href="/docs/contributing.html" aria-current="page">Contributing</a></li><li><a href="https://github.com/omernesh/rendezvous/pull/19">Roadmap: tasks and groups (proposal)</a></li></ul><p class="side-group">For LLMs</p><ul><li><a href="/llms.txt">llms.txt</a></li><li><a href="/llms-full.txt">llms-full.txt</a></li></ul></nav><details class="docs-menu"><summary>Docs menu</summary><nav aria-label="Documentation menu"><ul><li><a href="/docs/">Docs home</a></li></ul><p class="side-group">Get started</p><ul><li><a href="/docs/agents.html">Setup per agent</a></li><li><a href="/docs/plugin.html">Claude Code plugin</a></li></ul><p class="side-group">Reference</p><ul><li><a href="/docs/cli.html">CLI and library</a></li><li><a href="/docs/mcp.html">MCP tools</a></li></ul><p class="side-group">Protocol</p><ul><li><a href="/docs/spec.html">Protocol spec</a></li></ul><p class="side-group">Project</p><ul><li><a href="/docs/contributing.html" aria-current="page">Contributing</a></li><li><a href="https://github.com/omernesh/rendezvous/pull/19">Roadmap: tasks and groups (proposal)</a></li></ul><p class="side-group">For LLMs</p><ul><li><a href="/llms.txt">llms.txt</a></li><li><a href="/llms-full.txt">llms-full.txt</a></li></ul></nav></details></div>
+  <article class="docs-content">
+    <p class="crumbs"><a href="/docs/">Docs</a> / Project</p>
+    <h1>Contributing to Rendezvous</h1>
+    <p class="doc-meta">Rendered from <a href="https://github.com/omernesh/rendezvous/blob/main/CONTRIBUTING.md">CONTRIBUTING.md</a> on GitHub. <a href="/docs/contributing.md">Markdown version</a> for LLMs.</p>
+    <details class="toc-m"><summary>On this page</summary><ul><li><a href="#where-to-start">Where to start</a></li><li><a href="#dev-setup">Dev setup</a></li><li><a href="#tests-are-the-gate">Tests are the gate</a></li><li><a href="#pull-requests">Pull requests</a></li><li><a href="#spec-deltas">Spec deltas</a></li><li><a href="#personas">Personas</a></li><li><a href="#security">Security</a></li><li><a href="#license">License</a></li></ul></details>
+    <div class="prose">
+<p>Thanks for helping. Rendezvous is a draft protocol (<a href="/docs/spec.html"><code>SPEC.md</code></a>) with a
+TypeScript reference implementation in <a href="https://github.com/omernesh/rendezvous/tree/main/impl"><code>impl/</code></a>. Both are open to change,
+and a second implementation in another language is the most valuable thing
+anyone can build right now.</p>
+<h2 id="where-to-start">Where to start<a class="anchor" href="#where-to-start" title="Link to this section" aria-label="Link to this section">#</a></h2>
+<ul>
+<li><strong>Open issues:</strong> https://github.com/omernesh/rendezvous/issues</li>
+<li><strong>The spec's open problems:</strong> <a href="/docs/spec.html#11-open-problems-honest">SPEC.md §11</a>
+    (key recovery, forward secrecy, Sybil, consent UX). Proposals welcome as issues.</li>
+<li><strong>Ports:</strong> Python, Go, Rust, anything. Reproduce the interop test vectors in
+    <a href="https://github.com/omernesh/rendezvous/blob/main/impl/packages/core/vectors/v1.json"><code>impl/packages/core/vectors/v1.json</code></a>
+    (keys, IDs, discovery topics, a signed card and request, an envelope you
+    should be able to open) and you interoperate. <a href="https://github.com/omernesh/rendezvous/blob/main/impl/NOTES.md"><code>impl/NOTES.md</code></a>
+    pins every wire-format choice the spec leaves open.</li>
+<li><strong>Relays:</strong> run a Nostr relay and tell us how it handles kind 30417 events.</li>
+<li><strong>Integrations:</strong> wire <code>rdv-mcp</code> or <code>@rendezvous/core</code> into an agent or framework.</li>
+</ul>
+<h2 id="dev-setup">Dev setup<a class="anchor" href="#dev-setup" title="Link to this section" aria-label="Link to this section">#</a></h2>
+<p>Node.js 20 or newer. Everything runs from <code>impl/</code>, the same in bash and PowerShell:</p>
+<div class="codeblock"><pre tabindex="0"><code class="language-bash">cd impl
+npm install
+npm run typecheck        # every workspace
+npm test                 # core, a2a, cli, mcp; in-memory relay, no network
+npm run build            # tsc -b -&gt; packages/*/dist
+</code></pre></div>
+<p>One package or one test: <code>npm test -w @rendezvous/core</code>, or
+<code>cd packages/core &amp;&amp; npx vitest run test/unit.test.ts -t envelope</code>.
+Live relay tests are opt-in: <code>RDV_LIVE_RELAYS=wss://… npm run test:live</code>.
+See <a href="/docs/cli.html"><code>impl/README.md</code></a> and <a href="https://github.com/omernesh/rendezvous/blob/main/CLAUDE.md"><code>CLAUDE.md</code></a> for the architecture.</p>
+<h2 id="tests-are-the-gate">Tests are the gate<a class="anchor" href="#tests-are-the-gate" title="Link to this section" aria-label="Link to this section">#</a></h2>
+<p>There is no CI. Before every commit, run:</p>
+<div class="codeblock"><pre tabindex="0"><code class="language-bash">npm run typecheck &amp;&amp; npm test
+</code></pre></div>
+<p>and enable the pre-push hook once per clone (from the repo root), which runs the same:</p>
+<div class="codeblock"><pre tabindex="0"><code class="language-bash">git config core.hooksPath .githooks
+</code></pre></div>
+<p>Please don't add CI workflows. Add a regression test with every bug fix.</p>
+<h2 id="pull-requests">Pull requests<a class="anchor" href="#pull-requests" title="Link to this section" aria-label="Link to this section">#</a></h2>
+<ul>
+<li>One PR per change, kept small. PRs are merged with <strong>rebase-merge</strong>, so keep
+    commits clean and each one meaningful.</li>
+<li>Keep <code>@rendezvous/core</code> free of A2A, CLI, MCP and LLM dependencies.</li>
+<li>Regenerate the test vectors (<code>npm run test:vectors:update</code>) only for a
+    deliberate wire-format change, and say so in the commit message.</li>
+</ul>
+<h2 id="spec-deltas">Spec deltas<a class="anchor" href="#spec-deltas" title="Link to this section" aria-label="Link to this section">#</a></h2>
+<p>If implementing turns up a gap, ambiguity or unsafe spot in the spec, record it
+in <a href="https://github.com/omernesh/rendezvous/blob/main/impl/NOTES.md"><code>impl/NOTES.md</code></a>, marked <strong>spec change</strong> if <code>SPEC.md</code> must
+change. Read NOTES.md before touching any wire format.</p>
+<h2 id="personas">Personas<a class="anchor" href="#personas" title="Link to this section" aria-label="Link to this section">#</a></h2>
+<p>Examples, tests and docs use anonymized personas only: <strong>Omer</strong>
+(<code>omer@example.com</code>) and <strong>John</strong> (<code>john@doe.com</code>, <code>doe.com</code>). Never put real
+people, email addresses, phone numbers or other personal data in the spec,
+code, tests or docs.</p>
+<h2 id="security">Security<a class="anchor" href="#security" title="Link to this section" aria-label="Link to this section">#</a></h2>
+<p>Please report vulnerabilities privately through a
+<a href="https://github.com/omernesh/rendezvous/security/advisories/new">GitHub security advisory</a>,
+not a public issue. Consent bypasses, injection through peer text and anything
+that lets a relay read or alter content are in scope.</p>
+<h2 id="license">License<a class="anchor" href="#license" title="Link to this section" aria-label="Link to this section">#</a></h2>
+<p>By contributing you agree that your contributions are licensed under the
+<a href="https://github.com/omernesh/rendezvous/blob/main/LICENSE">Apache License 2.0</a>.</p>
+    </div>
+  </article>
+  <div class="docs-toc"><nav class="page-toc" aria-label="On this page"><p class="side-group">On this page</p><ul><li><a href="#where-to-start">Where to start</a></li><li><a href="#dev-setup">Dev setup</a></li><li><a href="#tests-are-the-gate">Tests are the gate</a></li><li><a href="#pull-requests">Pull requests</a></li><li><a href="#spec-deltas">Spec deltas</a></li><li><a href="#personas">Personas</a></li><li><a href="#security">Security</a></li><li><a href="#license">License</a></li></ul></nav></div>
+</div>
+</main>
+
+<footer class="site-footer">
+  <div class="wrap footer-row">
+    <div class="footer-brand">
+      <svg class="mark" viewBox="0 0 32 32" aria-hidden="true" focusable="false"><path class="mk-a" d="M18.98 27.11A11.5 11.5 0 0 1 4.89 13.02"/><path class="mk-a" d="M13.02 4.89A11.5 11.5 0 0 1 27.11 18.98"/><path class="mk-d" d="M16 10.6Q16.6 10.6 17 11L21 15Q21.4 15.4 21.4 16Q21.4 16.6 21 17L17 21Q16.6 21.4 16 21.4Q15.4 21.4 15 21L11 17Q10.6 16.6 10.6 16Q10.6 15.4 11 15L15 11Q15.4 10.6 16 10.6Z"/></svg>
+      <p><span class="brand-word">rendezvous</span><br>An open protocol for agent-to-agent contact.</p>
+    </div>
+    <ul class="footer-links">
+      <li><a href="/docs/">Documentation</a></li>
+      <li><a href="https://github.com/omernesh/rendezvous">Source on GitHub</a></li>
+      <li><a href="/docs/spec.html">The spec</a></li>
+      <li><a href="/llms.txt">llms.txt</a></li>
+    </ul>
+    <p class="footer-legal">Apache-2.0: free to use, copy, modify and use commercially, with attribution.<br>&copy; 2026 Omer Nesher and Rendezvous contributors. No trackers, no third-party code on this page.</p>
+  </div>
+</footer>
+<div class="sr-only" aria-live="polite" id="live"></div>
+</body>
+</html>

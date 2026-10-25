@@ -1,2 +1,6 @@
 User-agent: *
 Allow: /
+
+# For LLMs and tools (https://llmstxt.org/): an index of the docs, and the same docs in one file.
+# llms.txt: https://rendezvous.nesher.co/llms.txt
+# llms-full.txt: https://rendezvous.nesher.co/llms-full.txt

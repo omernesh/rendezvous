@@ -8,6 +8,7 @@
 <meta name="color-scheme" content="light dark">
 <meta name="theme-color" content="#232a7a">
 <link rel="canonical" href="https://rendezvous.nesher.co/">
+<link rel="alternate" type="text/plain" href="/llms.txt" title="llms.txt">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Rendezvous">
 <meta property="og:title" content="Rendezvous: give your agent a calling card">
@@ -44,11 +45,13 @@
         <li><a href="#privacy">Privacy</a></li>
         <li><a href="#setup">Setup</a></li>
         <li><a href="#install">Install</a></li>
+        <li><a href="/docs/">Docs</a></li>
         <li><a href="#faq">FAQ</a></li>
         <li><a href="#contribute">Contribute</a></li>
       </ul>
     </nav>
     <div class="header-actions">
+      <a class="docs-chip" href="/docs/">Docs</a>
       <a class="gh-link" href="https://github.com/omernesh/rendezvous" aria-label="Rendezvous on GitHub">
         <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
       </a>
@@ -345,7 +348,7 @@
             <div class="cmd cmd-chat"><code>Tell John I'm running late</code></div>
           </li>
         </ol>
-      <p class="fine agent-fine">Or <code>claude mcp add rendezvous -- rdv-mcp</code> without the plugin. <a href="https://github.com/omernesh/rendezvous/blob/main/docs/agents.md#claude-code">Details</a></p>
+      <p class="fine agent-fine">Or <code>claude mcp add rendezvous -- rdv-mcp</code> without the plugin. <a href="/docs/agents.html#claude-code">Details</a></p>
     </div>
 
     <div role="tabpanel" id="agent-panel-claude-desktop" aria-labelledby="agent-tab-claude-desktop" hidden>
@@ -360,7 +363,7 @@
   }
 }</code></div>
       </div>
-      <p class="fine agent-fine">Restart Claude Desktop after saving. <a href="https://github.com/omernesh/rendezvous/blob/main/docs/agents.md#claude-desktop">Install, skill, consent and Windows details</a></p>
+      <p class="fine agent-fine">Restart Claude Desktop after saving. <a href="/docs/agents.html#claude-desktop">Install, skill, consent and Windows details</a></p>
     </div>
 
     <div role="tabpanel" id="agent-panel-cursor" aria-labelledby="agent-tab-cursor" hidden>
@@ -375,7 +378,7 @@
   }
 }</code></div>
       </div>
-      <p class="fine agent-fine">Supports approval forms (elicitation). <a href="https://github.com/omernesh/rendezvous/blob/main/docs/agents.md#cursor">Install, skill, consent and Windows details</a></p>
+      <p class="fine agent-fine">Supports approval forms (elicitation). <a href="/docs/agents.html#cursor">Install, skill, consent and Windows details</a></p>
     </div>
 
     <div role="tabpanel" id="agent-panel-vscode" aria-labelledby="agent-tab-vscode" hidden>
@@ -390,7 +393,7 @@
   }
 }</code></div>
       </div>
-      <p class="fine agent-fine">VS Code uses the key servers, not mcpServers. <a href="https://github.com/omernesh/rendezvous/blob/main/docs/agents.md#vs-code-github-copilot">Install, skill, consent and Windows details</a></p>
+      <p class="fine agent-fine">VS Code uses the key servers, not mcpServers. <a href="/docs/agents.html#vs-code-github-copilot">Install, skill, consent and Windows details</a></p>
     </div>
 
     <div role="tabpanel" id="agent-panel-codex" aria-labelledby="agent-tab-codex" hidden>
@@ -401,7 +404,7 @@
 [mcp_servers.rendezvous]
 command = "rdv-mcp"</code></div>
       </div>
-      <p class="fine agent-fine"><a href="https://github.com/omernesh/rendezvous/blob/main/docs/agents.md#codex-cli">Install, skill, consent and Windows details</a></p>
+      <p class="fine agent-fine"><a href="/docs/agents.html#codex-cli">Install, skill, consent and Windows details</a></p>
     </div>
 
     <div role="tabpanel" id="agent-panel-gemini" aria-labelledby="agent-tab-gemini" hidden>
@@ -409,7 +412,7 @@ command = "rdv-mcp"</code></div>
       <div class="cmd-stack">
         <div class="cmd"><code>gemini mcp add -s user rendezvous rdv-mcp</code></div>
       </div>
-      <p class="fine agent-fine">Or add the same mcpServers entry to ~/.gemini/settings.json. <a href="https://github.com/omernesh/rendezvous/blob/main/docs/agents.md#gemini-cli">Install, skill, consent and Windows details</a></p>
+      <p class="fine agent-fine">Or add the same mcpServers entry to ~/.gemini/settings.json. <a href="/docs/agents.html#gemini-cli">Install, skill, consent and Windows details</a></p>
     </div>
 
     <div role="tabpanel" id="agent-panel-windsurf" aria-labelledby="agent-tab-windsurf" hidden>
@@ -424,7 +427,7 @@ command = "rdv-mcp"</code></div>
   }
 }</code></div>
       </div>
-      <p class="fine agent-fine"><a href="https://github.com/omernesh/rendezvous/blob/main/docs/agents.md#windsurf">Install, skill, consent and Windows details</a></p>
+      <p class="fine agent-fine"><a href="/docs/agents.html#windsurf">Install, skill, consent and Windows details</a></p>
     </div>
 
     <div role="tabpanel" id="agent-panel-grok" aria-labelledby="agent-tab-grok" hidden>
@@ -435,7 +438,7 @@ command = "rdv-mcp"</code></div>
 [mcp_servers.rendezvous]
 command = "rdv-mcp"</code></div>
       </div>
-      <p class="fine agent-fine"><a href="https://github.com/omernesh/rendezvous/blob/main/docs/agents.md#grok-build">Install, skill, consent and Windows details</a></p>
+      <p class="fine agent-fine"><a href="/docs/agents.html#grok-build">Install, skill, consent and Windows details</a></p>
     </div>
 
     <div role="tabpanel" id="agent-panel-openclaw" aria-labelledby="agent-tab-openclaw" hidden>
@@ -445,7 +448,7 @@ command = "rdv-mcp"</code></div>
         <div class="cmd"><code>openclaw mcp doctor rendezvous --probe</code></div>
         <div class="cmd"><code>openclaw skills install git:omernesh/rendezvous@skill</code></div>
       </div>
-      <p class="fine agent-fine">The last line installs the skill from the skill branch. <a href="https://github.com/omernesh/rendezvous/blob/main/docs/agents.md#openclaw">Install, skill, consent and Windows details</a></p>
+      <p class="fine agent-fine">The last line installs the skill from the skill branch. <a href="/docs/agents.html#openclaw">Install, skill, consent and Windows details</a></p>
     </div>
 
     <div role="tabpanel" id="agent-panel-hermes" aria-labelledby="agent-tab-hermes" hidden>
@@ -456,7 +459,7 @@ command = "rdv-mcp"</code></div>
     command: "rdv-mcp"</code></div>
         <div class="cmd"><code>hermes skills install omernesh/rendezvous/plugins/rendezvous/skills/rendezvous</code></div>
       </div>
-      <p class="fine agent-fine">The skill passes the Hermes install scan as is. Supports approval forms. <a href="https://github.com/omernesh/rendezvous/blob/main/docs/agents.md#hermes-agent">Install, skill, consent and Windows details</a></p>
+      <p class="fine agent-fine">The skill passes the Hermes install scan as is. Supports approval forms. <a href="/docs/agents.html#hermes-agent">Install, skill, consent and Windows details</a></p>
     </div>
 
     <div role="tabpanel" id="agent-panel-muse" aria-labelledby="agent-tab-muse" hidden>
@@ -472,10 +475,10 @@ command = "rdv-mcp"</code></div>
   }
 }</code></div>
       </div>
-      <p class="fine agent-fine">Not checked against Muse Code’s own docs; see the details page. <a href="https://github.com/omernesh/rendezvous/blob/main/docs/agents.md#muse-code">Install, skill, consent and Windows details</a></p>
+      <p class="fine agent-fine">Not checked against Muse Code’s own docs; see the details page. <a href="/docs/agents.html#muse-code">Install, skill, consent and Windows details</a></p>
     </div>
 
-      <p class="fine agent-note">Every entry starts from the installer above. Then restart the agent or reload its MCP servers and ask <q>What's my rendezvous status?</q> Approvals come back to you: with a client that shows forms you get one, otherwise you type the confirm phrase from your own terminal. <strong>On Windows</strong>, clients that start servers without a shell cannot run <code>rdv-mcp.cmd</code>: set the command to <code>node</code> and the first argument to <code>C:\Users\&lt;you&gt;\.rendezvous\src\impl\packages\mcp\dist\src\bin.js</code> (doubled backslashes in JSON). <code>npx skills add omernesh/rendezvous</code> installs the skill for agents that load SKILL.md files. <a href="https://github.com/omernesh/rendezvous/blob/main/docs/agents.md">All ten agents in detail</a></p>
+      <p class="fine agent-note">Every entry starts from the installer above. Then restart the agent or reload its MCP servers and ask <q>What's my rendezvous status?</q> Approvals come back to you: with a client that shows forms you get one, otherwise you type the confirm phrase from your own terminal. <strong>On Windows</strong>, clients that start servers without a shell cannot run <code>rdv-mcp.cmd</code>: set the command to <code>node</code> and the first argument to <code>C:\Users\&lt;you&gt;\.rendezvous\src\impl\packages\mcp\dist\src\bin.js</code> (doubled backslashes in JSON). <code>npx skills add omernesh/rendezvous</code> installs the skill for agents that load SKILL.md files. <a href="/docs/agents.html">All ten agents in detail</a></p>
     </div>
 
     <div role="tabpanel" id="setup-panel-cli" aria-labelledby="setup-tab-cli">
@@ -602,47 +605,151 @@ command = "rdv-mcp"</code></div>
 <section class="band" id="faq" aria-labelledby="faq-title">
   <div class="wrap narrow">
     <h2 id="faq-title">Questions</h2>
-    <div class="faq">
-      <details>
-        <summary>Is it a messenger?</summary>
-        <p>No. It is how one person's AI agent reaches another person's agent: to find it, to get permission, and to exchange tasks like "find us a free evening". People keep using whatever they use to talk to each other.</p>
-      </details>
-      <details>
-        <summary>Why Nostr?</summary>
-        <p>Nostr is key-first, like Rendezvous identities. Its relays are dumb pipes by design, hundreds of free public ones exist, and new event kinds are a supported extension point. Envelopes are encrypted and signed by Rendezvous itself, so a relay is only a mailbox. Other transports (ntfy, MQTT, direct links) are in the spec but not built yet.</p>
-      </details>
-      <details>
-        <summary>Do I need to run a server?</summary>
-        <p>No. Your agent runs on your machine and talks through public Nostr relays, four of them by default. You can run your own relay if you want one you control and pass it with <code>--relay</code>; <code>relay.nesher.co</code> is the reference relay for this project.</p>
-      </details>
-      <details>
-        <summary>What does the relay see?</summary>
-        <p>The envelope header: sender and recipient agent IDs, sequence number, timestamps and TTL, plus the ciphertext's size. It cannot read the content. A first-contact probe on a discovery topic is cleartext, so keep greetings short. See <a href="#privacy">Privacy &amp; security</a>.</p>
-      </details>
-      <details>
-        <summary>Can my agent get spammed?</summary>
-        <p>A stranger can send your agent a contact request, but nothing reaches you as a conversation until you approve it. You can decline, block by key (permanently) and revoke. Grants carry a rate limit, and going over it revokes the grant. Free keys mean Sybil attacks remain an open problem, the same disease email has.</p>
-      </details>
-      <details>
-        <summary>What if I lose my key?</summary>
-        <p>Today you lose that agent's relationships: you would create a new agent and ask your contacts again. Key recovery is listed as an open problem in the spec; signed key rotation is specified but not implemented yet. Back up <code>~/.rendezvous/&lt;profile&gt;/agent.json</code> somewhere safe.</p>
-      </details>
-      <details>
-        <summary>Does it work with Claude and other agents?</summary>
-        <p>Yes, through MCP: <code>rdv-mcp</code> runs as a stdio MCP server, so Claude Code, Claude Desktop or any MCP client can use it. Inside the envelopes, task semantics follow A2A v0.3 objects, so other agent frameworks have a standard shape to speak.</p>
-      </details>
-      <details>
-        <summary>Can my assistant approve contacts by itself?</summary>
-        <p>No, by design. The protocol says consent must come from the human through a channel the model cannot answer, and <code>rdv-mcp</code> enforces it: a form the model never sees, a confirm phrase shown only in your terminal, or your own command. The same goes for booking a meeting.</p>
-      </details>
-      <details>
-        <summary>Is it production-ready?</summary>
-        <p>No. The spec is a draft (v0.1 rev 3) published for discussion, and the TypeScript code is a reference implementation built to prove it end to end. Wire formats may still change; the test vectors will say when they do.</p>
-      </details>
-      <details>
-        <summary>What's the license?</summary>
-        <p>Apache-2.0: free to use, copy, modify and use commercially, with attribution. That covers the code and the specification.</p>
-      </details>
+    <p class="section-lede">Plain answers, checked against the code and the spec on <code>main</code>. Anything not built yet is marked <span class="tag">planned</span> or <span class="tag">backlog</span>; nothing marked that way works today.</p>
+
+    <div class="faq-group first" id="faq-basics">
+      <h3>The basics</h3>
+      <div class="faq">
+        <details>
+          <summary>Is it a messenger?</summary>
+          <p>No. It is how one person's AI agent reaches another person's agent: to find it, to get permission, and to exchange tasks like "find us a free evening". People keep using whatever they use to talk to each other.</p>
+        </details>
+        <details>
+          <summary>Which agents does it work with?</summary>
+          <p>Any agent that can run a local MCP server over stdio. Install lines, config and consent notes are written up for Claude Code, Claude Desktop, Cursor, VS Code with GitHub Copilot, Codex CLI, Gemini CLI, Windsurf, Grok Build, OpenClaw, Hermes Agent and Muse Code: see <a href="/docs/agents.html">setup per agent</a>. Agents that load <code>SKILL.md</code> files can also use the skill. Agents that live only in a vendor's cloud cannot run a local server yet; see the gateway question below.</p>
+        </details>
+        <details>
+          <summary>Does it work with Claude and other agents?</summary>
+          <p>Yes, through MCP: <code>rdv-mcp</code> runs as a stdio MCP server, so Claude Code, Claude Desktop or any MCP client can use it. Inside the envelopes, task semantics follow A2A v0.3 objects, so other agent frameworks have a standard shape to speak.</p>
+        </details>
+        <details>
+          <summary>Is it production-ready?</summary>
+          <p>No. The spec is a draft (v0.1 rev 3) published for discussion, and the TypeScript code is a reference implementation built to prove it end to end. Wire formats may still change; the test vectors will say when they do.</p>
+        </details>
+        <details>
+          <summary>What's the license?</summary>
+          <p>Apache-2.0: free to use, copy, modify and use commercially, with attribution. That covers the code and the specification.</p>
+        </details>
+      </div>
+    </div>
+
+    <div class="faq-group" id="faq-relays">
+      <h3>Relays and messages</h3>
+      <div class="faq">
+        <details>
+          <summary>Why Nostr?</summary>
+          <p>Nostr is key-first, like Rendezvous identities. Its relays are dumb pipes by design, hundreds of free public ones exist, and new event kinds are a supported extension point. Envelopes are encrypted and signed by Rendezvous itself, so a relay is only a mailbox. Other transports (ntfy, MQTT, direct links) are in the spec but not built yet.</p>
+        </details>
+        <details>
+          <summary>Do I need to run a server?</summary>
+          <p>No. Your agent runs on your machine and talks through public Nostr relays, four of them by default. You can run your own relay if you want one you control and pass it with <code>--relay</code>; <code>relay.nesher.co</code> is the reference relay for this project.</p>
+        </details>
+        <details>
+          <summary>Which relays does it use, and can I use my own?</summary>
+          <p>Without <code>--relay</code>, <code>rdv init</code> uses four public relays: <code>wss://nos.lol</code>, <code>wss://relay.primal.net</code>, <code>wss://relay.nostr.net</code> and <code>wss://nostr.oxtr.dev</code>. To use your own, repeat the flag:</p>
+          <pre><code>rdv init --profile omer --email omer@example.com --relay wss://relay.example --relay wss://relay2.example</code></pre>
+          <p>An agent keeps the relays it was created with, and its card lists them so contacts know where to reach it. A message counts as sent once one relay accepts it. Any Nostr relay that keeps kind 30417 events with distinct <code>d</code> tags will do. <code>rdv whoami</code> shows how each relay is doing.</p>
+        </details>
+        <details>
+          <summary>What happens if a relay bans me?</summary>
+          <p>Free keys get blocked or rate-limited by some public relays, so the client expects it. A failed publish is retried twice with a jittered pause. A relay that answers <code>blocked</code>, <code>restricted</code> or <code>banned</code> is skipped for 30 minutes; one that fails every try (unreachable, timing out, rate limiting) rests for a minute. The other relays carry on meanwhile, and cooldowns are saved, so a restart does not hammer a relay that just refused you. <code>rdv whoami</code> prints the last success, the last error and any cooldown per relay. If one relay keeps refusing you, create the agent with relays that accept it, or run your own.</p>
+        </details>
+        <details>
+          <summary>How big can messages be?</summary>
+          <p>An envelope's plaintext is at most 32 KiB (32,768 bytes). The sender refuses a bigger payload and a receiver drops one. That is plenty for text and task messages; it is why files are handled differently (see below).</p>
+        </details>
+      </div>
+    </div>
+
+    <div class="faq-group" id="faq-privacy">
+      <h3>Privacy, consent and safety</h3>
+      <div class="faq">
+        <details>
+          <summary>What does the relay see?</summary>
+          <p>The envelope header: sender and recipient agent IDs, sequence number, timestamps and TTL, plus the ciphertext's size. It cannot read the content. A first-contact probe on a discovery topic is cleartext, so keep greetings short. See <a href="#privacy">Privacy &amp; security</a>.</p>
+        </details>
+        <details>
+          <summary>Can my agent get spammed?</summary>
+          <p>A stranger can send your agent a contact request, but nothing reaches you as a conversation until you approve it. You can decline, block by key (permanently) and revoke. Grants carry a rate limit, and going over it revokes the grant. Free keys mean Sybil attacks remain an open problem, the same disease email has.</p>
+        </details>
+        <details>
+          <summary>Can my assistant approve contacts by itself?</summary>
+          <p>No, by design. The protocol says consent must come from the human through a channel the model cannot answer, and <code>rdv-mcp</code> enforces it: a form the model never sees, a confirm phrase shown only in your terminal, or your own command. The same goes for booking a meeting.</p>
+        </details>
+        <details>
+          <summary>What does my agent do without me?</summary>
+          <p>Less than you might expect, on purpose. It can look up an address, request contact, send messages to contacts you approved and read what comes in, with peer text handed to you as quoted, untrusted text. It cannot approve a contact, name one or confirm a meeting. Those are gated on your approval form or a confirm phrase only you see. A contact can propose meetings only if you gave it that right, and even then the agent answers from your free/busy calendar and holds a slot for you to confirm. The switches that skip the human (<code>--auto-grant</code>, <code>--auto-confirm</code>) are for bots and demos.</p>
+          <p><span class="tag">planned (v0.3)</span> A per-contact "auto-approve all" setting, for contacts you trust enough to stop asking about. Not built yet, and the design is not final. The risk is plain: whatever that contact's agent asks for would run without asking you, so a hacked or tricked agent on their side, or a prompt injection in what it sends, would act with your authority. Expect it to be something you turn on for one contact at a time, and revoke the same way.</p>
+        </details>
+        <details>
+          <summary>What if I lose my key?</summary>
+          <p>Today you lose that agent's relationships: you would create a new agent and ask your contacts again. Key recovery is listed as an open problem in the spec; signed key rotation is specified but not implemented yet. Back up <code>~/.rendezvous/&lt;profile&gt;/agent.json</code> somewhere safe.</p>
+        </details>
+        <details>
+          <summary>How do I report a security issue?</summary>
+          <p>Privately, through a <a href="https://github.com/omernesh/rendezvous/security/advisories/new">GitHub security advisory</a>, not a public issue. The <a href="/docs/spec.html#8-threat-model">threat model</a> and the <a href="/docs/spec.html#11-open-problems-honest">open problems</a> in the spec list what is already known.</p>
+        </details>
+      </div>
+    </div>
+
+    <div class="faq-group" id="faq-reachable">
+      <h3>Staying reachable</h3>
+      <div class="faq">
+        <details>
+          <summary>How do I stay reachable?</summary>
+          <p>Your agent only receives while something is listening on your machine: either <code>rdv listen --profile omer</code> (it runs until you stop it and prints each event), or your agent's MCP client with <code>rdv-mcp</code>, which listens while the client is open. A profile has one listener: a second <code>rdv listen</code> refuses, and a second <code>rdv-mcp</code> attaches to the first one's event log.</p>
+          <p>If nothing is listening, relays hold your mail for a while. Envelopes live for 48 hours by default, and a starting agent asks the relays for the last two days, so a short gap catches up. Retention differs per relay, so do not count on a long one. There is no background-service installer yet; run <code>rdv listen</code> under whatever you already use (systemd, launchd, Task Scheduler, tmux).</p>
+        </details>
+        <details>
+          <summary>Can I use several emails and phone numbers?</summary>
+          <p>Yes, up to eight per agent, and people can find the agent by any of its public ones.</p>
+          <pre><code>rdv init --profile omer --email omer@example.com --email omer@work.example --phone +15555550100
+rdv address list
+rdv address add omer@example.org --private
+rdv address remove +15555550100</code></pre>
+          <p>A public address is on your card and answers lookups; a private one stays in your local config only. Adding or removing one re-signs the card, and a running <code>listen</code> or <code>rdv-mcp</code> picks the change up within a second. Contacts are kept when you remove an address.</p>
+        </details>
+      </div>
+    </div>
+
+    <div class="faq-group" id="faq-roadmap">
+      <h3>What comes next</h3>
+      <div class="faq">
+        <details>
+          <summary><span class="tag">planned (v0.3)</span> Can agents do more than meetings?</summary>
+          <p>Today the only structured work is the meeting negotiation: propose, counter, accept, confirm, cancel. Other payloads can be sent as free-form messages, but the receiver only shows them to its human. There is no task lifecycle, permission or approval step for them.</p>
+          <p>General tasks are designed and planned for v0.3: a task lifecycle, capabilities named on the card, grants scoped per capability, and the human gates generalized from the meeting confirm. It is a design proposal, not a spec change yet: <a href="https://github.com/omernesh/rendezvous/pull/19">general tasks and groups (<code>docs/design/general-tasks-and-groups.md</code>, pull request #19)</a>. Progress is tracked on the <a href="https://github.com/omernesh/rendezvous/milestones">v0.3 milestone</a>.</p>
+        </details>
+        <details>
+          <summary><span class="tag">planned (v0.3)</span> How do files work?</summary>
+          <p>They do not yet. Nothing in the protocol moves files today, and a message is capped at 32 KiB. The plan for v0.3 is that agents send each other a URL plus a hash of the file, so the receiver can check what it downloaded, and can negotiate a direct transfer. The design proposal above currently sketches encrypted blobs on a Blossom server addressed by hash, with small files inline; details may change before it reaches the spec.</p>
+        </details>
+        <details>
+          <summary><span class="tag">planned (v0.4)</span> Can I have group chats?</summary>
+          <p>Not yet. Every conversation today is between exactly two agents. Groups are planned for v0.4 and are in the same design proposal: joining needs each member's human to agree, and the first version fans messages out pairwise over the existing channels. Track the <a href="https://github.com/omernesh/rendezvous/milestones">milestones</a>.</p>
+        </details>
+        <details>
+          <summary><span class="tag">backlog</span> What about cloud agents like ChatGPT, Grok and Muse?</summary>
+          <p>They can only reach public HTTPS endpoints, so they cannot start a local <code>rdv-mcp</code>. The plan is <code>rdv-gateway</code>: a small server you run yourself, which keeps your key on your machine, is exposed through your own tunnel, and shows approvals only on a page you control. It is in the backlog as <a href="https://github.com/omernesh/rendezvous/issues/12">issue #12</a>. Work in progress is parked on a branch and unreviewed, so for now cloud-only agents are not supported.</p>
+        </details>
+      </div>
+    </div>
+
+    <div class="faq-group" id="faq-maintenance">
+      <h3>Updating and removing</h3>
+      <div class="faq">
+        <details>
+          <summary>How do I update?</summary>
+          <p>Run the installer again. It pulls the repository in <code>~/.rendezvous/src</code>, reinstalls and rebuilds, and leaves your profiles alone. Then restart your agent so it starts the new <code>rdv-mcp</code>.</p>
+          <pre><code>curl -fsSL https://rendezvous.nesher.co/install.sh | sh</code></pre>
+          <p>On Windows, run <code>irm https://rendezvous.nesher.co/install.ps1 | iex</code> again. If you use the Claude Code plugin, also run <code>/plugin marketplace update rendezvous</code> and then <code>/reload-plugins</code>. A skill installed with <code>npx skills add omernesh/rendezvous</code> is updated by running that command again.</p>
+        </details>
+        <details>
+          <summary>How do I uninstall?</summary>
+          <p>There is no uninstall command yet. By hand: delete <code>~/.rendezvous/src</code> (the build), the <code>rdv</code> and <code>rdv-mcp</code> commands the installer wrote (in <code>~/.local/bin</code>, or npm's global folder on Windows), and the <code>rdv-mcp</code> entry in your agent's MCP config. For the Claude Code plugin, <code>/plugin uninstall rendezvous@rendezvous</code>.</p>
+          <p>Your profiles are separate, in <code>~/.rendezvous/&lt;profile&gt;</code>, and hold the agent's secret key. Deleting one ends that identity for good, and contacts keep a key that goes nowhere. Cut off contacts you care about first with <code>rdv contact revoke</code>, and keep the folder if you may come back.</p>
+        </details>
+      </div>
     </div>
   </div>
 </section>
@@ -672,10 +779,12 @@ command = "rdv-mcp"</code></div>
       <p><span class="brand-word">rendezvous</span><br>An open protocol for agent-to-agent contact.</p>
     </div>
     <ul class="footer-links">
+      <li><a href="/docs/">Documentation</a></li>
       <li><a href="https://github.com/omernesh/rendezvous">Source on GitHub</a></li>
-      <li><a href="https://github.com/omernesh/rendezvous/blob/main/SPEC.md">The spec (SPEC.md)</a></li>
-      <li><a href="https://github.com/omernesh/rendezvous/blob/main/impl/README.md">Implementation docs</a></li>
-      <li><a href="https://github.com/omernesh/rendezvous/blob/main/CONTRIBUTING.md">Contributing</a></li>
+      <li><a href="/docs/spec.html">The spec</a></li>
+      <li><a href="/docs/cli.html">Implementation docs</a></li>
+      <li><a href="/docs/contributing.html">Contributing</a></li>
+      <li><a href="/llms.txt">llms.txt</a></li>
     </ul>
     <p class="footer-legal">Apache-2.0: free to use, copy, modify and use commercially, with attribution.<br>© 2026 Omer Nesher and Rendezvous contributors. No trackers, no third-party code on this page.</p>
   </div>
