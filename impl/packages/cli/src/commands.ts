@@ -1330,16 +1330,24 @@ function draftOut(out: Output, id: string, r: { held?: PendingRelease; digest?: 
 export async function taskSubmit({ home, out, values, positionals }: Ctx): Promise<void> {
   const id = positionals[0];
   const text = list(values.text);
+  // A structured data part beside the text, shaped by the capability (request/v1: {"rdv": "request/data", "data": {…}}); the engine checks it.
+  const data = list(values.data).map((d) => {
+    const v = jsonArg(d, '--data');
+    if (!v || typeof v !== 'object' || Array.isArray(v)) throw new CliError('--data takes a JSON object', 2);
+    return v as Record<string, unknown>;
+  });
   const refs = fileArgs(values.file);
   const inline = list(values.inline);
-  if (text.length === 0 && refs.length === 0 && inline.length === 0) throw new CliError('give the result with --text "…", --file <sha256>=<url> or --inline <path> (each repeatable)', 2);
+  if (text.length === 0 && data.length === 0 && refs.length === 0 && inline.length === 0) {
+    throw new CliError('give the result with --text "…", --data \'{…}\', --file <sha256>=<url> or --inline <path> (each repeatable)', 2);
+  }
   const name = str(values.name);
   const r = await withAgent(home, (agent) => {
     // The owner's files leave only in a draft the human releases, shown with their name, size, hash, URL and source.
     const files = attachFiles(home, refs, inline);
     return submitDraft(home, agent, hostRegistry(), id, {
       kind: 'artifact',
-      parts: [...text.map((t) => ({ kind: 'text' as const, text: t })), ...files.parts],
+      parts: [...text.map((t) => ({ kind: 'text' as const, text: t })), ...data.map((d) => ({ kind: 'data' as const, data: d })), ...files.parts],
       ...(name !== undefined ? { name } : {}),
       complete: values.complete === true,
       ...(files.notes.length ? { files: files.notes } : {}),

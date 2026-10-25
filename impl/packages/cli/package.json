@@ -26,7 +26,8 @@
     "test": "tsc -b && vitest run",
     "test:live": "tsc -b && vitest run --mode live",
     "scenario": "tsc -b && node dist/scenarios/contact.js",
-    "scenario:dinner": "tsc -b && node dist/scenarios/dinner.js"
+    "scenario:dinner": "tsc -b && node dist/scenarios/dinner.js",
+    "scenario:review": "tsc -b && node dist/scenarios/review.js"
   },
   "dependencies": {
     "@rendezvous/a2a": "0.1.0",

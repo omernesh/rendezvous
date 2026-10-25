@@ -267,6 +267,8 @@ describe('task commands', () => {
       const none = await run(['task', 'approve', id, '--code', 'abcdef012345']);
       expect([none.code, none.stderr]).toEqual([1, expect.stringContaining(`no task ${id}`)]);
       expect((await run(['task', 'submit', id])).code).toBe(2); // no --text
+      for (const bad of ['[1]', '"x"', 'not json']) expect((await run(['task', 'submit', id, '--data', bad])).code, bad).toBe(2); // --data takes a JSON object
+      expect((await run(['task', 'submit', id, '--data', '{"rdv":"request/data","data":{}}'])).stderr).toContain(`no task ${id}`);
       const peer = generateKey().id;
       const noContact = await run(['task', 'request', peer, '--text', 'hi']);
       expect([noContact.code, noContact.stderr]).toEqual([1, expect.stringContaining('no active contact')]);
