@@ -4,6 +4,8 @@
 //   inbox.jsonl  received payloads, one JSON object per line
 //   cards.json   cards found by `rdv lookup` (so `contact request <agent-id>` works)
 //   negotiations.json  dinner negotiations (@rendezvous/a2a engine state)
+//   consent.json  confirm phrases for pending requests (written by the MCP server)
+//   mcp-events.jsonl  the MCP server's event log (rdv_inbox)
 //   lock         held while a command reads and writes state
 import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -25,6 +27,13 @@ export interface InboxEntry {
   from: string;
   seq: number;
   payload: Payload;
+}
+
+/** A confirm phrase the MCP server issued for a pending request; only a human should ever see it. */
+export interface ConsentEntry {
+  phrase: string;
+  created: string;
+  attempts: number;
 }
 
 export class CliError extends Error {
@@ -63,6 +72,9 @@ export class Home {
   }
   get negotiationsPath() {
     return join(this.dir, 'negotiations.json');
+  }
+  get consentPath() {
+    return join(this.dir, 'consent.json');
   }
   get lockPath() {
     return join(this.dir, 'lock');
@@ -126,6 +138,14 @@ export class Home {
     writeAtomic(this.negotiationsPath, JSON.stringify(state, null, 2) + '\n', 0o600);
   }
 
+  readConsent(): Record<string, ConsentEntry> {
+    return existsSync(this.consentPath) ? readJson(this.consentPath) : {};
+  }
+
+  writeConsent(consent: Record<string, ConsentEntry>): void {
+    writeAtomic(this.consentPath, JSON.stringify(consent, null, 2) + '\n', 0o600);
+  }
+
   appendInbox(entry: InboxEntry): void {
     appendFileSync(this.inboxPath, JSON.stringify(entry) + '\n', { mode: 0o600 });
   }
@@ -137,7 +157,9 @@ export class Home {
 
   /** `rdv init --force`: drop everything derived from the old key. */
   reset(): void {
-    for (const p of [this.agentPath, this.configPath, this.inboxPath, this.cardsPath, this.negotiationsPath]) rmSync(p, { force: true });
+    for (const p of [this.agentPath, this.configPath, this.inboxPath, this.cardsPath, this.negotiationsPath, this.consentPath]) {
+      rmSync(p, { force: true });
+    }
   }
 }
 

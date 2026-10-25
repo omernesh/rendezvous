@@ -5,6 +5,12 @@
   "author": "Omer Nesher",
   "license": "MIT",
   "type": "module",
+  "exports": {
+    "./lib": {
+      "types": "./dist/src/lib.d.ts",
+      "default": "./dist/src/lib.js"
+    }
+  },
   "bin": {
     "rdv": "dist/src/bin.js"
   },

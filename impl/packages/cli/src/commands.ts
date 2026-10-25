@@ -31,7 +31,7 @@ import {
   taskView,
   validateNegotiateOptions,
 } from './negotiate.js';
-import { cardText, contactText, contactView, inboxText, type Output, requestText, requestView } from './output.js';
+import { cardText, clean, contactText, contactView, inboxText, type Output, requestText, requestView } from './output.js';
 
 export const TIERS: Tier[] = ['spouse', 'family', 'friend', 'colleague', 'business', 'stranger'];
 
@@ -88,20 +88,29 @@ export async function withAgent<T>(
 
 // ---------------------------------------------------------------------------
 
-export async function init({ home, out, values }: Ctx): Promise<void> {
-  const relays = list(values.relay);
+export interface InitOptions {
+  profile: string;
+  relays: string[];
+  emails?: string[];
+  phones?: string[];
+  publicPointer?: boolean;
+  force?: boolean;
+}
+
+/** `rdv init` without the output: validate, generate key and card, write state. Shared with the MCP server. */
+export async function initHome(home: Home, opts: InitOptions): Promise<{ id: string; fingerprint: string; config: Config }> {
+  const { relays, profile } = opts;
   if (relays.length === 0) throw new CliError('at least one --relay is required', 2);
   for (const r of relays) if (!/^wss?:\/\/\S+$/.test(r)) throw new CliError(`not a ws:// or wss:// relay URL: ${r}`, 2);
   const addresses: DiscoveryAddress[] = [];
   try {
-    for (const e of list(values.email)) addresses.push({ type: 'email', value: canonAddress({ type: 'email', value: e }) });
-    for (const p of list(values.phone)) addresses.push({ type: 'phone', value: canonAddress({ type: 'phone', value: p }) });
+    for (const e of opts.emails ?? []) addresses.push({ type: 'email', value: canonAddress({ type: 'email', value: e }) });
+    for (const p of opts.phones ?? []) addresses.push({ type: 'phone', value: canonAddress({ type: 'phone', value: p }) });
   } catch (err) {
     throw new CliError((err as Error).message, 2);
   }
-  const publicPointer = values['public-pointer'] === true;
-  const profile = str(values.profile) ?? process.env.RDV_PROFILE ?? 'default';
-  if (home.initialized() && values.force !== true) {
+  const publicPointer = opts.publicPointer === true;
+  if (home.initialized() && opts.force !== true) {
     throw new CliError(`an agent already exists at ${home.dir} (--force replaces it, and its key, for good)`);
   }
   const config: Config = {
@@ -123,9 +132,22 @@ export async function init({ home, out, values }: Ctx): Promise<void> {
     a.close();
     return a;
   });
+  return { id: agent.id, fingerprint: fingerprint(agent.id), config };
+}
+
+export async function init({ home, out, values }: Ctx): Promise<void> {
+  const profile = str(values.profile) ?? process.env.RDV_PROFILE ?? 'default';
+  const r = await initHome(home, {
+    profile,
+    relays: list(values.relay),
+    emails: list(values.email),
+    phones: list(values.phone),
+    publicPointer: values['public-pointer'] === true,
+    force: values.force === true,
+  });
   out.emit(
-    { event: 'init', id: agent.id, fingerprint: fingerprint(agent.id), profile, home: home.dir },
-    `initialized profile "${profile}" at ${home.dir}\nid:          ${agent.id}\nfingerprint: ${fingerprint(agent.id)}`,
+    { event: 'init', id: r.id, fingerprint: r.fingerprint, profile, home: home.dir },
+    `initialized profile "${profile}" at ${home.dir}\nid:          ${r.id}\nfingerprint: ${r.fingerprint}`,
   );
 }
 
@@ -183,39 +205,52 @@ export async function lookup({ home, out, positionals }: Ctx): Promise<void> {
   for (const card of cards) out.emit({ event: 'card', id: card.id, fingerprint: fingerprint(card.id), card }, cardText(card));
 }
 
+/**
+ * Send a contact request to an address (topic probe), an agent ID whose card
+ * we know (contact, pending requester, or `rdv lookup` cache), or a card file.
+ * Call inside `withAgent`. Shared with the MCP server.
+ */
+export async function requestContactTo(
+  home: Home,
+  agent: Agent,
+  target: string,
+  greeting: string,
+  opts: { inPerson?: boolean } = {},
+): Promise<{ id: string; to: string; via: 'topic' | 'card'; binding: 'in-person' | 'claimed' }> {
+  let to: AddressCard | string;
+  let via: 'topic' | 'card';
+  if (isAgentId(String(target))) {
+    const card =
+      agent.book.state.contacts[target]?.card ??
+      agent.pendingRequests().find((p) => p.request.from === target)?.request.card ??
+      home.readCards()[target];
+    if (!card) throw new CliError(`no card known for ${target}: run "rdv lookup <address>" or pass a card file`);
+    to = card;
+    via = 'card';
+  } else if (target.includes('@') || target.startsWith('+')) {
+    if (!topicForHint(target)) throw new CliError(`not an email address or +phone number: ${target}`, 2);
+    if (opts.inPerson) throw new CliError('--in-person needs a card (file or agent ID), not an address', 2);
+    to = target;
+    via = 'topic';
+  } else {
+    if (!existsSync(target) || !statSync(target).isFile()) {
+      throw new CliError(`"${target}" is not an address, an agent ID, or a card file`, 2);
+    }
+    const check = verifyCard(readJsonFile(target, 'card file'));
+    if (!check.ok) throw new CliError(`invalid card in ${target}: ${check.reason}`);
+    to = check.card;
+    via = 'card';
+  }
+  if (typeof to !== 'string' && to.id === agent.id) throw new CliError('that card is your own');
+  const binding = opts.inPerson ? ('in-person' as const) : ('claimed' as const);
+  const req = await agent.requestContact(to, greeting, { binding });
+  return { id: req.id, to: req.to_hint, via, binding };
+}
+
 export async function contactRequest({ home, out, values, positionals }: Ctx): Promise<void> {
-  const target = positionals[0];
-  const inPerson = values['in-person'] === true;
   const res = await withAgent(home, async (agent, config) => {
     const greeting = str(values.greeting) ?? `${config.profile}'s agent would like to get in touch.`;
-    let to: AddressCard | string;
-    let via: 'topic' | 'card';
-    if (isAgentId(String(target))) {
-      const card =
-        agent.book.state.contacts[target]?.card ??
-        agent.pendingRequests().find((p) => p.request.from === target)?.request.card ??
-        home.readCards()[target];
-      if (!card) throw new CliError(`no card known for ${target}: run "rdv lookup <address>" or pass a card file`);
-      to = card;
-      via = 'card';
-    } else if (target.includes('@') || target.startsWith('+')) {
-      if (!topicForHint(target)) throw new CliError(`not an email address or +phone number: ${target}`, 2);
-      if (inPerson) throw new CliError('--in-person needs a card (file or agent ID), not an address', 2);
-      to = target;
-      via = 'topic';
-    } else {
-      if (!existsSync(target) || !statSync(target).isFile()) {
-        throw new CliError(`"${target}" is not an address, an agent ID, or a card file`, 2);
-      }
-      const check = verifyCard(readJsonFile(target, 'card file'));
-      if (!check.ok) throw new CliError(`invalid card in ${target}: ${check.reason}`);
-      to = check.card;
-      via = 'card';
-    }
-    if (typeof to !== 'string' && to.id === agent.id) throw new CliError('that card is your own');
-    const binding = inPerson ? ('in-person' as const) : ('claimed' as const);
-    const req = await agent.requestContact(to, greeting, { binding });
-    return { id: req.id, to: req.to_hint, via, binding };
+    return requestContactTo(home, agent, positionals[0], greeting, { inPerson: values['in-person'] === true });
   });
   out.emit(
     { event: 'request-sent', ...res },
@@ -227,7 +262,12 @@ export async function contactPending({ home, out }: Ctx): Promise<void> {
   const pending = await withAgent(home, async (agent) => agent.pendingRequests(), { save: false });
   pending.sort((a, b) => a.received.localeCompare(b.received));
   if (pending.length === 0 && !out.json) out.emit({}, 'no pending requests');
-  for (const p of pending) out.emit(requestView(p), requestText(p));
+  // The MCP server's confirm phrases (see packages/mcp README) are shown in text mode only: they are for the human at a terminal.
+  const consent = home.readConsent();
+  for (const p of pending) {
+    const phrase = consent[p.request.id]?.phrase;
+    out.emit(requestView(p), requestText(p) + (phrase ? `\n  confirm phrase (tell it to your MCP client to approve): ${clean(phrase)}` : ''));
+  }
 }
 
 export async function contactGrant({ home, out, values, positionals }: Ctx): Promise<void> {
