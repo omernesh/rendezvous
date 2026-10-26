@@ -37,6 +37,27 @@ import {
   openEnvelope,
   sealEnvelope,
 } from './envelope.js';
+import {
+  GROUP_CONTROL_LIMIT,
+  GROUP_INVITE_TYPE,
+  GROUP_JOIN_TYPE,
+  GROUP_MEMBERS_TYPE,
+  GROUP_STATE_TYPE,
+  GROUP_TYPES,
+  GROUPS_EXTENSION,
+  GroupBook,
+  type GroupBookState,
+  type GroupChange,
+  type GroupContext,
+  type GroupInvite,
+  type GroupJoin,
+  type GroupRecord,
+  type GroupScope,
+  memberIds,
+  membersPayloads,
+  type NewcomerPolicy,
+  type ReceivedInvite,
+} from './group.js';
 import { type AgentKey, generateKey, keyFromSecret } from './identity.js';
 import type { MirrorOptions, MirrorReport, Transport } from './transport/transport.js';
 
@@ -58,7 +79,7 @@ export const REVERSE_GRANT_LIMIT = { count: 10, windowMs: 3_600_000 };
 /** Card updates we apply per contact (each one rewrites the contact; NOTES 82). */
 export const CARD_UPDATE_LIMIT = { count: 20, windowMs: 3_600_000 };
 export const CARD_UPDATE_TYPE = 'rdv/card-update';
-const CONTROL_TYPES = new Set(['rdv/contact-request', 'rdv/contact-grant', 'rdv/revoke', 'rdv/resend', CARD_UPDATE_TYPE]);
+const CONTROL_TYPES = new Set(['rdv/contact-request', 'rdv/contact-grant', 'rdv/revoke', 'rdv/resend', CARD_UPDATE_TYPE, ...GROUP_TYPES]);
 
 /** What a contact's new card changed (NOTES 82): relays and capabilities, as lists. */
 export interface CardChange {
@@ -106,6 +127,14 @@ export interface AgentState {
    * card once (NOTES 82). Absent for contacts made before it: they get one.
    */
   cardSent?: Record<string, string>;
+  /** Groups (SPEC §7.8): their states, invites waiting for our human, our open invites. Absent until the first. */
+  groups?: GroupBookState;
+}
+
+/** A failed send in a group fan-out (the others still went). */
+export interface GroupSendFailure {
+  peer: string;
+  error: string;
 }
 
 export interface AgentEvents {
@@ -129,6 +158,18 @@ export interface AgentEvents {
    * (the peer revoked us) and from the grant-wide `max_frequency` revoke.
    */
   'task-abuse': [TaskAbuse];
+  /** A contact (an admin) invited us to a group: waiting for our human (`joinGroup` / `declineGroupInvite`). */
+  'group-invite': [ReceivedInvite];
+  /** The invite list was full and the oldest invite was dropped; `total` counts all such drops. */
+  'group-invites-evicted': [total: number];
+  /**
+   * A group state was applied: members added or removed, newcomers now
+   * waiting for our human (policy `ask`), the state that admitted us, or the
+   * one that removed us. As admin, also after we added a joiner.
+   */
+  'group-state': [GroupChange];
+  /** Two states at one epoch from one admin (§7.8.6): the group's membership is frozen until our human re-syncs it. */
+  'group-fork': [GroupRecord];
   dropped: [reason: string, detail?: unknown];
   error: [Error];
 }
@@ -136,6 +177,7 @@ export interface AgentEvents {
 export class Agent extends EventEmitter<AgentEvents> {
   readonly book: ContactBook;
   readonly channels: Channels;
+  readonly groups: GroupBook;
   private outbox: Record<string, Envelope[]>;
   private buffer: Record<string, Envelope[]>;
   private cardSent: Record<string, string>;
@@ -156,7 +198,7 @@ export class Agent extends EventEmitter<AgentEvents> {
     readonly key: AgentKey,
     public card: AddressCard,
     readonly transport: Transport,
-    state?: Partial<Pick<AgentState, 'book' | 'channels' | 'outbox' | 'buffer' | 'cardSent'>>,
+    state?: Partial<Pick<AgentState, 'book' | 'channels' | 'outbox' | 'buffer' | 'cardSent' | 'groups'>>,
   ) {
     super();
     this.book = new ContactBook({ policy: card.policy.inbound, ...state?.book });
@@ -164,6 +206,7 @@ export class Agent extends EventEmitter<AgentEvents> {
     this.outbox = state?.outbox ?? {};
     this.buffer = state?.buffer ?? {};
     this.cardSent = state?.cardSent && typeof state.cardSent === 'object' ? { ...state.cardSent } : {};
+    this.groups = new GroupBook(state?.groups && typeof state.groups === 'object' ? state.groups : undefined);
     this.pruneChannels(); // state saved before NOTES 64 may hold strangers' channels
   }
 
@@ -185,6 +228,7 @@ export class Agent extends EventEmitter<AgentEvents> {
       outbox: this.outbox,
       buffer: this.bufferToPersist(),
       cardSent: Object.fromEntries(Object.entries(this.cardSent).filter(([peer]) => Object.hasOwn(this.book.state.contacts, peer))),
+      ...(this.groups.isEmpty() ? {} : { groups: this.groups.toJSON() }),
     };
   }
 
@@ -509,6 +553,7 @@ export class Agent extends EventEmitter<AgentEvents> {
   async revoke(peer: string): Promise<void> {
     const c = this.book.contact(peer);
     this.book.revoke(peer);
+    this.groups.forgetPeer(peer);
     if (c) await this.deliver(peer, createRevoke(this.key, peer, c.grantId), relaysOf(c.card));
   }
 
@@ -534,6 +579,117 @@ export class Agent extends EventEmitter<AgentEvents> {
 
   contacts(): Contact[] {
     return Object.values(this.book.state.contacts);
+  }
+
+  // --- groups (SPEC §7.8) -----------------------------------------------------
+
+  private groupCtx(now = new Date()): GroupContext {
+    return { me: this.id, isContact: (p) => !!this.book.contact(p, now) && !this.book.isBlocked(p), now };
+  }
+
+  /** A contact, or another member of a group we are in (or the admin a join of ours waits on). */
+  private isGroupPeer(peer: string): boolean {
+    return !!this.book.contact(peer) || this.groups.admittedPeers(this.id).has(peer);
+  }
+
+  /** Groups we are in, joining, or were removed from. */
+  groupList(): GroupRecord[] {
+    return this.groups.records();
+  }
+
+  /**
+   * A new group with us as its only member and admin (epoch 0). `scope` is
+   * our own group-scoped grant (what members may invoke on us through the
+   * group; default nothing). No message leaves.
+   */
+  createGroup(name: string, opts: { scope?: GroupScope; policy?: NewcomerPolicy; now?: Date } = {}): GroupRecord {
+    return this.groups.create(this.key, this.card, { name, scope: opts.scope, policy: opts.policy, now: opts.now });
+  }
+
+  /**
+   * Invite a contact to a group we administer (§7.8.2). Only an active,
+   * unblocked contact whose card lists the groups extension is invited; the
+   * invite carries the group's current state. `name` is how the group's state
+   * will name the invitee to the others (display text our human gives; never
+   * our local label unless they typed it).
+   */
+  async inviteToGroup(groupId: string, peer: string, opts: { greeting?: string; name?: string; expires?: string } = {}): Promise<GroupInvite> {
+    const c = this.book.contact(peer);
+    if (!c || this.book.isBlocked(peer)) throw new Error(`only contacts are invited, and ${peer} is not an active contact`);
+    if (!(Array.isArray(c.card.capabilities) && c.card.capabilities.includes(GROUPS_EXTENSION))) {
+      throw new Error("the contact's card does not list groups, so its agent may not support them");
+    }
+    const invite = this.groups.invite(this.key, groupId, peer, opts);
+    await this.deliver(peer, invite, relaysOf(c.card));
+    return invite;
+  }
+
+  /** Invites waiting for our human (expired ones dropped). */
+  groupInvites(): ReceivedInvite[] {
+    this.groups.prune();
+    return this.groups.invites();
+  }
+
+  /**
+   * Our human approved joining (§5.5): our join document, a group-scoped grant
+   * (`scope`, what members may invoke on us through the group), goes to the
+   * inviting admin, and the group waits for the state that admits us. Only
+   * for the human's own decision: never on a model's or a peer's say-so, and
+   * no standing approval covers it (§5.5.1).
+   */
+  async joinGroup(inviteId: string, opts: { scope?: GroupScope; policy?: NewcomerPolicy } = {}): Promise<GroupRecord> {
+    const entry = Object.hasOwn(this.groups.state.invites, inviteId) ? this.groups.state.invites[inviteId] : undefined;
+    if (!entry) throw new Error(`no pending group invite ${inviteId}`);
+    const admin = entry.invite.from;
+    const c = this.book.contact(admin);
+    if (!c || this.book.isBlocked(admin)) throw new Error('the admin who invited us is no longer an active contact');
+    const { join, record } = this.groups.join(this.key, this.card, inviteId, opts);
+    await this.deliver(admin, join, relaysOf(c.card));
+    return record;
+  }
+
+  /** Our human said no to an invite (reduce-only; nothing is sent). */
+  declineGroupInvite(inviteId: string): ReceivedInvite | undefined {
+    return this.groups.decline(inviteId);
+  }
+
+  /** Our human approved a newcomer under `ask`: from now on it may receive our group traffic. Never automatic (§5.5.1). */
+  approveGroupNewcomer(groupId: string, member: string): GroupRecord {
+    return this.groups.approveNewcomer(groupId, member);
+  }
+
+  /** Our human checked with the admin after a membership fork: the group thaws at the state we hold (§7.8.6). */
+  resyncGroup(groupId: string): GroupRecord {
+    return this.groups.resync(groupId);
+  }
+
+  /** Send to a contact, or to a group co-member on the card its join carries (pinned by the state). */
+  private async deliverTo(peer: string, payload: { type: string }): Promise<Envelope> {
+    const c = this.book.contact(peer);
+    const card = c ? c.card : this.groups.memberCard(peer);
+    if (!card) throw new Error(`no card to reach ${peer}`);
+    return this.deliver(peer, payload, relaysOf(card));
+  }
+
+  /**
+   * As admin, after a state that adds `added`: the state to every other
+   * member (blocked keys excepted), the newcomers' joins to the others, and
+   * everyone else's joins to the newcomers (§7.8.2). One failed send does not
+   * stop the rest; its envelope stays in the outbox for a resend.
+   */
+  private async fanOutState(r: GroupRecord, added: string[]): Promise<void> {
+    const state = r.state;
+    const joinsOf = (ids: string[]): GroupJoin[] => ids.flatMap((id) => (Object.hasOwn(r.joins, id) ? [r.joins[id]] : []));
+    for (const peer of memberIds(state)) {
+      if (peer === this.id || this.book.isBlocked(peer)) continue;
+      try {
+        await this.deliverTo(peer, state);
+        const joins = added.includes(peer) ? joinsOf(memberIds(state).filter((id) => id !== peer)) : joinsOf(added.filter((id) => id !== peer));
+        for (const p of membersPayloads(state.group, joins)) await this.deliverTo(peer, p);
+      } catch (err) {
+        this.drop('group fan-out send failed', { peer, group: state.group, error: err instanceof Error ? err.message : String(err) });
+      }
+    }
   }
 
   /** Send an application payload (A2A task, message, proposal) to a contact. */
@@ -668,6 +824,8 @@ export class Agent extends EventEmitter<AgentEvents> {
     for (const peer of Object.keys(b.allowlist)) kept.add(peer);
     for (const p of Object.values(b.pending)) kept.add(p.request.from);
     for (const c of Object.values(b.candidates)) kept.add(c.grant.from);
+    // Group members while both are members (§6.4, §7.8.2), bounded by groups × members, never by peers.
+    for (const peer of this.groups.admittedPeers(this.id)) kept.add(peer);
     return kept;
   }
 
@@ -684,7 +842,7 @@ export class Agent extends EventEmitter<AgentEvents> {
 
   /** Only contacts (or agents we asked by card) may park envelopes with us. */
   private mayBuffer(peer: string): boolean {
-    return !!this.book.contact(peer) || this.book.outstandingTargets().has(peer);
+    return !!this.book.contact(peer) || this.book.outstandingTargets().has(peer) || this.groups.admittedPeers(this.id).has(peer);
   }
 
   private bufferEnvelope(env: Envelope): void {
@@ -761,7 +919,10 @@ export class Agent extends EventEmitter<AgentEvents> {
         return;
       }
       case 'rdv/revoke':
-        if (this.book.receiveRevoke(payload, this.id)) this.emit('revoked', from);
+        if (this.book.receiveRevoke(payload, this.id)) {
+          this.groups.forgetPeer(from);
+          this.emit('revoked', from);
+        }
         return;
       case CARD_UPDATE_TYPE: {
         // Rate-limited per contact only: a stranger's update is refused below without touching state.
@@ -772,6 +933,50 @@ export class Agent extends EventEmitter<AgentEvents> {
         if ('unchanged' in got) return;
         if ('rejected' in got) return this.drop(`card update rejected: ${got.reason}`, { peer: from, code: got.rejected });
         this.emit('card-update', { contact: got.contact, previous: got.previous, change: cardChange(got.previous, got.contact.card) });
+        return;
+      }
+      case GROUP_INVITE_TYPE: {
+        // Only contacts invite (§7.8.2): a stranger's invite is dropped before any state is kept.
+        if (!this.book.contact(from)) return this.drop('group invite from a non-contact', from);
+        if (!this.book.admitControl('group', from, GROUP_CONTROL_LIMIT)) return this.drop('group payload rate-limited', { peer: from });
+        const out = this.groups.receiveInvite(payload, from, this.groupCtx());
+        if (out.status === 'pending') {
+          if (out.evicted) this.emit('group-invites-evicted', this.groups.state.invitesEvicted ?? 1);
+          this.emit('group-invite', out.invite);
+          return;
+        }
+        return this.drop(`group invite ${out.status === 'invalid' ? `invalid: ${out.reason}` : out.status}`, { peer: from });
+      }
+      case GROUP_JOIN_TYPE: {
+        // A join answers an invite of ours, and we invite only contacts.
+        if (!this.book.contact(from)) return this.drop('group join from a non-contact', from);
+        if (!this.book.admitControl('group', from, GROUP_CONTROL_LIMIT)) return this.drop('group payload rate-limited', { peer: from });
+        const out = this.groups.receiveJoin(this.key, payload, from, this.groupCtx());
+        if (!out.ok) return this.drop(`group join ${out.code === 'duplicate' ? 'duplicate' : 'refused'}: ${out.reason}`, { peer: from, code: out.code });
+        this.emit('group-state', out.change);
+        await this.fanOutState(out.record, [from]);
+        return;
+      }
+      case GROUP_STATE_TYPE: {
+        if (!this.isGroupPeer(from)) return this.drop('group state from a non-member', from);
+        if (!this.book.admitControl('group', from, GROUP_CONTROL_LIMIT)) return this.drop('group payload rate-limited', { peer: from });
+        const out = this.groups.receiveState(payload, from, this.groupCtx());
+        if (out.kind === 'applied') {
+          for (const change of [out.change, ...out.also]) this.emit('group-state', change);
+          return;
+        }
+        if (out.kind === 'fork') {
+          this.emit('group-fork', out.record);
+          return;
+        }
+        if (out.kind === 'duplicate' || out.kind === 'future') return;
+        return this.drop(`group state ${out.kind}: ${out.reason}`, { peer: from });
+      }
+      case GROUP_MEMBERS_TYPE: {
+        if (!this.isGroupPeer(from)) return this.drop('group members from a non-member', from);
+        if (!this.book.admitControl('group', from, GROUP_CONTROL_LIMIT)) return this.drop('group payload rate-limited', { peer: from });
+        const out = this.groups.receiveMembers(payload, from, this.groupCtx());
+        if ('rejected' in out) return this.drop(`group members refused: ${out.rejected}`, { peer: from });
         return;
       }
       case 'rdv/resend': {

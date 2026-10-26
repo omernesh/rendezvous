@@ -39,15 +39,19 @@ import {
   allowedCapabilities,
   canonicalize,
   type Contact,
+  docHash,
   type GrantCandidate,
   type GrantScope,
+  type GroupRecord,
+  memberOf,
+  type ReceivedInvite,
   MEETING_CAPABILITIES,
   MEETINGS_CAPABILITY,
   type PendingRequest,
   scopeAllows,
   type Tier,
 } from '@rendezvous/core';
-import { type ConsentAction, type ConsentEntry, type ConsentHash, type ConsentTerms, consentKey, type Home } from './home.js';
+import { type ConsentAction, type ConsentEntry, type ConsentHash, type ConsentTerms, consentKey, type GroupTerms, type Home } from './home.js';
 
 export interface PhraseTarget {
   action: ConsentAction;
@@ -64,6 +68,8 @@ export interface PhraseTarget {
   terms?: ConsentTerms;
   /** request, candidate: the local label the contact gets (none if absent), shown to the human. */
   label?: string;
+  /** group-join: the scope and newcomer policy the join approves, shown to the human. */
+  group?: GroupTerms;
 }
 
 // 64 short, distinct, easy-to-say words: 6 bits each.
@@ -215,7 +221,7 @@ export function inboundAsks(home: Home): Map<string, ConsentTerms> {
   return asks;
 }
 
-const ACTIONS: readonly string[] = ['request', 'candidate', 'meeting', 'cancel', 'inbound', 'task-start', 'task-release', 'relays'];
+const ACTIONS: readonly string[] = ['request', 'candidate', 'meeting', 'cancel', 'inbound', 'task-start', 'task-release', 'relays', 'group-join', 'group-newcomer'];
 const isStr = (v: unknown): v is string => typeof v === 'string' && v.length > 0;
 const isHash = (h: unknown): h is ConsentHash =>
   !!h && typeof h === 'object' && isStr((h as ConsentHash).salt) && isStr((h as ConsentHash).hash) && ((h as ConsentHash).digest === undefined || isStr((h as ConsentHash).digest));
@@ -234,6 +240,15 @@ function valid(e: unknown): e is ConsentEntry {
   if (x.previous !== undefined && (!isHash(x.previous) || 'phrase' in x.previous)) return false;
   if (x.label !== undefined && !isStr(x.label)) return false;
   if (x.action === 'candidate') return isStr(x.subject) && x.digest === candidateLabelDigest(x.subject, x.label);
+  // A join phrase is always bound to the invite as shown and to the join's terms (issue #77); it sets no label or tier.
+  if (x.action === 'group-join') {
+    try {
+      return isStr(x.subject) && x.group !== undefined && x.terms === undefined && x.label === undefined && x.digest === joinTermsDigest(x.subject, x.group);
+    } catch {
+      return false;
+    }
+  }
+  if (x.group !== undefined) return false;
   if (x.action === 'inbound' && (x.terms === undefined || x.label !== undefined)) return false; // always bound to terms; never sets a label
   if (x.terms !== undefined) {
     try {
@@ -275,6 +290,7 @@ function fresh(t: PhraseTarget, previous?: ConsentEntry): { entry: ConsentEntry;
     ...(t.subject !== undefined && t.subject !== t.digest ? { subject: t.subject } : {}),
     ...(t.terms !== undefined ? { terms: t.terms } : {}),
     ...(t.label !== undefined ? { label: t.label } : {}),
+    ...(t.group !== undefined ? { group: t.group } : {}),
     salt,
     hash,
     ...(previous ? { previous: { salt: previous.salt, hash: previous.hash, ...(previous.digest !== undefined ? { digest: previous.digest } : {}) } } : {}),
@@ -342,10 +358,15 @@ export function reissueForDisplay(home: Home, targets: PhraseTarget[]): Map<stri
   for (const t of targets) {
     const have = entryFor(consent, t);
     if (!have || subjectOf(have) !== subjectOf(t)) continue;
-    const same: PhraseTarget = { action: have.action, id: t.id, digest: have.digest, subject: have.subject, terms: have.terms, label: have.label };
+    const same: PhraseTarget = { action: have.action, id: t.id, digest: have.digest, subject: have.subject, terms: have.terms, label: have.label, group: have.group };
     const { entry, phrase } = fresh(same, have);
     consent[consentKey(t.action, t.id)] = entry;
-    shown.set(consentKey(t.action, t.id), { phrase, ...(have.terms ? { terms: have.terms } : {}), ...(have.label !== undefined ? { label: have.label } : {}) });
+    shown.set(consentKey(t.action, t.id), {
+      phrase,
+      ...(have.terms ? { terms: have.terms } : {}),
+      ...(have.label !== undefined ? { label: have.label } : {}),
+      ...(have.group ? { group: have.group } : {}),
+    });
   }
   if (dirty || shown.size) home.writeConsent(consent);
   return shown;
@@ -356,6 +377,7 @@ export interface ShownPhrase {
   phrase: string;
   terms?: ConsentTerms;
   label?: string;
+  group?: GroupTerms;
 }
 
 export type PhraseCheck =
@@ -373,6 +395,7 @@ export type PhraseCheck =
       rotated?: string;
       terms?: ConsentTerms;
       label?: string;
+      group?: GroupTerms;
       left: number;
     };
 
@@ -390,7 +413,14 @@ export function checkPhrase(home: Home, target: PhraseTarget, given: string): Ph
   const left = MAX_ATTEMPTS - entry.attempts;
   if (subjectOf(entry) !== subjectOf(target)) return { ok: false, reason: 'changed', left };
   if (entry.digest !== target.digest) {
-    return { ok: false, reason: 'terms', ...(entry.terms ? { terms: entry.terms } : {}), ...(entry.label !== undefined ? { label: entry.label } : {}), left };
+    return {
+      ok: false,
+      reason: 'terms',
+      ...(entry.terms ? { terms: entry.terms } : {}),
+      ...(entry.label !== undefined ? { label: entry.label } : {}),
+      ...(entry.group ? { group: entry.group } : {}),
+      left,
+    };
   }
   if (matches(entry, target.action, target.id, given)) return { ok: true };
   if (entry.previous && matches(entry.previous, target.action, target.id, given)) {
@@ -453,4 +483,80 @@ export function describeLabel(label: string | undefined): string {
  */
 export function describeApproval(a: { terms?: ConsentTerms; label?: string }): string {
   return [...(a.terms ? [describeTerms(a.terms)] : []), ...(a.label !== undefined || !a.terms ? [describeLabel(a.label)] : [])].join(', ');
+}
+
+// --- groups (SPEC §7.8.2, issue #77) -------------------------------------------------
+
+/** The terms of a join when nobody chose others: nothing members may invoke on us, newcomers asked about. */
+export const DEFAULT_GROUP_TERMS: GroupTerms = Object.freeze({ scope: Object.freeze({ invoke: Object.freeze({}) }), newcomers: 'ask' }) as GroupTerms;
+
+/**
+ * What a join phrase is about, apart from the terms: this invite as it
+ * arrived and as the human is shown it, including which members are our
+ * contacts (the form says "your contact" or "not your contact" for each), so
+ * a contact gone or made since is another subject and the phrase approves
+ * nothing.
+ */
+export function inviteSubject(i: ReceivedInvite, isContact: (peer: string) => boolean): string {
+  const inv = i.invite;
+  const contacts = inv.state.members.map((m) => m.id).filter(isContact).sort();
+  return sha256('rdv1/group-invite-consent', {
+    id: inv.id,
+    from: inv.from,
+    group: inv.group,
+    state: docHash(inv.state),
+    greeting: inv.greeting,
+    expires: inv.expires,
+    received: i.received,
+    contacts,
+  });
+}
+
+/** The digest a join phrase approves: the invite (`subject`, inviteSubject) and the group scope and newcomer policy shown with it. */
+export function joinTermsDigest(subject: string, terms: GroupTerms): string {
+  return sha256('rdv1/group-join-terms', { subject, scope: terms.scope, newcomers: terms.newcomers });
+}
+
+export function joinTarget(i: ReceivedInvite, isContact: (peer: string) => boolean, terms: GroupTerms = DEFAULT_GROUP_TERMS): PhraseTarget {
+  const subject = inviteSubject(i, isContact);
+  return { action: 'group-join', id: i.invite.id, subject, digest: joinTermsDigest(subject, terms), group: terms };
+}
+
+/** Consent key id of a newcomer approval: the group and the member (both strict shapes, so the key is unambiguous). */
+export const newcomerKey = (group: string, member: string): string => `${group}/${member}`;
+
+/**
+ * The digest a newcomer phrase (or `rdv group approve --code`) approves:
+ * this member, with this card and admin-written name, in this group, as
+ * added at that epoch. A member removed and added again (another card, name
+ * or epoch) is another approval.
+ */
+export function newcomerDigest(r: GroupRecord, member: string): string {
+  const m = memberOf(r.state, member);
+  const n = Object.hasOwn(r.newcomers, member) ? r.newcomers[member] : undefined;
+  return sha256('rdv1/group-newcomer-consent', { group: r.group, member, card: m?.card ?? null, name: m?.name ?? null, epoch: n?.epoch ?? null });
+}
+
+export function newcomerTarget(r: GroupRecord, member: string): PhraseTarget {
+  return { action: 'group-newcomer', id: newcomerKey(r.group, member), digest: newcomerDigest(r, member) };
+}
+
+/** Every group decision waiting for the human: each pending invite (default terms; a model's other terms get their own phrase) and each newcomer. */
+export function groupPhraseTargets(invites: ReceivedInvite[], records: GroupRecord[], isContact: (peer: string) => boolean): PhraseTarget[] {
+  return [
+    ...invites.map((i) => joinTarget(i, isContact)),
+    ...records.filter((r) => r.status === 'active').flatMap((r) => Object.keys(r.newcomers).map((m) => newcomerTarget(r, m))),
+  ];
+}
+
+/** "members may invoke on you: request/v1 (at most 5/day); newcomers: ask": a join's terms in words for the human. */
+export function describeGroupTerms(t: GroupTerms): string {
+  const caps = Object.keys(t.scope.invoke ?? {}).sort();
+  const invoke = caps.length ? `members may invoke on you: ${caps.map((u) => `${u}${limitWords(t.scope.invoke?.[u])}`).join(', ')}` : 'members may invoke nothing on you';
+  const rate = t.scope.max_frequency ? `, at most ${t.scope.max_frequency} in all` : '';
+  const newcomers =
+    t.newcomers === 'trust-admin'
+      ? "newcomers the admin adds get your group messages at once (trust-admin)"
+      : 'you are asked before each newcomer who is not your contact gets anything from you (ask)';
+  return `${invoke}${rate}; ${newcomers}`;
 }

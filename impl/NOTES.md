@@ -1121,7 +1121,8 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
     (item 46 generalized), per-capability rate limits, file references by
     URL plus content hash (Blossom optional, P2P transfer negotiable), and
     groups by pairwise fan-out (v0.4). The envelope size cap it needs is
-    item 70.
+    item 70. Groups: membership is item 86 (issue #77); messages and the
+    board follow (#78, #79).
 
 ## File references (v0.3, issue #26, core slice)
 
@@ -2530,6 +2531,127 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       accepts Omer's dinner, audited, while Omer, who started it, is still
       asked; off brings John's confirm back); `plugin.test.ts` (the guard
       still refuses the shell command and names the tool).
+
+## Groups v1: membership (v0.4, issue #77)
+
+86. **Group state, invite, join and the newcomer policy** (**spec change**,
+    new §7.8.1 and §7.8.2, §4.6, §6.4, §8, §11 item 14, §12, §13; design
+    Part B, slice 1 of the three in design §C.5). Three new signed documents
+    and new test vectors for them (`group_state_0`, `group_invite`,
+    `group_join`, `group_state_1` in `vectors/v1.json`); every existing
+    vector is byte for byte unchanged.
+    - **Core** (`group.ts`, `Agent`). `rdv/group-state` (`epoch`, `prev` =
+      `docHash` of the state before, the same hash as §4.6; signed by an
+      admin of the state before, the creator at epoch 0), `rdv/group-invite`
+      and `rdv/group-join`, all strict (unknown fields refused), plus the
+      unsigned `rdv/group-members` carrier. `GroupBook` (in `AgentState.groups`,
+      written only once there is something in it, so old state files are
+      unchanged) keeps per group the state, the one before (for the tie
+      rule), 16 recent (epoch, hash, signer), 4 states ahead of ours, each
+      member's join, who our human approved (`approved`), who waits for them
+      (`newcomers`), our newcomer policy and our own join scope. `Agent`
+      adds `createGroup`, `inviteToGroup`, `groupInvites`, `joinGroup`,
+      `declineGroupInvite`, `approveGroupNewcomer`, `resyncGroup` and the
+      events `group-invite`, `group-invites-evicted`, `group-state` (a
+      `GroupChange`: added, removed, newcomers, admitted, left, replaced)
+      and `group-fork`. Nothing in core joins or approves on its own.
+    - **Who may send what.** An invite and a join only from a current
+      contact; a state and a members payload only from a contact or a
+      co-member (else a stranger drop, not logged); a state only from its
+      signer; group control payloads at most 60 an hour per peer
+      (`GROUP_CONTROL_LIMIT`, dropped, never revoking).
+    - **Departures from the design, all for a reason:**
+      (a) Members' cards and join documents do *not* travel inside the invite
+      and the state: 15 joins with cards are about 30 KiB, over the envelope
+      cap (item 70). The invite carries the signed state only (IDs, roles,
+      admin-written names, card hashes), which is all the joiner's human
+      needs to decide; after each state that adds members the admin sends
+      `rdv/group-members` payloads, packed under 28 KiB each: the newcomer's
+      join to the others and everyone's to the newcomer. A receiver keeps a
+      join only if its card hashes to the state's entry for its signer.
+      (b) The join carries the joiner's whole card (the admin forwards it;
+      the state pins its hash), and the state's member entry has an optional
+      `name` the admin's human gives at invite time (`--name`), which is
+      where "named by the admin as …" comes from. It is never the admin's
+      local label unless they typed it.
+      (c) Under `ask`, the state that admits me makes *every* other member
+      new to me, so a member already in the group who is not my contact
+      waits for my human too. This is design B.5 step 3 (Dana approves John
+      after joining); §7.8.2's text only spoke of later newcomers.
+      (d) The joiner adopts the first state that lists it from the admin it
+      joined through, even when it skips epochs (the group moved on while
+      the joiner's human decided): it cannot check the epochs in between,
+      and trusts its contact for them, as it trusted the invite.
+      (e) The creator writes its own join (`invite_ref: null`, `to` itself),
+      so it has a group-scoped grant like everyone else (empty in the hosts
+      for now: changing one's own group terms is slice 3).
+      (f) `members_may_invite` is reserved (always `false`); only admins
+      invite. Open invites count against the 16.
+      (g) A state that removes us can still lose a same-epoch tie: the
+      record stays `removed` but keeps its approvals, and a lower-hash state
+      that lists us reinstates it.
+    - **What `trust-admin` trusts.** Creating a group and inviting a contact
+      are not human gates (the design names only joining and newcomer
+      approval), so an admin's invites may come from its model. A member on
+      `trust-admin` therefore trusts the admin's *agent*, not only its human,
+      to pick the audience; `ask` stays the default, and the join form says
+      what `trust-admin` does. Revisit if invites should need the admin's
+      human too.
+    - **Forks (§7.8.6 layer 4, the part that belongs to membership).** A
+      different state at an epoch we hold, from the same admin, freezes the
+      group: later states are refused, our admin role cannot invite, and the
+      human is told (`group-fork`); `rdv group resync` thaws it at the state
+      we hold. The equivocating admin's other state is never adopted.
+    - **The human gates.** Joining and approving a newcomer are the human's
+      every time, and auto-approve never covers them (§5.5.1): its
+      `covered()` drops the groups extension even from a hand-edited scope,
+      and the contact-grant paths (`rdv contact grant --invoke`, `rdv_grant
+      invoke`) and a group scope refuse it as a key. Digests (CLI
+      `consent.ts`): `inviteSubject` (invite id, admin, group, state hash,
+      greeting, expiry, arrival, and which members are our contacts now, so
+      a contact made or lost since is another subject) with
+      `joinTermsDigest` over the scope and the newcomer policy; and
+      `newcomerDigest` (group, member, card hash, admin's name for it, the
+      epoch it came in). Consent actions `group-join` (terms stored with the
+      phrase, like a request's) and `group-newcomer`. The MCP server issues
+      a join phrase at arrival for the default terms (nothing invocable,
+      `ask`) and a new one when the model asks for other terms; each
+      newcomer gets one when it starts waiting.
+    - **CLI.** `rdv group create`, `invite`, `list` (no codes) and
+      `decline`; human-only (on the consent guard's list, its xargs check
+      included): `rdv group pending` (codes and, in text mode, the phrases),
+      `join --code`, `approve --code` and `resync`. The codes are the first
+      12 hex digits of the digests. The listener writes `group-invite`,
+      `group-state`, `group-fork` and `group-invites-evicted` events.
+    - **MCP.** `rdv_group` (`list`, `create`, `invite`, `join`, `decline`,
+      `approve`); `join` and `approve` through `askForm()` or the confirm
+      phrase, bound and re-checked under the lock before anything is sent.
+      `rdv_inbox` events `group_invite`, `group_update` (with
+      `newcomers_waiting`), `group_fork`, `group_invites_flooded`. Group and
+      member names and greetings are `untrusted_peer_text`; a member's ID
+      and our own label for a contact are plain.
+    - **Not in this slice.** Group messages, heads, equivocation of members,
+      group resend, removal and leaving, `member_rate` and the abuse rules
+      (issue #78); the board, claim and assign, tools to post and to change
+      one's own group terms, and the three-agent scenario (issue #79). So
+      far a group carries its membership only; nothing else is sent to
+      co-members who are not contacts.
+    - Tests: core `test/group.test.ts` (state shape and signature, the chain:
+      epoch, prev, a signer that is not an admin of the state before; a
+      fork freezes and resync thaws; the tie rule in both orders, including
+      one that removes us; invites only from contacts that are admins, for
+      us, bounded 2 per admin and 16 in all; the 16 cap with open invites;
+      joins only for our open invite, from the invitee, bound to the state
+      it carried; the newcomer policy; three agents on the in-memory relay
+      converge, and a stranger's invite is dropped), `test/vectors.test.ts`
+      (the new documents verify and chain); CLI `test/groups.test.ts` (three
+      `rdv` processes: wrong code refused, `pending` codes join and approve,
+      the homes converge), `test/autoapprove.test.ts` (groups are never
+      covered); MCP `test/groups.test.ts` (three servers: John joins by
+      phrase, a default-terms phrase does not approve wider terms, Dana by
+      form, Dana approves John; no phrase reaches a model; a stranger cannot
+      be invited; decline), `plugin.test.ts` (the guard refuses the
+      human-only group commands and the skill names them).
 
 ## Not implemented yet
 

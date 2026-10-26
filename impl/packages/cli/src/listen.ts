@@ -48,6 +48,7 @@ import {
   requestView,
 } from './output.js';
 import { meetingAutoApproved, subjectOf, sweepAutoApprove } from './autoapprove.js';
+import { changeText, changeView, describeInvite, forkText, groupView, inviteView } from './groups.js';
 import { isTransferPayload, transferEventText, transfersInbound } from './files.js';
 import { cardRefreshText, hostCardCapabilities, hostRegistry, refreshHostCard, taskEventText, taskEventView, tasksExpiring, tasksInbound, tasksRoute } from './tasks.js';
 import { relaySets, relayTransport } from './transport.js';
@@ -303,6 +304,15 @@ async function handleLocked(
         events.push(ev);
       });
       agent.on('revoked', (peer) => events.push({ obj: { event: 'revoked', peer }, human: `revoked by ${clean(peer)}` }));
+      // Groups (SPEC §7.8, issue #77): an invite and each newcomer wait for the human (rdv group pending); nothing joins or approves here.
+      agent.on('group-invite', (i) =>
+        events.push({ obj: inviteView(agent, i), human: `group invite: ${describeInvite(agent, i)}\n  your decision: rdv group pending` }),
+      );
+      agent.on('group-invites-evicted', (total) =>
+        events.push({ obj: { event: 'group-invites-evicted', total }, human: `group invites full: dropped the oldest (${total} so far)` }),
+      );
+      agent.on('group-state', (c) => events.push({ obj: changeView(c), human: changeText(c) }));
+      agent.on('group-fork', (r) => events.push({ obj: { ...groupView(agent, r), event: 'group-fork' }, human: forkText(r) }));
       // We revoked a contact for gross abuse of per-capability limits (§5.3, issue #28): an rdv/revoke went out.
       agent.on('task-abuse', (a) => events.push({ obj: { event: 'task-abuse', ...a }, human: abuseText(a) }));
       agent.on('dropped', (reason, detail) => {

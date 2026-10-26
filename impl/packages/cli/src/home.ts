@@ -24,7 +24,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync } from 'nod
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { emptyState, emptyTaskState, type FilePart, type NegotiationState, type TaskEngineState, type TaskPart } from '@rendezvous/a2a';
-import type { AddressCard, AgentState, DiscoveryAddress, FileEnc, GrantScope, InboundPolicy, Payload, RelayStatus, Tier, TransferState } from '@rendezvous/core';
+import type { AddressCard, AgentState, DiscoveryAddress, FileEnc, GrantScope, GroupScope, InboundPolicy, NewcomerPolicy, Payload, RelayStatus, Tier, TransferState } from '@rendezvous/core';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { acquireLock, writeAtomic } from './fsutil.js';
 import { stable } from './hash.js';
@@ -82,7 +82,7 @@ export interface InboxEntry {
  * dinner, canceling an agreed one, or granting an existing contact rights
  * towards us (`inbound`, issue #1: a reverse grant).
  */
-export type ConsentAction = 'request' | 'candidate' | 'meeting' | 'cancel' | 'inbound' | 'task-start' | 'task-release' | 'relays';
+export type ConsentAction = 'request' | 'candidate' | 'meeting' | 'cancel' | 'inbound' | 'task-start' | 'task-release' | 'relays' | 'group-join' | 'group-newcomer';
 
 /**
  * One of the owner's files in a draft, as the release gate shows it: what
@@ -274,6 +274,12 @@ export interface ConsentTerms {
   scope: GrantScope;
 }
 
+/** What joining a group grants (SPEC §7.8.2): the group-scoped grant, and our newcomer policy. */
+export interface GroupTerms {
+  scope: GroupScope;
+  newcomers: NewcomerPolicy;
+}
+
 /** A confirm phrase the MCP server issued for one action (hashed); only a human ever sees the phrase. */
 export interface ConsentEntry extends ConsentHash {
   /** The only action this phrase approves. */
@@ -290,6 +296,8 @@ export interface ConsentEntry extends ConsentHash {
   terms?: ConsentTerms;
   /** request, candidate: the local label it approves for the contact (none if absent; part of `digest`). */
   label?: string;
+  /** group-join: the terms of the join it approves (part of `digest`). */
+  group?: GroupTerms;
   /** The phrase this one replaced, so a stale phrase is reported as such. */
   previous?: ConsentHash;
   created: string;

@@ -91,6 +91,32 @@ export {
   validateNegotiateOptions,
 } from './negotiate.js';
 export { candidateView, clean, contactView, jsonLine, overflowView, requestView } from './output.js';
+export {
+  changeText as groupChangeText,
+  changeView as groupChangeView,
+  describeInvite,
+  groupText,
+  groupTermsArgs,
+  groupView,
+  inviteCode,
+  inviteView,
+  memberText,
+  memberViews,
+  type MemberView,
+  newcomerCode,
+} from './groups.js';
+export {
+  DEFAULT_GROUP_TERMS,
+  describeGroupTerms,
+  groupPhraseTargets,
+  inviteSubject,
+  joinTarget,
+  joinTermsDigest,
+  newcomerDigest,
+  newcomerKey,
+  newcomerTarget,
+} from './consent.js';
+export { type GroupTerms } from './home.js';
 export { type AuditEntry, AUDIT_KEPT, type HeldRequest, type PendingRelease, type ReleaseContent, type TaskHostState } from './home.js';
 export {
   answerPeer,

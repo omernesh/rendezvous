@@ -148,6 +148,11 @@ inbound loop), so <code>rdv</code> and <code>rdv-mcp</code> share profiles.</p>
 <td><code>fetchFileRef</code>: https only, SSRF-blocked and DNS-pinned, no credentials, capped, hash-verified</td>
 </tr>
 <tr>
+<td><code>group</code></td>
+<td>§7.8</td>
+<td>Groups v1 membership: the signed <code>rdv/group-state</code> chain (<code>epoch</code>, <code>prev</code>, admin signer, forks, the tie rule), <code>rdv/group-invite</code>, <code>rdv/group-join</code> (a group-scoped grant), and the <code>GroupBook</code> (invites, newcomer policy, approvals; at most 16 members, NOTES 86)</td>
+</tr>
+<tr>
 <td><code>transfer</code></td>
 <td>§7.7</td>
 <td><code>rdv/transfer</code> messages and their pure state machine (negotiation only, no transport)</td>
@@ -531,6 +536,30 @@ npm run rdv -- --help                     # or: node packages/cli/dist/src/bin.j
 <tr>
 <td><code>rdv task cancel &lt;task-id&gt;</code> / <code>rdv task input &lt;task-id&gt; --text "…"</code></td>
 <td>Withdraw a task you requested, or answer its executor's question</td>
+</tr>
+<tr>
+<td><code>rdv group create &lt;name&gt;</code> / <code>rdv group invite &lt;group-id&gt; &lt;agent-id\|label&gt; [--name …] [--greeting …]</code></td>
+<td>Make a group with you as its admin (at most 16 members), and invite your contacts to it (SPEC §7.8). Their humans decide</td>
+</tr>
+<tr>
+<td><code>rdv group list</code></td>
+<td>Your groups (members, who you approved, who waits for you) and the invites waiting for you; no codes</td>
+</tr>
+<tr>
+<td><code>rdv group pending</code></td>
+<td>Invites and newcomers waiting for your decision, with the <code>--code</code> for <code>join</code> and <code>approve</code> (and, in text mode, the MCP server's confirm phrases). Yours to run</td>
+</tr>
+<tr>
+<td><code>rdv group join &lt;invite-id&gt; --code &lt;code&gt; [--invoke &lt;uri&gt;]… [--max-frequency f] [--newcomers ask\|trust-admin]</code> / <code>rdv group decline &lt;invite-id&gt;</code></td>
+<td>Join a group on these terms (what members may ask of you; by default nothing, and you are asked about each newcomer who is not your contact), or say no. <code>--code</code> is refused if the invite changed since you read it. <code>join</code> is yours to run</td>
+</tr>
+<tr>
+<td><code>rdv group approve &lt;group-id&gt; &lt;agent-id&gt; --code &lt;code&gt;</code></td>
+<td>Let a newcomer who is not your contact receive your group traffic. Yours to run</td>
+</tr>
+<tr>
+<td><code>rdv group resync &lt;group-id&gt;</code></td>
+<td>Thaw a group whose admin signed two member lists for one step, after checking with them. Yours to run</td>
 </tr>
 <tr>
 <td><code>rdv file prepare &lt;path&gt; [--name …] [--mime …] [--plain]</code></td>

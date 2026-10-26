@@ -7,6 +7,8 @@
 // path is the rdv_auto_approve MCP tool, whose "on" takes the owner passphrase in a form, issue #44), the commands
 // that show confirm phrases (`rdv contact pending`, `rdv dinner list`, `rdv task list`, `rdv relays list`), changing the
 // listening relays (`rdv relays add/remove`), re-keying (`rdv init --force`),
+// joining a group, approving a group newcomer and thawing a forked group (`rdv group join/approve/resync`;
+// `rdv group pending` shows their confirm phrases; SPEC §7.8.2),
 // the owner passphrase that turns auto-approve on (`rdv owner-secret`, issue #47),
 // and the secret key, consent and auto-approve state (`agent.json`, `agent.json.bak`, `consent.json`,
 // `autoapprove.json`, `owner-secret.json`) in the Rendezvous home, through any tool. A command naming
@@ -73,6 +75,11 @@ const DIRECT_TRANSFER =
   'rdv file direct-transfer is the human\'s setting, in their own terminal: turning it on shows their network address to contacts who ask for a direct transfer. Tell your user; rdv_file "decline-transfer" can only say no.';
 const RELAYS =
   'rdv relays add/remove/list is for the human, in their own terminal: the relays the agent listens on receive its messages, and rdv relays list shows a confirm phrase meant only for them. Use the rdv_relays tool, which asks the human for a listening-relay change.';
+const GROUP_GATE =
+  'That Rendezvous command is for the human, in their own terminal: joining a group and approving a newcomer decide who hears what your user says. ' +
+  'Use rdv_group "join" and "approve", which ask the human through an approval form or a confirm phrase they type to you.';
+const GROUP_PENDING =
+  'rdv group pending is for the human, in their own terminal (it shows confirm phrases meant only for them). Use rdv_group with action "list".';
 const OWNER_SECRET =
   'The owner passphrase (rdv owner-secret, owner-secret.json) is for the human alone: it is what they type to turn auto-approve on. Never set, change, read, write or ask for it.';
 const PTY_RDV =
@@ -336,6 +343,8 @@ const FILE_SUBS = { 'direct-transfer': DIRECT_TRANSFER };
 const OWNER_SUBS = { set: OWNER_SECRET, reset: OWNER_SECRET };
 // The listening relays: adding one routes our messages through it, removing the good ones cuts us off; list shows the human's phrase.
 const RELAYS_SUBS = { add: RELAYS, remove: RELAYS, list: RELAYS };
+// Groups (SPEC §7.8.2, issue #77): joining one and approving a newcomer are the human's every time; pending shows their phrases.
+const GROUP_SUBS = { join: GROUP_GATE, approve: GROUP_GATE, resync: `rdv group resync: ${HUMAN_ONLY}`, pending: GROUP_PENDING };
 /** Every command group with human-only subcommands. The subcommand loop and the `xargs` tail check both read this, so a new group is covered in both. */
 const HUMAN_GROUPS = [
   ['contact', CONTACT_SUBS],
@@ -344,6 +353,7 @@ const HUMAN_GROUPS = [
   ['file', FILE_SUBS],
   ['owner-secret', OWNER_SUBS],
   ['relays', RELAYS_SUBS],
+  ['group', GROUP_SUBS],
 ];
 
 /**

@@ -7,7 +7,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { type Capability, REQUEST_URI, TASKS_URI, type TaskPayload } from '@rendezvous/a2a';
-import { type Agent, type Contact, fingerprint, generateKey, type GrantScope, MEETING_CANCEL_CAPABILITY, MEETINGS_CAPABILITY } from '@rendezvous/core';
+import { type Agent, type Contact, fingerprint, generateKey, type GrantScope, GROUPS_EXTENSION, MEETING_CANCEL_CAPABILITY, MEETINGS_CAPABILITY } from '@rendezvous/core';
 import { startTestRelay, type TestRelay } from '@rendezvous/core/testing';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { Listener, rdv } from '../scenarios/harness.js';
@@ -335,6 +335,16 @@ describe('auto-approve in the gates', () => {
     expect(() => setAutoApprove(home, subjectOf(f.agent), PEER, null)).toThrow(/allows no task capability/);
     expect(() => setAutoApprove(home, subjectOf(f.agent), generateKey().id, null)).toThrow(/no active contact/);
     expect(home.readAutoApprove()).toEqual({});
+  });
+
+  it('never covers groups: a scope that lists the groups extension gets nothing for it, and only it is nothing to cover (issue #77, §5.5.1)', () => {
+    f.contacts.set(PEER, granted(PEER, { invoke: { [GROUPS_EXTENSION]: {} } }));
+    expect(() => setAutoApprove(home, subjectOf(f.agent), PEER, null)).toThrow(/allows no task capability/);
+    f.contacts.set(PEER, granted(PEER, { invoke: { [GROUPS_EXTENSION]: {}, [REQUEST_URI]: {} } }));
+    const r = setAutoApprove(home, subjectOf(f.agent), PEER, null);
+    expect(r.capabilities).toEqual([REQUEST_URI]);
+    expect(r.entry.covers).not.toContain(GROUPS_EXTENSION);
+    expect(autoApproveWarning(f.contacts.get(PEER)!, r.capabilities, null)).not.toContain(GROUPS_EXTENSION);
   });
 
   it('covers the meeting confirm only while the grant allows meetings and the entry holds (issue #44)', () => {

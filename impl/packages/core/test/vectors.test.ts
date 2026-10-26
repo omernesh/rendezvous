@@ -9,6 +9,8 @@ import {
   bytesToHex,
   canonicalize,
   createCard,
+  createGroupState,
+  docHash,
   dtopic,
   idtopic,
   b64encode,
@@ -25,7 +27,12 @@ import {
   sealEnvelope,
   signDoc,
   verifyGrant,
+  verifyGroupInvite,
+  verifyGroupJoin,
+  verifyGroupState,
   verifyReverseGrant,
+  successorProblem,
+  GROUPS_EXTENSION,
 } from '../src/index.js';
 
 const FILE = new URL('../vectors/v1.json', import.meta.url);
@@ -100,6 +107,56 @@ function deterministic() {
     size: fileCipher.length,
     enc: { alg: 'aes256gcm', key: b64encode(fileKey), nonce: b64encode(fileNonce), plain_sha256: sha256Hex(filePlain) },
   });
+  // Groups (SPEC §7.8, issue #77): Omer creates a group (epoch 0), invites John, John's human joins with a
+  // group-scoped grant, and Omer adds him (epoch 1). Each document is signed like any other (§4.6).
+  const groupId = '00000000-0000-4000-8000-000000000010';
+  const policy = { member_rate: '60/hour', members_may_invite: false };
+  const omerGroupCard = createCard(omer, { now, rendezvous: [{ type: 'nostr', relay: 'wss://relay.example', pref: 1 }], capabilities: ['rdv/v1', 'a2a/0.3', GROUPS_EXTENSION] });
+  const johnGroupCard = createCard(john, { now, rendezvous: [{ type: 'nostr', relay: 'wss://relay.example', pref: 1 }], capabilities: ['rdv/v1', 'a2a/0.3', GROUPS_EXTENSION] });
+  const state0 = createGroupState(omer, { group: groupId, epoch: 0, prev: null, members: [{ id: omer.id, role: 'admin', card: docHash(omerGroupCard) }], policy, name: 'Microsite launch', ts: now.toISOString() });
+  const invite = signDoc(
+    {
+      v: 1,
+      type: 'rdv/group-invite',
+      id: '00000000-0000-4000-8000-000000000011',
+      group: groupId,
+      from: omer.id,
+      to: john.id,
+      state: state0,
+      greeting: 'Help with the microsite?',
+      expires: new Date(now.getTime() + 7 * 86_400_000).toISOString(),
+      ts: now.toISOString(),
+    },
+    omer,
+  );
+  const join = signDoc(
+    {
+      v: 1,
+      type: 'rdv/group-join',
+      id: '00000000-0000-4000-8000-000000000012',
+      group: groupId,
+      from: john.id,
+      to: omer.id,
+      invite_ref: invite.id,
+      state: docHash(state0),
+      card: johnGroupCard,
+      scope: { invoke: { 'https://rendezvous.nesher.co/ext/request/v1': {} }, max_frequency: '20/day' },
+      ts: now.toISOString(),
+    },
+    john,
+  );
+  const state1 = createGroupState(omer, {
+    group: groupId,
+    epoch: 1,
+    prev: docHash(state0),
+    members: [
+      { id: omer.id, role: 'admin', card: docHash(omerGroupCard) },
+      { id: john.id, role: 'member', card: docHash(johnGroupCard), name: 'John' },
+    ],
+    policy,
+    name: 'Microsite launch',
+    ts: now.toISOString(),
+  });
   return {
     keys: [omer, john].map((k) => ({
       seed_hex: bytesToHex(k.secretKey),
@@ -120,6 +177,10 @@ function deterministic() {
     contact_grant: { canonical: canonicalize(grant), doc: grant },
     reverse_grant: { canonical: canonicalize(reverseGrant), doc: reverseGrant },
     file_ref: { plaintext_hex: bytesToHex(filePlain), ciphertext_hex: bytesToHex(fileCipher), part: filePart },
+    group_state_0: { canonical: canonicalize(state0), hash: docHash(state0), doc: state0 },
+    group_invite: { canonical: canonicalize(invite), doc: invite },
+    group_join: { canonical: canonicalize(join), doc: join },
+    group_state_1: { canonical: canonicalize(state1), hash: docHash(state1), doc: state1 },
   };
 }
 
@@ -153,6 +214,15 @@ describe('test vectors', () => {
     const parsed = parseFilePart(f.part);
     if (!parsed.ok || parsed.value.kind !== 'ref') throw new Error('file_ref vector does not parse');
     expect(bytesToHex(verifyAndDecrypt(parsed.value.ref, hexToBytes(f.ciphertext_hex)))).toBe(f.plaintext_hex);
+  });
+
+  it('verifies the group documents and the state chain (issue #77)', () => {
+    const { group_state_0: s0, group_invite: i, group_join: j, group_state_1: s1 } = saved;
+    expect([verifyGroupState(s0.doc, now).ok, verifyGroupInvite(i.doc, now).ok, verifyGroupJoin(j.doc, now).ok, verifyGroupState(s1.doc, now).ok]).toEqual([true, true, true, true]);
+    expect(successorProblem(s0.doc, s1.doc)).toBeNull();
+    expect(j.doc.state).toBe(s0.hash);
+    expect(s1.doc.prev).toBe(s0.hash);
+    expect(s1.doc.members[1].card).toBe(docHash(j.doc.card));
   });
 
   it('opens the sample envelope', () => {
