@@ -794,12 +794,24 @@ export class GroupBook {
     if (r.status === 'joining') return this.receiveAdmission(r, s, from, ctx, now);
     if (!memberOf(r.state, from) && !(r.prevState && memberOf(r.prevState, from))) return { kind: 'ignored', reason: 'state from a non-member' };
     if (r.status === 'removed') return { kind: 'ignored', reason: 'not a group we are in' };
-    // Another state at an epoch we hold or wait for, from any admin: a fork.
-    const rival = r.history.find((h) => h.epoch === s.epoch)?.hash ?? r.future.map(docHash).find((h, i) => r.future[i].epoch === s.epoch);
-    if (rival !== undefined) return this.fork(r, s, rival, now);
+    // Another state at an epoch we hold or wait for is a fork, but only if it could have been legitimate:
+    // a successor of the state before ours, or, ahead of us, signed by an admin of ours. Anything else
+    // (a member, or an epoch we cannot check) is ignored, so a non-admin cannot freeze the group.
+    const held = r.history.find((h) => h.epoch === s.epoch);
+    if (held) {
+      if (s.epoch !== r.state.epoch || !r.prevState || successorProblem(r.prevState, s)) return { kind: 'ignored', reason: 'a state at an epoch we hold that we cannot check' };
+      return this.fork(r, s, held.hash, now);
+    }
+    const waiting = r.future.find((f) => f.epoch === s.epoch);
+    if (waiting) {
+      if (!isAdmin(r.state, s.from)) return { kind: 'ignored', reason: 'a state ahead of ours not signed by an admin' };
+      return this.fork(r, s, docHash(waiting), now);
+    }
     if (r.frozen) return { kind: 'ignored', reason: 'membership is frozen until our human re-syncs' };
     if (s.epoch < r.state.epoch) return { kind: 'ignored', reason: 'older than the state we hold' };
     if (s.epoch > r.state.epoch + 1) {
+      // Only an admin of the state we hold may queue one (one per epoch: a second is a fork, above).
+      if (!isAdmin(r.state, s.from)) return { kind: 'ignored', reason: 'a state ahead of ours not signed by an admin' };
       if (!r.future.some((f) => f.epoch === s.epoch)) {
         r.future.push(s);
         r.future.sort((a, b) => a.epoch - b.epoch);

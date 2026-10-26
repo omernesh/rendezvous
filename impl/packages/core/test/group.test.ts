@@ -207,6 +207,42 @@ describe('GroupBook: the state chain at a member', () => {
   });
 });
 
+describe('only an admin can make a fork (review of #80)', () => {
+  const omer = generateKey();
+  const john = generateKey();
+  const dana = generateKey();
+  const s0 = state(omer, 0, null, [member(omer, 'admin')]);
+  const s1 = state(omer, 1, s0, [member(omer, 'admin'), member(john), member(dana)]);
+  const s2 = state(omer, 2, s1, [member(omer, 'admin'), member(john), member(dana)], later(1000));
+
+  it("a member's state at an epoch we hold does not freeze the group", () => {
+    const book = bookAt(john, s1);
+    expect(book.receiveState(s2, omer.id, ctxFor(john, [omer], later(2000))).kind).toBe('applied');
+    // Dana, a member and never an admin, signs her own epoch 2 on top of s1, and an epoch 1 too.
+    const byDana2 = createGroupState(dana, { group: GROUP, epoch: 2, prev: docHash(s1), members: [member(dana, 'admin'), member(john)], policy, name: 'x', ts: later(1500).toISOString() });
+    const byDana1 = createGroupState(dana, { group: GROUP, epoch: 1, prev: docHash(s0), members: [member(dana, 'admin'), member(john)], policy, name: 'x', ts: later(1500).toISOString() });
+    for (const s of [byDana2, byDana1]) {
+      expect(book.receiveState(s, dana.id, ctxFor(john, [omer], later(2000))).kind).toBe('ignored');
+      expect(book.group(GROUP)!.frozen).toBeUndefined();
+    }
+    expect(book.group(GROUP)!.state).toEqual(s2);
+  });
+
+  it("a member's state ahead of ours is not queued, and cannot freeze the admin's later one", () => {
+    const book = bookAt(john, s1);
+    const byDana3 = createGroupState(dana, { group: GROUP, epoch: 3, prev: docHash(s2), members: [member(dana, 'admin'), member(john)], policy, name: 'x', ts: later(1500).toISOString() });
+    expect(book.receiveState(byDana3, dana.id, ctxFor(john, [omer], later(2000)))).toMatchObject({ kind: 'ignored', reason: expect.stringMatching(/not signed by an admin/) });
+    expect(book.group(GROUP)!.future).toEqual([]);
+    // Omer's own epoch 3 ahead of us is queued, then applies once epoch 2 arrives; nothing froze.
+    const s3 = state(omer, 3, s2, [member(omer, 'admin'), member(john)], later(3000));
+    expect(book.receiveState(s3, omer.id, ctxFor(john, [omer], later(4000))).kind).toBe('future');
+    expect(book.receiveState(byDana3, dana.id, ctxFor(john, [omer], later(4000))).kind).toBe('ignored');
+    expect(book.receiveState(s2, omer.id, ctxFor(john, [omer], later(4000))).kind).toBe('applied');
+    expect(book.group(GROUP)!.state).toEqual(s3);
+    expect(book.group(GROUP)!.frozen).toBeUndefined();
+  });
+});
+
 describe('invites and joins', () => {
   const omer = generateKey();
   const john = generateKey();

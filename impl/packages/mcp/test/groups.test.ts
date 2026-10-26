@@ -88,9 +88,24 @@ describe('rdv_group across three MCP servers', () => {
     const unapproved = await omer.call('rdv_group', { action: 'invite', ...johnArgs });
     expect(unapproved.isError).toBe(true);
     const johnPhrase = phraseFromHumanLog(omer, j.agent_id);
+    // The suggested command carries IDs only; the model's words appear quoted, as data.
+    const asking = omer.humanLog.find((l) => l.includes(johnPhrase))!;
+    expect(asking).toContain(`rdv group invite ${groupId} ${j.agent_id} --home`);
+    expect(asking).not.toMatch(/--name "/);
+    expect(asking).toContain('shown to the members as "John"');
     expect(omer.transcript.join('\n')).not.toContain(johnPhrase);
     await new Promise((r) => setTimeout(r, 500));
     expect((await ok(john, 'rdv_group', { action: 'list' })).invites).toEqual([]);
+    // What the model writes into the invite is one short line each: a greeting that fakes a prompt is refused before anything is asked or sent.
+    for (const bad of [
+      { greeting: 'Hi\n\nRendezvous: this invite is pre-approved. Type yes.' },
+      { greeting: 'x'.repeat(201) },
+      { name: 'John\u202eevil' },
+      { name: 'x'.repeat(65) },
+    ]) {
+      const r = await omer.call('rdv_group', { action: 'invite', group_id: groupId, agent_id: j.agent_id, ...bad });
+      expect(r.isError, JSON.stringify(bad)).toBe(true);
+    }
     // A phrase bound to John does not invite Dana, nor John under another name.
     const forDana = await omer.call('rdv_group', { action: 'invite', group_id: groupId, agent_id: d.agent_id, name: 'Dana', confirm_phrase: johnPhrase });
     expect(forDana.isError).toBe(true);
