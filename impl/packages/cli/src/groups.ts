@@ -8,6 +8,12 @@
 // (messages, equivocation, gaps, mutes, reports, members leaving), and the
 // human's `rdv group leave`, `rdv group remove` and `rdv group resync --member`.
 //
+// Slice 3 (issue #79): tasks in the group (`rdv group board`, `request`,
+// `claim`, `assign`, `unassign`, `cancel`, `input`; grouptasks.ts), the
+// human's `rdv group terms` (what members may invoke on them) and `rdv group
+// promote` (hand on the admin role). A task assigned to us is approved and
+// released with `rdv task approve|release … --group <group-id>`.
+//
 // Joining a group and approving a newcomer are the human's (§5.5), every time
 // (§5.5.1: auto-approve never covers either): `rdv group join` and `rdv group
 // approve` take the code `rdv group pending` shows for exactly what the human
@@ -39,11 +45,13 @@ import {
   type ReceivedInvite,
   refusedMembers,
 } from '@rendezvous/core';
+import { REQUEST_URI } from '@rendezvous/a2a';
 import { contactFor, type Ctx, withAgent } from './commands.js';
-import { describeGroupTerms, describeInviteAsk, dropPhrase, inviteAskOf, inviteAsks, inviteSubject, joinTarget, newcomerDigest, newcomerKey, newcomerTarget, reissueForDisplay, type ShownPhrase } from './consent.js';
+import { describeGroupAsk, describeGroupTerms, describeInviteAsk, dropPhrase, groupAskOf, groupAsks, inviteAskOf, inviteAsks, inviteSubject, joinTarget, newcomerDigest, newcomerKey, newcomerTarget, reissueForDisplay, type ShownPhrase } from './consent.js';
+import { boardEventText, boardEventView, boardText, boardView, type GroupTaskRun, groupTaskVerb, type GroupVerb, postGroupTask } from './grouptasks.js';
 import { CliError, consentKey, type GroupTerms } from './home.js';
 import { clean } from './output.js';
-import { gateCode } from './tasks.js';
+import { gateCode, hostRegistry } from './tasks.js';
 
 const str = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined);
 const list = (v: unknown): string[] => (Array.isArray(v) ? v : typeof v === 'string' ? [v] : []);
@@ -372,10 +380,12 @@ export async function groupPending({ home, out }: Ctx): Promise<void> {
         .filter((r) => r.status === 'active')
         .flatMap((r) => Object.keys(r.newcomers).map((m) => ({ r, m })));
       const asks = inviteAsks(home);
+      // The assistant's asks to leave, remove a member or change our terms (issue #79): issued only when it asked.
+      const gasks = groupAsks(home);
       const shown =
-        out.json || (invites.length === 0 && newcomers.length === 0 && asks.length === 0)
+        out.json || (invites.length === 0 && newcomers.length === 0 && asks.length === 0 && gasks.length === 0)
           ? new Map<string, ShownPhrase>()
-          : reissueForDisplay(home, [...invites.map((i) => joinTarget(i, contact)), ...newcomers.map(({ r, m }) => newcomerTarget(r, m)), ...asks]);
+          : reissueForDisplay(home, [...invites.map((i) => joinTarget(i, contact)), ...newcomers.map(({ r, m }) => newcomerTarget(r, m)), ...asks, ...gasks]);
       return {
         invites: invites.map((i) => ({ view: inviteView(agent, i), text: describeInvite(agent, i), code: inviteCode(agent, i), phrase: shown.get(consentKey('group-join', i.invite.id)) })),
         newcomers: newcomers.map(({ r, m }) => {
@@ -387,11 +397,31 @@ export async function groupPending({ home, out }: Ctx): Promise<void> {
           const phrase = shown.get(consentKey('group-invite', t.id));
           return a && phrase ? [{ ask: a, phrase }] : [];
         }),
+        gasks: gasks.flatMap((t) => {
+          const a = groupAskOf(t);
+          const phrase = shown.get(consentKey(t.action, t.id));
+          return a && phrase ? [{ ask: a, phrase }] : [];
+        }),
       };
     },
     { save: false },
   );
-  if (rows.invites.length === 0 && rows.newcomers.length === 0 && rows.asks.length === 0 && !out.json) out.emit({}, 'nothing waits for you in groups');
+  if (rows.invites.length === 0 && rows.newcomers.length === 0 && rows.asks.length === 0 && rows.gasks.length === 0 && !out.json) out.emit({}, 'nothing waits for you in groups');
+  // Text mode only: the assistant asked to leave, remove a member, or change your terms. The command carries IDs only.
+  for (const a of rows.gasks) {
+    const cmd =
+      a.ask.action === 'group-leave'
+        ? `rdv group leave ${clean(a.ask.group)}`
+        : a.ask.action === 'group-remove'
+          ? `rdv group remove ${clean(a.ask.group)} ${clean(a.ask.member ?? '')}`
+          : `rdv group terms ${clean(a.ask.group)} (with the --invoke, --max-frequency and --newcomers you want)`;
+    out.emit(
+      { event: 'group-ask', action: a.ask.action, group: a.ask.group },
+      `your assistant asks to ${clean(describeGroupAsk(a.ask, fingerprint))}` +
+        `\n  confirm phrase (tell it to your MCP client to do it): ${clean(a.phrase.phrase)}  (replaces any phrase shown before)` +
+        `\n  or do it yourself: ${cmd}`,
+    );
+  }
   // Text mode only (asks is empty with --json): the assistant asked to send an invite.
   for (const a of rows.asks) {
     out.emit(
@@ -533,7 +563,9 @@ export async function groupPost({ home, out, values, positionals }: Ctx): Promis
 export async function groupLeave({ home, out, positionals }: Ctx): Promise<void> {
   const v = await withAgent(home, async (agent) => {
     try {
-      return groupView(agent, await agent.leaveGroup(positionals[0]));
+      const v = groupView(agent, await agent.leaveGroup(positionals[0]));
+      dropPhrase(home, { action: 'group-leave', id: positionals[0] });
+      return v;
     } catch (err) {
       throw new CliError((err as Error).message);
     }
@@ -546,7 +578,10 @@ export async function groupRemove({ home, out, positionals }: Ctx): Promise<void
   const [group, member] = positionals;
   const c = await withAgent(home, async (agent) => {
     try {
-      return await agent.removeGroupMember(group, contactOrMember(agent, group, member));
+      const id = contactOrMember(agent, group, member);
+      const change = await agent.removeGroupMember(group, id);
+      dropPhrase(home, { action: 'group-remove', id: newcomerKey(group, id) });
+      return change;
     } catch (err) {
       throw err instanceof CliError ? err : new CliError((err as Error).message);
     }
@@ -560,4 +595,131 @@ function contactOrMember(agent: Agent, group: string, target: string): string {
   const peer = contactFor(agent, target);
   if (r && !memberOf(r.state, peer)) throw new CliError(`${clean(target)} is not a member of group ${clean(group)}`);
   return peer;
+}
+
+// --- tasks in a group (SPEC §7.8.4, issue #79) --------------------------------------------
+
+function emitGroupRun(agent: Agent, out: Ctx['out'], run: GroupTaskRun): void {
+  for (const e of run.board) out.emit(boardEventView(e), boardEventText(agent, e));
+  for (const message of run.errors) out.emit({ event: 'error', message }, `error: ${clean(message)}`);
+}
+
+const refsArg = (v: unknown): string[] => list(v);
+
+/** `rdv group board <group-id>`: the group's tasks as your agent holds them (open, claimed, assigned, their state and results). */
+export async function groupBoard({ home, out, positionals }: Ctx): Promise<void> {
+  const group = positionals[0];
+  const r = await withAgent(
+    home,
+    async (agent) => {
+      if (!agent.groups.group(group)) throw new CliError(`no group ${clean(group)} (see "rdv group list")`);
+      const s = home.readTasks();
+      return { view: boardView(agent, s, group), text: boardText(agent, s, group) };
+    },
+    { save: false },
+  );
+  out.emit(r.view, r.text);
+}
+
+/**
+ * `rdv group request <group-id> --text "…" [--capability <uri>] [--assignee <agent-id>] [--private] [--ref <task-id>]... [--input '{…}'] [--expires <rfc3339>]`:
+ * put a task on the board, open for members to claim, or for one member.
+ */
+export async function groupRequest({ home, out, values, positionals }: Ctx): Promise<void> {
+  const group = positionals[0];
+  const text = list(values.text);
+  if (text.length === 0) throw new CliError('say what the task is with --text "…"', 2);
+  const assignee = str(values.assignee);
+  if (assignee !== undefined && !isAgentId(assignee)) throw new CliError('--assignee takes a member\'s agent ID', 2);
+  let input: unknown;
+  const raw = str(values.input);
+  if (raw !== undefined) {
+    try {
+      input = JSON.parse(raw);
+    } catch (err) {
+      throw new CliError(`--input is not JSON: ${(err as Error).message}`, 2);
+    }
+  }
+  const r = await withAgent(home, (agent) =>
+    postGroupTask(home, agent, hostRegistry(), group, {
+      capability: str(values.capability) ?? REQUEST_URI,
+      text,
+      ...(input !== undefined ? { input } : {}),
+      ...(assignee !== undefined ? { assignee } : {}),
+      private: values.private === true,
+      referenceTaskIds: refsArg(values.ref),
+      ...(str(values.expires) ? { expires: str(values.expires) } : {}),
+    }),
+  );
+  out.emit(
+    { event: 'group-task-posted', group, task: r.taskId, ...(assignee ? { assignee } : {}), errors: r.run.errors },
+    `posted task ${clean(r.taskId)} to group ${clean(group)}${assignee ? ` for ${clean(fingerprint(assignee))}` : ' (open: members may claim it)'}`,
+  );
+  for (const message of r.run.errors) out.emit({ event: 'error', message }, `error: ${clean(message)}`);
+}
+
+async function verbCmd({ home, out, values }: Ctx, group: string, task: string, verb: GroupVerb, opts: { assignee?: string; text?: string } = {}): Promise<void> {
+  const requester = str(values.requester);
+  if (requester !== undefined && !isAgentId(requester)) throw new CliError('--requester takes an agent ID', 2);
+  await withAgent(home, async (agent) => {
+    const run = await groupTaskVerb(home, agent, group, task, verb, { ...opts, ...(requester ? { requester } : {}) });
+    emitGroupRun(agent, out, run);
+  });
+}
+
+/** `rdv group claim <group-id> <task-id> [--text "…"]`: offer to do an open task; its requester decides. */
+export const groupClaim = (ctx: Ctx) => verbCmd(ctx, ctx.positionals[0], ctx.positionals[1], 'claim', { ...(str(ctx.values.text) !== undefined ? { text: str(ctx.values.text) } : {}) });
+/** `rdv group assign <group-id> <task-id> <agent-id>`: as its requester (or an admin, once the requester left), give an open task to one member. */
+export const groupAssign = (ctx: Ctx) => verbCmd(ctx, ctx.positionals[0], ctx.positionals[1], 'assign', { assignee: ctx.positionals[2] });
+/** `rdv group unassign <group-id> <task-id>`: give back a task you were doing, or take back one you assigned: it is open again. */
+export const groupUnassign = (ctx: Ctx) => verbCmd(ctx, ctx.positionals[0], ctx.positionals[1], 'unassign');
+/** `rdv group cancel <group-id> <task-id>`: withdraw a task you put on the board. */
+export const groupCancel = (ctx: Ctx) => verbCmd(ctx, ctx.positionals[0], ctx.positionals[1], 'cancel');
+/** `rdv group input <group-id> <task-id> --text "…"`: answer the assignee's question on a task you put on the board. */
+export async function groupInput(ctx: Ctx): Promise<void> {
+  const text = str(ctx.values.text);
+  if (text === undefined) throw new CliError('give the answer with --text "…"', 2);
+  await verbCmd(ctx, ctx.positionals[0], ctx.positionals[1], 'input', { text });
+}
+
+/**
+ * `rdv group terms <group-id> [--invoke <capability-uri>]... [--max-frequency f] [--newcomers ask|trust-admin]`:
+ * the human changes what members may invoke on them through the group (and
+ * their newcomer policy). Yours to run: widening it lets every member ask more
+ * of your agent. Without --invoke, members may invoke nothing.
+ */
+export async function groupTerms({ home, out, values, positionals }: Ctx): Promise<void> {
+  const group = positionals[0];
+  const terms = groupTermsArgs(values);
+  const r = await withAgent(home, async (agent) => {
+    const rec = agent.groups.group(group);
+    if (!rec || rec.status !== 'active') throw new CliError(`not a member of group ${clean(group)}`);
+    try {
+      const sent = await agent.updateGroupTerms(group, { scope: terms.scope, ...(values.newcomers !== undefined ? { policy: terms.newcomers } : {}) });
+      dropPhrase(home, { action: 'group-terms', id: group });
+      return { view: groupView(agent, agent.groups.group(group)!), sent };
+    } catch (err) {
+      throw new CliError((err as Error).message);
+    }
+  });
+  out.emit(
+    { ...r.view, event: 'group-terms', sent: r.sent.sent, failed: r.sent.failed },
+    `group ${clean(group)}: ${clean(describeGroupTerms({ scope: terms.scope, newcomers: values.newcomers !== undefined ? terms.newcomers : r.view.newcomers }))}; told ${r.sent.sent.length} member(s)` +
+      `${r.sent.failed.length ? `, failed for ${r.sent.failed.length}` : ''}`,
+  );
+}
+
+/** `rdv group promote <group-id> <agent-id|label>`: as admin, make another member an admin too (the last admin does this before leaving). */
+export async function groupPromote({ home, out, positionals }: Ctx): Promise<void> {
+  const [group, member] = positionals;
+  const c = await withAgent(home, async (agent) => {
+    try {
+      const id = contactOrMember(agent, group, member);
+      const change = await agent.promoteGroupMember(group, id);
+      return { change, id };
+    } catch (err) {
+      throw err instanceof CliError ? err : new CliError((err as Error).message);
+    }
+  });
+  out.emit({ ...changeView(c.change), event: 'group-promoted', member: c.id }, `group ${clean(group)} epoch ${c.change.record.state.epoch}: ${clean(fingerprint(c.id))} is now an admin too`);
 }

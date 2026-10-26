@@ -969,8 +969,28 @@ describe('joining a group and approving a newcomer are the human’s (issue #77)
     'npx rdv group remove g1 dana',
     'rdv group resync g1 --member rdv1:abc',
     'echo leave | xargs rdv group',
+    // Slice 3 (issue #79): one's own group terms and handing on the admin role are the human's.
+    'rdv group terms g1 --invoke https://rendezvous.nesher.co/ext/request/v1',
+    'rdv group terms g1',
+    'npx rdv group promote g1 rdv1:abc',
+    'echo terms | xargs rdv group',
   ];
-  const allowed = ['rdv group create "Microsite launch"', 'rdv group list', 'rdv group list --json', 'rdv group decline 0f1e', `rdv group post g1 --json '{"type":"note"}'`];
+  const allowed = [
+    'rdv group create "Microsite launch"',
+    'rdv group list',
+    'rdv group list --json',
+    'rdv group decline 0f1e',
+    `rdv group post g1 --json '{"type":"note"}'`,
+    // Slice 3: the board and its verbs are the model's to use (each start and release still waits for the assignee's human).
+    'rdv group board g1',
+    'rdv group request g1 --text "Draft the copy" --assignee rdv1:abc',
+    'rdv group claim g1 t1 --text "I can do it"',
+    'rdv group assign g1 t1 rdv1:abc',
+    'rdv group unassign g1 t1',
+    'rdv group cancel g1 t1',
+    'rdv group input g1 t1 --text "shorter"',
+    'rdv task submit t1 --group g1 --text "draft"',
+  ];
   it.each(denied)('the guard refuses %s', (c) => expect(checkCommand(c)).toBeTruthy());
   it.each(allowed)('the guard allows %s', (c) => expect(checkCommand(c)).toBeUndefined());
   it('the skill lint catches a skill that tells the assistant to join or approve', () => {
@@ -1018,6 +1038,9 @@ describe('the skill covers general tasks, files and auto-approve (issue #29)', (
     // Slice 2 (issue #78).
     'rdv group leave',
     'rdv group remove',
+    // Slice 3 (issue #79).
+    'rdv group terms',
+    'rdv group promote',
   ];
   it.each(humanOnly)('the skill names %s as the human’s, and the guard refuses it', (c) => {
     expect(skill).toContain(c);

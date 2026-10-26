@@ -221,7 +221,7 @@ export function inboundAsks(home: Home): Map<string, ConsentTerms> {
   return asks;
 }
 
-const ACTIONS: readonly string[] = ['request', 'candidate', 'meeting', 'cancel', 'inbound', 'task-start', 'task-release', 'relays', 'group-join', 'group-newcomer', 'group-invite'];
+const ACTIONS: readonly string[] = ['request', 'candidate', 'meeting', 'cancel', 'inbound', 'task-start', 'task-release', 'relays', 'group-join', 'group-newcomer', 'group-invite', 'group-leave', 'group-remove', 'group-terms'];
 const isStr = (v: unknown): v is string => typeof v === 'string' && v.length > 0;
 const isHash = (h: unknown): h is ConsentHash =>
   !!h && typeof h === 'object' && isStr((h as ConsentHash).salt) && isStr((h as ConsentHash).hash) && ((h as ConsentHash).digest === undefined || isStr((h as ConsentHash).digest));
@@ -611,4 +611,66 @@ export function describeInviteAsk(a: InviteAsk, fingerprintOf: (id: string) => s
     `${a.name !== null ? `, shown to the members as ${q(a.name)}` : ''}${a.greeting !== null ? `, with the greeting ${q(a.greeting)}` : ''}. ` +
     'They see who is in the group, and if they join, every member\'s card and group terms'
   );
+}
+
+// --- leaving, removing, and changing one's own terms (issue #79) ---------------------------
+
+/**
+ * What the model asks the human to decide in a group: to leave it, to remove
+ * a member (as admin), or to change our own terms (what members may invoke on
+ * us, and our newcomer policy). Each changes membership or our audience, so it
+ * is the human's (SPEC §5.5), never covered by auto-approve (§5.5.1). The
+ * approval is bound to the group as shown (its name, the epoch we hold) and to
+ * what is asked (the member and the admin's name for it; the new terms), so a
+ * group that changed since, or another member or other terms, is another
+ * approval.
+ */
+export interface GroupAsk {
+  action: 'group-leave' | 'group-remove' | 'group-terms';
+  group: string;
+  group_name: string;
+  epoch: number;
+  /** group-remove: the member and the name the state gives it. */
+  member?: string;
+  member_name?: string | null;
+  /** group-terms: the terms asked for. */
+  terms?: GroupTerms;
+}
+
+const GROUP_ASK = 'group-ask/v1\0';
+export const GROUP_ASK_ACTIONS: readonly GroupAsk['action'][] = ['group-leave', 'group-remove', 'group-terms'];
+
+export function groupAskTarget(a: GroupAsk): PhraseTarget {
+  const subject = GROUP_ASK + canonicalize(a);
+  return { action: a.action, id: a.action === 'group-remove' ? newcomerKey(a.group, a.member ?? '') : a.group, subject, digest: sha256('rdv1/group-ask', { subject }) };
+}
+
+/** The ask a stored phrase was issued for, from its subject. */
+export function groupAskOf(t: Pick<PhraseTarget, 'subject' | 'action'>): GroupAsk | undefined {
+  if (!t.subject?.startsWith(GROUP_ASK)) return undefined;
+  try {
+    const a = JSON.parse(t.subject.slice(GROUP_ASK.length)) as GroupAsk;
+    return a.action === t.action ? a : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Open asks to leave, remove or change terms (issued only when the model asks): kept by a re-sync until used. */
+export function groupAsks(home: Home): PhraseTarget[] {
+  return Object.values(load(home).consent).flatMap((e) => {
+    const a = (GROUP_ASK_ACTIONS as readonly string[]).includes(e.action) ? groupAskOf(e) : undefined;
+    return a ? [groupAskTarget(a)] : [];
+  });
+}
+
+/** An ask in words, for the human (the group and member names are the admin's, quoted). */
+export function describeGroupAsk(a: GroupAsk, fingerprintOf: (id: string) => string): string {
+  const q = (v: string) => JSON.stringify(v);
+  const group = `group ${q(a.group_name)} (${a.group})`;
+  if (a.action === 'group-leave') return `leave ${group}: every member is told, and your agent sends them nothing more`;
+  if (a.action === 'group-remove') {
+    return `remove ${fingerprintOf(a.member ?? '')}${a.member_name ? ` (named by the admin as ${q(a.member_name)})` : ''} from ${group}: the next member list without them goes to every member, them included`;
+  }
+  return `change your terms in ${group}: ${describeGroupTerms(a.terms ?? DEFAULT_GROUP_TERMS)}`;
 }

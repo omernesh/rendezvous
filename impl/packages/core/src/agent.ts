@@ -73,6 +73,7 @@ import {
   type GroupMute,
   type GroupReport,
   createGroupLeave,
+  groupRecipients,
   groupResend,
   leaveRecipients,
   prepareGroupMessage,
@@ -766,6 +767,42 @@ export class Agent extends EventEmitter<AgentEvents> {
     await this.fanOutState(change.record, change.added, change.removed.map((id) => ({ id, card: id === member ? removedCard : undefined })));
     this.dropGroupChannels(change.removed);
     return change;
+  }
+
+  /**
+   * As admin, our human makes another member an admin (§7.8.5: the last admin
+   * hands the role on before leaving). The next state goes to every member.
+   */
+  async promoteGroupMember(groupId: string, member: string): Promise<GroupChange> {
+    const change = this.groups.promote(this.key, groupId, member, this.groupCtx());
+    this.emit('group-state', change);
+    await this.fanOutState(change.record, []);
+    return change;
+  }
+
+  /**
+   * Our human changes our own terms in a group (§7.8.2): our join, signed
+   * again with the new scope, goes to the members we send to and to the
+   * admins (who give it to later newcomers). What members may invoke on us is
+   * enforced by our own host from our record at once; the new join tells
+   * them. Never on a model's or a peer's say-so.
+   */
+  async updateGroupTerms(groupId: string, opts: { scope: GroupScope; policy?: NewcomerPolicy }): Promise<{ join: GroupJoin; sent: string[]; failed: GroupSendFailure[] }> {
+    const join = this.groups.updateTerms(this.key, groupId, opts);
+    const r = this.groups.group(groupId)!;
+    const admins = r.state.members.filter((m) => m.role === 'admin').map((m) => m.id);
+    const to = [...new Set([...groupRecipients(r, this.id), ...admins])].filter((id) => id !== this.id && !(r.departed && Object.hasOwn(r.departed, id)) && !this.book.isBlocked(id));
+    const sent: string[] = [];
+    const failed: GroupSendFailure[] = [];
+    for (const peer of to) {
+      try {
+        await this.deliverTo(peer, { type: GROUP_MEMBERS_TYPE, group: groupId, joins: [join] } as { type: string });
+        sent.push(peer);
+      } catch (err) {
+        failed.push({ peer, error: err instanceof Error ? err.message : String(err) });
+      }
+    }
+    return { join, sent, failed };
   }
 
   /** Our human checked with a member's human after it equivocated or was muted: its group messages are taken again (§7.8.6). */

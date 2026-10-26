@@ -97,6 +97,7 @@ The verb sits in the message's `data` part (`data.rdv`): `meeting/propose`,
 | `capabilities` | General tasks (SPEC §7.6.3): `CapabilityRegistry` (URI, approval class, strict `input` and result `data` schemas built with `s`) |
 | `taskmodel` | `parseTaskPayload` for `tasks/v1` (`task/request`, `task/input`, `rdv/cancel`, status updates, `a2a/artifact-update`), and `routeA2A`, which picks the meetings or the tasks engine |
 | `tasks` | Pure task engine: `requestTask`, `receiveTask`, `inputTask`, `cancelTask`, `startTask`, `rejectTask`, `askInput`, `sendArtifact`, `finishTask`, `expireTasks`; start and release gates as effects; bounds of §7.4 |
+| `board` | Tasks in a group (SPEC §7.8.4): the board, each member's pure projection of the group's task messages (`boardReceive`, `boardDeparted`, `boardSweep`; open, claimed, assigned, state, artifacts), who may say what (only the requester assigns, only the assignee reports), `boardRequest` / `boardVerb` for our own posts, and `admitGroupInvoke`, the join scope's limits (NOTES 88) |
 | `calendar` | `CalendarAdapter` (`freeBusy(range)`, `hold(slot)`, `release(slot, note)`), `MemoryCalendar`, `JsonFileCalendar` (titles never leave the file) |
 | `window` | `parseWindow`: RFC 3339 ranges and a few phrases, with `now` and the UTC offset passed in |
 | `time` | Instants, fixed offsets, slot formatting |
@@ -155,7 +156,7 @@ State lives in a directory: `--home <dir>`, else `$RDV_HOME`, else
 | `inbox.jsonl` | received payloads, one JSON object per line |
 | `cards.json` | cards found by `rdv lookup` or fetched by agent ID, so `contact request <agent-id>` can use them |
 | `negotiations.json` | dinner negotiations (the a2a engine state) |
-| `tasks.json` | general tasks (the tasks/v1 engine state) and, per task, the draft waiting for your release |
+| `tasks.json` | general tasks (the tasks/v1 engine state) and, per task, the draft waiting for your release; per group (`groups`), its board and the tasks members gave you, with their drafts |
 | `audit.jsonl` | each task gate passed: by the grant (`auto`, `notify`) or by you (bounded to its last 1000 lines) |
 | `files.json` | files you prepared (their keys and nonces; mode 600), for the release view and for sending |
 | `files/outgoing/`, `files/incoming/<task>/` | the encrypted copies to upload, and files fetched from peers (quarantine: mode 600, `.quarantine` after active extensions) |
@@ -199,7 +200,7 @@ State lives in a directory: `--home <dir>`, else `$RDV_HOME`, else
 | `rdv dinner list` | Negotiations with state, round, agreed or held slot (and what it waits for) |
 | `rdv task request <agent-id> --text "…" [--capability <uri>] [--input '{…}'] [--expires <rfc3339>]` | Ask a contact's agent for a task (SPEC §7.6; default capability `request/v1`, a free-text request). Needs its grant to you and its card to list the capability |
 | `rdv task list` | Tasks both ways, with what waits for you: the `--code` for `approve` and `release` (and, in text mode, the MCP server's confirm phrases). Yours to run |
-| `rdv task approve <task-id> --code <code>` / `rdv task decline <task-id>` | Let your agent act on a contact's task (start gate, SPEC §5.5), or refuse it. `--code` is refused if the task changed since you reviewed it. `approve` is yours to run |
+| `rdv task approve <task-id> --code <code>` / `rdv task decline <task-id>` | Let your agent act on a contact's task (start gate, SPEC §5.5), or refuse it. `--code` is refused if the task changed since you reviewed it. `approve` is yours to run. A task a group member gave you takes `--group <group-id>` here and in `submit`, `ask`, `finish` and `release` |
 | `rdv task submit <task-id> --text "…" [--name …] [--complete]` / `rdv task ask <task-id> --text "…"` / `rdv task finish <task-id> [--failed] [--text …]` | Draft a result, a question or the end of a contact's task; a draft leaves only when released |
 | `rdv task submit <task-id> --file <sha256>=<https-url>… [--inline <path>…]` | Attach files by reference (or up to 16 KiB inline) to the draft. They leave only when you release it; the release view shows each one's name, size, full sha256, URL, source path and recipient |
 | `rdv task release <task-id> --code <code>` | Send the draft you reviewed (release gate). Yours to run |
@@ -212,6 +213,12 @@ State lives in a directory: `--home <dir>`, else `$RDV_HOME`, else
 | `rdv group resync <group-id> [--member <agent-id>]` | Thaw a group whose admin signed two member lists for one step, after checking with them; with `--member`, take the group messages of a member that equivocated or was muted again, after checking with them. Yours to run |
 | `rdv group post <group-id> --json '<body>' [--to <agent-id>]…` | Say something to the group: to every member you send to (board-visible), or privately to those named (SPEC §7.8.3) |
 | `rdv group leave <group-id>` / `rdv group remove <group-id> <agent-id\|label>` | Leave a group (every member is told), or as admin remove a member (the new member list goes to everyone, them included). Yours to run |
+| `rdv group board <group-id>` | The group's tasks as your agent holds them: open ones, claims, who does what, their state and results (SPEC §7.8.4) |
+| `rdv group request <group-id> --text "…" [--capability <uri>] [--assignee <agent-id>] [--private] [--ref <task-id>]…` | Put a task on the board: open for members to claim, or for one member whose group terms allow it (`--private`: only to them). `--ref` names earlier tasks it builds on |
+| `rdv group claim <group-id> <task-id> [--text "…"]` / `rdv group assign <group-id> <task-id> <agent-id>` | Offer to do an open task; as its requester (or an admin, once the requester left), give it to one member |
+| `rdv group unassign <group-id> <task-id>` / `rdv group cancel …` / `rdv group input … --text "…"` | Give back a task you were doing, or take back one you assigned (open again); withdraw your task; answer its assignee's question |
+| `rdv group terms <group-id> [--invoke <uri>]… [--max-frequency f] [--newcomers ask\|trust-admin]` | Change what members may ask of your agent through the group (without `--invoke`: nothing) and your newcomer policy; members are told. Yours to run |
+| `rdv group promote <group-id> <agent-id\|label>` | As admin, make another member an admin too: the last admin does this before leaving. Yours to run |
 | `rdv file prepare <path> [--name …] [--mime …] [--plain]` | Encrypt one of your files under a fresh key and write the copy (`files/outgoing/<sha256>.bin`) for you to upload anywhere a peer can fetch over https. Nothing is sent. Refuses anything inside a Rendezvous home (NOTES 77) |
 | `rdv file list` | Prepared files, files peers sent for your tasks (not fetched), direct-transfer requests and the setting |
 | `rdv file fetch <task-id> [--file <n\|sha256>]` | Fetch one file a peer sent, only for a task you started (or a result of a task you requested): https only, no credentials, no private addresses, 25 MiB cap, hash and decryption checked. Saved in quarantine (`files/incoming/<task>/`, mode 600) |
@@ -300,6 +307,23 @@ evening and both end `canceled`). All seven run in `npm test`; `overlap` runs in
 `npm run test:live`; by hand:
 
 `node packages/cli/dist/scenarios/dinner.js --relay ws://… [--variant overlap] [--variant …]`.
+
+### The microsite scenario (design B.5, issue #79)
+
+`packages/cli/scenarios/microsite.ts`: Omer, John and Dana, three `rdv`
+processes. Omer is John's and Dana's contact; John and Dana never meet. Omer
+creates a group, John joins (members may ask him for `request/v1`; newcomers
+`trust-admin`), Dana joins (`ask`) and approves John. Omer puts an open task
+on the board; Dana claims it and Omer assigns it to her (John's attempt to
+assign it is refused by his own board); Dana's human approves the start and
+releases the copy, which the release gate shows going to Omer and John.
+Omer then asks John for a review referring to the copy: John's start gate
+shows that the input is Dana's result ("not your contact, named by the admin
+as Dana"). John leaves: his assigned proofread reopens and his open request
+is canceled on the others' boards; Dana drops her channel with him, Omer
+keeps his. Omer hands the admin role to Dana and leaves. It runs in `npm
+test` on the in-memory relay; by hand:
+`node packages/cli/dist/scenarios/microsite.js --relay wss://… [--timeout ms] [--keep]`.
 
 ### The contact scenario (PLAN §4.5)
 

@@ -108,8 +108,13 @@ export {
 } from './groups.js';
 export {
   DEFAULT_GROUP_TERMS,
+  describeGroupAsk,
   describeGroupTerms,
   describeInviteAsk,
+  type GroupAsk,
+  groupAskOf,
+  groupAskTarget,
+  groupAsks,
   type InviteAsk,
   inviteAskOf,
   inviteAskTarget,
@@ -123,6 +128,22 @@ export {
   newcomerTarget,
 } from './consent.js';
 export { type GroupTerms } from './home.js';
+export {
+  boardEventText,
+  boardEventView,
+  boardTaskView,
+  boardText,
+  boardView,
+  type GroupInbound,
+  type GroupTaskRun,
+  groupTaskEventText,
+  groupTaskEventView,
+  groupTasksInbound,
+  groupTaskVerb,
+  type GroupVerb,
+  isGroupTaskBody,
+  postGroupTask,
+} from './grouptasks.js';
 export { type AuditEntry, AUDIT_KEPT, type HeldRequest, type PendingRelease, type ReleaseContent, type TaskHostState } from './home.js';
 export {
   answerPeer,
@@ -142,6 +163,15 @@ export {
   discardDraft,
   type DraftInput,
   gateCode,
+  describeGroupRelease,
+  describeGroupStart,
+  groupHost,
+  groupReleaseShown,
+  groupStartShown,
+  groupTaskKey,
+  type GroupView,
+  groupViewOf,
+  type InGroup,
   HOST_CAPABILITIES,
   hostCardCapabilities,
   hostRegistry,

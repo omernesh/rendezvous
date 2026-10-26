@@ -7,6 +7,7 @@ import {
   type CardUpdateReport,
   type AddressCard,
   Agent,
+  isDocId,
   b64decode,
   canonAgentId,
   cleanLabel,
@@ -77,6 +78,8 @@ import {
   describeHeldRequest,
   discardHeldRequest,
   gateCode,
+  groupTaskKey,
+  groupViewOf,
   heldRequest,
   heldRequestDigest,
   heldRequestView,
@@ -97,6 +100,7 @@ import {
 
 import { type Attachment, attachFiles, declineTransfer, describeFile, fetchIncoming, fileSummaries, outgoingView, prepareFile, transferEventText, transferView } from './files.js';
 import { cardSyncText } from './cardupdate.js';
+import { groupTaskEventText, groupTaskEventView } from './grouptasks.js';
 import { listen } from './listen.js';
 import { checkRelayUrl, MAX_MIRROR_RELAYS, MAX_RELAYS, mirrorRelaysOf, relaySets, relayTransport } from './transport.js';
 import {
@@ -1523,7 +1527,10 @@ export async function dinnerList({ home, out }: Ctx): Promise<void> {
 // --- general tasks (tasks/v1, SPEC §7.6; issues #24, #36) -------------------------
 
 function emitRun(out: Output, run: TaskRun): void {
-  for (const e of run.events) out.emit(taskEventView(e), taskEventText(e));
+  if (run.group !== undefined) {
+    const group = run.group;
+    for (const e of run.events) out.emit(groupTaskEventView({ ...e, group }), groupTaskEventText({ ...e, group }));
+  } else for (const e of run.events) out.emit(taskEventView(e), taskEventText(e));
   for (const message of run.errors) out.emit({ event: 'error', message }, `error: ${clean(message)}`);
 }
 
@@ -1586,14 +1593,21 @@ export async function taskRequest({ home, out, values, positionals }: Ctx): Prom
  */
 export async function taskList({ home, out }: Ctx): Promise<void> {
   home.requireInit();
-  const { s, shown } = await home.locked(async () => {
-    const s = home.readTasks();
-    const targets = out.json ? [] : taskPhraseTargets(s);
-    return { s, shown: targets.length ? reissueForDisplay(home, targets) : new Map<string, ShownPhrase>() };
-  });
+  const { s, shown, views } = await withAgent(
+    home,
+    async (agent) => {
+      const s = home.readTasks();
+      // Tasks in groups (issue #79): shown with who asks in the group and what the task refers to on the board.
+      const views = new Map(Object.keys(s.groups ?? {}).map((g) => [g, groupViewOf(agent, s, g)]));
+      const targets = out.json ? [] : taskPhraseTargets(s, (g) => views.get(g));
+      return { s, views, shown: targets.length ? reissueForDisplay(home, targets) : new Map<string, ShownPhrase>() };
+    },
+    { save: false },
+  );
   const tasks = Object.values(s.engine.tasks).sort((a, b) => a.created.localeCompare(b.created));
   const held = Object.values(s.requests ?? {}).sort((a, b) => a.created.localeCompare(b.created));
-  if (tasks.length === 0 && held.length === 0 && !out.json) out.emit({}, 'no tasks');
+  const inGroups = Object.entries(s.groups ?? {}).flatMap(([g, h]) => Object.values(h.engine.tasks).map((t) => ({ g, t })));
+  if (tasks.length === 0 && held.length === 0 && inGroups.length === 0 && !out.json) out.emit({}, 'no tasks');
   // Our requests with the owner's files, waiting for release (issue #53).
   for (const h of held) {
     const code = gateCode(heldRequestDigest(h));
@@ -1612,6 +1626,15 @@ export async function taskList({ home, out }: Ctx): Promise<void> {
       (rel ? `\n  confirm phrase (tell it to your MCP client to send this result): ${clean(rel.phrase)}  (replaces any phrase shown before)` : '');
     out.emit(taskListView(t, s), taskListText(t, s) + phrases);
   }
+  for (const { g, t } of inGroups.sort((a, b) => a.t.created.localeCompare(b.t.created))) {
+    const v = views.get(g)!;
+    const start = shown.get(consentKey('task-start', groupTaskKey(g, t.id)));
+    const rel = shown.get(consentKey('task-release', groupTaskKey(g, t.id)));
+    const phrases =
+      (start ? `\n  confirm phrase (tell it to your MCP client to let your agent start this task): ${clean(start.phrase)}  (replaces any phrase shown before)` : '') +
+      (rel ? `\n  confirm phrase (tell it to your MCP client to send this result): ${clean(rel.phrase)}  (replaces any phrase shown before)` : '');
+    out.emit(taskListView(t, s, v), taskListText(t, s, v) + phrases);
+  }
   const dropped = Object.entries(s.engine.dropped).filter(([, n]) => (n ?? 0) > 0);
   if (dropped.length) {
     out.emit(
@@ -1621,40 +1644,53 @@ export async function taskList({ home, out }: Ctx): Promise<void> {
   }
 }
 
-/** `rdv task approve <task-id> --code <code>`: the human lets the agent act on a peer's task (start gate). */
+/** `--group <group-id>`: a task in that group's lane (SPEC §7.8.4), else the pairwise one. */
+function groupArg(v: unknown): string | undefined {
+  const g = str(v);
+  if (g !== undefined && !isDocId(g)) throw new CliError('--group takes a group ID (a UUID, see "rdv group list")', 2);
+  return g;
+}
+
+/** The consent key ID of a task's gates: the task, or for a task in a group, the group and the task. */
+const gateId = (id: string, group: string | undefined) => (group === undefined ? id : groupTaskKey(group, id));
+
+/** `rdv task approve <task-id> --code <code> [--group <group-id>]`: the human lets the agent act on a peer's task (start gate). */
 export async function taskApprove({ home, out, values, positionals }: Ctx): Promise<void> {
   const id = positionals[0];
+  const group = groupArg(values.group);
   const code = codeArg(values.code, 'approve');
   const run = await withAgent(home, async (agent) => {
-    const { digest } = startView(home, id);
+    const { digest } = startView(home, id, group !== undefined ? { group, agent } : undefined);
     if (gateCode(digest) !== code) {
       throw new CliError(`task ${clean(id)} is not the task you reviewed (it changed, or the code is wrong). Nothing was started: run "rdv task list" and check it again.`);
     }
-    const r = await approveStart(home, agent, hostRegistry(), id, digest);
-    dropPhrase(home, { action: 'task-start', id });
+    const r = await approveStart(home, agent, hostRegistry(), id, digest, group);
+    dropPhrase(home, { action: 'task-start', id: gateId(id, group) });
     return r;
   });
   emitRun(out, run);
 }
 
-/** `rdv task decline <task-id>`: refuse a peer's task before it starts (reduce-only). */
-export async function taskDecline({ home, out, positionals }: Ctx): Promise<void> {
+/** `rdv task decline <task-id> [--group <group-id>]`: refuse a peer's task before it starts (reduce-only). */
+export async function taskDecline({ home, out, values, positionals }: Ctx): Promise<void> {
   const id = positionals[0];
+  const group = groupArg(values.group);
   const run = await withAgent(home, async (agent) => {
-    const r = await declineStart(home, agent, hostRegistry(), id);
-    dropPhrase(home, { action: 'task-start', id });
+    const r = await declineStart(home, agent, hostRegistry(), id, undefined, group);
+    dropPhrase(home, { action: 'task-start', id: gateId(id, group) });
     return r;
   });
   emitRun(out, run);
 }
 
-function draftOut(out: Output, id: string, r: { held?: PendingRelease; digest?: string; run: TaskRun; autoReleased?: boolean }): void {
+function draftOut(out: Output, id: string, r: { held?: PendingRelease; digest?: string; run: TaskRun; autoReleased?: boolean }, group?: string): void {
   emitRun(out, r.run);
   if (r.autoReleased) out.emit({ event: 'task-auto-released', task: id }, `sent without asking: you put this contact on auto-approve (audited; rdv audit)`);
   if (r.held && r.digest) {
+    const flag = group !== undefined ? ` --group ${clean(group)}` : '';
     out.emit(
-      { event: 'task-draft', task: id, draft: r.held.content, release_code: gateCode(r.digest) },
-      `held for your release: ${clean(describeDraft(r.held.content))}\n  to send it: rdv task release ${clean(id)} --code ${gateCode(r.digest)}`,
+      { event: 'task-draft', task: id, ...(group !== undefined ? { group } : {}), draft: r.held.content, release_code: gateCode(r.digest) },
+      `held for your release: ${clean(describeDraft(r.held.content))}${group !== undefined ? ' (to the group: "rdv task list" shows who gets it)' : ''}\n  to send it: rdv task release ${clean(id)}${flag} --code ${gateCode(r.digest)}`,
     );
   }
 }
@@ -1675,6 +1711,7 @@ export async function taskSubmit({ home, out, values, positionals }: Ctx): Promi
     throw new CliError('give the result with --text "…", --data \'{…}\', --file <sha256>=<url> or --inline <path> (each repeatable)', 2);
   }
   const name = str(values.name);
+  const group = groupArg(values.group);
   const r = await withAgent(home, (agent) => {
     // The owner's files leave only in a draft the human releases, shown with their name, size, hash, URL and source.
     const files = attachFiles(home, refs, inline);
@@ -1684,9 +1721,9 @@ export async function taskSubmit({ home, out, values, positionals }: Ctx): Promi
       ...(name !== undefined ? { name } : {}),
       complete: values.complete === true,
       ...(files.notes.length ? { files: files.notes } : {}),
-    });
+    }, group);
   });
-  draftOut(out, id, r);
+  draftOut(out, id, r, group);
 }
 
 /** `rdv task ask <task-id> --text …`: ask the requester for more (input-required), held for the release gate. */
@@ -1694,7 +1731,8 @@ export async function taskAsk({ home, out, values, positionals }: Ctx): Promise<
   const id = positionals[0];
   const text = str(values.text);
   if (text === undefined) throw new CliError('give the question with --text "…"', 2);
-  draftOut(out, id, await withAgent(home, (agent) => submitDraft(home, agent, hostRegistry(), id, { kind: 'question', text })));
+  const group = groupArg(values.group);
+  draftOut(out, id, await withAgent(home, (agent) => submitDraft(home, agent, hostRegistry(), id, { kind: 'question', text }, group)), group);
 }
 
 /** `rdv task finish <task-id> [--failed] [--text …]`: end a started task; a message is held for the release gate. */
@@ -1702,15 +1740,17 @@ export async function taskFinish({ home, out, values, positionals }: Ctx): Promi
   const id = positionals[0];
   const outcome = values.failed === true ? 'failed' : 'completed';
   const text = str(values.text);
-  draftOut(out, id, await withAgent(home, (agent) => submitDraft(home, agent, hostRegistry(), id, { kind: 'finish', outcome, ...(text !== undefined ? { text } : {}) })));
+  const group = groupArg(values.group);
+  draftOut(out, id, await withAgent(home, (agent) => submitDraft(home, agent, hostRegistry(), id, { kind: 'finish', outcome, ...(text !== undefined ? { text } : {}) }, group)), group);
 }
 
 /** `rdv task release <task-id> --code <code>`: the human sends the result they reviewed (release gate). */
 export async function taskRelease({ home, out, values, positionals }: Ctx): Promise<void> {
   const id = positionals[0];
   const code = codeArg(values.code, 'release');
+  const group = groupArg(values.group);
   const run = await withAgent(home, async (agent) => {
-    if (heldRequest(home.readTasks(), id)) {
+    if (group === undefined && heldRequest(home.readTasks(), id)) {
       // A request of ours with the owner's files (issue #53).
       const { digest } = heldRequestView(home, id);
       if (gateCode(digest) !== code) {
@@ -1720,12 +1760,12 @@ export async function taskRelease({ home, out, values, positionals }: Ctx): Prom
       dropPhrase(home, { action: 'task-release', id });
       return r;
     }
-    const { digest } = releaseView(home, id);
+    const { digest } = releaseView(home, id, group !== undefined ? { group, agent } : undefined);
     if (gateCode(digest) !== code) {
       throw new CliError(`the result for task ${clean(id)} is not the one you reviewed (it changed, or the code is wrong). Nothing was sent: run "rdv task list" and check it again.`);
     }
-    const r = await approveRelease(home, agent, hostRegistry(), id, digest);
-    dropPhrase(home, { action: 'task-release', id });
+    const r = await approveRelease(home, agent, hostRegistry(), id, digest, group);
+    dropPhrase(home, { action: 'task-release', id: gateId(id, group) });
     return r;
   });
   emitRun(out, run);

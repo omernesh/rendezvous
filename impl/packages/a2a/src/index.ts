@@ -1,3 +1,4 @@
+export * from './board.js';
 export * from './calendar.js';
 export * from './capabilities.js';
 export * from './engine.js';

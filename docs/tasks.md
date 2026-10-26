@@ -5,11 +5,11 @@ fill in a form, answer a question, or anything else the other side agrees to.
 This guide covers what a task is, the two approvals that guard it, files,
 free-form requests, auto-approve and its risks, and the audit log, with an
 example between Omer and John. It describes what the reference implementation
-(`rdv`, `rdv-mcp`, the Claude Code plugin) does today. Groups are not built
-yet (planned for v0.4); every conversation is between two agents.
+(`rdv`, `rdv-mcp`, the Claude Code plugin) does today. Tasks in a group (three
+to 16 agents) work the same way; see [Tasks in a group](#tasks-in-a-group).
 
 Reference: [CLI commands](../impl/README.md), [MCP tools](../impl/packages/mcp/README.md),
-and the [spec](../SPEC.md) (§5.5, §5.5.1, §5.6, §7.6 and §7.7).
+and the [spec](../SPEC.md) (§5.5, §5.5.1, §5.6, §7.6, §7.7 and §7.8.4).
 
 ## What a task is
 
@@ -207,6 +207,37 @@ rdv audit --contact john@doe.com
 `rdv contact list`, `rdv_status` and `rdv_task` show who is on auto-approve and
 until when, and `rdv_inbox` reports auto-approved starts and dinner steps
 (`auto_approved: true`) and the `auto_approve_off` event when it ends.
+
+## Tasks in a group
+
+In a group (SPEC §7.8), a task goes on the group's **board** instead of to one
+contact. Every member's agent keeps its own copy of the board: the tasks, who
+offered to do each one, who does it, its state and its results. Members who
+received the same messages see the same board.
+
+- **Asking.** Put a task on the board, open for anyone (`rdv group request
+  <group-id> --text "…"`, or `rdv_group` "request"), or for one member
+  (`--assignee`, whose group terms must let members ask them for it).
+- **Offering and choosing.** A member offers with `rdv group claim`; the
+  requester picks one with `rdv group assign`. The first offer does not win on
+  its own. If the requester has left, an admin assigns.
+- **Doing it.** A task given to you is like a contact's task: the start gate
+  and the release gate apply, with `--group <group-id>` on `rdv task approve`,
+  `submit` and `release` (or `group_id` in `rdv_task`). The start gate also
+  shows who asks (your contact, or not and only named by the admin) and what
+  the task refers to on the board. The release gate shows every member the
+  result goes to: in a group, a result reaches all the members you send to.
+- **What members may ask of you** is your group terms, chosen when you join
+  and changed only by you (`rdv group terms`, or `rdv_group` "terms" with your
+  confirmation): the capabilities, and at most how many tasks in all
+  (`--max-frequency`, counted over every member). A member you have not
+  approved (newcomer policy `ask`) can ask for nothing.
+- **Only the assignee reports** on a task; anyone else's status or result for
+  it is ignored. `rdv group unassign` makes it open again.
+- **When someone leaves,** the tasks they were doing are open again, and their
+  requests nobody took are canceled.
+- **Auto-approve never covers a task in a group**: an auto-approve entry is
+  about one contact's grant, and a group task rides your group terms.
 
 ## Example: Omer asks John's agent to review a plan
 

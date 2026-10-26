@@ -78,6 +78,32 @@ export type TaskInputData = { rdv: 'task/input'; input?: unknown };
 export type TaskCancelData = { rdv: 'rdv/cancel'; reason?: string };
 export type TaskVerbData = TaskRequestData | TaskInputData | TaskCancelData;
 
+// --- tasks in a group (SPEC §7.8.4) ------------------------------------------
+
+/** The groups extension (SPEC §7.8): listed in `extensions` of a group task's messages. */
+export const GROUPS_URI = 'https://rendezvous.nesher.co/ext/groups/v1';
+/**
+ * Status and artifact updates in a group name the task's requester here, in
+ * their `metadata`: a task in a group is (requester, taskId), since task IDs
+ * are chosen by each requester and two members could pick the same one.
+ */
+export const GROUP_REQUESTER_KEY = `${GROUPS_URI}/requester`;
+
+/** An agent ID (SPEC §3.1): `rdv1:` and 52 lowercase base32 characters. a2a does not import core, so the shape is checked here. */
+export const isAgentIdShape = (v: unknown): v is string => typeof v === 'string' && /^rdv1:[a-z2-7]{52}$/.test(v);
+
+export type GroupTaskVerb = 'task/claim' | 'task/assign' | 'task/release';
+export const GROUP_TASK_VERBS: readonly GroupTaskVerb[] = ['task/claim', 'task/assign', 'task/release'];
+/** `task/request` in a group may name the member it is for. */
+export type GroupTaskRequestData = TaskRequestData & { assignee?: string };
+/** A member offers to do an open task (its text parts are the offer, peer text). */
+export type TaskClaimData = { rdv: 'task/claim'; requester: string };
+/** The requester (or an admin, if the requester left) gives an open task to one member. */
+export type TaskAssignData = { rdv: 'task/assign'; requester: string; assignee: string };
+/** The assignee gives the task back, or the requester takes it back: open again. */
+export type TaskReleaseData = { rdv: 'task/release'; requester: string };
+export type GroupVerbData = GroupTaskRequestData | TaskInputData | TaskCancelData | TaskClaimData | TaskAssignData | TaskReleaseData;
+
 export interface TaskTextPart {
   kind: 'text';
   text: string;
@@ -267,11 +293,34 @@ function partList(v: unknown, what: string): unknown[] {
 
 // --- message ----------------------------------------------------------------
 
-function parseVerb(v: unknown): TaskVerbData {
+function agentId(v: unknown, what: string): string {
+  if (!isAgentIdShape(v)) fail(`${what} must be an agent ID`);
+  return v as string;
+}
+
+function parseVerb(v: unknown, group = false): TaskVerbData | GroupVerbData {
   if (!isObject(v)) return fail('data part must hold an object');
   const verb = v.rdv;
   const shown = JSON.stringify(typeof verb === 'string' ? verb.slice(0, 40) : verb);
   if (typeof verb !== 'string') return fail(`unknown verb ${shown}`);
+  if (group && GROUP_TASK_VERBS.includes(verb as GroupTaskVerb)) {
+    switch (verb as GroupTaskVerb) {
+      case 'task/claim':
+        keys(v, ['rdv', 'requester'], [], verb);
+        return { rdv: 'task/claim', requester: agentId(v.requester, 'task/claim.requester') };
+      case 'task/assign':
+        keys(v, ['rdv', 'requester', 'assignee'], [], verb);
+        return { rdv: 'task/assign', requester: agentId(v.requester, 'task/assign.requester'), assignee: agentId(v.assignee, 'task/assign.assignee') };
+      case 'task/release':
+        keys(v, ['rdv', 'requester'], [], verb);
+        return { rdv: 'task/release', requester: agentId(v.requester, 'task/release.requester') };
+    }
+  }
+  if (group && verb === 'task/request' && Object.hasOwn(v, 'assignee')) {
+    const { assignee, ...rest } = v;
+    const out = parseVerb(rest) as TaskRequestData;
+    return { ...out, assignee: agentId(assignee, 'task/request.assignee') };
+  }
   if (!TASK_VERBS.includes(verb as TaskVerb)) return unsupported(`unknown verb ${shown}`, verbName(verb));
   const dataKeys = (required: string[], optional: string[]) => {
     try {
@@ -300,7 +349,7 @@ function parseVerb(v: unknown): TaskVerbData {
   }
 }
 
-function parseMessage(v: unknown): ParsedTaskPayload {
+function parseMessage(v: unknown, group = false): ParsedTaskPayload {
   if (!isObject(v)) return fail('message must be an object');
   keys(v, ['kind', 'messageId', 'taskId', 'contextId', 'role', 'parts'], ['metadata', 'extensions', 'referenceTaskIds'], 'message');
   if (v.kind !== 'message') fail('message.kind must be "message"');
@@ -313,20 +362,20 @@ function parseMessage(v: unknown): ParsedTaskPayload {
   try {
     const text: string[] = [];
     const files: FilePart[] = [];
-    let data: TaskVerbData | undefined;
+    let data: TaskVerbData | GroupVerbData | undefined;
     for (const p of parts) {
       if (!isObject(p)) return fail('part must be an object');
       if (p.kind === 'text') text.push(textPart(p, 'text part').text);
       else if (p.kind === 'data') {
         dataPart(p, 'data part');
         if (data) fail('more than one data part');
-        data = parseVerb(p.data);
+        data = parseVerb(p.data, group);
       } else if (p.kind === 'file') files.push(filePart(p, 'file part'));
       else if (typeof p.kind === 'string') unsupported(`unsupported part kind ${JSON.stringify(p.kind.slice(0, 20))}`);
       else fail(`unsupported part kind ${JSON.stringify(p.kind)}`);
     }
     if (!data) return fail('no data part with a verb');
-    return { kind: 'message', message: v as unknown as TaskMessage, data, text, files };
+    return { kind: 'message', message: v as unknown as TaskMessage, data: data as TaskVerbData, text, files };
   } catch (err) {
     if (err instanceof Unsupported) err.head = { messageId: v.messageId as string, taskId: v.taskId as string, contextId: v.contextId as string };
     throw err;
@@ -416,12 +465,26 @@ function parseArtifactUpdate(v: unknown): ParsedTaskPayload {
  * verb, field or part kind we do not support fails with `unsupported` set.
  */
 export function parseTaskPayload(input: unknown): TaskParseResult {
+  return parsePayload(input, false);
+}
+
+/** A tasks/v1 payload inside a group (SPEC §7.8.4): also `task/claim`, `task/assign`, `task/release`, and `assignee` on `task/request`. */
+export type ParsedGroupTaskPayload =
+  | { kind: 'message'; message: TaskMessage; data: GroupVerbData; text: string[]; files: FilePart[] }
+  | Exclude<ParsedTaskPayload, { kind: 'message' }>;
+
+export function parseGroupTaskPayload(input: unknown): { ok: true; value: ParsedGroupTaskPayload } | { ok: false; reason: string } {
+  const r = parsePayload(input, true);
+  return r.ok ? { ok: true, value: r.value as ParsedGroupTaskPayload } : { ok: false, reason: r.reason };
+}
+
+function parsePayload(input: unknown, group: boolean): TaskParseResult {
   try {
     if (!isObject(input)) fail('payload must be an object');
     const p = input as Record<string, unknown>;
     if (p.type === 'a2a/message') {
       keys(p, ['type', 'message'], [], 'a2a/message');
-      return { ok: true, value: parseMessage(p.message) };
+      return { ok: true, value: parseMessage(p.message, group) };
     }
     if (p.type === 'a2a/task-update') {
       keys(p, ['type', 'update'], [], 'a2a/task-update');
