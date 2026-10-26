@@ -20,6 +20,7 @@ export {
   withAgent,
 } from './commands.js';
 export { ownerSecretInfo } from './ownersecret.js';
+export { cardSyncText, cardUpdateText, cardUpdateView, syncContactCards } from './cardupdate.js';
 export { appendEvents, EVENTS_FILE_KEPT, eventsStamp, isNoise, type LoggedEvent, readEvents, STRANGER_DROPS } from './events.js';
 export { acquireLock, LockTimeoutError, type LongLock, tryLongLock, writeAtomic } from './fsutil.js';
 export {

@@ -119,6 +119,8 @@ import {
   hostRegistry,
   type PendingRelease,
   refreshHostCard,
+  cardSyncText,
+  syncContactCards,
   releaseView,
   requestPeer,
   startView,
@@ -737,7 +739,13 @@ export class RdvMcpServer {
         const text = cardRefreshText(await refreshHostCard(this.home, hostCardCapabilities(this.registry), real));
         if (text) this.humanLog(text);
       })
-      .catch((err) => this.humanLog(`error refreshing the card: ${(err as Error).message}`));
+      .catch((err) => this.humanLog(`error refreshing the card: ${(err as Error).message}`))
+      // Issue #45: contacts that do not hold our current card get it (rdv/card-update).
+      .then(async () => {
+        const text = cardSyncText(await syncContactCards(this.home, real));
+        if (text) this.humanLog(text);
+      })
+      .catch((err) => this.humanLog(`error sending the card to contacts: ${(err as Error).message}`));
     this.humanLog(`listening as ${boot.id} (${fingerprint(boot.id)}) on ${config.relays.join(', ')}; home ${this.home.dir}`);
   }
 
@@ -1404,14 +1412,22 @@ export class RdvMcpServer {
             })),
           };
         }
-        const { topics, addresses } = await this.withAgent(async (agent) => {
+        const { topics, addresses, sent } = await this.withAgent(async (agent) => {
           const addrs = agent.card.discovery?.addresses ?? [];
           if (!agent.card.discovery?.public_pointer || !agent.card.policy.public || addrs.length === 0) {
             throw new ToolError('public pointer is off for this agent (it was created without public_pointer)');
           }
-          return { topics: await agent.publishPointers(), addresses: addrs.map((a) => a.value) };
+          const topics = await agent.publishPointers();
+          // Contacts that do not hold this card yet get it too (issue #45).
+          const sent = await agent.sendCardUpdates();
+          return { topics, addresses: addrs.map((a) => a.value), sent };
         });
-        return { published: true, topics, on_relays: await this.ownCardOnRelays(addresses) };
+        return {
+          published: true,
+          topics,
+          on_relays: await this.ownCardOnRelays(addresses),
+          ...(sent.sent.length || sent.failed.length ? { sent_to_contacts: sent.sent.length, send_failed: sent.failed.length } : {}),
+        };
       },
     );
 

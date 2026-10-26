@@ -82,8 +82,9 @@ flood far over it revokes the contact. The older meeting rights are read the
 same way, so existing contacts keep working and nothing is widened.</p>
 <p>The requester also needs the contact's card to list the capability. A card
 made before v0.3 is refreshed automatically the next time <code>rdv listen</code> or
-<code>rdv-mcp</code> starts, but a contact keeps the card it already holds: sending the
-new card to existing contacts is not built yet (issue #45).</p>
+<code>rdv-mcp</code> starts, and the new card then goes to every contact over the
+pairwise channel (<code>rdv/card-update</code>, issue #45). A contact on older software
+keeps the card it holds.</p>
 <h2 id="the-two-gates">The two gates<a class="anchor" href="#the-two-gates" title="Link to this section" aria-label="Link to this section">#</a></h2>
 <p>Every task from a contact passes two points where the human decides. Neither
 can be passed by the assistant.</p>

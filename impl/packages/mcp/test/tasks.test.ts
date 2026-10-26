@@ -342,6 +342,31 @@ describe('outbound tasks are checked before anything leaves', () => {
   });
 });
 
+describe('a capability added after the handshake (rdv/card-update, issue #45)', () => {
+  it("John's server restarts on code that routes review/v1; Omer gets the new card and the task it refused before goes out", async () => {
+    const { omer, john, johnId, omerId } = await connected({ invoke: [REQUEST_URI, REVIEW.uri], omerCaps: [...CAPS, REVIEW] });
+    const notYet = await omer.call('rdv_task', { action: 'request', agent_id: johnId, capability: REVIEW.uri, text: 'review this' });
+    expect(notYet.isError).toBe(true);
+    expect(notYet.text).toContain('card does not advertise');
+
+    await john.close();
+    sides = sides.filter((x) => x !== john);
+    const john2 = await makeSide('john', john.home.dir, { capabilities: [...CAPS, REVIEW] });
+    sides.push(john2);
+    await ok(john2, 'rdv_status');
+    const up = await waitEvent(omer, (e) => e.type === 'card_updated' && e.peer === johnId, 'the new card', T);
+    expect(up.capabilities_added).toEqual([REVIEW.uri]);
+    expect(up).toMatchObject({ fingerprint: expect.any(String), relays_added: [], relays_removed: [], addresses_changed: false });
+    expect(up.summary).toContain('Nothing your user approved changed');
+    await until(async () => (john2.humanLog.some((l) => l.includes('sent our current card to 1 contact')) ? true : undefined), 'the send, in the human log', T);
+
+    const r = await ok(omer, 'rdv_task', { action: 'request', agent_id: johnId, capability: REVIEW.uri, text: 'review this' });
+    expect(r.state).toBe('submitted');
+    const asked = await waitEvent(john2, taskEvent(r.task_id, 'received'), 'the request', T);
+    expect(asked).toMatchObject({ peer: omerId, capability: REVIEW.uri });
+  });
+});
+
 describe('state survives a restart', () => {
   it('a task waiting at each gate, and its phrase, outlive the server', async () => {
     const { omer, john, johnId } = await connected();

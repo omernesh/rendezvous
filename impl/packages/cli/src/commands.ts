@@ -4,6 +4,7 @@
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { createInterface } from 'node:readline/promises';
 import {
+  type CardUpdateReport,
   type AddressCard,
   Agent,
   b64decode,
@@ -93,6 +94,7 @@ import {
 } from './tasks.js';
 
 import { type Attachment, attachFiles, declineTransfer, describeFile, fetchIncoming, fileSummaries, outgoingView, prepareFile, transferEventText, transferView } from './files.js';
+import { cardSyncText } from './cardupdate.js';
 import { listen } from './listen.js';
 import { checkRelayUrl, MAX_MIRROR_RELAYS, MAX_RELAYS, mirrorRelaysOf, relaySets, relayTransport } from './transport.js';
 import {
@@ -406,6 +408,8 @@ export interface AddressChange {
   card_created?: string;
   /** Topics the new card was published on (public pointer on): our addresses, plus a removed one, so the new card replaces the old there. */
   published: string[];
+  /** The new card sent to contacts (`rdv/card-update`, NOTES 82); absent when no contact was due. */
+  card_sent?: CardUpdateReport;
 }
 
 /**
@@ -459,6 +463,8 @@ export async function changeAddress(
     // The card, then the config, both under the lock: a listener follows the card (watchTopics).
     home.writeAgentState(agent.toJSON());
     home.writeConfig({ ...config, addresses: next });
+    // Then the contacts, which keep the old card until they get this one (issue #45).
+    if (!entry.private) withCardSent(result, await agent.sendCardUpdates());
     return result;
   });
 }
@@ -505,15 +511,24 @@ export async function cardPublish({ home, out, values }: Ctx): Promise<void> {
     out.emit({ event: 'mirrored', ...mirrorSummary(report) }, mirrorSummaryText(report));
     return;
   }
-  const topics = await withAgent(
+  const { topics, sent } = await withAgent(
     home,
     async (agent) => {
       requirePublicPointer(agent);
-      return agent.publishPointers();
+      const topics = await agent.publishPointers();
+      // Contacts that do not hold this card yet get it too (issue #45); saved only if one did.
+      const sent = await agent.sendCardUpdates();
+      if (sent.sent.length || sent.failed.length) home.writeAgentState(agent.toJSON());
+      return { topics, sent };
     },
     { save: false },
   );
-  out.emit({ event: 'published', topics }, `published card on ${topics.length} topic(s): ${topics.join(', ')}`);
+  const sentText = cardSyncText(sent);
+  out.emit(
+    { event: 'published', topics, ...(sent.sent.length || sent.failed.length ? { card_sent: sent } : {}) },
+    `published card on ${topics.length} topic(s): ${topics.join(', ')}${sentText ? `
+${sentText}` : ''}`,
+  );
 }
 
 function requirePublicPointer(agent: Agent): void {
@@ -594,6 +609,12 @@ export interface RelayChange {
   published: string[];
   /** Removing a listening relay: contacts that hold the old card may still send there (they keep it until they get a newer one). */
   warning?: string;
+  /** The new card sent to contacts (`rdv/card-update`, NOTES 82); absent when no contact was due. */
+  card_sent?: CardUpdateReport;
+}
+
+function withCardSent(result: { card_sent?: CardUpdateReport }, report: CardUpdateReport): void {
+  if (report.sent.length || report.failed.length) result.card_sent = report;
 }
 
 /** Validate a relay URL for `rdv relays` / `rdv_relays` (usage error otherwise). */
@@ -636,12 +657,15 @@ export async function changeRelays(
       }
       if ('remove' in op) {
         result.warning =
-          'contacts keep the card they hold until they get a newer one, so some may still send to the removed relay; keep it for a while if you can';
+          'contacts keep the card they hold until the new one reaches them (it was just sent), so one that is offline or runs an older version may still send to the removed relay; keep it for a while if you can';
       }
       home.writeAgentState(agent.toJSON());
     }
     // The mirror list is written once the owner changed either set, so the default no longer decides it.
     home.writeConfig({ ...config, relays, mirror_relays: mirror });
+    // Contacts keep the old card until they get this one (issue #45). The envelopes go to the old relays
+    // too (and, as always, to the new ones and the contact's), so a contact still on the old set gets it.
+    if (set === 'listen') withCardSent(result, await agent.sendCardUpdates({ alsoRelays: config.relays }));
     return result;
   });
 }

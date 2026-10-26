@@ -1,7 +1,7 @@
 // §5: contact request, grant, revocation, and the local contact book that
 // enforces consent, policy, replay protection and grant-scoped rate limits.
 import type { AddressCard, InboundPolicy } from './card.js';
-import { verifyCard } from './card.js';
+import { cardUpdateProblem, verifyCard } from './card.js';
 import { BINDING_STRENGTH, type Binding, topicForHint } from './discovery.js';
 import type { AgentKey } from './identity.js';
 import { isAgentId } from './identity.js';
@@ -428,6 +428,8 @@ export interface OutstandingRequest {
   dropped?: number;
   /** Our human's name for the target (Contact.label), carried to the contact the grant creates. */
   label?: string;
+  /** `created` of our card the request carried: the card a grantor holds (Agent `cardSent`, NOTES 82). */
+  card_created?: string;
 }
 
 /** A probe got more answers than we keep: someone may be flooding it. */
@@ -562,6 +564,8 @@ const DECLINED_LIMIT = 1000;
 export const CANDIDATES_PER_PROBE = 16;
 /** How far ahead of our clock a reverse grant's `ts` may be, so a peer can't make later updates look stale. */
 export const REVERSE_GRANT_SKEW_MS = 5 * 60_000;
+/** How far ahead of our clock a card update's `created` may be (a burst of re-signs runs a few seconds ahead). */
+export const CARD_UPDATE_SKEW_MS = 10 * 60_000;
 
 export class ContactBook {
   state: ContactBookState;
@@ -631,9 +635,10 @@ export class ContactBook {
   trackOutstanding(req: ContactRequestBody, binding: Binding = 'claimed', to?: string, label?: string): void {
     // A probe is labeled with the address our human probed, unless they named the peer otherwise.
     const l = label !== undefined ? cleanLabel(label) : to ? undefined : req.to_hint;
+    const card = typeof req.card?.created === 'string' ? { card_created: req.card.created } : {};
     this.state.outstanding[req.id] = to
-      ? { to_hint: req.to_hint, sent: req.ts, binding, to, ...(l ? { label: l } : {}) }
-      : { to_hint: req.to_hint, sent: req.ts, binding: 'claimed', ...(l ? { label: l } : {}) };
+      ? { to_hint: req.to_hint, sent: req.ts, binding, to, ...(l ? { label: l } : {}), ...card }
+      : { to_hint: req.to_hint, sent: req.ts, binding: 'claimed', ...(l ? { label: l } : {}), ...card };
   }
 
   /** Contacts our human labeled `label` (by labelKey). More than one means the label is ambiguous. */
@@ -844,6 +849,43 @@ export class ContactBook {
     const current = c.expires === null ? null : parseTimestamp(c.expires);
     if (ends !== null && (current === null || ends < current)) c.expires = g.expires;
     return { contact: c };
+  }
+
+  /**
+   * A contact's new card, from `rdv/card-update` (SPEC §4.3, NOTES 82): the
+   * card we use to reach it (relays) and to see what it supports
+   * (capabilities). `from` is the authenticated envelope sender.
+   *
+   * Accepted only from a current, unblocked contact, for a card that passes
+   * verifyCard and cardUpdateProblem, whose key is the contact's, whose
+   * `created` is strictly later than the card we hold and at most
+   * CARD_UPDATE_SKEW_MS ahead of our clock. The same card again is
+   * `unchanged` (idempotent, no drop). Only `contact.card` changes: tier,
+   * scopes, grant, label, binding and expiry are never touched, so nothing
+   * the human approved moves.
+   */
+  receiveCardUpdate(
+    input: unknown,
+    from: string,
+    now = new Date(),
+    opts: { allowWs?: boolean } = {},
+  ): { contact: Contact; previous: AddressCard } | { unchanged: true } | { rejected: 'not-contact' | 'invalid' | 'foreign-key' | 'stale' | 'future' | 'bounds'; reason: string } {
+    const c = this.contact(from, now);
+    if (!c || this.isBlocked(from)) return { rejected: 'not-contact', reason: 'not a contact' };
+    const check = verifyCard(input, now);
+    if (!check.ok) return { rejected: 'invalid', reason: check.reason };
+    const card = check.card;
+    if (card.id !== from || card.id !== c.peer) return { rejected: 'foreign-key', reason: "the card is not the sender's" };
+    const problem = cardUpdateProblem(card, { allowWs: opts.allowWs, held: c.card });
+    if (problem) return { rejected: 'bounds', reason: problem };
+    if (card.created === c.card.created && card.sig === c.card.sig) return { unchanged: true };
+    const created = parseTimestamp(card.created)!;
+    const held = parseTimestamp(c.card.created) ?? 0;
+    if (created <= held) return { rejected: 'stale', reason: 'not newer than the card we hold' };
+    if (created > now.getTime() + CARD_UPDATE_SKEW_MS) return { rejected: 'future', reason: 'created too far ahead of our clock' };
+    const previous = c.card;
+    c.card = card;
+    return { contact: c, previous };
   }
 
   private addReceivedGrant(g: ContactGrant, binding: Binding, now: Date, label?: string): Contact {

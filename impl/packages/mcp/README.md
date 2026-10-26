@@ -245,7 +245,10 @@ client's other tools away while its model reads the request (SPEC §5.6,
 **Card refresh (issue #43).** On start, a server whose home holds a card
 signed by older code (without `tasks/v1` or a capability it routes)
 re-signs the card with them and republishes it on the public address
-topics, once; `rdv listen` does the same. Contacts keep the card they hold.
+topics, once; `rdv listen` does the same. Any card change (this refresh,
+`rdv_relays`, `rdv_addresses`) is then sent to every contact
+(`rdv/card-update`, issue #45); the receiving side's `rdv_inbox` gets a
+`card_updated` event, and nothing its user approved changes.
 
 **Canceling an agreed dinner (issue #20).** `rdv_negotiate` action `cancel`
 on a completed dinner passes the same gate, bound to the agreement shown

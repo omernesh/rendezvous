@@ -263,8 +263,37 @@ Rules:
   the replaceable event. It does so only when the card lacks one of them,
   so restarting on the same software changes nothing. A capability the card
   lists and the software no longer supports may stay listed; a task for it
-  is answered as unsupported (§7.5). Contacts keep the card they received
-  until a newer one reaches them (§11).
+  is answered as unsupported (§7.5). Contacts get the new card as below.
+- **Sending a changed card to contacts** (**spec change**, issue #45). A
+  contact holds the card it got in the handshake (the request or the grant),
+  so after a change it would still send to the old relays and see the old
+  capabilities. Whenever an agent re-signs its card, it sends the new card
+  to each current contact over the pairwise channel (§6.4), once per card:
+
+  ```json
+  {"type": "rdv/card-update", "card": { …the new signed card… }}
+  ```
+
+  The envelope authenticates the sender and the card is signed by its own
+  key, so the payload carries no signature of its own. The sender publishes
+  the envelope on its relays from before and after the change as well as on
+  the contact's relays, so a contact still on the old set gets it. The
+  receiver accepts it only from a current contact, and only when the card
+  verifies, its `id` is the envelope's `from`, its `created` is later than
+  the card it holds and at most 10 minutes ahead of its clock, its canonical
+  JSON is at most 16 KiB, and it lists 1 to 16 `nostr` relays (`wss://`
+  URLs; a `ws://` relay only if the held card listed it, or in a test or
+  dev setup). It then replaces the card it holds and nothing else:
+  tier, scopes, grants, the local label and the expiry stay as the humans
+  set them, so no human approval is needed, and a newly listed capability
+  is usable only as far as the grant allows (§5.3). From then on the
+  receiver sends to the new card's relays. The same card again is ignored;
+  an older one, or one that fails these checks, is dropped and the human
+  told. A receiver rate-limits updates per contact (20 an hour in the
+  reference implementation). An agent that has not sent a contact its
+  current card (the contact predates card updates, or the send failed)
+  sends it at its next start. A contact that is offline past the relays'
+  retention, or runs software without card updates, keeps the old card.
 
 ### 4.4 Discovery of a card
 
@@ -1764,11 +1793,11 @@ a proxy or decline the transfer. The relay sees nothing new.
 11. **Extending the meeting verbs** (resolved). New verbs are A2A extension
     URIs advertised in the card's `capabilities`; unknown verbs and `data`
     fields are answered as unsupported, `metadata` is ignorable (§7.5).
-12. **Contacts hold a stale card.** An agent that gains a capability
-    re-signs its card and republishes it on its public topics (§4.3), but a
-    contact keeps the card from the handshake, so it still sees the old
-    capabilities and sends no task for the new one. A signed
-    `rdv/card-update` sent to contacts (design C.1) closes this.
+12. **Contacts hold a stale card** (resolved). A contact used to keep the
+    card from the handshake, so it missed new capabilities and relays. An
+    agent now sends each contact its new card (`rdv/card-update`, §4.3).
+    Still open: a contact that is offline past the relays' retention, or
+    runs older software, keeps the old card until the next change.
 13. **The quarantine is not enforced by today's hosts.** §5.6 rule 3 asks
     for a tool-less model to read peer tasks; the reference MCP server
     cannot take tools away from the client's model, so it enforces the
