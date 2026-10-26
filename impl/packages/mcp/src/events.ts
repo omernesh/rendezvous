@@ -7,7 +7,7 @@
 import { describeSlot, isA2APayload, REASON_CODES, type Slot, TASK_LIFECYCLE_STATES, TASK_STATES } from '@rendezvous/a2a';
 import { fingerprint } from '@rendezvous/core';
 import { appendEvents, eventsStamp, type Home, type LoggedEvent, readEvents, STRANGER_DROPS } from '@rendezvous/cli/lib';
-import { address, agentId, capability, fileView, isPlain, oneOf, safe, sha256, token, untrusted, uuid } from './untrusted.js';
+import { address, agentId, capability, fileView, isPlain, oneOf, relayUrl, safe, sha256, token, untrusted, uuid } from './untrusted.js';
 
 const TIERS = ['spouse', 'family', 'friend', 'colleague', 'business', 'stranger'];
 const BINDINGS = ['in-person', 'dns', 'mailbox', 'claimed'];
@@ -252,6 +252,26 @@ export function toModelEvent(e: Raw, negotiating: boolean): Omit<McpEvent, 'n' |
         summary: meetings
           ? `${who(e.peer)} now lets you propose meetings to them (rdv_negotiate).`
           : `${who(e.peer)} updated what you may do towards them; meetings are not allowed.`,
+      };
+    }
+    case 'card-update': {
+      // A contact's newer card (NOTES 82, issue #45). Its relays and capabilities are the peer's text: strict shape, else quarantined.
+      const list = (v: unknown, max: number, shape: (x: unknown) => unknown) => (Array.isArray(v) ? v.slice(0, max).map(shape) : []);
+      const capsAdded = list(e.capabilities_added, 32, capability);
+      return {
+        type: 'card_updated',
+        peer: agentId(e.peer),
+        fingerprint: fp(e.peer),
+        // Our own user's name for the peer (written locally, never by the peer).
+        local_label: typeof e.label === 'string' ? safe(e.label) : null,
+        relays_added: list(e.relays_added, 16, relayUrl),
+        relays_removed: list(e.relays_removed, 16, relayUrl),
+        capabilities_added: capsAdded,
+        capabilities_removed: list(e.capabilities_removed, 32, capability),
+        addresses_changed: e.addresses_changed === true,
+        summary:
+          `${who(e.peer)} sent a newer card: this agent now reaches it on its current relays and sees what it supports. ` +
+          'Nothing your user approved changed (grants, tier and label are as they were); a new capability is usable only if its grant allows it.',
       };
     }
     case 'message': {

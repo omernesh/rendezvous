@@ -55,7 +55,42 @@ export const DEFAULT_GRANT_SCOPE: Readonly<GrantScope> = Object.freeze({
 export const RESEND_LIMIT = { count: 10, windowMs: 3_600_000 };
 /** Reverse grants we process per contact (each one rewrites the contact; NOTES 60). */
 export const REVERSE_GRANT_LIMIT = { count: 10, windowMs: 3_600_000 };
-const CONTROL_TYPES = new Set(['rdv/contact-request', 'rdv/contact-grant', 'rdv/revoke', 'rdv/resend']);
+/** Card updates we apply per contact (each one rewrites the contact; NOTES 82). */
+export const CARD_UPDATE_LIMIT = { count: 20, windowMs: 3_600_000 };
+export const CARD_UPDATE_TYPE = 'rdv/card-update';
+const CONTROL_TYPES = new Set(['rdv/contact-request', 'rdv/contact-grant', 'rdv/revoke', 'rdv/resend', CARD_UPDATE_TYPE]);
+
+/** What a contact's new card changed (NOTES 82): relays and capabilities, as lists. */
+export interface CardChange {
+  relays: { added: string[]; removed: string[] };
+  capabilities: { added: string[]; removed: string[] };
+  /** Whether the card's discovery addresses changed (its own claims, never a label). */
+  addresses_changed: boolean;
+}
+
+/** A contact's card replaced by an `rdv/card-update`. */
+export interface CardUpdate {
+  contact: Contact;
+  previous: AddressCard;
+  change: CardChange;
+}
+
+/** What `sendCardUpdates` did: the contacts that got our current card, and the ones whose send failed (retried by the next one). */
+export interface CardUpdateReport {
+  sent: string[];
+  failed: Array<{ peer: string; error: string }>;
+}
+
+export function cardChange(previous: AddressCard, next: AddressCard): CardChange {
+  const diff = (a: string[], b: string[]) => ({ added: b.filter((x) => !a.includes(x)), removed: a.filter((x) => !b.includes(x)) });
+  const caps = (c: AddressCard) => (Array.isArray(c.capabilities) ? c.capabilities : []);
+  const addrs = (c: AddressCard) => JSON.stringify((c.discovery?.addresses ?? []).map((a) => `${a.type}:${a.value}`).sort());
+  return {
+    relays: diff(relaysOf(previous), relaysOf(next)),
+    capabilities: diff(caps(previous), caps(next)),
+    addresses_changed: addrs(previous) !== addrs(next),
+  };
+}
 
 export interface AgentState {
   secretKey: string;
@@ -65,6 +100,12 @@ export interface AgentState {
   outbox: Record<string, Envelope[]>;
   /** Out-of-order envelopes waiting for a gap to fill (kept so a restart doesn't lose them). */
   buffer?: Record<string, Envelope[]>;
+  /**
+   * Per contact, the `created` of our card it was last sent (in our grant or
+   * an `rdv/card-update`), so `sendCardUpdates` sends each contact a newer
+   * card once (NOTES 82). Absent for contacts made before it: they get one.
+   */
+  cardSent?: Record<string, string>;
 }
 
 export interface AgentEvents {
@@ -78,6 +119,8 @@ export interface AgentEvents {
   contact: [Contact];
   /** A contact's human granted us rights towards it: `outboundScope` changed (NOTES 60). */
   'reverse-grant': [Contact];
+  /** A contact sent its newer card (`rdv/card-update`): we now reach it on its relays and see its capabilities. Nothing the human approved changed. */
+  'card-update': [CardUpdate];
   message:[peer: string, payload: Payload, envelope: Envelope];
   revoked: [peer: string];
   /**
@@ -95,6 +138,7 @@ export class Agent extends EventEmitter<AgentEvents> {
   readonly channels: Channels;
   private outbox: Record<string, Envelope[]>;
   private buffer: Record<string, Envelope[]>;
+  private cardSent: Record<string, string>;
   private unsubscribers: Array<() => void> = [];
   /** The discovery-topic subscription, kept apart so `setAddresses` can replace it. */
   private topicUnsub?: () => void;
@@ -112,13 +156,14 @@ export class Agent extends EventEmitter<AgentEvents> {
     readonly key: AgentKey,
     public card: AddressCard,
     readonly transport: Transport,
-    state?: Partial<Pick<AgentState, 'book' | 'channels' | 'outbox' | 'buffer'>>,
+    state?: Partial<Pick<AgentState, 'book' | 'channels' | 'outbox' | 'buffer' | 'cardSent'>>,
   ) {
     super();
     this.book = new ContactBook({ policy: card.policy.inbound, ...state?.book });
     this.channels = new Channels(state?.channels ?? {});
     this.outbox = state?.outbox ?? {};
     this.buffer = state?.buffer ?? {};
+    this.cardSent = state?.cardSent && typeof state.cardSent === 'object' ? { ...state.cardSent } : {};
     this.pruneChannels(); // state saved before NOTES 64 may hold strangers' channels
   }
 
@@ -139,6 +184,7 @@ export class Agent extends EventEmitter<AgentEvents> {
       channels: this.channelsToPersist(),
       outbox: this.outbox,
       buffer: this.bufferToPersist(),
+      cardSent: Object.fromEntries(Object.entries(this.cardSent).filter(([peer]) => Object.hasOwn(this.book.state.contacts, peer))),
     };
   }
 
@@ -216,6 +262,42 @@ export class Agent extends EventEmitter<AgentEvents> {
     this.card = reissueCardRelays(this.key, this.card, relays, opts.now);
     this.transport.setRelays?.(relays, opts.mirrorRelays);
     return this.card;
+  }
+
+  /** Active contacts that have not been sent our current card yet (NOTES 82). */
+  cardUpdatesDue(now = new Date()): string[] {
+    return this.contacts()
+      .filter((c) => this.book.contact(c.peer, now) && !this.book.isBlocked(c.peer))
+      .filter((c) => this.cardSent[c.peer] !== this.card.created)
+      .map((c) => c.peer);
+  }
+
+  /**
+   * Send our current card to every active contact that has not had it
+   * (`rdv/card-update`, SPEC §4.3, NOTES 82), so they reach us on our current
+   * relays and see our current capabilities. Call it after re-signing the
+   * card (`setRelays`, `setAddresses`, `refreshCapabilities`) and at a
+   * listener's start (a contact made before this existed, or a send that
+   * failed, gets it then). `alsoRelays` (our relays before a change) get the
+   * envelopes too, besides our relays now and the contact's: a contact that
+   * still sends to and reads from the old set is reached there. One failed
+   * send does not stop the others; that contact stays due.
+   */
+  async sendCardUpdates(opts: { alsoRelays?: readonly string[] } = {}): Promise<CardUpdateReport> {
+    const report: CardUpdateReport = { sent: [], failed: [] };
+    const card = this.card;
+    for (const peer of this.cardUpdatesDue()) {
+      const c = this.book.contact(peer);
+      if (!c) continue;
+      try {
+        await this.deliver(peer, { type: CARD_UPDATE_TYPE, card } as Payload, [...new Set([...relaysOf(c.card), ...(opts.alsoRelays ?? [])])]);
+        this.cardSent[peer] = card.created;
+        report.sent.push(peer);
+      } catch (err) {
+        report.failed.push({ peer, error: err instanceof Error ? err.message : String(err) });
+      }
+    }
+    return report;
   }
 
   close(): void {
@@ -351,7 +433,9 @@ export class Agent extends EventEmitter<AgentEvents> {
 
   /** Owner confirms a probe answer: that grantor becomes the contact (outbound per its grant, inbound the local default). */
   confirmCandidate(grantId: string, opts: { label?: string } = {}): Contact {
+    const sentCard = this.requestCard(this.book.state.candidates[grantId]?.request_ref);
     const contact = this.book.confirmCandidate(grantId, new Date(), opts.label);
+    if (sentCard) this.cardSent[contact.peer] = sentCard;
     this.emit('contact', contact);
     return contact;
   }
@@ -426,6 +510,12 @@ export class Agent extends EventEmitter<AgentEvents> {
     });
   }
 
+  /** `created` of the card our outstanding request carried (what its grantor holds of ours). */
+  private requestCard(requestRef: unknown): string | undefined {
+    if (typeof requestRef !== 'string' || !Object.hasOwn(this.book.state.outstanding, requestRef)) return undefined;
+    return this.book.state.outstanding[requestRef].card_created;
+  }
+
   private async deliver(peer: string, payload: { type: string }, relays: string[]): Promise<Envelope> {
     const { seq, prev } = this.channels.nextOutbound(peer);
     const env = sealEnvelope(this.key, peer, payload, { seq, prev });
@@ -450,6 +540,7 @@ export class Agent extends EventEmitter<AgentEvents> {
       expires: opts.expires,
     });
     const contact = this.book.recordIssuedGrant(grant, request, binding, opts.label);
+    this.cardSent[request.from] = this.card.created; // the grant carries our card
     await this.deliver(request.from, grant, relaysOf(request.card));
     this.emit('contact', contact);
     return contact;
@@ -611,6 +702,7 @@ export class Agent extends EventEmitter<AgentEvents> {
           this.emit('reverse-grant', rev.contact);
           return;
         }
+        const sentCard = this.requestCard((payload as { request_ref?: unknown }).request_ref);
         const got = this.book.receiveGrant(payload, this.id);
         if (!got) return this.drop('unexpected or invalid grant');
         if ('candidate' in got) {
@@ -621,12 +713,24 @@ export class Agent extends EventEmitter<AgentEvents> {
           if (got.overflow.dropped === 1) this.emit('probe-overflow', got.overflow);
           return;
         }
+        if (sentCard) this.cardSent[got.contact.peer] = sentCard;
         this.emit('contact', got.contact);
         return;
       }
       case 'rdv/revoke':
         if (this.book.receiveRevoke(payload, this.id)) this.emit('revoked', from);
         return;
+      case CARD_UPDATE_TYPE: {
+        // Rate-limited per contact only: a stranger's update is refused below without touching state.
+        if (!this.book.contact(from)) return this.drop('card update from a non-contact', from);
+        if (!this.book.admitControl('card-update', from, CARD_UPDATE_LIMIT)) return this.drop('card update rate-limited', { peer: from });
+        // A new ws:// relay only when we are on one ourselves (a test or dev setup; NOTES 82).
+        const got = this.book.receiveCardUpdate(payload.card, from, new Date(), { allowWs: relaysOf(this.card).some((r) => r.startsWith('ws://')) });
+        if ('unchanged' in got) return;
+        if ('rejected' in got) return this.drop(`card update rejected: ${got.reason}`, { peer: from, code: got.rejected });
+        this.emit('card-update', { contact: got.contact, previous: got.previous, change: cardChange(got.previous, got.contact.card) });
+        return;
+      }
       case 'rdv/resend': {
         const c = this.book.contact(from);
         if (!c) return;

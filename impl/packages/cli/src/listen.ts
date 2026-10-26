@@ -28,6 +28,7 @@ import {
   type Transport,
   verifyContactRequest,
 } from '@rendezvous/core';
+import { cardSyncText, cardUpdateText, cardUpdateView, syncContactCards } from './cardupdate.js';
 import { appendEvents } from './events.js';
 import { LockTimeoutError, tryLongLock } from './fsutil.js';
 import { CliError, type Home, type InboxEntry } from './home.js';
@@ -292,6 +293,8 @@ async function handleLocked(
       agent.on('reverse-grant', (c) =>
         events.push({ obj: { event: 'reverse-grant', ...contactView(c) }, human: `reverse grant: ${contactText(c)}` }),
       );
+      // A contact's newer card (NOTES 82): only how we reach it and what it supports changed, never consent.
+      agent.on('card-update', (u) => events.push({ obj: cardUpdateView(u), human: cardUpdateText(u) }));
       agent.on('message', (from, payload, env) => {
         const entry: InboxEntry = { ts: new Date().toISOString(), from, seq: env.seq, payload };
         inbox.push(entry);
@@ -492,6 +495,14 @@ export async function listen(home: Home, out: Output, opts: ListenOptions): Prom
   const refresh = await refreshHostCard(home, hostCardCapabilities(hostRegistry()), real);
   const refreshText = cardRefreshText(refresh);
   if (refreshText) out.emit({ event: 'card-refreshed', capabilities: refresh.capabilities, published: refresh.published, ...(refresh.error ? { error: refresh.error } : {}) }, refreshText);
+  // Issue #45: contacts that do not hold our current card get it (`rdv/card-update`).
+  try {
+    const sync = await syncContactCards(home, real);
+    const syncText = cardSyncText(sync);
+    if (syncText) out.emit({ event: 'card-sent', sent: sync.sent, failed: sync.failed }, syncText);
+  } catch (err) {
+    out.emit({ event: 'error', message: (err as Error).message }, `error: ${clean((err as Error).message)}`);
+  }
   let topics = (boot.card.discovery?.addresses ?? []).map(dtopic);
 
   const print = async (e: Emitted) => {

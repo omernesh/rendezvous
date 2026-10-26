@@ -1,7 +1,7 @@
 // §4.3: the address card ("calling card").
 import type { AgentKey } from './identity.js';
 import { isAgentId } from './identity.js';
-import { isPast, parseTimestamp } from './encoding.js';
+import { canonicalize, isPast, parseTimestamp, utf8ToBytes } from './encoding.js';
 import { type Signed, signDoc, verifyDoc } from './sign.js';
 
 export type InboundPolicy = 'allow' | 'block' | 'prompt';
@@ -159,6 +159,40 @@ export function verifyCard(input: unknown, now: Date = new Date()): CardCheck {
   if (parseTimestamp(card.created) === null) return { ok: false, reason: 'bad created' };
   if (isPast(card.expires, now)) return { ok: false, reason: 'card expired' };
   return { ok: true, card };
+}
+
+/**
+ * Bounds on a card that arrives in `rdv/card-update` (SPEC §4.3, NOTES 82):
+ * its canonical JSON, and its Nostr relays, which become where we send to
+ * that contact. A card at the 32-capability limit is about 7 KiB.
+ */
+export const MAX_CARD_BYTES = 16_384;
+export const MAX_CARD_RELAYS = 16;
+const MAX_RELAY_URL_CHARS = 512;
+
+/**
+ * Why a contact's new card (a verified one) can't replace the one we hold,
+ * beyond verifyCard: too large, or its relays are missing, too many, or not
+ * `ws://` / `wss://` URLs. A new `ws://` relay (unencrypted, typically on a
+ * LAN or this machine) is taken only when `allowWs` (we listen on a `ws://`
+ * relay ourselves: a test or dev setup, as for the mirrors in NOTES 81) or
+ * the card we `held` already lists it, so a contact can't point our traffic
+ * at a plaintext endpoint of its choosing. Null when it is fine.
+ */
+export function cardUpdateProblem(card: AddressCard, opts: { allowWs?: boolean; held?: AddressCard } = {}): string | null {
+  if (utf8ToBytes(canonicalize(card)).length > MAX_CARD_BYTES) return `card larger than ${MAX_CARD_BYTES} bytes`;
+  const nostr = card.rendezvous.filter((h) => h && typeof h === 'object' && (h as { type?: unknown }).type === 'nostr') as Array<{ relay?: unknown }>;
+  if (nostr.length === 0) return 'card lists no relay';
+  if (nostr.length > MAX_CARD_RELAYS) return `card lists more than ${MAX_CARD_RELAYS} relays`;
+  for (const h of nostr) {
+    if (typeof h.relay !== 'string' || h.relay.length > MAX_RELAY_URL_CHARS || !/^wss?:\/\/\S+$/.test(h.relay)) return 'card lists a relay that is not a ws:// or wss:// URL';
+    if (h.relay.startsWith('ws://') && !opts.allowWs && !(opts.held && relaysOfCard(opts.held).includes(h.relay))) return 'card lists a new ws:// (unencrypted) relay';
+  }
+  return null;
+}
+
+function relaysOfCard(card: AddressCard): string[] {
+  return Array.isArray(card.rendezvous) ? card.rendezvous.flatMap((h) => (h?.type === 'nostr' ? [h.relay] : [])) : [];
 }
 
 /** Delivery hints in preference order (pref 0 entries are lookup-only). */

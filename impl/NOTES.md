@@ -1785,8 +1785,8 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
     replaceable event. Tested with the rev-3 fixture (key, book and
     channels unchanged; idempotent; order alone is no change) and with
     real processes (one republish; a restart changes nothing on disk or on
-    the relay). **Not here:** sending the new card to contacts, who keep
-    the one from the handshake (`rdv/card-update`, design C.1; issue #45).
+    the relay). Sending the new card to contacts, who used to keep the one
+    from the handshake, is item 82 (`rdv/card-update`, issue #45).
 
 ## Files in tasks (v0.3, issue #26, hosts)
 
@@ -2058,10 +2058,11 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       in the error text (`rdv_relays`, `rdv_addresses`, `rdv_publish_card`
       with `mirror`). The same fix covers `rdv address add/remove`, which
       used to put the relays' text into its error.
-    - **Not here:** contacts keep the card they got in the handshake, so a
-      contact may still send to a removed relay (it also sends to its own
-      relays, which may overlap). `rdv relays remove` says so. Pushing the
-      new card to contacts is `rdv/card-update` (issue #45).
+    - **Contacts:** a listening change now sends the new card to every
+      contact (item 82). One that is offline or on older software keeps the
+      card it got in the handshake and may still send to a removed relay (it
+      also sends to its own relays, which may overlap); `rdv relays remove`
+      says so.
     - **Mirroring.** `Agent.mirrorPointers()` → `NostrTransport.mirrorTopics()`:
       the card, as the replaceable event of each address topic, to our
       relays and then each mirror, strictly one relay at a time. Between two
@@ -2161,6 +2162,99 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       cooldown, a lookup found through a mirror); MCP (`rdv_relays`
       validation, the server moving at once, `rdv_publish_card` mirror with
       the relay's text quarantined).
+
+## Card updates to contacts (v0.3, issue #45)
+
+82. **`rdv/card-update`** (**spec change**, §4.3, §11 item 12; design C.1).
+    A contact used to hold the card from the handshake for good, so it never
+    saw a relay change (`rdv relays`, item 81) or a capability refresh (item
+    79): `requestTask` refused a task for `tasks/v1` on the old card.
+    - **Wire.** A payload `{type: "rdv/card-update", card}` in an ordinary
+      envelope. No signature of its own: the envelope signs the sender and
+      the content (§6.4), and the card is self-signed. That departs from the
+      issue's "signed `rdv/card-update`" in form, not in what is proven. No
+      existing document changes, so the test vectors stay.
+    - **Receiving** (`ContactBook.receiveCardUpdate`, `Agent.dispatch`).
+      From a current, unblocked contact only (a stranger's update is
+      dropped as `card update from a non-contact`, a stranger drop that is
+      not logged); per contact at most `CARD_UPDATE_LIMIT` (20 an hour,
+      `admitControl`, which drops but never revokes, unlike `max_frequency`).
+      The card must pass `verifyCard`, have `id` = the envelope's `from` =
+      the contact, a `created` strictly later than the held card's and at
+      most `CARD_UPDATE_SKEW_MS` (10 min) ahead of our clock, canonical JSON
+      at most `MAX_CARD_BYTES` (16 KiB; a card at the 32-capability limit
+      is about 7 KiB), and 1 to `MAX_CARD_RELAYS` (16) `nostr` hints that
+      are `ws://` / `wss://` URLs of at most 512 characters (`rdv init`
+      takes any number of relays, so the bound is looser than the 8 of
+      `rdv relays`). A `ws://` relay the held card did not list is refused
+      unless we listen on a `ws://` relay ourselves (a test or dev setup, the
+      rule item 81 uses for mirrors): otherwise a contact could point our
+      traffic at an unencrypted endpoint of its choosing, on its LAN or ours,
+      without its human or ours seeing it. Then only `contact.card` changes; tier, scopes, grant
+      id, label, binding and expiry do not (tested field by field). The
+      same card again (same `created` and `sig`) is a silent no-op; an older
+      or equally dated other card is dropped `card update rejected: not
+      newer …` with code `stale`. Replays: an envelope replay is a channel
+      duplicate; an older card in a new envelope is stale.
+    - **Relays per contact.** Unchanged code: every send already goes to
+      `relaysOf(contact.card)` plus our own relays (`NostrTransport.publish`),
+      and `rdv/resend` uses the contact's card too, so replacing the card is
+      enough. We still listen only on our own relays: a peer's envelopes for
+      us go to our relays (from our card) and its own, so listening on the
+      contact's relays would add nothing.
+    - **Sending** (`Agent.sendCardUpdates`). Our current card to every
+      active contact that has not had it. `AgentState.cardSent` (peer ->
+      the `created` of the card it holds of ours) is set from our grant
+      (`issueGrant`), from our request (`OutstandingRequest.card_created`,
+      for a contact made by card or by probe), and after each update that
+      left. A failed send leaves the contact due (the envelope stays in the
+      outbox; a later envelope's gap brings it back through `rdv/resend`).
+      State from before this has no `cardSent`, so every contact gets one
+      update once (the receiver ignores it if it already held that card).
+      **Relays:** after a listening change the envelope goes to our new
+      relays, the contact's, and our old ones (`alsoRelays`), so a contact
+      still on the old set gets it too (in the common case both sides share
+      the default relays, so the contact's relays already cover it).
+    - **Where it is sent.** `changeRelays` (listening set; after the config
+      is written), `changeAddress` (a public address), `rdv card publish`
+      and `rdv_publish_card` (to contacts still due), and at every `rdv
+      listen` / `rdv-mcp` start (`syncContactCards`, after `refreshHostCard`,
+      under the home lock; event `card-sent` / a human-log line). So the
+      issue's case, a contact made before the upgrade, is fixed by the next
+      start of either side's listener. `rdv_relays` and `rdv_addresses` go
+      through `changeRelays` / `changeAddress`. The `card_sent` report is
+      on the relay and address results only when a contact was due.
+    - **Hosts.** `handleInbound` turns the `card-update` agent event into an
+      `events.jsonl` line (`cardUpdateView`: peer, fingerprint, local label,
+      `created`, relays and capabilities added and removed, whether the
+      claimed addresses changed); the terminal line goes through `clean()`.
+      `rdv_inbox` shows `card_updated` with relays as `relayUrl` and
+      capabilities as `capability` (strict shape, else `untrusted_peer_text`)
+      and a summary written by us. No human gate: it is not a consent
+      decision and changes nothing the human approved. A new capability is
+      only advertised; invoking it still needs the peer's grant (tested:
+      `mayInvoke` stays false).
+    - **Not here.** A contact offline past our subscription lookback (2
+      days) misses the update until our next envelope reopens the gap, and
+      if our relays moved meanwhile its resend request may not reach us; it
+      gets the card at our next change. An outstanding request we sent
+      before a change carries the old card, and the grantor keeps it until
+      our next update (we count the contact as holding the card the request
+      carried, so it is due then). Reverse grants carry our card too, but
+      the receiver still ignores that copy.
+    - Tests: core `test/cardupdate.test.ts` (newer accepted, consent
+      untouched; same card unchanged; older, equally dated, foreign-key,
+      bad-signature, future, oversized, too many relays, stranger, revoked
+      contact refused; two agents on two relays: a move, then a message on
+      the new relay; a capability added after the handshake; the rate limit;
+      `cardSent` across a restart and from state without it; a probe-made
+      contact not due); CLI `test/cardupdate.test.ts` (real processes: a
+      relay added and one removed reach the contact, which then sends to
+      the new relay; the issue's repro: a contact holding the pre-tasks card
+      gets the new one at John's next listener start, after which `rdv task
+      request` goes out; a second start sends nothing); MCP `tasks.test.ts`
+      (John's server restarts on code that routes one more capability; Omer
+      sees `card_updated` and the task its old card refused is submitted).
 
 ## Not implemented yet
 

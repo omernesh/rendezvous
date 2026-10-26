@@ -30,8 +30,9 @@ same way, so existing contacts keep working and nothing is widened.
 
 The requester also needs the contact's card to list the capability. A card
 made before v0.3 is refreshed automatically the next time `rdv listen` or
-`rdv-mcp` starts, but a contact keeps the card it already holds: sending the
-new card to existing contacts is not built yet (issue #45).
+`rdv-mcp` starts, and the new card then goes to every contact over the
+pairwise channel (`rdv/card-update`, issue #45). A contact on older software
+keeps the card it holds.
 
 ## The two gates
 

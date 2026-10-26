@@ -434,11 +434,11 @@ npm run rdv -- --help                     # or: node packages/cli/dist/src/bin.j
 </tr>
 <tr>
 <td><code>rdv relays remove &lt;wss://…&gt; [--mirror]</code></td>
-<td>Stop listening on a relay (never the last one): re-signs and republishes the card, there too, so it serves the newer card. Contacts keep the card they hold until they get a newer one, so some may still send to the removed relay. <code>--mirror</code>: remove a discovery mirror</td>
+<td>Stop listening on a relay (never the last one): re-signs and republishes the card, there too, so it serves the newer card. The new card is sent to every contact (<code>rdv/card-update</code>, NOTES 82); one that is offline or on older software keeps the old card, so it may still send to the removed relay. <code>--mirror</code>: remove a discovery mirror</td>
 </tr>
 <tr>
 <td><code>rdv card publish [--mirror]</code></td>
-<td>Publish public pointers (if enabled at init). <code>--mirror</code>: to our relays and then each discovery mirror, one relay at a time and paced, one try each, then a read-back; one line per relay (<code>accepted</code> / <code>rejected</code> with the relay's reason / <code>timeout</code> / <code>skipped</code> when cooling down, and <code>served</code>) and a summary (NOTES 81)</td>
+<td>Publish public pointers (if enabled at init), and send the card to contacts that do not hold it yet. <code>--mirror</code>: to our relays and then each discovery mirror, one relay at a time and paced, one try each, then a read-back; one line per relay (<code>accepted</code> / <code>rejected</code> with the relay's reason / <code>timeout</code> / <code>skipped</code> when cooling down, and <code>served</code>) and a summary (NOTES 81)</td>
 </tr>
 <tr>
 <td><code>rdv lookup john@doe.com</code></td>
