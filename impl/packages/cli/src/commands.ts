@@ -12,6 +12,7 @@ import {
   b64decode,
   canonAgentId,
   cleanLabel,
+  type Contact,
   DEFAULT_GRANT_SCOPE,
   DEFAULT_RELAYS,
   type DiscoveryAddress,
@@ -45,6 +46,8 @@ import {
   autoApproveTarget,
   autoApproveWarning,
   autoApprovedCounts,
+  autoApproveKeptText,
+  grantKeepingAutoApprove,
   parseUntil,
   scopeDigest,
   setAutoApprove,
@@ -1042,18 +1045,28 @@ export async function contactGrant({ home, out, values, positionals }: Ctx): Pro
   scope = invokeScope(scope, values.invoke, values['no-meetings'] === true);
   const label = labelOf(values.label);
   const target = positionals[0];
-  const contact = await withAgent(home, async (agent) => {
+  const { result: contact, autoApprove } = await withAgent(home, async (agent) => {
+    // Our human's own grant: a contact on auto-approve keeps it for what it covered that the grant still allows (issue #93).
     // An agent ID: the owner grants an existing contact (one we requested) rights towards us,
     // and the agent sends the peer a reverse grant so it can use them (NOTES 60).
+    // A contact on auto-approve keeps it for what it covered that the grant still allows (issue #93).
     if (isAgentId(target)) {
       if (!agent.book.contact(target)) throw new CliError(`no active contact ${target}`);
       if (label !== undefined) throw new CliError('--label goes with a request ID; to name an existing contact use "rdv contact label <agent-id> <label>"', 2);
-      return agent.allowInbound(target, { tier, scope });
+      return grantKeepingAutoApprove(home, subjectOf(agent), target, () => agent.allowInbound(target, { tier, scope }), 'cli');
     }
+    // A request re-founds the contact (its card and binding): never rebound, so an entry for that peer ends (NOTES 92).
     if (!agent.book.state.pending[target]) throw new CliError(`no pending request ${target}`);
-    return agent.grant(target, { tier, scope, label });
+    return { result: await agent.grant(target, { tier, scope, label }), autoApprove: null };
   });
-  out.emit({ event: 'granted', ...contactView(contact) }, `granted: ${contactText(contact)}`);
+  out.emit(
+    {
+      event: 'granted',
+      ...contactView(contact),
+      ...(autoApprove ? { auto_approve: autoApprove.ended ? 'off' : { covers: autoApprove.capabilities, not_covered: autoApprove.uncovered } } : {}),
+    },
+    `granted: ${contactText(contact)}` + (autoApprove ? `\n${autoApproveKeptText(contact.peer, autoApprove)}` : ''),
+  );
 }
 
 export async function contactDecline({ home, out, values, positionals }: Ctx): Promise<void> {
@@ -1087,8 +1100,12 @@ export async function contactList({ home, out }: Ctx): Promise<void> {
   for (const c of contacts) {
     const a = auto.get(c.peer);
     out.emit(
-      { ...contactView(c), ...(a ? { auto_approve: { mode: 'all', until: a.until, since: a.set } } : {}) },
-      contactText(c) + (a ? `  AUTO-APPROVE all until ${a.until ? clean(a.until) : 'you turn it off'}` : ''),
+      { ...contactView(c), ...(a ? { auto_approve: { mode: 'all', until: a.until, since: a.set, covers: a.capabilities, not_covered: a.uncovered } } : {}) },
+      contactText(c) +
+        (a
+          ? `  AUTO-APPROVE all until ${a.until ? clean(a.until) : 'you turn it off'} (covers ${a.capabilities.map((u) => clean(u)).join(', ')}` +
+            `${a.uncovered.length ? `; not covered: ${a.uncovered.map((u) => clean(u)).join(', ')}` : ''})`
+          : ''),
     );
   }
 }
@@ -1281,6 +1298,8 @@ function auditText(a: AuditEntry): string {
   if (a.reason) parts.push(`reason ${a.reason}`);
   if (a.until !== undefined) parts.push(`until ${a.until ?? 'turned off'}`);
   if (a.capabilities?.length) parts.push(`covers ${a.capabilities.join(', ')}`);
+  if (a.uncovered?.length) parts.push(`not covered ${a.uncovered.join(', ')}`);
+  if (a.dropped?.length) parts.push(`dropped ${a.dropped.join(', ')}`);
   if (a.meeting) parts.push(`meeting ${a.meeting}`);
   if (a.via) parts.push(`via ${a.via}`);
   return parts.map((x) => clean(x)).join('  ');

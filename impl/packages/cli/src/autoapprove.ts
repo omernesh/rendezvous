@@ -12,8 +12,15 @@
 // - local state (autoapprove.json, mode 600), never on the wire; each entry is
 //   MACed with the agent's secret key, so a file written by anything that
 //   cannot read agent.json approves nothing;
-// - bound to the grant it was set on: revoked, blocked, revoked for abuse,
-//   re-granted or widened, or a forked or rolled-back channel, and it is off;
+// - bound to the grant it was set on: revoked, blocked, revoked for abuse, or
+//   a forked or rolled-back channel, and it is off. A re-grant, or a widened
+//   or narrowed grant, that our own human makes to the same contact keeps it
+//   (issue #93, NOTES 92): our code rebinds the entry at that moment, under
+//   the lock, to what it covered before that the new grant still allows;
+//   capabilities the grant adds are not covered until the owner turns it on
+//   for them. Any other change to the grant (one our code did not rebind:
+//   approving a new request, which re-founds the contact, a grant received
+//   from the peer, or the allowlist's) ends it;
 // - bound to the owner passphrase record it was set under: a change, a reset
 //   or a deleted passphrase file ends it for good (issue #47 follow-up);
 // - optional expiry; an unreadable, expired, future-dated or malformed entry
@@ -31,6 +38,7 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import { type Agent, type AgentState, b64decode, type Contact, ContactBook, effectiveInvoke, fingerprint, type GrantScope, GROUPS_EXTENSION, MEETING_CANCEL_CAPABILITY, MEETINGS_CAPABILITY, parseTimestamp } from '@rendezvous/core';
 import { type AuditEntry, type AutoApproveEntry, type AutoApproveOff, CliError, type Home } from './home.js';
 import { sha, stable } from './hash.js';
+import { clean } from './output.js';
 import { ownerSecretBinding } from './ownersecret.js';
 
 /** What the check reads of an agent: its key (the MAC), its contacts, and its channels. */
@@ -76,7 +84,8 @@ function sameMac(a: string, b: string): boolean {
 }
 
 export type AutoApproveCheck =
-  | { ok: true; entry: AutoApproveEntry; capabilities: string[] }
+  /** `capabilities`: covered now; `uncovered`: the grant allows them, auto-approve does not (they ask the human). */
+  | { ok: true; entry: AutoApproveEntry; capabilities: string[]; uncovered: string[] }
   /** `clock` / `owner-unreadable`: our clock, or owner-secret.json, is unreadable; nothing is approved and nothing removed. */
   | { ok: false; reason: AutoApproveOff | 'clock' | 'owner-unreadable' };
 
@@ -127,7 +136,8 @@ export function checkAutoApprove(entry: AutoApproveEntry | undefined, subject: A
   }
   if (subject.refused(peer)) return { ok: false, reason: 'fork' };
   if (entry.covers !== undefined && !(Array.isArray(entry.covers) && entry.covers.every((u) => typeof u === 'string'))) return { ok: false, reason: 'invalid' };
-  return { ok: true, entry, capabilities: coveredBy(entry, c.inboundScope) };
+  const capabilities = coveredBy(entry, c.inboundScope);
+  return { ok: true, entry, capabilities, uncovered: covered(c.inboundScope).filter((u) => !capabilities.includes(u)) };
 }
 
 /**
@@ -188,7 +198,7 @@ const offLine = (now: Date, peer: string, reason: AutoApproveOff): AuditEntry =>
  * another one, the entry is removed, and setting a passphrase never brings it
  * back; the owner turns it on again.
  */
-export function autoApproved(home: Home, subject: AutoApproveSubject, peer: string, now = new Date()): { entry: AutoApproveEntry; capabilities: string[] } | null {
+export function autoApproved(home: Home, subject: AutoApproveSubject, peer: string, now = new Date()): { entry: AutoApproveEntry; capabilities: string[]; uncovered: string[] } | null {
   const owner = ownerBinding(home);
   if (owner === undefined) return null;
   let all: Record<string, AutoApproveEntry>;
@@ -210,8 +220,9 @@ export function autoApproved(home: Home, subject: AutoApproveSubject, peer: stri
 
 /**
  * Inside the home lock, after each inbound item: end every entry that no
- * longer holds (expired, contact revoked or blocked, revoked for abuse,
- * re-granted, a fork), so it is off, and audited, even before a gate asks.
+ * longer holds (expired, contact revoked or blocked, revoked for abuse, a
+ * grant change our code did not rebind, a fork), so it is off, and audited,
+ * even before a gate asks.
  */
 export function sweepAutoApprove(home: Home, subject: AutoApproveSubject, now = new Date()): { ended: Array<{ peer: string; reason: AutoApproveOff }>; error?: string } {
   let all: Record<string, AutoApproveEntry>;
@@ -236,9 +247,17 @@ export function sweepAutoApprove(home: Home, subject: AutoApproveSubject, now = 
   return { ended };
 }
 
+/** One contact's auto-approve as shown: what it covers now, and what the grant allows that it does not cover. */
+export interface AutoApproveShown {
+  until: string | null;
+  set: string;
+  capabilities: string[];
+  uncovered: string[];
+}
+
 /** Contacts on auto-approve now, for display only (writes nothing). */
-export function autoApproveStatus(home: Home, subject: AutoApproveSubject, now = new Date()): Map<string, { until: string | null; set: string; capabilities: string[] }> {
-  const out = new Map<string, { until: string | null; set: string; capabilities: string[] }>();
+export function autoApproveStatus(home: Home, subject: AutoApproveSubject, now = new Date()): Map<string, AutoApproveShown> {
+  const out = new Map<string, AutoApproveShown>();
   const owner = ownerBinding(home);
   if (!owner) return out;
   let all: Record<string, AutoApproveEntry>;
@@ -249,7 +268,7 @@ export function autoApproveStatus(home: Home, subject: AutoApproveSubject, now =
   }
   for (const peer of Object.keys(all)) {
     const r = checkAutoApprove(all[peer], subject, peer, now, owner);
-    if (r.ok) out.set(peer, { until: r.entry.until, set: r.entry.set, capabilities: r.capabilities });
+    if (r.ok) out.set(peer, { until: r.entry.until, set: r.entry.set, capabilities: r.capabilities, uncovered: r.uncovered });
   }
   return out;
 }
@@ -263,6 +282,106 @@ export function autoApprovedCounts(home: Home): Map<string, number> {
     // diagnostics only
   }
   return out;
+}
+
+// --- a grant our human changes (issue #93, NOTES 92) -----------------------------------
+
+/** What a grant change our human approved did to the contact's auto-approve. */
+export interface AutoApproveKept {
+  /** Still covered, without asking. */
+  capabilities: string[];
+  /** The grant allows these and auto-approve does not cover them: they ask the human, as before. */
+  uncovered: string[];
+  /** Covered before; the new grant no longer allows them. */
+  dropped: string[];
+  /** Nothing it covered is left: it is off (the sweep after the grant removes and audits it, reason grant-changed). */
+  ended: boolean;
+}
+
+/**
+ * Our human's own grant to an existing contact `peer` (allowInbound: a
+ * re-grant, or a widened or narrowed one), already approved through the grant
+ * gate, applied by `grant` inside the home lock. If the contact was on auto-approve just before, it stays on for what
+ * it covered then that the new grant still allows; what the grant adds is not
+ * covered. This is the only path that rebinds an entry, and only to the grant
+ * our own code just made: any other change to the grant still ends it.
+ */
+export async function grantKeepingAutoApprove<T>(
+  home: Home,
+  subject: AutoApproveSubject,
+  peer: string,
+  grant: () => Promise<T>,
+  via: 'cli' | 'mcp' = 'cli',
+): Promise<{ result: T; autoApprove: AutoApproveKept | null }> {
+  // Checked in full (MAC, expiry, passphrase, the grant it is bound to, fork) before the grant; one that fails is off.
+  const before = autoApproved(home, subject, peer);
+  const result = await grant();
+  return { result, autoApprove: before ? keepAutoApprove(home, subject, peer, before, via) : null };
+}
+
+function keepAutoApprove(home: Home, subject: AutoApproveSubject, peer: string, before: { entry: AutoApproveEntry; capabilities: string[] }, via: 'cli' | 'mcp'): AutoApproveKept | null {
+  const now = new Date();
+  if (!Number.isFinite(now.getTime()) || subject.isBlocked(peer) || subject.refused(peer)) return null;
+  const c = subject.contact(peer, now);
+  if (!c || c.inboundGranted !== true) return null; // the sweep ends it, with its reason
+  const allowed = covered(c.inboundScope);
+  const capabilities = before.capabilities.filter((u) => allowed.includes(u));
+  const kept: AutoApproveKept = {
+    capabilities,
+    uncovered: allowed.filter((u) => !capabilities.includes(u)),
+    dropped: before.capabilities.filter((u) => !allowed.includes(u)),
+    ended: capabilities.length === 0,
+  };
+  const e = before.entry;
+  const scope = scopeDigest(c.inboundScope);
+  // The same grant: nothing to rebind, and the entry (which held a moment ago) is left as it is.
+  if (c.grantId === e.grantId && c.since === e.since && scope === e.scope) return { ...kept, ended: false };
+  if (kept.ended) return kept;
+  // Still the entry checked before the grant, under the passphrase record it was set under.
+  let all: Record<string, AutoApproveEntry>;
+  try {
+    all = home.readAutoApprove();
+  } catch {
+    return null;
+  }
+  const owner = ownerBinding(home);
+  if (!Object.hasOwn(all, peer) || all[peer]?.mac !== e.mac || !owner || owner !== e.owner) return null;
+  const body: Omit<AutoApproveEntry, 'mac'> = {
+    v: 1,
+    peer,
+    mode: 'all',
+    set: e.set,
+    until: e.until,
+    grantId: c.grantId,
+    since: c.since,
+    scope,
+    owner,
+    covers: capabilities,
+  };
+  all[peer] = { ...body, mac: macOf(subject.secretKey, body) };
+  home.writeAutoApprove(all);
+  home.appendAudit([
+    {
+      ts: now.toISOString(),
+      peer,
+      gate: 'auto-approve',
+      by: 'human',
+      action: 'keep',
+      until: e.until,
+      capabilities,
+      ...(kept.uncovered.length ? { uncovered: kept.uncovered } : {}),
+      ...(kept.dropped.length ? { dropped: kept.dropped } : {}),
+      via,
+    },
+  ]);
+  return kept;
+}
+
+/** The one line a grant change shows the human about auto-approve: informational, never a prompt to turn it on. */
+export function autoApproveKeptText(peer: string, k: AutoApproveKept): string {
+  const list = (xs: string[]) => xs.map((u) => clean(u)).join(', ');
+  if (k.ended) return `auto-approve for ${clean(peer)} is off: the new grant allows nothing it covered`;
+  return `auto-approve for ${clean(peer)} still covers ${list(k.capabilities)}` + (k.uncovered.length ? `; not covered (asks you as before): ${list(k.uncovered)}` : '');
 }
 
 // --- the owner's command (commands.ts) -------------------------------------------------

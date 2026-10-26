@@ -14,7 +14,10 @@ import { Listener, rdv } from '../scenarios/harness.js';
 import {
   autoApprovedFor,
   autoApproveWarning,
+  autoApproveKeptText,
+  autoApproveStatus,
   checkAutoApprove,
+  grantKeepingAutoApprove,
   meetingAutoApproved,
   ownerBinding,
   scopeDigest,
@@ -326,6 +329,143 @@ describe('auto-approve in the gates', () => {
     f.contacts.get(PEER)!.inboundScope = { invoke: { [REQUEST_URI]: {}, [CAP.uri]: {}, 'https://example.com/ext/more/v1': {} } };
     expect((await arrive()).task().gate).toMatchObject({ kind: 'start' });
     expect(home.readAudit().at(-1)).toMatchObject({ action: 'off', reason: 'grant-changed' });
+  });
+
+  describe('a grant our human changes keeps it for what it still covers (issue #93)', () => {
+    const MORE = 'https://example.com/ext/more/v1';
+    const BOTH = [CAP.uri, REQUEST_URI]; // as covered() lists them (sorted)
+    /** Our human's grant, as commands.ts and rdv-mcp apply it: the new scope (and a new grant ID for a re-grant) under the keep path. */
+    const regrant = (scope: GrantScope, newGrant = false, via: 'cli' | 'mcp' = 'cli') =>
+      grantKeepingAutoApprove(
+        home,
+        subjectOf(f.agent),
+        PEER,
+        async () => {
+          const c = f.contacts.get(PEER)!;
+          c.inboundScope = scope;
+          if (newGrant) {
+            c.grantId = uuid();
+            c.since = new Date().toISOString();
+          }
+          return c;
+        },
+        via,
+      );
+    const lastKeep = () => home.readAudit().filter((a) => a.action === 'keep').at(-1);
+
+    it('widened: what it covered stays auto-approved, the new capability asks; audited, shown, and the sweep keeps it', async () => {
+      setAutoApprove(home, subjectOf(f.agent), PEER, null);
+      const r = await regrant({ invoke: { [REQUEST_URI]: {}, [CAP.uri]: {}, [MORE]: {} } }, false, 'mcp');
+      expect(r.autoApprove).toEqual({ capabilities: BOTH, uncovered: [MORE], dropped: [], ended: false });
+      expect(autoApprovedFor(home, subjectOf(f.agent), PEER, REQUEST_URI)).toBe(true);
+      expect(autoApprovedFor(home, subjectOf(f.agent), PEER, CAP.uri)).toBe(true);
+      expect(autoApprovedFor(home, subjectOf(f.agent), PEER, MORE)).toBe(false);
+      expect(sweepAutoApprove(home, subjectOf(f.agent)).ended).toEqual([]);
+      expect(lastKeep()).toMatchObject({ gate: 'auto-approve', by: 'human', peer: PEER, capabilities: BOTH, uncovered: [MORE], via: 'mcp', until: null });
+      expect(home.readAutoApprove()[PEER].covers).toEqual(BOTH);
+      expect(autoApproveStatus(home, subjectOf(f.agent)).get(PEER)).toMatchObject({ capabilities: BOTH, uncovered: [MORE] });
+      expect(autoApproveKeptText(PEER, r.autoApprove!)).toMatch(/still covers .*; not covered \(asks you as before\): https:\/\/example.com\/ext\/more\/v1$/);
+      expect(autoApproveKeptText(PEER, r.autoApprove!)).not.toMatch(/turn it on|rdv contact auto-approve/);
+      // A task under the new capability still waits for the human; one it covered still passes.
+      expect((await arrive(PEER, PEER_TEXT, REQUEST_URI)).task().gate).toBeUndefined();
+    });
+
+    it('narrowed: coverage narrows for good; granting it back does not cover it again', async () => {
+      setAutoApprove(home, subjectOf(f.agent), PEER, null);
+      const narrow = await regrant({ invoke: { [REQUEST_URI]: {} } });
+      expect(narrow.autoApprove).toEqual({ capabilities: [REQUEST_URI], uncovered: [], dropped: [CAP.uri], ended: false });
+      expect(lastKeep()).toMatchObject({ capabilities: [REQUEST_URI], dropped: [CAP.uri] });
+      expect(autoApprovedFor(home, subjectOf(f.agent), PEER, CAP.uri)).toBe(false);
+      const back = await regrant({ invoke: { [REQUEST_URI]: {}, [CAP.uri]: {} } });
+      expect(back.autoApprove).toMatchObject({ capabilities: [REQUEST_URI], uncovered: [CAP.uri] });
+      expect(autoApprovedFor(home, subjectOf(f.agent), PEER, CAP.uri)).toBe(false);
+      expect(autoApprovedFor(home, subjectOf(f.agent), PEER, REQUEST_URI)).toBe(true);
+    });
+
+    it('re-granted on the same terms (a new grant ID): still on, same coverage, same expiry; the same grant again writes nothing', async () => {
+      const until = new Date(Date.now() + 3_600_000).toISOString();
+      const set = setAutoApprove(home, subjectOf(f.agent), PEER, until);
+      const same = f.contacts.get(PEER)!.inboundScope!;
+      const r = await regrant(same, true);
+      expect(r.autoApprove).toEqual({ capabilities: BOTH, uncovered: [], dropped: [], ended: false });
+      const e = home.readAutoApprove()[PEER];
+      expect(e).toMatchObject({ grantId: f.contacts.get(PEER)!.grantId, until, set: set.entry.set });
+      expect(e.mac).not.toBe(set.entry.mac);
+      expect(autoApprovedFor(home, subjectOf(f.agent), PEER, CAP.uri)).toBe(true);
+      expect(lastKeep()).toMatchObject({ until });
+      const lines = home.readAudit().length;
+      await regrant(same);
+      expect(home.readAudit().length).toBe(lines);
+      // The expiry still ends it.
+      expect(autoApprovedFor(home, subjectOf(f.agent), PEER, CAP.uri, new Date(Date.now() + 7_200_000))).toBe(false);
+      expect(home.readAudit().at(-1)).toMatchObject({ action: 'off', reason: 'expired' });
+    });
+
+    it('a grant that leaves nothing it covered: off, ended by the sweep and audited', async () => {
+      setAutoApprove(home, subjectOf(f.agent), PEER, null);
+      const r = await regrant({ invoke: { [MORE]: {} } });
+      expect(r.autoApprove).toEqual({ capabilities: [], uncovered: [MORE], dropped: BOTH, ended: true });
+      expect(autoApproveKeptText(PEER, r.autoApprove!)).toMatch(/is off/);
+      expect(sweepAutoApprove(home, subjectOf(f.agent)).ended).toEqual([{ peer: PEER, reason: 'grant-changed' }]);
+      expect(home.readAutoApprove()).toEqual({});
+    });
+
+    it('fails closed: an entry that did not hold before the grant is not rebound; nor one changed meanwhile, nor after a fork, block or new passphrase', async () => {
+      const set = setAutoApprove(home, subjectOf(f.agent), PEER, null);
+      home.writeAutoApprove({ [PEER]: { ...set.entry, mac: 'ab'.repeat(32) } });
+      expect((await regrant({ invoke: { [REQUEST_URI]: {} } }, true)).autoApprove).toBeNull();
+      expect(home.readAutoApprove()).toEqual({});
+      expect(home.readAudit().at(-1)).toMatchObject({ action: 'off', reason: 'invalid' });
+      // Bound to a grant that changed some other way (not through this path): off before the grant, never rebound.
+      f = fake();
+      setAutoApprove(home, subjectOf(f.agent), PEER, null);
+      f.contacts.get(PEER)!.grantId = uuid();
+      expect((await regrant({ invoke: { [REQUEST_URI]: {} } }, true)).autoApprove).toBeNull();
+      expect(home.readAutoApprove()).toEqual({});
+      // The grant step itself blocks or forks: nothing is rebound, the sweep ends it.
+      for (const [hit, reason] of [
+        [() => f.blocked.add(PEER), 'blocked'],
+        [() => f.refused.add(PEER), 'fork'],
+      ] as const) {
+        f = fake();
+        setAutoApprove(home, subjectOf(f.agent), PEER, null);
+        const r = await grantKeepingAutoApprove(home, subjectOf(f.agent), PEER, async () => {
+          hit();
+        });
+        expect(r.autoApprove).toBeNull();
+        expect(sweepAutoApprove(home, subjectOf(f.agent)).ended).toEqual([{ peer: PEER, reason }]);
+      }
+      // The passphrase changes while the grant is applied: not rebound under it.
+      f = fake();
+      setAutoApprove(home, subjectOf(f.agent), PEER, null);
+      const r = await grantKeepingAutoApprove(home, subjectOf(f.agent), PEER, async () => {
+        f.contacts.get(PEER)!.grantId = uuid();
+        await storeOwnerSecret(home, 'ANOTHER-OWNER-PASS 99');
+      });
+      expect(r.autoApprove).toBeNull();
+      sweepAutoApprove(home, subjectOf(f.agent));
+      expect(home.readAutoApprove()).toEqual({});
+      expect(home.readAudit().filter((a) => a.action === 'keep')).toEqual([]);
+    });
+
+    it('a grant from the peer changes nothing: a reverse grant moves only what we may do towards it', () => {
+      setAutoApprove(home, subjectOf(f.agent), PEER, null);
+      const before = home.readAutoApprove()[PEER];
+      const c = f.contacts.get(PEER)!;
+      c.outboundScope = { may_initiate: true, may_propose_meetings: true, invoke: { [MORE]: {} } };
+      c.reverseGrantId = uuid();
+      expect(sweepAutoApprove(home, subjectOf(f.agent)).ended).toEqual([]);
+      expect(home.readAutoApprove()[PEER]).toEqual(before);
+      expect(autoApprovedFor(home, subjectOf(f.agent), PEER, MORE)).toBe(false);
+      expect(autoApprovedFor(home, subjectOf(f.agent), PEER, CAP.uri)).toBe(true);
+    });
+
+    it('a contact not on auto-approve: the grant goes through and nothing is written', async () => {
+      const r = await regrant({ invoke: { [REQUEST_URI]: {} } }, true);
+      expect(r.autoApprove).toBeNull();
+      expect(home.readAutoApprove()).toEqual({});
+      expect(home.readAudit()).toEqual([]);
+    });
   });
 
   it('is only for a contact our human granted something: nothing to cover is refused', () => {
@@ -655,6 +795,67 @@ describe('rdv contact auto-approve and rdv audit', () => {
       writeFileSync(john.ownerSecretMarkerPath, JSON.stringify({ v: 1, first: new Date().toISOString(), mac: 'ab'.repeat(32) }));
       expect(hasOwnerSecret(john)).toBe(false);
       expect(existsSync(john.ownerSecretPath)).toBe(false);
+    } finally {
+      await Promise.all([johnL.stop(), omerL.stop()]);
+    }
+  });
+
+  it('rdv contact grant keeps it for what it still covers (issue #93): widened, narrowed, re-granted; the peer’s own grant changes nothing', async () => {
+    const MORE = 'https://example.com/ext/more/v1';
+    const omerHome = join(root, 'omer-keep');
+    const johnHome = join(root, 'john-keep');
+    await rdv(['init', '--profile', 'omer', '--email', 'omer-keep@example.com', '--relay', relay.url], omerHome);
+    await rdv(['init', '--profile', 'john', '--email', 'john-keep@doe.com', '--relay', relay.url], johnHome);
+    const cardFile = join(root, 'john-keep-card.json');
+    writeFileSync(cardFile, JSON.stringify((await rdv(['whoami'], johnHome)).lines[0].card));
+    const johnL = new Listener('john', johnHome, ['--auto-grant', 'friend', '--auto-grant-any-tier']);
+    const omerL = new Listener('omer', omerHome);
+    const john = new Home(johnHome);
+    const ctx = (positionals: string[], t?: Tty) => ({ home: john, out: new Output(true), values: {}, positionals, ...(t ? { tty: t } : {}) });
+    try {
+      await johnL.waitFor((l) => l.event === 'ready', 'ready', 10_000);
+      await omerL.waitFor((l) => l.event === 'ready', 'ready', 10_000);
+      await rdv(['contact', 'request', cardFile], omerHome);
+      const johnId = (await omerL.waitFor((l) => l.event === 'contact', 'omer contact', 10_000)).peer as string;
+      const omerId = (await rdv(['whoami'], omerHome)).lines[0].id as string;
+      await rdv(['contact', 'grant', omerId, '--invoke', REQUEST_URI], johnHome);
+      await ownerSecretSet(ctx([], tty(PASS)));
+      await contactAutoApprove(ctx([omerId, 'all'], tty(PASS)));
+      const covers = (j: Record<string, unknown>) => (j.auto_approve as { covers: string[] }).covers;
+
+      // Widened: meetings and the request capability stay covered; the new one is not, and the output says so in one line.
+      const wide = await rdv(['contact', 'grant', omerId, '--invoke', REQUEST_URI, '--invoke', MORE], johnHome);
+      expect(wide.lines[0].auto_approve).toEqual({ covers: [MEETINGS_CAPABILITY, REQUEST_URI], not_covered: [MORE] });
+      const listed = (await rdv(['contact', 'list'], johnHome)).lines[0];
+      expect(listed.auto_approve).toMatchObject({ mode: 'all', covers: [MEETINGS_CAPABILITY, REQUEST_URI], not_covered: [MORE] });
+      expect((await rdv(['audit', '--contact', omerId], johnHome)).lines.filter((a) => a.action === 'keep').at(-1)).toMatchObject({ by: 'human', via: 'cli', uncovered: [MORE] });
+
+      // A task under a covered capability still starts without asking.
+      const req = await rdv(['task', 'request', johnId, '--text', PEER_TEXT], omerHome);
+      const taskId = req.lines.find((l) => l.kind === 'requested')!.task as string;
+      await johnL.waitFor((l) => l.event === 'task' && l.task === taskId && l.kind === 'started' && l.auto_approved === true, 'auto start (john)', 10_000);
+
+      // Omer's own grant to John (a reverse grant): what John may do towards Omer; John's auto-approve is untouched.
+      const entry = john.readAutoApprove()[omerId];
+      await rdv(['contact', 'grant', johnId, '--invoke', MORE], omerHome);
+      await johnL.waitFor((l) => l.event === 'reverse-grant', 'john gets the reverse grant', 10_000);
+      expect(john.readAutoApprove()[omerId]).toEqual(entry);
+
+      // Narrowed (no meetings): just the request capability.
+      const narrow = await rdv(['contact', 'grant', omerId, '--no-meetings', '--invoke', REQUEST_URI], johnHome);
+      expect(covers(narrow.lines[0])).toEqual([REQUEST_URI]);
+      // Meetings granted back: not covered again until the owner turns it on for them.
+      const back = await rdv(['contact', 'grant', omerId, '--invoke', REQUEST_URI], johnHome);
+      expect(back.lines[0].auto_approve).toEqual({ covers: [REQUEST_URI], not_covered: [MEETINGS_CAPABILITY] });
+      // The same grant again: still on, nothing new in the audit log.
+      const lines = john.readAudit().length;
+      expect(covers((await rdv(['contact', 'grant', omerId, '--invoke', REQUEST_URI], johnHome)).lines[0])).toEqual([REQUEST_URI]);
+      expect(john.readAudit().length).toBe(lines);
+      // Narrowed to nothing it covered: off, audited.
+      const none = await rdv(['contact', 'grant', omerId, '--no-meetings', '--invoke', MORE], johnHome);
+      expect(none.lines[0].auto_approve).toBe('off');
+      expect(john.readAutoApprove()).toEqual({});
+      expect(john.readAudit().at(-1)).toMatchObject({ action: 'off', reason: 'grant-changed' });
     } finally {
       await Promise.all([johnL.stop(), omerL.stop()]);
     }

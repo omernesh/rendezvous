@@ -3203,6 +3203,85 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       contact follows), `plugin.test.ts` (guard, skill lint), gateway
       `auth.test.ts` (not available remotely). Wire vectors unchanged.
 
+## Auto-approve across a grant our human changes (v0.6.1, issue #93)
+
+92. **A re-grant, or a widened or narrowed grant, that our own human makes
+    to the same contact keeps its auto-approve, for what it covered that
+    the new grant still allows** (local state, not a spec change; the
+    owner's decision of 2026-10-26: "I expect it to remain this way until I
+    say otherwise"). No wire change; the test vectors are unchanged.
+    - **The one rebind path.** `grantKeepingAutoApprove` (cli
+      `autoapprove.ts`) wraps `Agent.allowInbound` inside the home lock at
+      the two places our human grants an existing contact: `rdv contact
+      grant <agent-id>` and rdv-mcp's `rdv_grant` with `agent_id`
+      (`grantInbound`, after the form or the phrase passed and the subject
+      was re-checked under the lock). Approving a contact *request* is not
+      wrapped (security review): a request still pending from before the
+      peer became a contact can be granted, and that re-founds the contact
+      (new grant ID, the request's card and binding, a new expiry), so an
+      entry for that peer ends there as before.
+      Before the grant it runs the full check (`autoApproved`: MAC, times,
+      passphrase binding, grant binding, fork; a failing entry is removed
+      and audited as before). After it, if the contact is still a granted,
+      unblocked, unrefused contact, the stored entry is still the one
+      checked (same MAC) and the passphrase record is unchanged, the entry
+      is rewritten under the agent key with the new `grantId`, `since` and
+      scope digest, `covers` = what it covered before ∩ what the new grant
+      allows, and `set`, `until` and `owner` unchanged. The same grant
+      again (same ID, `since`, scope) writes nothing. If nothing it covered
+      is left it is not rewritten, so the sweep after the command ends it
+      (`grant-changed`, audited, `auto_approve_off` event in MCP).
+    - **Coverage only shrinks.** `covers` is stored narrowed, so a
+      capability dropped by a narrower grant and granted again later is not
+      covered again, and one the grant adds is never covered: both need
+      the owner to turn it on (the passphrase path, which shows the
+      warning). Limits on a covered capability move with the grant the
+      human approved; that grant is their decision, through its own gate.
+    - **Everything else still ends it.** Off by the owner, revoke, block,
+      abuse revoke, a fork or rollback refusal, a passphrase change, reset
+      or deletion, expiry. Any grant change that did not pass through the
+      rebind path still fails the binding: a grant *received* from the
+      peer (a fresh contact grant for a request we re-sent, or a probe
+      answer we confirm, re-founds the contact under the peer's grant ID),
+      the listener's allowlist auto-grant, approving a request (above), or
+      a hand-edited `agent.json`. A reverse grant (NOTES 60) moves only
+      `outboundScope` and never touched the binding.
+    - **Known limits (security review, issue #94).** `allowInbound` keeps
+      `grantId` and `since`, so after narrow-then-widen-back the scope
+      digest matches an older entry again: someone who can write the home
+      but not read `agent.json` could put back an older `autoapprove.json`
+      and revive a dropped capability (a file rollback, possible before
+      this change after a narrowing or an off too). And the grant form
+      does not tell the human that auto-approve stays on for the contact
+      whose limits they loosen.
+    - **Audit and display.** A rebind appends `gate: "auto-approve"`,
+      `by: "human"`, `action: "keep"`, `capabilities` (still covered),
+      `uncovered` (the grant allows, auto-approve does not), `dropped`
+      (covered before, no longer granted), `until`, `via` (no peer text).
+      `rdv contact list` shows `covers` and `not_covered`; `rdv_status`'s
+      per-contact `auto_approve` adds `not_covered`. The grant's output
+      gets one line (CLI) or an `auto_approve` object (MCP: `state`,
+      `covers`, `not_covered`, `no_longer_granted`, and a note telling the
+      model to tell the user as information and never to suggest turning
+      it on); the `rdv_grant` tool description does not mention it.
+    - **SPEC wording.** §5.5.1 "Bound to the grant" still says a changed
+      or widened grant turns it off. This keeps the setting's intent (the
+      owner's standing approval for what they were shown) and changes only
+      what a grant change by that same owner does, so it was recorded here
+      as local behaviour; rev 3 may reword the bullet to "a grant change
+      the owner did not make".
+    - **Tests.** cli `autoapprove.test.ts`: widened (old capabilities
+      auto, the new one asks, audited, status), narrowed and granted back
+      (not covered again), re-granted on the same terms (new grant ID:
+      still on, expiry kept; the same grant: no audit line), narrowed to
+      nothing (off), fail closed (forged entry, a binding changed another
+      way, a block or fork during the grant, a passphrase change), a
+      reverse grant changes nothing, a contact not on it; and end to end
+      with real `rdv` processes (widen, the peer's reverse grant, narrow,
+      grant back, same grant, nothing left). MCP `autoapprove.test.ts`:
+      `rdv_grant` widen, narrow, grant back, same terms, nothing left (the
+      event), with a task still auto-started after the widen.
+
 ## Not implemented yet
 
 
