@@ -23,7 +23,7 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { emptyState, emptyTaskState, type FilePart, type NegotiationState, type TaskEngineState, type TaskPart } from '@rendezvous/a2a';
+import { type BoardState, emptyState, emptyTaskState, type FilePart, type InvokeCounters, type NegotiationState, type TaskEngineState, type TaskPart } from '@rendezvous/a2a';
 import type { AddressCard, AgentState, DiscoveryAddress, FileEnc, GrantScope, GroupScope, InboundPolicy, NewcomerPolicy, Payload, RelayStatus, Tier, TransferState } from '@rendezvous/core';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { acquireLock, writeAtomic } from './fsutil.js';
@@ -82,7 +82,7 @@ export interface InboxEntry {
  * dinner, canceling an agreed one, or granting an existing contact rights
  * towards us (`inbound`, issue #1: a reverse grant).
  */
-export type ConsentAction = 'request' | 'candidate' | 'meeting' | 'cancel' | 'inbound' | 'task-start' | 'task-release' | 'relays' | 'group-join' | 'group-newcomer' | 'group-invite';
+export type ConsentAction = 'request' | 'candidate' | 'meeting' | 'cancel' | 'inbound' | 'task-start' | 'task-release' | 'relays' | 'group-join' | 'group-newcomer' | 'group-invite' | 'group-leave' | 'group-remove' | 'group-terms';
 
 /**
  * One of the owner's files in a draft, as the release gate shows it: what
@@ -141,6 +141,22 @@ export interface TaskHostState {
    * what they were shown.
    */
   requests?: Record<string, HeldRequest>;
+  /**
+   * Tasks in groups (SPEC §7.8.4, issue #79), by group ID: the board (our
+   * projection of the group's task messages), the tasks engine for the
+   * tasks assigned to us (the requester is the engine's peer; what it may
+   * invoke is our group terms), their drafts waiting for release, and the
+   * counts our terms' limits are applied to.
+   */
+  groups?: Record<string, GroupTaskHost>;
+}
+
+/** One group's tasks in tasks.json. */
+export interface GroupTaskHost {
+  board: BoardState;
+  engine: TaskEngineState;
+  releases: Record<string, PendingRelease>;
+  invoked?: InvokeCounters;
 }
 
 /** A task request with the owner's files, waiting for the human's release: exactly the arguments requestTask gets once released. */
@@ -215,6 +231,8 @@ export interface AuditEntry {
   by: 'grant' | 'human' | 'auto-approve';
   approval?: string;
   digest?: string;
+  /** A task in a group (SPEC §7.8.4): which group. */
+  group?: string;
   /** Release lines: SHA-256 and size of each payload that left (ours, never the peer's). */
   sent?: Array<{ sha256: string; bytes: number }>;
   /** gate `auto-approve`: what changed (`set`, `extend`, `off`); gate `owner-secret`: `set`, `changed` or `reset`. */
@@ -539,10 +557,16 @@ export class Home {
     if (!existsSync(this.tasksPath)) return { v: 1, engine: emptyTaskState(), releases: {} };
     const s = readJson<TaskHostState>(this.tasksPath);
     const ok = (o: unknown) => typeof o === 'object' && o !== null && !Array.isArray(o);
-    if (s?.v !== 1 || !ok(s.engine) || s.engine.v !== 1 || !ok(s.engine.tasks) || !ok(s.releases) || (s.received !== undefined && !ok(s.received)) || (s.requests !== undefined && !ok(s.requests))) {
+    if (s?.v !== 1 || !ok(s.engine) || s.engine.v !== 1 || !ok(s.engine.tasks) || !ok(s.releases) || (s.received !== undefined && !ok(s.received)) || (s.requests !== undefined && !ok(s.requests)) || (s.groups !== undefined && !ok(s.groups))) {
       throw new CliError(`unrecognized ${this.tasksPath}`);
     }
     s.engine.dropped ??= {};
+    for (const [id, g] of Object.entries(s.groups ?? {})) {
+      if (!ok(g) || !ok(g.board) || g.board.v !== 1 || !ok(g.board.tasks) || !ok(g.engine) || g.engine.v !== 1 || !ok(g.engine.tasks) || !ok(g.releases)) {
+        throw new CliError(`unrecognized ${this.tasksPath} (group ${id})`);
+      }
+      g.engine.dropped ??= {};
+    }
     return s;
   }
 

@@ -216,13 +216,13 @@ false</code>) that changes nothing; neither a cancel nor a timeout ever approves
 </tr>
 <tr>
 <td><code>rdv_task</code></td>
-<td>action <code>list</code> / <code>status</code> / <code>read</code> / <code>request</code> / <code>input</code> / <code>cancel</code> / <code>approve-start</code> / <code>decline</code> / <code>submit</code> / <code>approve-release</code>; task_id, agent_id or to, capability (default <code>request/v1</code>), text, input, data, expires, reason, kind (<code>result</code> / <code>question</code> / <code>finish</code>), name, files, inline_files, complete, outcome, confirm_phrase</td>
+<td>action <code>list</code> / <code>status</code> / <code>read</code> / <code>request</code> / <code>input</code> / <code>cancel</code> / <code>approve-start</code> / <code>decline</code> / <code>submit</code> / <code>approve-release</code>; task_id, group_id (a task a group member gave us: <code>status</code>, <code>read</code>, <code>approve-start</code>, <code>decline</code>, <code>submit</code>, <code>approve-release</code>), agent_id or to, capability (default <code>request/v1</code>), text, input, data, expires, reason, kind (<code>result</code> / <code>question</code> / <code>finish</code>), name, files, inline_files, complete, outcome, confirm_phrase</td>
 <td>tasks with state (peer text as <code>untrusted_peer_text</code>); <code>read</code> adds the rules for handling a peer's task and changes nothing; <code>approve-start</code> and <code>approve-release</code> need the human (below). No result carries a phrase or a file key</td>
 </tr>
 <tr>
 <td><code>rdv_group</code></td>
-<td>action <code>list</code> / <code>create</code> / <code>invite</code> / <code>join</code> / <code>decline</code> / <code>approve</code>; name (create), group_id, agent_id or to, name and greeting (invite), invite_id (join, decline), invoke, max_frequency, newcomers <code>ask</code> / <code>trust-admin</code> (join), confirm_phrase (join, approve)</td>
-<td>groups (SPEC §7.8): members with, for each, whether they are the user's contact or only named by the admin (<code>untrusted_peer_text</code>), who the user approved and who waits for them; invites waiting for the user. <code>invite</code>, <code>join</code> and <code>approve</code> need the human (below). No result carries a phrase</td>
+<td>action <code>list</code> / <code>create</code> / <code>invite</code> / <code>join</code> / <code>decline</code> / <code>approve</code> / <code>board</code> / <code>post</code> / <code>request</code> / <code>claim</code> / <code>assign</code> / <code>unassign</code> / <code>cancel</code> / <code>input</code> / <code>leave</code> / <code>remove</code> / <code>terms</code>; name (create), group_id, agent_id or to, name and greeting (invite), invite_id (join, decline), invoke, max_frequency, newcomers <code>ask</code> / <code>trust-admin</code> (join, terms), text (post, request, claim, input), capability, private, references, input, expires (request), task_id and requester (claim, assign, unassign, cancel, input), confirm_phrase (invite, join, approve, leave, remove, terms)</td>
+<td>groups (SPEC §7.8): members with, for each, whether they are the user's contact or only named by the admin (<code>untrusted_peer_text</code>), who the user approved and who waits for them; invites waiting for the user; the board (SPEC §7.8.4: tasks, claims, assignees, states, results as <code>untrusted_peer_text</code>). <code>invite</code>, <code>join</code>, <code>approve</code>, <code>leave</code>, <code>remove</code> and <code>terms</code> need the human (below); a task a member gives the agent waits for the human through <code>rdv_task</code> with <code>group_id</code>. No result carries a phrase</td>
 </tr>
 <tr>
 <td><code>rdv_file</code></td>
@@ -237,6 +237,7 @@ arrive, so a client that subscribes needn't poll.</p>
 <p>Events: <code>contact_request</code>, <code>contact_candidate</code> (an answer to our discovery
 probe, confirmed through the same human gate as a grant), <code>contact</code>, <code>message</code>, <code>revoked</code>, <code>dropped</code>, <code>error</code>,
 <code>reverse_grant</code> (what a contact's human now lets us do: <code>may_propose_meetings</code> and <code>invoke</code>, the capability URIs),
+<code>group_task</code> (a task on a group board, SPEC §7.8.4: kind posted / claimed / assigned / released / reopened / input / status / artifact / canceled / expired; what members wrote as <code>untrusted_peer_text</code>), a <code>task</code> event with <code>group_id</code> for a task a group member gave this agent,
 and <code>dinner</code> (kind proposed / offer-received / countered / confirm-needed /
 accepted / completed / released / rejected / canceled / expired / status /
 refused (a proposal over the meeting limits of our grant, declined at once), with

@@ -74,7 +74,10 @@
   their sender, sealed to each member over the pairwise channels, with a
   per-sender group chain and `heads` so that a member who leaves someone
   out, or tells members different things, is caught; group resend, leaving
-  and removal, and the rate rules. Tasks in a group follow.
+  and removal, and the rate rules. Tasks in a group (v0.4, issue #79): a
+  board each member projects from the task messages, claim and assign by
+  the requester, the assignee's own gates under its group-scoped grant, and
+  changing one's own terms.
 - **Elsewhere:** threat-model rows (§8), probe privacy (§9), new open problems
   (§11), phases aligned with the implementation plan (§12), MCP consent and
   inbox semantics (§13).
@@ -906,7 +909,9 @@ MAY set `auto_approve: "all"` on that contact, optionally with an expiry
   sizes, the untrusted-content rules (§5.6) and the file-fetch rules
   (§7.7) all still apply, and gross abuse still revokes (§5.3).
 - **What it never covers.** Creating a contact (approving a request or a
-  discovery candidate); joining a group, or approving a group newcomer;
+  discovery candidate); joining a group, approving a group newcomer,
+  leaving one, removing a member, changing one's own group terms, or a task
+  in a group (§7.8.4);
   granting anyone, or widening any grant, this contact's included;
   attaching the owner's files to a task *we* send; cancelling an agreed
   meeting; and setting, extending or changing auto-approve itself. Each of
@@ -1739,11 +1744,11 @@ a proxy or decline the transfer. The relay sees nothing new.
 
 ### 7.8 Groups
 
-> **Spec change (v0.4, issues #77, #78).** New section, from the approved
+> **Spec change (v0.4, issues #77, #78, #79).** New section, from the approved
 > design (`docs/design/general-tasks-and-groups.md` Part B): membership
 > (§7.8.1, §7.8.2), then group messages, removal and leaving, ordering and
-> abuse (§7.8.3, §7.8.5–§7.8.7, issue #78). Tasks in a group (design §7.8.4)
-> follow in issue #79.
+> abuse (§7.8.3, §7.8.5–§7.8.7, issue #78), and tasks in a group (§7.8.4,
+> issue #79).
 
 A group is three or more agents sharing messages and tasks under the
 **groups extension**, `https://rendezvous.nesher.co/ext/groups/v1`, a
@@ -1942,7 +1947,92 @@ said:
   payloads (`rdv/group-msg` and the group control payloads of §7.8.1–§7.8.7,
   `rdv/resend` included) for groups both are in; anything pairwise is
   refused as from a stranger. Hosts keep group messages apart from the
-  pairwise inbox, so no pairwise engine (tasks, meetings, files) runs on one.
+  pairwise inbox, so no pairwise engine (tasks, meetings, files) runs on one;
+  a task payload in a group goes to the board and its own engine (§7.8.4).
+
+#### 7.8.4 Tasks in a group
+
+(**Spec change**, issue #79.) Tasks (§7.6) travel in group messages: the
+body of an `rdv/group-msg` is a tasks/v1 payload whose `contextId` is the
+group ID, and whose message lists the groups extension in `extensions`.
+
+- **Identity.** A task in a group is (requester, `taskId`): the requester
+  chooses the ID, so a member that reuses another's ID names a task of its
+  own, never that one. Verbs that are not the requester's name it:
+
+  | `data.rdv` | From | Fields | Meaning |
+  |---|---|---|---|
+  | `task/request` | any member | as §7.6.1, optional `assignee` | a task on the board: open, or for one member |
+  | `task/claim` | a member other than the requester | `requester` | an offer to do an open task (its text parts are the offer) |
+  | `task/assign` | the requester; an admin only once the requester left | `requester`, `assignee` | the requester's choice of one member for an open task |
+  | `task/release` | the assignee, or whoever may assign | `requester` | the task is open again |
+  | `task/input`, `rdv/cancel` | the requester | as §7.6.1 | as §7.6 |
+
+  A status or artifact update (§7.6.1) comes from the assignee only, and
+  names the requester in its `metadata` under
+  `https://rendezvous.nesher.co/ext/groups/v1/requester`. `assignee` names
+  another member; the first claim is not the winner, so no ordering between
+  members is needed. A pairwise peer never takes these verbs or `assignee`
+  (they are not §7.6's): only a group message carries them.
+- **The board** is each member's projection of the task messages it took
+  (board-visible, or private to it): each task's request, its claims, its
+  assignee, its state as the assignee reports it (forward only, as §7.6.2),
+  and its artifacts. It is not a shared document, so there is nothing to
+  merge: members who received the same messages show the same board. A
+  message that the rules above do not allow changes nothing; one about a
+  task not held yet (its request or its assign is still on its way from
+  another member) is kept a short while and tried again after each change
+  (the reference: 16 per board, 4 per sender, 10 minutes). Bounds
+  (reference): 64 tasks per board, 16 open per requester, 15 claims and 8
+  artifacts per task.
+- **Private tasks.** A `task/request` sent privately (§7.8.3) to its
+  assignee is the assignee's and the requester's: everything about it goes
+  only to them (and to any other member it named).
+- **Doing it.** The assignee treats the task exactly as a pairwise one from
+  the requester (§7.6): the requester's right to invoke the capability is the
+  assignee's group-scoped grant, its join's `scope` (§7.8.2), whose
+  `max_frequency`, and each capability's `max_open` and `max_frequency`,
+  count every member's tasks in that group together (the scope is one grant
+  to all of them); over them a task is rejected (`rate`), never revoking
+  anything. A member the assignee's human has not approved (`ask`) invokes
+  nothing (`scope`). The start and release gates apply (§5.5), bound to what
+  the human is shown about the group as well: who asks (their contact, or
+  not and named by the admin), what the task refers to on the board
+  (`referenceTaskIds`: the results of earlier tasks there), and, for a
+  release, every member it goes to. Auto-approve never covers a task in a
+  group (§5.5.1): an entry covers what one contact's grant allows, not a
+  group scope. Everything the assignee's agent sends about the task goes to
+  the board (or, for a private task, to its members).
+- **Requester and admin.** The requester follows the board. Once it has
+  left the group, an admin may assign its tasks that are open again.
+- **Changing one's own terms.** A member's human may change what members
+  may invoke on it, and its newcomer policy, at any time: its agent signs its
+  join again with the new `scope` (the same card, invite and admin, the state
+  it holds now) and sends it in an `rdv/group-members` of its own to the
+  members it sends to and to the admins, who keep it for later newcomers. A
+  receiver keeps a member's own join only from that member (or an admin), as
+  for any join (§7.8.2). It takes effect at the member at once: what it does
+  is checked against its terms now. This is the human's decision, never
+  covered by auto-approve.
+- **Handing on the admin role.** An admin may issue a state that makes
+  another member an admin (§7.8.1); the last admin does so before leaving
+  (§7.8.5).
+
+The reference CLI's commands: `rdv group board`, `rdv group request <group-id>
+--text … [--assignee <agent-id>] [--private] [--ref <task-id>]…`, `rdv group
+claim`, `rdv group assign`, `rdv group unassign` (`task/release`), `rdv
+group cancel` and `rdv group input`; the assignee's gates are `rdv task
+approve|release … --group <group-id>`; the human's `rdv group terms
+<group-id> [--invoke <uri>]… [--max-frequency f] [--newcomers …]` and `rdv
+group promote <group-id> <agent-id>` are on the consent guard's list. The
+MCP server's `rdv_group` posts, shows the board, requests, claims, assigns,
+unassigns and cancels, and asks the human (form or confirm phrase, bound to
+what is asked and the group as shown) for "leave", "remove" and "terms";
+`rdv_task` takes `group_id` for a task in a group.
+
+No new signed document: the payloads are §7.6's inside `rdv/group-msg`, and a
+member's new terms are an `rdv/group-join` (§7.8.2), so the test vectors do not
+change.
 
 #### 7.8.5 Removal and leaving
 
@@ -1963,12 +2053,14 @@ said:
   at (a replay). Each member stops sending to it and taking its group
   messages on receipt, without waiting for the admin's next state; an admin
   issues that state on receipt. The last admin must hand the role to
-  another member first; a group whose admins all left keeps working among
-  its members but cannot change membership.
+  another member first (a state that makes it an admin, §7.8.4); a group
+  whose admins all left keeps working among its members but cannot change
+  membership.
 - **Afterwards**: the channel kept for the group is dropped unless the two
   are contacts or share another group. Tasks assigned to the departed
-  member go back to open; its pending requests are canceled locally (with
-  tasks in a group, issue #79).
+  member go back to open; its requests nobody was assigned are canceled
+  locally, and an admin may assign the others once they are open again
+  (§7.8.4).
 
 #### 7.8.6 Ordering, forks and equivocation
 
@@ -2076,7 +2168,10 @@ replays of the old one stay duplicates.
 | A member tells John "done" and Dana "not started", leaves someone out, or restored a backup | Per-sender group chain and `heads`: a gap asks for a group resend and is shown to the human; two headers it signed at one `gseq` are proof, exchanged as headers only (no body), and its group messages are refused until each human re-syncs it (§7.8.6) |
 | A member lies in its `heads`, forges evidence, or sends from outside the group | A `heads` claim only makes the receiver send that member its own signed copy; evidence counts only with two valid signatures by the accused; a non-member's group payloads change no state (§7.8.3, §7.8.6) |
 | A member floods the group | `member_rate` and the receiver's own ceiling: muted, the human told, the admins sent a report; nothing is removed on a report (§7.8.7) |
-| An assistant leaves a group or removes a member because a peer's text asks it to | Leaving and removing are the human's commands; group messages are quarantined peer text (§5.6, §7.8.5) |
+| An assistant leaves a group or removes a member because a peer's text asks it to | Leaving and removing are the human's: their commands, or the MCP server's form or confirm phrase; group messages are quarantined peer text (§5.6, §7.8.5) |
+| A member reports on, assigns or takes over a task that is not its own | Only the assignee reports, only the requester assigns (an admin once it left); a task is (requester, ID), so reusing an ID names another task; anything else changes no member's board (§7.8.4) |
+| A group task slips past its human, or a result reaches more members than shown | The assignee's start and release gates apply, bound to who asks, what it refers to and every member a result goes to; auto-approve never covers a group task (§7.8.4) |
+| Members ask one member for too much | The member's group terms (capabilities, `max_open`, `max_frequency`, counting every member together) reject the excess; an unapproved newcomer invokes nothing (§7.8.4) |
 | Stranger answers a topic probe | Grant recorded as `claimed`; grantor fingerprint shown before trust (§5.3) |
 | Relay logs metadata (who talks to whom) | Envelope minimizes metadata; fallback to human channels if metadata exposure is unacceptable |
 | Spam agents (Sybil) | Consent-first inbound; key-based block; tier-based rate caps; §10 reputation |
@@ -2132,7 +2227,9 @@ replays of the old one stay duplicates.
   automatically. Per-capability limits (`scope.invoke`, §5.3) reject only
   the task that goes over them, and revoke the grant only for gross abuse
   (**spec change**, issue #28). In a group, `member_rate` and the
-  receiver's own ceiling mute a flooding member, never revoking (§7.8.7).
+  receiver's own ceiling mute a flooding member, never revoking (§7.8.7),
+  and the joiner's group-scoped `max_frequency` rejects tasks over it,
+  counting every member's together (§7.8.4).
 - **Optional reputation:** a contact may attach verifiable vouches ("this key
   is also trusted by N of your existing contacts") — web-of-trust signals,
   never a global score.
@@ -2245,12 +2342,13 @@ Proposed MCP tool API (v0.3):
 | `rdv_send` | send an envelope (task, message, proposal) |
 | `rdv_inbox` | read events after a cursor (an event log; nothing is acknowledged to the peer) |
 | `rdv_negotiate` | A2A task exchange lifecycle |
-| `rdv_group` | groups (§7.8): create one, list groups and invites; inviting a contact, joining and approving a newcomer only with the human's own approval (§5.5). Group messages, equivocation, gaps, mutes, reports and members leaving arrive as `rdv_inbox` events, a message's body as untrusted peer text |
-| `rdv_task` | general tasks (§7.6): request one from a contact, list and show them, answer `input-required`, cancel; for a contact's task, approve its start and release each result, both only with the human's own approval (§5.5) |
+| `rdv_group` | groups (§7.8): create one, list groups and invites; inviting a contact, joining, approving a newcomer, leaving, removing a member and changing one's own terms only with the human's own approval (§5.5); posting, the board, and requesting, claiming, assigning and canceling tasks on it (§7.8.4). Group messages, board changes, equivocation, gaps, mutes, reports and members leaving arrive as `rdv_inbox` events, what members wrote as untrusted peer text |
+| `rdv_task` | general tasks (§7.6): request one from a contact, list and show them, answer `input-required`, cancel; for a contact's task (or one a group member gave the agent, with `group_id`), approve its start and release each result, both only with the human's own approval (§5.5) |
 
 `rdv_grant` MUST NOT succeed on the model's say-so (§5.5), nor may
 `rdv_task` pass a start or release gate on it, nor `rdv_group` invite
-someone, join a group or approve a newcomer, and peer text in any result
+someone, join a group, approve a newcomer, leave, remove a member or change
+the user's terms, and peer text in any result
 is returned marked as untrusted (§5.6). One server runs per home
 state directory.
 

@@ -70,6 +70,7 @@ import {
 } from './groups.js';
 import { isTransferPayload, transferEventText, transfersInbound } from './files.js';
 import { cardRefreshText, hostCardCapabilities, hostRegistry, refreshHostCard, taskEventText, taskEventView, tasksExpiring, tasksInbound, tasksRoute } from './tasks.js';
+import { boardEventText, boardEventView, type GroupInbound, groupTaskEventText, groupTaskEventView, groupTasksInbound, isGroupTaskBody } from './grouptasks.js';
 import { relaySets, relayTransport } from './transport.js';
 
 /** How often `listen --negotiate` checks pending negotiations for expiry. */
@@ -285,6 +286,7 @@ async function handleLocked(
       const grants: Promise<unknown>[] = [];
       const inbox: InboxEntry[] = [];
       const messageEvents = new Map<InboxEntry, Emitted>();
+      const groupIn: GroupInbound = { deliveries: [], departures: [] };
       let flushed = 0;
       // Inbox first, then state: a crash in between re-delivers rather than loses.
       const save = () => {
@@ -330,15 +332,27 @@ async function handleLocked(
       agent.on('group-invites-evicted', (total) =>
         events.push({ obj: { event: 'group-invites-evicted', total }, human: `group invites full: dropped the oldest (${total} so far)` }),
       );
-      agent.on('group-state', (c) => events.push({ obj: changeView(c), human: changeText(c) }));
+      agent.on('group-state', (c) => {
+        // Members a state removed: the board reopens their tasks and cancels their open requests (§7.8.5).
+        if (!c.left) for (const member of c.removed) groupIn.departures.push({ group: c.record.group, member });
+        events.push({ obj: changeView(c), human: changeText(c) });
+      });
       agent.on('group-fork', (r) => events.push({ obj: { ...groupView(agent, r), event: 'group-fork' }, human: forkText(r) }));
       // Group messages (issue #78): events only, never the inbox, so no pairwise engine (tasks, dinners, files) runs on a member's words.
-      agent.on('group-message', (d) => events.push({ obj: groupMessageView(d), human: groupMessageText(agent, d) }));
+      // A task payload goes to the board (issue #79), whose own events say what it did.
+      agent.on('group-message', (d) => {
+        const board = isGroupTaskBody(d.body);
+        if (board) groupIn.deliveries.push(d);
+        events.push({ obj: { ...groupMessageView(d), ...(board ? { routed: 'board' } : {}) }, human: board ? undefined : groupMessageText(agent, d) });
+      });
       agent.on('group-equivocation', (e) => events.push({ obj: equivocationView(e), human: equivocationText(agent, e) }));
       agent.on('group-gap', (g) => events.push({ obj: gapView(g), human: gapText(agent, g) }));
       agent.on('group-mute', (m) => events.push({ obj: muteView(m), human: muteText(agent, m) }));
       agent.on('group-report', (r) => events.push({ obj: reportView(r), human: reportText(agent, r) }));
-      agent.on('group-left', (l) => events.push({ obj: leftView(l), human: leftText(agent, l) }));
+      agent.on('group-left', (l) => {
+        groupIn.departures.push(l);
+        events.push({ obj: leftView(l), human: leftText(agent, l) });
+      });
       // We revoked a contact for gross abuse of per-capability limits (§5.3, issue #28): an rdv/revoke went out.
       agent.on('task-abuse', (a) => events.push({ obj: { event: 'task-abuse', ...a }, human: abuseText(a) }));
       agent.on('dropped', (reason, detail) => {
@@ -366,6 +380,8 @@ async function handleLocked(
       }
       await agent.idle();
       await routeInbound(home, opts, agent, inbox, messageEvents, sweep, events);
+      await agent.idle();
+      await groupTasks(home, opts, agent, groupIn, sweep, events);
       await agent.idle();
       // auto-approve ends with the grant it was set on (revoked, blocked, abuse, a fork) and on expiry: off now, audited (issue #25).
       const auto = sweepAutoApprove(home, subjectOf(agent));
@@ -459,6 +475,18 @@ async function routeInbound(
     });
   }
   for (const message of run.errors) events.push({ obj: { event: 'error', message }, human: `error: ${clean(message)}` });
+}
+
+/** Inside the lock: group task traffic to the boards and the group lanes' engines (issue #79). */
+async function groupTasks(home: Home, opts: Pick<ListenOptions, 'tasks'>, agent: Agent, groupIn: GroupInbound, sweep: boolean, events: Emitted[]): Promise<void> {
+  try {
+    const run = await groupTasksInbound(home, opts.tasks?.registry ?? hostRegistry(), agent, groupIn, sweep);
+    for (const e of run.board) events.push({ obj: boardEventView(e), human: boardEventText(agent, e) });
+    for (const e of run.tasks) events.push({ obj: groupTaskEventView(e), human: groupTaskEventText(e) });
+    for (const message of run.errors) events.push({ obj: { event: 'error', message }, human: `error: ${clean(message)}` });
+  } catch (err) {
+    events.push({ obj: { event: 'error', message: (err as Error).message }, human: `error: ${clean((err as Error).message)}` });
+  }
 }
 
 // Inside the lock: feed this item's meeting payloads to the engine, save its state, then hold and send.

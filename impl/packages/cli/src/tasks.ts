@@ -25,6 +25,15 @@
 import { randomUUID } from 'node:crypto';
 import {
   artifactExtensions,
+  type BoardCtx,
+  type BoardEvent,
+  type BoardState,
+  boardReceive,
+  boardTask,
+  boardTasksById,
+  emptyBoard,
+  emptyTaskState,
+  forBoard,
   askInput,
   type Capability,
   type FilePart,
@@ -50,13 +59,14 @@ import {
   type TaskEngineState,
   type TaskEvent,
   type TaskPart,
+  type TaskPayload,
   type TaskRecord,
   type TaskStep,
 } from '@rendezvous/a2a';
-import { Agent, type Contact, effectiveInvoke, fingerprint, GROUPS_EXTENSION, type Payload, type Transport } from '@rendezvous/core';
+import { Agent, type Contact, effectiveInvoke, fingerprint, type GroupBody, type GroupRecord, groupRecipients, GROUPS_EXTENSION, memberIds, memberOf, type Payload, type Transport } from '@rendezvous/core';
 import type { PhraseTarget } from './consent.js';
 import { changedAttachment, describeFile, describeNote, fileSummaries, fileSummary, normalizeTaskFiles, pruneReceived, redactFilePart, rememberReceived } from './files.js';
-import { type AuditEntry, CliError, type FileNote, type HeldRequest, type Home, type InboxEntry, type PendingRelease, type ReleaseContent, type TaskHostState } from './home.js';
+import { type AuditEntry, CliError, type FileNote, type GroupTaskHost, type HeldRequest, type Home, type InboxEntry, type PendingRelease, type ReleaseContent, type TaskHostState } from './home.js';
 import { clean } from './output.js';
 import { sha, sha256, stable } from './hash.js';
 import { autoApprovedFor, subjectOf } from './autoapprove.js';
@@ -142,6 +152,220 @@ export function inboundTaskCtx(registry: CapabilityRegistry, contact: Contact | 
   return taskCtx(registry, contact, t?.role === 'requester' && t.peer === contact?.peer ? 'outbound' : 'inbound', now);
 }
 
+// --- tasks in a group (SPEC §7.8.4, issue #79) --------------------------------------
+//
+// A task assigned to us in a group runs on the same engine and the same gates
+// as a pairwise one, in its own lane: tasks.json `groups[<group>]` holds its
+// engine state (the requester is the engine's peer) and its drafts. What the
+// requester may invoke is our group terms (our join's scope, read from the
+// group record at each step, so narrowing them takes effect at once), and
+// everything our engine sends goes to the board (or, for a private task, to
+// its members) instead of the pairwise channel. A gate there is also bound to
+// what the human is shown about the group: who asks (our contact or not, the
+// admin's name for them), what the task refers to on the board, and, for a
+// release, every member it goes to.
+
+/** Consent key ID of a group task's gates: the group and the task (both UUIDs, so the key is unambiguous). */
+export const groupTaskKey = (group: string, taskId: string): string => `${group}/${taskId}`;
+
+export const emptyGroupHost = (group: string): GroupTaskHost => ({ board: emptyBoard(group), engine: emptyTaskState(), releases: {} });
+
+/** One group's tasks in tasks.json (created when `create`). */
+export function groupHost(s: TaskHostState, group: string, create = false): GroupTaskHost | undefined {
+  if (s.groups && Object.hasOwn(s.groups, group)) return s.groups[group];
+  if (!create) return undefined;
+  s.groups = { ...(s.groups ?? {}), [group]: emptyGroupHost(group) };
+  return s.groups[group];
+}
+
+/** Where a task's engine state and drafts live: the pairwise lane, or one group's. */
+interface Lane {
+  group?: string;
+  engine: TaskEngineState;
+  readonly releases: Record<string, PendingRelease>;
+}
+
+function lane(s: TaskHostState, group?: string): Lane {
+  if (group === undefined) {
+    return {
+      get engine() {
+        return s.engine;
+      },
+      set engine(v) {
+        s.engine = v;
+      },
+      get releases() {
+        return s.releases;
+      },
+    };
+  }
+  const g = groupHost(s, group);
+  if (!g) throw new CliError(`no tasks in group ${group}`);
+  return {
+    group,
+    get engine() {
+      return g.engine;
+    },
+    set engine(v) {
+      g.engine = v;
+    },
+    get releases() {
+      return g.releases;
+    },
+  };
+}
+
+/** What the host knows of a group when it shows one of its tasks: the record, our board, and who our contacts are. */
+export interface GroupView {
+  group: string;
+  me: string;
+  record?: GroupRecord;
+  board: BoardState;
+  isContact: (peer: string) => boolean;
+  label?: (peer: string) => string | undefined;
+  isBlocked?: (peer: string) => boolean;
+}
+
+export function groupViewOf(agent: Agent, s: TaskHostState, group: string): GroupView {
+  return {
+    group,
+    me: agent.id,
+    record: agent.groups.group(group),
+    board: groupHost(s, group)?.board ?? emptyBoard(group),
+    isContact: (p) => !!agent.book.contact(p) && !agent.book.isBlocked(p),
+    label: (p) => agent.book.contact(p)?.label,
+    isBlocked: (p) => agent.book.isBlocked(p),
+  };
+}
+
+/** The board's context: the members of the state we hold who have not left, and its admins. */
+export function boardCtxOf(agent: Agent, group: string, now = new Date()): BoardCtx {
+  const r = agent.groups.group(group);
+  const here = (id: string) => !(r?.departed && Object.hasOwn(r.departed, id));
+  const members = r && r.status === 'active' ? memberIds(r.state).filter(here) : [];
+  const admins = r && r.status === 'active' ? r.state.members.filter((m) => m.role === 'admin' && here(m.id)).map((m) => m.id) : [];
+  return { now, me: agent.id, members, admins };
+}
+
+/**
+ * Who a post about this task reaches: for a private task, its members and its
+ * requester (those we send to); otherwise every member we send to (§7.8.3).
+ * `to` is set for a private post.
+ */
+export function postRecipients(v: GroupView, requester: string, taskId: string): { to?: string[]; recipients: string[] } {
+  const all = v.record && v.record.status === 'active' ? groupRecipients(v.record, v.me).filter((p) => !v.isBlocked?.(p)) : [];
+  const bt = boardTask(v.board, requester, taskId);
+  if (bt?.private) {
+    const to = [...new Set([...bt.private, bt.requester])].filter((id) => id !== v.me && all.includes(id)).sort();
+    return { to, recipients: to };
+  }
+  return { recipients: [...all].sort() };
+}
+
+/** A member as the human is shown it: its ID, the card the state pins, the admin's name, and whether it is our contact (with our label). */
+function memberShown(v: GroupView, id: string) {
+  const m = v.record ? memberOf(v.record.state, id) : undefined;
+  const contact = v.isContact(id);
+  return { id, card: m?.card ?? null, name: m?.name ?? null, contact, label: contact ? (v.label?.(id) ?? null) : null };
+}
+type MemberShown = ReturnType<typeof memberShown>;
+
+/** The tasks a group task refers to, as our board holds them (design B.5 step 7: "the input is Dana's artifact"). */
+function refsShown(v: GroupView, t: TaskRecord) {
+  return (t.referenceTaskIds ?? [])
+    .flatMap((id) => boardTasksById(v.board, id))
+    .map((bt) => ({
+      task: bt.id,
+      requester: memberShown(v, bt.requester),
+      assignee: bt.assignee ? memberShown(v, bt.assignee) : null,
+      state: bt.state,
+      title: bt.title,
+      artifacts: bt.artifacts.map((a) => ({ id: a.artifactId, name: a.name ?? null, text: a.text, files: a.files.map((f) => sha('rdv1/task-file', f)) })),
+    }));
+}
+
+/** What a group task's start gate shows beyond the task (and is bound to): the group, who asks, what it refers to. */
+export const groupStartShown = (v: GroupView, t: TaskRecord) => ({ group: v.group, name: v.record?.state.name ?? null, requester: memberShown(v, t.peer), refs: refsShown(v, t) });
+
+/** What a group task's release gate shows beyond the draft (and is bound to): every member it goes to. */
+export const groupReleaseShown = (v: GroupView, t: TaskRecord) => ({
+  group: v.group,
+  name: v.record?.state.name ?? null,
+  to: postRecipients(v, t.peer, t.id).recipients.map((id) => memberShown(v, id)),
+});
+
+const memberWords = (m: MemberShown): string =>
+  `${fingerprint(m.id)}, ${m.contact ? `your contact${m.label !== null ? ` ${JSON.stringify(clean(m.label))}` : ''}` : `not your contact${m.name !== null ? `, named by the admin as ${JSON.stringify(clean(m.name))}` : ''}`}`;
+
+/** The group part of a start gate, in words (peer text quoted and cleaned). */
+export function describeGroupStart(v: GroupView, t: TaskRecord): string[] {
+  const s = groupStartShown(v, t);
+  const lines = [`in group ${JSON.stringify(clean(s.name ?? v.group))} (${v.group}), asked by ${memberWords(s.requester)}`];
+  for (const r of s.refs) {
+    lines.push(`it refers to task ${r.task} (${r.state}${r.assignee ? `, done by ${memberWords(r.assignee)}` : ''}): ${JSON.stringify(clean(r.title))} (untrusted)`);
+    for (const a of r.artifacts) lines.push(`  its result${a.name !== null ? ` ${JSON.stringify(clean(a.name))}` : ''} (untrusted): ${JSON.stringify(clean(a.text))}${a.files.length ? ` and ${a.files.length} file(s)` : ''}`);
+  }
+  return lines;
+}
+
+/** The group part of a release gate, in words: who receives it. */
+export function describeGroupRelease(v: GroupView, t: TaskRecord): string {
+  const s = groupReleaseShown(v, t);
+  return `it goes to ${s.to.length} member(s) of group ${JSON.stringify(clean(s.name ?? v.group))}: ${s.to.map(memberWords).join('; ') || 'nobody (no member you send to)'}`;
+}
+
+/** The engine context for our steps on a group task: what members may invoke is our group terms, read now. */
+export function groupTaskCtx(registry: CapabilityRegistry, agent: Agent, group: string, now = new Date()): TaskCtx {
+  const r = agent.groups.group(group);
+  return { now, registry, invoke: r && r.status === 'active' ? (r.scope.invoke ?? {}) : null };
+}
+
+/** A post our engine (or our human) makes about a group task, applied to our own board before it is sent. */
+export interface BoardPost {
+  group: string;
+  payload: TaskPayload;
+  to?: string[];
+}
+
+/**
+ * Turn engine steps of a group lane into board posts: each status and
+ * artifact names its requester (GROUP_REQUESTER_KEY), goes to the board (or
+ * the task's private members), and is applied to our own board first, so
+ * what we show is what we sent. Call before the state is written.
+ */
+export function boardPosts(agent: Agent, s: TaskHostState, group: string, steps: TaskStep[], now = new Date()): { posts: BoardPost[]; events: BoardEvent[] } {
+  const g = groupHost(s, group, true)!;
+  const posts: BoardPost[] = [];
+  const events: BoardEvent[] = [];
+  for (const step of steps) {
+    for (const o of step.outgoing) {
+      const payload = forBoard(o.payload, o.to);
+      const id = payload.type === 'a2a/message' ? payload.message.taskId : payload.update.taskId;
+      const { to } = postRecipients(groupViewOf(agent, s, group), o.to, id);
+      if (to && to.length === 0) continue; // a private task none of whose members we send to
+      const applied = boardReceive(g.board, { from: agent.id, body: payload, board: !to, ...(to ? { to } : {}) }, boardCtxOf(agent, group, now));
+      g.board = applied.board;
+      events.push(...applied.events);
+      posts.push({ group, payload, ...(to ? { to } : {}) });
+    }
+  }
+  return { posts, events };
+}
+
+/** Send board posts (after the state is saved). Returns errors; the rest still go. */
+export async function sendPosts(agent: Agent, posts: BoardPost[]): Promise<string[]> {
+  const errors: string[] = [];
+  for (const p of posts) {
+    try {
+      const r = await agent.sendGroup(p.group, p.payload as unknown as GroupBody, p.to ? { to: p.to } : {});
+      for (const f of r.failed) errors.push(`posting to ${f.peer} in group ${p.group} failed: ${f.error}`);
+    } catch (err) {
+      errors.push(`posting to group ${p.group} failed: ${(err as Error).message}`);
+    }
+  }
+  return errors;
+}
+
 // --- digests: what the human approves --------------------------------------------
 
 /**
@@ -151,9 +375,10 @@ export function inboundTaskCtx(registry: CapabilityRegistry, contact: Contact | 
  * a step `input`), each text part's SHA-256 and each file part's hash.
  * Undefined unless the task waits at the start gate.
  */
-export function startDigest(t: TaskRecord): string | undefined {
+export function startDigest(t: TaskRecord, group?: unknown): string | undefined {
   if (t.role !== 'executor' || !t.gate || isFinished(t.state) || t.tombstone) return undefined;
   return sha('rdv1/task-start', {
+    ...(group !== undefined ? { group } : {}),
     peer: t.peer,
     fingerprint: fingerprint(t.peer),
     contextId: t.contextId,
@@ -171,16 +396,20 @@ export function startDigest(t: TaskRecord): string | undefined {
 }
 
 /** The digest a release approval is bound to: the peer, the task, and exactly what would leave (SPEC §5.5). */
-export function releaseDigest(t: TaskRecord | undefined, r: PendingRelease | undefined): string | undefined {
+export function releaseDigest(t: TaskRecord | undefined, r: PendingRelease | undefined, group?: unknown): string | undefined {
   if (!t || !r || t.role !== 'executor' || isFinished(t.state) || t.gate || r.taskId !== t.id || r.peer !== t.peer) return undefined;
-  return sha('rdv1/task-release', { peer: t.peer, fingerprint: fingerprint(t.peer), taskId: t.id, contextId: t.contextId, capability: t.capability, created: t.created, content: r.content });
+  return sha('rdv1/task-release', { ...(group !== undefined ? { group } : {}), peer: t.peer, fingerprint: fingerprint(t.peer), taskId: t.id, contextId: t.contextId, capability: t.capability, created: t.created, content: r.content });
 }
 
 /** The short form `rdv task list` shows and `rdv task approve|release --code` takes (48 bits). */
 export const gateCode = (digest: string): string => digest.slice(0, 12);
 
-/** The confirm-phrase targets: every task waiting at the start gate, and every draft waiting for release. */
-export function taskPhraseTargets(s: TaskHostState): PhraseTarget[] {
+/**
+ * The confirm-phrase targets: every task waiting at the start gate, and every
+ * draft waiting for release; with `views`, those of the group lanes too
+ * (keyed by groupTaskKey, bound to what the human is shown about the group).
+ */
+export function taskPhraseTargets(s: TaskHostState, views?: (group: string) => GroupView | undefined): PhraseTarget[] {
   const out: PhraseTarget[] = [];
   for (const t of Object.values(s.engine.tasks)) {
     const d = startDigest(t);
@@ -190,6 +419,17 @@ export function taskPhraseTargets(s: TaskHostState): PhraseTarget[] {
   }
   // Our requests that carry the owner's files (issue #53): released like a draft. Hold IDs are ours (UUIDs).
   for (const h of Object.values(s.requests ?? {})) out.push({ action: 'task-release', id: h.id, digest: heldRequestDigest(h) });
+  for (const [group, g] of Object.entries(s.groups ?? {})) {
+    const v = views?.(group);
+    if (!v) continue;
+    for (const t of Object.values(g.engine.tasks)) {
+      const d = t.gate ? startDigest(t, groupStartShown(v, t)) : undefined;
+      if (d) out.push({ action: 'task-start', id: groupTaskKey(group, t.id), digest: d });
+      const rel = Object.hasOwn(g.releases, t.id) ? g.releases[t.id] : undefined;
+      const r = rel ? releaseDigest(t, rel, groupReleaseShown(v, t)) : undefined;
+      if (r) out.push({ action: 'task-release', id: groupTaskKey(group, t.id), digest: r });
+    }
+  }
   return out;
 }
 
@@ -240,22 +480,26 @@ export function pruneReleases(s: TaskHostState, now = new Date()): void {
     }
     if (Object.keys(s.requests).length === 0) delete s.requests;
   }
-  for (const [id, r] of Object.entries(s.releases)) {
-    const t = Object.hasOwn(s.engine.tasks, id) ? s.engine.tasks[id] : undefined;
-    if (!t || t.role !== 'executor' || isFinished(t.state) || t.gate || r.taskId !== id || r.peer !== t.peer) delete s.releases[id];
-  }
+  const prune = (engine: TaskEngineState, releases: Record<string, PendingRelease>) => {
+    for (const [id, r] of Object.entries(releases)) {
+      const t = Object.hasOwn(engine.tasks, id) ? engine.tasks[id] : undefined;
+      if (!t || t.role !== 'executor' || isFinished(t.state) || t.gate || r.taskId !== id || r.peer !== t.peer) delete releases[id];
+    }
+  };
+  prune(s.engine, s.releases);
+  for (const g of Object.values(s.groups ?? {})) prune(g.engine, g.releases);
 }
 
-function audit(now: Date, t: { peer: string; capability: string; id: string; approval?: string }, gate: AuditEntry['gate'], by: AuditEntry['by'], digest?: string): AuditEntry {
-  return { ts: now.toISOString(), peer: t.peer, capability: t.capability, task: t.id, gate, by, ...(t.approval ? { approval: t.approval } : {}), ...(digest ? { digest } : {}) };
+function audit(now: Date, t: { peer: string; capability: string; id: string; approval?: string; group?: string }, gate: AuditEntry['gate'], by: AuditEntry['by'], digest?: string): AuditEntry {
+  return { ts: now.toISOString(), peer: t.peer, capability: t.capability, task: t.id, ...(t.group ? { group: t.group } : {}), gate, by, ...(t.approval ? { approval: t.approval } : {}), ...(digest ? { digest } : {}) };
 }
 
 /** The host side of a step's effects, before the state is saved: drafts of aborted tasks go, and gates passed without a prompt are audited. */
-function applyEffects(s: TaskHostState, step: TaskStep, now: Date, by: AuditEntry['by'], audits: AuditEntry[], digest?: string): void {
+export function applyEffects(l: { readonly releases: Record<string, PendingRelease>; group?: string }, step: TaskStep, now: Date, by: AuditEntry['by'], audits: AuditEntry[], digest?: string): void {
   for (const e of step.effects) {
     const t = step.state.tasks[e.taskId];
-    const rec = { peer: e.peer, capability: e.capability, id: e.taskId, approval: t?.approval };
-    if (e.kind === 'abort') delete s.releases[e.taskId];
+    const rec = { peer: e.peer, capability: e.capability, id: e.taskId, approval: t?.approval, group: l.group };
+    if (e.kind === 'abort') delete l.releases[e.taskId];
     else if (e.kind === 'start') audits.push(audit(now, rec, 'start', by, digest));
     else if (e.kind === 'notify') audits.push(audit(now, rec, 'notify', 'grant'));
   }
@@ -277,6 +521,10 @@ async function sendAll(agent: Agent, step: TaskStep): Promise<string[]> {
 }
 
 export interface TaskRun {
+  /** A group lane's run (SPEC §7.8.4): its events are about a task in this group. */
+  group?: string;
+  /** What our own posts did to our board (group lanes). */
+  board?: BoardEvent[];
   steps: TaskStep[];
   events: TaskEvent[];
   /**
@@ -312,7 +560,7 @@ export async function tasksInbound(home: Home, registry: CapabilityRegistry, age
     const ctx = inboundTaskCtx(registry, agent.book.contact(e.from), s.engine, files.payload, now);
     // Core's per-capability limiter (issue #28): max_open and max_frequency from our grant; gross abuse revokes.
     const step = receiveTask(s.engine, e.from, files.payload, { ...ctx, limit: (cap, o) => agent.admitTask(e.from, cap, o, now) });
-    applyEffects(s, step, now, 'grant', audits);
+    applyEffects(lane(s), step, now, 'grant', audits);
     s.engine = step.state;
     // A result's files, for a task we requested: kept so our agent can fetch them later, if it chooses.
     for (const ev of step.events) if (ev.kind === 'artifact' && ev.files?.length && ev.taskId) rememberReceived(s, ev.taskId, e.from, ev.files);
@@ -332,7 +580,7 @@ export async function tasksInbound(home: Home, registry: CapabilityRegistry, age
         if (err instanceof TaskError) continue; // the gate stays for the human
         throw err;
       }
-      applyEffects(s, started, now, 'auto-approve', audits, digest);
+      applyEffects(lane(s), started, now, 'auto-approve', audits, digest);
       s.engine = started.state;
       run.steps.push(started);
       autoSteps.add(started);
@@ -341,7 +589,7 @@ export async function tasksInbound(home: Home, registry: CapabilityRegistry, age
   }
   if (sweep) {
     const step = expireTasks(s.engine, { now });
-    applyEffects(s, step, now, 'grant', audits);
+    applyEffects(lane(s), step, now, 'grant', audits);
     s.engine = step.state;
     run.steps.push(step);
   }
@@ -374,7 +622,10 @@ export function tasksRoute(home: Home, entries: InboxEntry[]): { tasks: InboxEnt
 /** Any open task that can expire? Unreadable state counts, so the sweep reports it. */
 export function tasksExpiring(home: Home): boolean {
   try {
-    return Object.values(home.readTasks().engine.tasks).some((t) => !isFinished(t.state) && t.expires !== null);
+    const s = home.readTasks();
+    const open = (tasks: Record<string, TaskRecord>) => Object.values(tasks).some((t) => !isFinished(t.state) && t.expires !== null);
+    // Group lanes too (issue #79): their engines, and their boards' open tasks and early messages.
+    return open(s.engine.tasks) || Object.values(s.groups ?? {}).some((g) => open(g.engine.tasks) || Object.values(g.board.tasks).some((t) => !isFinished(t.state)) || !!g.board.early?.length);
   } catch {
     return true;
   }
@@ -392,41 +643,60 @@ function engine<T>(fn: () => T): T {
   }
 }
 
-/** Save the state, then send: a crash mid-send leaves a task that expires, not a reply to an unknown task (issue #4). */
-async function commit(home: Home, agent: Agent, s: TaskHostState, steps: TaskStep[], audits: AuditEntry[]): Promise<TaskRun> {
+/**
+ * Save the state, then send: a crash mid-send leaves a task that expires, not
+ * a reply to an unknown task (issue #4). A group lane's messages go to the
+ * board (applied to our own board before the save).
+ */
+async function commit(home: Home, agent: Agent, s: TaskHostState, steps: TaskStep[], audits: AuditEntry[], group?: string): Promise<TaskRun> {
   pruneReleases(s);
+  const board = group !== undefined ? boardPosts(agent, s, group, steps) : undefined;
   home.writeTasks(s);
   home.appendAudit(audits);
-  const run: TaskRun = { steps, events: [], notices: [], errors: [] };
+  const run: TaskRun = { steps, events: [], notices: [], errors: [], ...(group !== undefined ? { group, board: board!.events } : {}) };
   for (const step of steps) {
-    run.errors.push(...(await sendAll(agent, step)));
+    if (group === undefined) run.errors.push(...(await sendAll(agent, step)));
     run.events.push(...step.events);
   }
+  if (board) run.errors.push(...(await sendPosts(agent, board.posts)));
   return run;
 }
 
-function executorTask(s: TaskHostState, taskId: string): TaskRecord {
-  const t = Object.hasOwn(s.engine.tasks, taskId) ? s.engine.tasks[taskId] : undefined;
-  if (!t || t.role !== 'executor' || t.tombstone) throw new CliError(`no task ${taskId} from a peer`);
+function executorTask(engine: TaskEngineState, taskId: string, group?: string): TaskRecord {
+  const t = Object.hasOwn(engine.tasks, taskId) ? engine.tasks[taskId] : undefined;
+  if (!t || t.role !== 'executor' || t.tombstone) throw new CliError(group ? `no task ${taskId} of yours in group ${group}` : `no task ${taskId} from a peer`);
   return t;
 }
 
+/** A group lane: which group, and the agent that knows it (for what the human is shown about it). */
+export interface InGroup {
+  group: string;
+  agent: Agent;
+}
+
 /** A peer's task waiting at the start gate, as it is now, with the digest and code the human approves. */
-export function startView(home: Home, taskId: string): { task: TaskRecord; digest: string } {
-  const t = executorTask(home.readTasks(), taskId);
-  const digest = startDigest(t);
+export function startView(home: Home, taskId: string, g?: InGroup): { task: TaskRecord; digest: string } {
+  const s = home.readTasks();
+  const t = executorTask(lane(s, g?.group).engine, taskId, g?.group);
+  const digest = startDigest(t, g && t.gate ? groupStartShown(groupViewOf(g.agent, s, g.group), t) : undefined);
   if (!digest) throw new CliError(`task ${taskId} is not waiting for your approval (state ${t.state})`);
   return { task: t, digest };
 }
 
 /** A draft waiting for release, as it is now, with its digest. */
-export function releaseView(home: Home, taskId: string): { task: TaskRecord; release: PendingRelease; digest: string } {
+export function releaseView(home: Home, taskId: string, g?: InGroup): { task: TaskRecord; release: PendingRelease; digest: string } {
   const s = home.readTasks();
-  const t = executorTask(s, taskId);
-  const r = Object.hasOwn(s.releases, taskId) ? s.releases[taskId] : undefined;
-  const digest = releaseDigest(t, r);
+  const l = lane(s, g?.group);
+  const t = executorTask(l.engine, taskId, g?.group);
+  const r = Object.hasOwn(l.releases, taskId) ? l.releases[taskId] : undefined;
+  const digest = releaseDigest(t, r, g ? groupReleaseShown(groupViewOf(g.agent, s, g.group), t) : undefined);
   if (!r || !digest) throw new CliError(`task ${taskId} has no result waiting for your release`);
   return { task: t, release: r, digest };
+}
+
+/** The engine context for our own step on a task in lane `l` (the grant we gave the peer, or our group terms). */
+function stepCtx(registry: CapabilityRegistry, agent: Agent, l: Lane, t: TaskRecord, now: Date): TaskCtx {
+  return l.group !== undefined ? groupTaskCtx(registry, agent, l.group, now) : taskCtx(registry, agent.book.contact(t.peer), 'inbound', now);
 }
 
 /**
@@ -434,29 +704,33 @@ export function releaseView(home: Home, taskId: string): { task: TaskRecord; rel
  * task. Refused with TaskChangedError, nothing saved or sent, unless the task
  * is still the one the human reviewed.
  */
-export async function approveStart(home: Home, agent: Agent, registry: CapabilityRegistry, taskId: string, digest: string): Promise<TaskRun> {
+export async function approveStart(home: Home, agent: Agent, registry: CapabilityRegistry, taskId: string, digest: string, group?: string): Promise<TaskRun> {
   const s = home.readTasks();
-  const t = executorTask(s, taskId);
-  if (startDigest(t) !== digest) throw new TaskChangedError(`task ${taskId} changed since it was reviewed (or no longer waits for approval). Nothing was started.`);
+  const l = lane(s, group);
+  const t = executorTask(l.engine, taskId, group);
+  const shown = group !== undefined && t.gate ? groupStartShown(groupViewOf(agent, s, group), t) : undefined;
+  if (startDigest(t, shown) !== digest) throw new TaskChangedError(`task ${taskId} changed since it was reviewed (or no longer waits for approval). Nothing was started.`);
   const now = new Date();
-  const step = engine(() => startTask(s.engine, taskId, taskCtx(registry, agent.book.contact(t.peer), 'inbound', now)));
+  const step = engine(() => startTask(l.engine, taskId, stepCtx(registry, agent, l, t, now)));
   const audits: AuditEntry[] = [];
-  applyEffects(s, step, now, 'human', audits, digest);
-  s.engine = step.state;
-  return commit(home, agent, s, [step], audits);
+  applyEffects(l, step, now, 'human', audits, digest);
+  l.engine = step.state;
+  return commit(home, agent, s, [step], audits, group);
 }
 
 /** Our human says no at the start gate (or refuses a task before it starts): `rejected`. Reduce-only; bound to `digest` when given. */
-export async function declineStart(home: Home, agent: Agent, registry: CapabilityRegistry, taskId: string, digest?: string): Promise<TaskRun> {
+export async function declineStart(home: Home, agent: Agent, registry: CapabilityRegistry, taskId: string, digest?: string, group?: string): Promise<TaskRun> {
   const s = home.readTasks();
-  const t = executorTask(s, taskId);
-  if (digest !== undefined && startDigest(t) !== digest) throw new TaskChangedError(`task ${taskId} changed since it was reviewed. Nothing was declined.`);
+  const l = lane(s, group);
+  const t = executorTask(l.engine, taskId, group);
+  const shown = group !== undefined && t.gate ? groupStartShown(groupViewOf(agent, s, group), t) : undefined;
+  if (digest !== undefined && startDigest(t, shown) !== digest) throw new TaskChangedError(`task ${taskId} changed since it was reviewed. Nothing was declined.`);
   const now = new Date();
-  const step = engine(() => rejectTask(s.engine, taskId, taskCtx(registry, agent.book.contact(t.peer), 'inbound', now)));
+  const step = engine(() => rejectTask(l.engine, taskId, stepCtx(registry, agent, l, t, now)));
   const audits: AuditEntry[] = [];
-  applyEffects(s, step, now, 'human', audits);
-  s.engine = step.state;
-  return commit(home, agent, s, [step], audits);
+  applyEffects(l, step, now, 'human', audits);
+  l.engine = step.state;
+  return commit(home, agent, s, [step], audits, group);
 }
 
 export type DraftInput =
@@ -477,43 +751,51 @@ export async function submitDraft(
   registry: CapabilityRegistry,
   taskId: string,
   draft: DraftInput,
+  group?: string,
 ): Promise<{ run: TaskRun; held?: PendingRelease; digest?: string; autoReleased?: boolean }> {
   const s = home.readTasks();
-  const t = executorTask(s, taskId);
+  const l = lane(s, group);
+  const t = executorTask(l.engine, taskId, group);
   const now = new Date();
-  const ctx = taskCtx(registry, agent.book.contact(t.peer), 'inbound', now);
+  const ctx = stepCtx(registry, agent, l, t, now);
   let content: ReleaseContent;
   let step: TaskStep;
   if (draft.kind === 'artifact') {
-    if (draft.parts.some((p) => p.kind === 'file')) needsFilesExtension(agent, t.peer);
+    if (draft.parts.some((p) => p.kind === 'file')) {
+      if (group === undefined) needsFilesExtension(agent, t.peer);
+      // A result in a group goes to every member we send to: each one's card must list the files extension.
+      else for (const p of postRecipients(groupViewOf(agent, s, group), t.peer, t.id).recipients) needsFilesExtension(agent, p);
+    }
     const artifact = { artifactId: randomUUID(), parts: draft.parts, ...(draft.name !== undefined ? { name: draft.name } : {}), ...(draft.description !== undefined ? { description: draft.description } : {}), lastChunk: true };
     content = { kind: 'artifact', artifact, ...(draft.complete ? { complete: true } : {}), ...(draft.files?.length ? { files: draft.files } : {}) };
-    step = engine(() => sendArtifact(s.engine, taskId, ctx, artifact, { ownerData: true }));
+    step = engine(() => sendArtifact(l.engine, taskId, ctx, artifact, { ownerData: true }));
   } else if (draft.kind === 'question') {
     content = { kind: 'question', ...(draft.text !== undefined ? { text: draft.text } : {}), ...(draft.data !== undefined ? { data: draft.data } : {}) };
-    step = engine(() => askInput(s.engine, taskId, ctx, { text: draft.text, data: draft.data }, { ownerData: true }));
+    step = engine(() => askInput(l.engine, taskId, ctx, { text: draft.text, data: draft.data }, { ownerData: true }));
   } else {
     content = { kind: 'finish', outcome: draft.outcome, ...(draft.text !== undefined ? { text: draft.text } : {}), ...(draft.data !== undefined ? { data: draft.data } : {}) };
-    step = engine(() => finishTask(s.engine, taskId, ctx, draft.outcome, { text: draft.text, data: draft.data }, { ownerData: true }));
+    step = engine(() => finishTask(l.engine, taskId, ctx, draft.outcome, { text: draft.text, data: draft.data }, { ownerData: true }));
   }
   const audits: AuditEntry[] = [];
-  applyEffects(s, step, now, 'human', audits);
-  s.engine = step.state;
+  applyEffects(l, step, now, 'human', audits);
+  l.engine = step.state;
   if (step.effects.some((e) => e.kind === 'release-gate')) {
     const held: PendingRelease = { taskId, peer: t.peer, content, created: now.toISOString() };
-    s.releases[taskId] = held;
-    const digest = releaseDigest(s.engine.tasks[taskId], held);
+    l.releases[taskId] = held;
+    const nowTask = l.engine.tasks[taskId];
+    const digest = releaseDigest(nowTask, held, group !== undefined ? groupReleaseShown(groupViewOf(agent, s, group), nowTask) : undefined);
     // auto_approve: all (SPEC §5.5.1, issue #25): our human's standing approval for this contact releases it now,
     // checked here under the lock; off, expired or no longer bound to the grant, and it is held as always.
-    if (digest && typeof t.capability === 'string' && autoApprovedFor(home, subjectOf(agent), t.peer, t.capability, now)) {
+    // Never for a task in a group: a pairwise entry covers what the contact's grant allows, not what our group terms do.
+    if (group === undefined && digest && typeof t.capability === 'string' && autoApprovedFor(home, subjectOf(agent), t.peer, t.capability, now)) {
       return { run: await releaseHeld(home, agent, registry, s, taskId, held, digest, 'auto-approve', audits, now), autoReleased: true };
     }
-    const run = await commit(home, agent, s, [], audits);
+    const run = await commit(home, agent, s, [], audits, group);
     return { run, held, digest };
   }
   // Nothing to gate (a bare finish), or the grant no longer allows the task (the engine ended it, `scope`).
-  delete s.releases[taskId];
-  return { run: await commit(home, agent, s, [step], audits) };
+  delete l.releases[taskId];
+  return { run: await commit(home, agent, s, [step], audits, group) };
 }
 
 /**
@@ -521,12 +803,14 @@ export async function submitDraft(
  * draft as it was shown. Refused with TaskChangedError, nothing sent, unless
  * the draft and the task are still the ones the human reviewed.
  */
-export async function approveRelease(home: Home, agent: Agent, registry: CapabilityRegistry, taskId: string, digest: string): Promise<TaskRun> {
+export async function approveRelease(home: Home, agent: Agent, registry: CapabilityRegistry, taskId: string, digest: string, group?: string): Promise<TaskRun> {
   const s = home.readTasks();
-  const t = executorTask(s, taskId);
-  const r = Object.hasOwn(s.releases, taskId) ? s.releases[taskId] : undefined;
-  if (!r || releaseDigest(t, r) !== digest) throw new TaskChangedError(`the result for task ${taskId} changed since it was reviewed (or the task ended). Nothing was sent.`);
-  return releaseHeld(home, agent, registry, s, taskId, r, digest, 'human', [], new Date());
+  const l = lane(s, group);
+  const t = executorTask(l.engine, taskId, group);
+  const r = Object.hasOwn(l.releases, taskId) ? l.releases[taskId] : undefined;
+  const shown = group !== undefined ? groupReleaseShown(groupViewOf(agent, s, group), t) : undefined;
+  if (!r || releaseDigest(t, r, shown) !== digest) throw new TaskChangedError(`the result for task ${taskId} changed since it was reviewed (or the task ended). Nothing was sent.`);
+  return releaseHeld(home, agent, registry, s, taskId, r, digest, 'human', [], new Date(), group);
 }
 
 /** Send the held draft `r` (its digest checked by the caller) as it was shown, audit the release `by` whom, and commit. */
@@ -541,15 +825,17 @@ async function releaseHeld(
   by: AuditEntry['by'],
   audits: AuditEntry[],
   now: Date,
+  group?: string,
 ): Promise<TaskRun> {
-  const t = executorTask(s, taskId);
-  const ctx = () => taskCtx(registry, agent.book.contact(t.peer), 'inbound', now);
+  const l = lane(s, group);
+  const t = executorTask(l.engine, taskId, group);
+  const ctx = () => stepCtx(registry, agent, l, t, now);
   const steps: TaskStep[] = [];
   const c = r.content;
   const released = { released: true, ownerData: true };
   let step: TaskStep;
   if (c.kind === 'artifact') {
-    step = engine(() => sendArtifact(s.engine, taskId, ctx(), c.artifact, released));
+    step = engine(() => sendArtifact(l.engine, taskId, ctx(), c.artifact, released));
     // The payload that leaves is the one the human saw.
     const sent = step.outgoing.find((o) => o.payload.type === 'a2a/artifact-update');
     if (sent && stable((sent.payload as { update: { artifact: unknown } }).update.artifact) !== stable({ ...c.artifact, extensions: artifactExtensions(t.capability, c.artifact.parts), append: undefined, lastChunk: undefined }))
@@ -559,27 +845,28 @@ async function releaseHeld(
       steps.push(engine(() => finishTask(step.state, taskId, ctx(), 'completed')));
     }
   } else if (c.kind === 'question') {
-    steps.push(engine(() => askInput(s.engine, taskId, ctx(), { text: c.text, data: c.data }, released)));
+    steps.push(engine(() => askInput(l.engine, taskId, ctx(), { text: c.text, data: c.data }, released)));
   } else {
-    steps.push(engine(() => finishTask(s.engine, taskId, ctx(), c.outcome, { text: c.text, data: c.data }, released)));
+    steps.push(engine(() => finishTask(l.engine, taskId, ctx(), c.outcome, { text: c.text, data: c.data }, released)));
   }
-  for (const st of steps) applyEffects(s, st, now, by, audits);
-  s.engine = steps[steps.length - 1].state;
-  delete s.releases[taskId];
+  for (const st of steps) applyEffects(l, st, now, by, audits);
+  l.engine = steps[steps.length - 1].state;
+  delete l.releases[taskId];
   const left = steps[0].events.some((e) => e.kind === 'artifact' || e.kind === 'input-required' || ((e.kind === 'completed' || e.kind === 'failed') && e.code !== 'scope'));
   if (left) {
     // What left: a hash and size of each payload (ours), never its text.
     const sent = steps.flatMap((st) => st.outgoing.filter((o) => o.to === t.peer).map((o) => ({ sha256: sha256(stable(o.payload)), bytes: Buffer.byteLength(stable(o.payload)) })));
-    audits.push({ ...audit(now, { peer: t.peer, capability: t.capability, id: taskId, approval: t.approval }, 'release', by, digest), sent });
+    audits.push({ ...audit(now, { peer: t.peer, capability: t.capability, id: taskId, approval: t.approval, group }, 'release', by, digest), sent });
   }
-  return commit(home, agent, s, steps, audits);
+  return commit(home, agent, s, steps, audits, group);
 }
 
 /** Throw away a draft (the human said no, or the model wants to redo it). Reduce-only. */
-export function discardDraft(home: Home, taskId: string): boolean {
+export function discardDraft(home: Home, taskId: string, group?: string): boolean {
   const s = home.readTasks();
-  if (!Object.hasOwn(s.releases, taskId)) return false;
-  delete s.releases[taskId];
+  const releases = group === undefined ? s.releases : groupHost(s, group)?.releases;
+  if (!releases || !Object.hasOwn(releases, taskId)) return false;
+  delete releases[taskId];
   home.writeTasks(s);
   return true;
 }
@@ -787,11 +1074,12 @@ export function describeDraft(c: ReleaseContent): string {
   return c.kind === 'question' ? `question for the requester: ${body}` : `end the task ${c.outcome}: ${body}`;
 }
 
-/** One task for `rdv task list` (JSON), with the codes `approve` and `release` take. */
-export function taskListView(t: TaskRecord, s: TaskHostState) {
-  const start = startDigest(t);
-  const r = Object.hasOwn(s.releases, t.id) ? s.releases[t.id] : undefined;
-  const rel = releaseDigest(t, r);
+/** One task for `rdv task list` (JSON), with the codes `approve` and `release` take. With `g`, a task in that group's lane. */
+export function taskListView(t: TaskRecord, s: TaskHostState, g?: GroupView) {
+  const releases = g ? (groupHost(s, g.group)?.releases ?? {}) : s.releases;
+  const start = startDigest(t, g && t.gate ? groupStartShown(g, t) : undefined);
+  const r = Object.hasOwn(releases, t.id) ? releases[t.id] : undefined;
+  const rel = releaseDigest(t, r, g && r ? groupReleaseShown(g, t) : undefined);
   const { seen: _seen, files, ...rest } = t;
   const got = s.received && Object.hasOwn(s.received, t.id) ? s.received[t.id].files : undefined;
   // Files as summaries and drafts with their file keys redacted: never a key in a listing.
@@ -799,6 +1087,8 @@ export function taskListView(t: TaskRecord, s: TaskHostState) {
   return {
     event: 'task',
     ...rest,
+    // In a group: who asks and what it refers to on the board (start), who it goes to (release), as the gates show them.
+    ...(g ? { group: g.group, in_group: { ...groupStartShown(g, t), ...(r ? { release_to: groupReleaseShown(g, t).to } : {}) } } : {}),
     ...(files?.length ? { files: fileSummaries(files) } : {}),
     ...(got?.length ? { received_files: fileSummaries(got) } : {}),
     fingerprint: fingerprint(t.peer),
@@ -807,9 +1097,12 @@ export function taskListView(t: TaskRecord, s: TaskHostState) {
   };
 }
 
-export function taskListText(t: TaskRecord, s: TaskHostState): string {
-  const v = taskListView(t, s);
+export function taskListText(t: TaskRecord, s: TaskHostState, g?: GroupView): string {
+  const v = taskListView(t, s, g);
+  const releases = g ? (groupHost(s, g.group)?.releases ?? {}) : s.releases;
+  const flag = g ? ` --group ${safe(g.group)}` : '';
   const lines = [`${safe(t.id)}  ${t.role} with ${safe(t.peer)} (${safe(v.fingerprint)})  ${safe(t.capability || '-')}  ${safe(t.state)}${t.approval ? `  class ${safe(t.approval)}` : ''}`];
+  if (g) lines.push(...describeGroupStart(g, t).map((l) => `  ${l}`));
   for (const x of t.text ?? []) lines.push(`  request (untrusted, written by the peer): ${safe(JSON.stringify(x))}`);
   if (t.input !== undefined) lines.push(`  input (untrusted): ${safe(JSON.stringify(t.input))}`);
   if (t.answer !== undefined) lines.push(`  answer (untrusted): ${safe(JSON.stringify(t.answer))}`);
@@ -817,10 +1110,11 @@ export function taskListText(t: TaskRecord, s: TaskHostState): string {
   const got = s.received && Object.hasOwn(s.received, t.id) ? s.received[t.id].files : undefined;
   for (const f of fileSummaries(got) ?? []) lines.push(`  result file (untrusted, not fetched; rdv file fetch ${safe(t.id)} --file ${f.index}): ${safe(describeFile(f))}`);
   if (t.reason) lines.push(`  reason: ${safe(JSON.stringify(t.reason))}${t.code ? ` (${safe(t.code)})` : ''}`);
-  if (v.start_code) lines.push(`  waiting for YOUR approval to start: rdv task approve ${safe(t.id)} --code ${v.start_code}  (or rdv task decline ${safe(t.id)})`);
+  if (v.start_code) lines.push(`  waiting for YOUR approval to start: rdv task approve ${safe(t.id)}${flag} --code ${v.start_code}  (or rdv task decline ${safe(t.id)}${flag})`);
   if (v.release_code && v.draft) {
-    lines.push(`  waiting for YOUR release: ${safe(describeDraft(s.releases[t.id].content))}`);
-    lines.push(`  to send it: rdv task release ${safe(t.id)} --code ${v.release_code}`);
+    lines.push(`  waiting for YOUR release: ${safe(describeDraft(releases[t.id].content))}`);
+    if (g) lines.push(`  ${describeGroupRelease(g, t)}`);
+    lines.push(`  to send it: rdv task release ${safe(t.id)}${flag} --code ${v.release_code}`);
   }
   return lines.join('\n');
 }

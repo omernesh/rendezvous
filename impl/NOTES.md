@@ -2795,6 +2795,144 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       hostile post arrives quarantined; the event mapping), `plugin.test.ts`
       (the guard refuses leave, remove and member re-sync, allows post).
 
+## Groups v1: tasks, the board, the human's group decisions (v0.4, issue #79)
+
+88. **Tasks in a group, the board, claim and assign, changing one's own
+    terms, handing on the admin role, and the three-agent scenario**
+    (**spec change**, new §7.8.4, and §5.5.1, §7.8.3, §7.8.5, §8, §10, §13;
+    design Part B, slice 3 of 3, which closes #31). No new signed document,
+    so no new test vectors: the task payloads are §7.6's inside
+    `rdv/group-msg`, and a member's new terms are an `rdv/group-join`.
+    - **The board** (`@rendezvous/a2a` `board.ts`: pure, `now` injected, no
+      core import). `boardReceive(board, item, ctx)` returns the board, events
+      and effects for our own agent (`execute` a request assigned to us,
+      `forward` the requester's `task/input` and `rdv/cancel`, `unassign`).
+      `boardDeparted`, `boardSweep`, the builders `boardRequest` and
+      `boardVerb`, `forBoard` (adds the requester key to an update), and
+      `admitGroupInvoke`, the join scope as the engine's limiter. The parser
+      (`parseGroupTaskPayload`) takes `task/claim`, `task/assign`,
+      `task/release` and `assignee`; `parseTaskPayload` (pairwise) still
+      refuses them.
+    - **Hosts** (CLI `grouptasks.ts`, the group lanes of `tasks.ts`). A task
+      assigned to us runs on the same tasks engine and gates as a pairwise
+      one, in a lane of its own: tasks.json `groups[<group>]` holds the board,
+      the engine (the requester is its peer), the drafts and the invoke
+      counts. Engine replies go to the board (or a private task's members),
+      named with the requester, and are applied to our own board before the
+      state is saved. Our own posts (request, claim, assign, unassign, cancel,
+      input) are judged by our own board first: if it would ignore one,
+      nothing is sent. The listener routes group messages with a task body to
+      the board (`routed: "board"`; the MCP server shows the board's
+      `group_task` event instead), and departures (a leave, a state that
+      removes a member) to `boardDeparted`.
+    - **Departures from the design, each for a reason:**
+      (a) **A task is (requester, taskId).** The design keyed tasks by ID
+      alone. IDs are each requester's choice, so a member that raced another's
+      ID could take over its task on some boards (whoever arrived first).
+      Verbs that are not the requester's name it (`requester` in claim,
+      assign, release; `…/groups/v1/requester` in update metadata).
+      (b) **Messages ahead of their task wait.** Members are not ordered
+      across senders: Dana's claim can reach John before Omer's request, or
+      Dana's status before Omer's assign. They are kept (16 per board, 4 per
+      sender, 10 minutes) and tried again after each change, so boards that
+      received the same messages agree in any order. Nothing in them counts
+      until the rule holds.
+      (c) **A departed member's requests.** §7.8.5 said its pending requests
+      are canceled, §7.8.4 that the admin assigns when the requester left.
+      Both hold: its open requests (nobody assigned) are canceled locally;
+      one already assigned goes on, and an admin may assign it once it is open
+      again. Its own assignments go back to open.
+      (d) **The scope's limits count every member together.** The join scope
+      is one grant to the whole group, so its `max_frequency` (and each
+      capability's `max_open` and `max_frequency`) caps what the group as a
+      whole asks of the joiner, not each member. Over it a task is rejected
+      `rate`, never revoking.
+      (e) **An unapproved newcomer invokes nothing** (B.4's "it may not invoke
+      anything until approved"): its task is rejected `scope`, which only
+      members we send to see.
+      (f) **Private tasks.** A request sent privately to its assignee stays
+      private: the assignee's replies go only to its members.
+      (g) **Own terms** (`rdv group terms`, MCP "terms"): the member signs its
+      join again (same card, invite and admin; the state it holds now) and
+      sends it in an `rdv/group-members` of its own to the members it sends
+      to and the admins; `GroupBook.receiveMembers` now also takes a payload
+      from a member carrying only its own join (a newer one replaces the old,
+      as before). Narrowing takes effect at once: the engine reads the scope
+      from the group record at each step, so a task the terms no longer allow
+      ends `scope`.
+      (h) **Handing on the admin role** was small, so it is here:
+      `GroupBook.promote`, `Agent.promoteGroupMember`, `rdv group promote`
+      (the human's; no MCP action). The last admin's leave error names it.
+      (i) **The scenario.** B.5 step 2 lets John allow `review/v1`; hosts
+      implement `request/v1` only, so both tasks use it (the review refers to
+      the copy). B.5 step 8 (Omer restores a backup) is core's
+      `groupmsg.test.ts`: a real restore trips the pairwise rollback check
+      (§6.4) first, so through `rdv` processes it shows layer 1, not the
+      group layers. The scenario adds a proofread assigned to John and an
+      open request of his, to show (c) when he leaves, and ends with Omer
+      promoting Dana and leaving.
+    - **Gate decisions.**
+      - The start and release gates of a group task are the pairwise ones
+        (`rdv task approve|release --group`, `rdv_task` with `group_id`),
+        bound also to what the human is shown about the group: the
+        requester's member entry (card hash, the admin's name, whether a
+        contact, our label), the tasks it refers to on the board and their
+        results (start), and every member a result goes to (release). Consent
+        key: `task-start`/`task-release` with ID `<group>/<task>`.
+      - **Auto-approve never covers a group task.** A pairwise entry's
+        `covers` names what that contact's grant allows; a group task rides
+        the group scope, and no `covers` value names a group, so the group
+        lane never consults auto-approve. The default is not covered, and
+        nothing turns it on.
+      - **MCP "leave", "remove" and "terms" are gated**: `askForm()` or a
+        confirm phrase (consent actions `group-leave`, `group-remove`,
+        `group-terms`, issued only when the model asks, kept until used),
+        bound to the group as shown (name, epoch), the member and the
+        admin's name for it, or the new terms, and checked again under the
+        lock where the step runs. Leaving and removing change who hears the
+        user; terms decide what every member may ask of them. The suggested
+        terminal command carries IDs only. `rdv group pending` shows these
+        asks with their phrases.
+      - **Not gated**, as `rdv_task` "request" and `rdv_send` are not:
+        posting, putting a task on the board, claiming, assigning,
+        unassigning, canceling, answering. They disclose nothing new (a
+        board task is already on the board; assigning gives the assignee the
+        request it already holds) and each task still waits for the
+        assignee's human. The skill tells the model to do them only on its
+        user's say-so.
+      - On the consent guard: `rdv group terms` and `rdv group promote`.
+    - **MCP.** `rdv_group` gains `board`, `post`, `request`, `claim`,
+      `assign`, `unassign`, `cancel`, `input`, `leave`, `remove`, `terms`;
+      `rdv_task` takes `group_id` (`list` shows `group_tasks` with an
+      `in_group` view: who asks, what it refers to, peer text untrusted).
+      `rdv_inbox` gains `group_task` events (kind posted, claimed, assigned,
+      released, reopened, input, status, artifact, canceled, expired; what
+      members wrote as `untrusted_peer_text`), and a `task` event of a group
+      lane carries `group_id`.
+    - Tests: a2a `test/board.test.ts` (pairwise parsing refuses the group
+      verbs; open task, claim, assign; a task for one member; only the
+      requester assigns, an admin once it left; only the assignee reports,
+      forward only, naming the requester; release and taking back; input and
+      cancel; a reused ID names another task; early messages wait, bounded;
+      non-members, other groups and notes change nothing; departures and
+      expiry; 16 open per requester; the limiter); core `group.test.ts`
+      (promote, and the last admin's leave after it; new terms re-signed,
+      kept from the member itself or an admin and only if newer, never
+      carried by another member); CLI `test/microsite.test.ts` (the B.5
+      scenario on the in-memory relay; the relay sees no task, offer, copy
+      or review) and `test/grouptasks.test.ts` (an unapproved newcomer's task
+      refused `scope` without asking; the terms' 1/day refuses the second
+      task `rate`; narrowed terms end a waiting task `scope` and reach the
+      requester; unassign makes the assignee forget the task; only the
+      requester cancels); MCP `groups.test.ts`
+      (post, board, open task, claim, a non-requester's assign refused,
+      terms widened and narrowed by form, start and release by form with the
+      group shown, a group task's phrase with `--group` in the human log,
+      leave and remove refused without the human and done with the phrase,
+      the review reopened when its assignee leaves; the event mapping),
+      `plugin.test.ts` (the guard refuses terms and promote, allows the board
+      verbs; the skill names both).
+
 ## Not implemented yet
 
 

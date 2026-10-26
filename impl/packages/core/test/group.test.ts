@@ -424,6 +424,56 @@ describe('the newcomer policy', () => {
   });
 });
 
+describe('slice 3 (issue #79): handing on the admin role, and changing our own terms', () => {
+  const omer = generateKey();
+  const john = generateKey();
+  const dana = generateKey();
+  const s0 = state(omer, 0, null, [member(omer, 'admin')]);
+  const s1 = state(omer, 1, s0, [member(omer, 'admin'), member(john)]);
+  const s2 = state(omer, 2, s1, [member(omer, 'admin'), member(john), member(dana)], later(1000));
+
+  it('the last admin cannot leave; it promotes a member, which every member applies; then it can', () => {
+    const book = bookAt(omer, s2);
+    expect(book.leaveProblem(GROUP, omer.id)).toMatch(/rdv group promote/);
+    expect(() => book.promote(john, GROUP, dana.id, ctxFor(john))).toThrow(/only an admin/);
+    expect(() => book.promote(omer, GROUP, omer.id, ctxFor(omer))).toThrow(/already an admin/);
+    const change = book.promote(omer, GROUP, dana.id, ctxFor(omer, [], later(2000)));
+    const s3 = change.record.state;
+    expect(s3.epoch).toBe(3);
+    expect(memberOf(s3, dana.id)?.role).toBe('admin');
+    expect(successorProblem(s2, s3)).toBeNull();
+    expect(book.leaveProblem(GROUP, omer.id)).toBeNull();
+    const at = bookAt(john, s2, 'trust-admin');
+    expect(at.receiveState(s3, omer.id, ctxFor(john, [omer], later(3000)))).toMatchObject({ kind: 'applied' });
+    expect(memberOf(at.group(GROUP)!.state, dana.id)?.role).toBe('admin');
+  });
+
+  it('our new terms: our join signed again with the new scope; members keep it only from us (or an admin), and only if newer', () => {
+    const johnBook = bookAt(john, s2);
+    const first = createGroupJoin(john, { group: GROUP, to: omer.id, inviteRef: '00000000-0000-4000-8000-0000000000b1', state: s1, card: cardOf(john), scope: { invoke: {} }, now: T0 });
+    johnBook.group(GROUP)!.joins[john.id] = first;
+    const join = johnBook.updateTerms(john, GROUP, { scope: { invoke: { [REQUEST]: { max_open: 2 } }, max_frequency: '5/day' }, policy: 'trust-admin', now: later(1000) });
+    expect(verifyGroupJoin(join, later(1000))).toMatchObject({ ok: true });
+    expect(join).toMatchObject({ from: john.id, to: omer.id, invite_ref: first.invite_ref, state: docHash(s2), scope: { invoke: { [REQUEST]: { max_open: 2 } }, max_frequency: '5/day' } });
+    expect(docHash(join.card)).toBe(docHash(first.card));
+    expect(johnBook.group(GROUP)!).toMatchObject({ scope: join.scope, policy: 'trust-admin' });
+    expect(() => johnBook.updateTerms(john, GROUP, { scope: { invoke: { [GROUPS_EXTENSION]: {} } } })).toThrow(/groups extension/);
+
+    const members = (joins: unknown[]) => ({ type: 'rdv/group-members', group: GROUP, joins });
+    const danaBook = bookAt(dana, s2);
+    danaBook.group(GROUP)!.joins[john.id] = first;
+    // From John himself, his own join only: kept. From Dana's view, Omer (an admin) could send it too.
+    expect(danaBook.receiveMembers(members([join]), john.id, ctxFor(dana, [], later(2000)))).toEqual({ group: GROUP, stored: [john.id] });
+    expect(danaBook.group(GROUP)!.joins[john.id].scope).toEqual(join.scope);
+    // An older one does not replace it, whoever sends it.
+    expect(danaBook.receiveMembers(members([first]), john.id, ctxFor(dana, [], later(2000)))).toEqual({ group: GROUP, stored: [] });
+    // A member may not carry another member's join.
+    const omerBook = bookAt(omer, s2);
+    expect(omerBook.receiveMembers(members([join]), dana.id, ctxFor(omer, [], later(2000)))).toMatchObject({ rejected: expect.any(String) });
+    expect(omerBook.receiveMembers(members([join]), john.id, ctxFor(omer, [], later(2000)))).toEqual({ group: GROUP, stored: [john.id] });
+  });
+});
+
 // --- three agents over the in-memory relay ---------------------------------------------
 
 function once<K extends keyof AgentEvents>(agent: Agent, event: K, ms = 5000, match: (...a: AgentEvents[K]) => boolean = () => true): Promise<AgentEvents[K]> {

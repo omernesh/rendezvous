@@ -55,7 +55,7 @@
     <p class="crumbs"><a href="/docs/">Docs</a> / Reference</p>
     <h1>CLI and library</h1>
     <p class="doc-meta">Rendered from <a href="https://github.com/omernesh/rendezvous/blob/main/impl/README.md">impl/README.md</a> on GitHub. <a href="/docs/cli.md">Markdown version</a> for LLMs.</p>
-    <details class="toc-m"><summary>On this page</summary><ul><li><a href="#rendezvouscore">@rendezvous/core</a></li><li><a href="#rendezvousa2a">@rendezvous/a2a</a></li><li><a href="#rdv-the-cli">rdv (the CLI)</a><ul><li><a href="#tasks-and-files-an-example-user-guide-docstasksmd">Tasks and files: an example (user guide: docs/tasks.md)</a></li><li><a href="#the-dinner-scenarios-plan-53">The dinner scenarios (PLAN §5.3)</a></li><li><a href="#the-contact-scenario-plan-45">The contact scenario (PLAN §4.5)</a></li></ul></li><li><a href="#rdv-mcp-the-mcp-server">rdv-mcp (the MCP server)</a></li><li><a href="#develop">Develop</a></li></ul></details>
+    <details class="toc-m"><summary>On this page</summary><ul><li><a href="#rendezvouscore">@rendezvous/core</a></li><li><a href="#rendezvousa2a">@rendezvous/a2a</a></li><li><a href="#rdv-the-cli">rdv (the CLI)</a><ul><li><a href="#tasks-and-files-an-example-user-guide-docstasksmd">Tasks and files: an example (user guide: docs/tasks.md)</a></li><li><a href="#the-dinner-scenarios-plan-53">The dinner scenarios (PLAN §5.3)</a></li><li><a href="#the-microsite-scenario-design-b5-issue-79">The microsite scenario (design B.5, issue #79)</a></li><li><a href="#the-contact-scenario-plan-45">The contact scenario (PLAN §4.5)</a></li></ul></li><li><a href="#rdv-mcp-the-mcp-server">rdv-mcp (the MCP server)</a></li><li><a href="#develop">Develop</a></li></ul></details>
     <div class="prose">
 <p>TypeScript packages for the <a href="/docs/spec.html">Rendezvous</a> agent-to-agent contact
 protocol, built toward the two-agent dinner demo in <a href="https://github.com/omernesh/rendezvous/blob/main/PLAN.md">PLAN.md</a>.
@@ -253,6 +253,10 @@ The verb sits in the message's <code>data</code> part (<code>data.rdv</code>): <
 <td>Pure task engine: <code>requestTask</code>, <code>receiveTask</code>, <code>inputTask</code>, <code>cancelTask</code>, <code>startTask</code>, <code>rejectTask</code>, <code>askInput</code>, <code>sendArtifact</code>, <code>finishTask</code>, <code>expireTasks</code>; start and release gates as effects; bounds of §7.4</td>
 </tr>
 <tr>
+<td><code>board</code></td>
+<td>Tasks in a group (SPEC §7.8.4): the board, each member's pure projection of the group's task messages (<code>boardReceive</code>, <code>boardDeparted</code>, <code>boardSweep</code>; open, claimed, assigned, state, artifacts), who may say what (only the requester assigns, only the assignee reports), <code>boardRequest</code> / <code>boardVerb</code> for our own posts, and <code>admitGroupInvoke</code>, the join scope's limits (NOTES 88)</td>
+</tr>
+<tr>
 <td><code>calendar</code></td>
 <td><code>CalendarAdapter</code> (<code>freeBusy(range)</code>, <code>hold(slot)</code>, <code>release(slot, note)</code>), <code>MemoryCalendar</code>, <code>JsonFileCalendar</code> (titles never leave the file)</td>
 </tr>
@@ -360,7 +364,7 @@ npm run rdv -- --help                     # or: node packages/cli/dist/src/bin.j
 </tr>
 <tr>
 <td><code>tasks.json</code></td>
-<td>general tasks (the tasks/v1 engine state) and, per task, the draft waiting for your release</td>
+<td>general tasks (the tasks/v1 engine state) and, per task, the draft waiting for your release; per group (<code>groups</code>), its board and the tasks members gave you, with their drafts</td>
 </tr>
 <tr>
 <td><code>audit.jsonl</code></td>
@@ -524,7 +528,7 @@ npm run rdv -- --help                     # or: node packages/cli/dist/src/bin.j
 </tr>
 <tr>
 <td><code>rdv task approve &lt;task-id&gt; --code &lt;code&gt;</code> / <code>rdv task decline &lt;task-id&gt;</code></td>
-<td>Let your agent act on a contact's task (start gate, SPEC §5.5), or refuse it. <code>--code</code> is refused if the task changed since you reviewed it. <code>approve</code> is yours to run</td>
+<td>Let your agent act on a contact's task (start gate, SPEC §5.5), or refuse it. <code>--code</code> is refused if the task changed since you reviewed it. <code>approve</code> is yours to run. A task a group member gave you takes <code>--group &lt;group-id&gt;</code> here and in <code>submit</code>, <code>ask</code>, <code>finish</code> and <code>release</code></td>
 </tr>
 <tr>
 <td><code>rdv task submit &lt;task-id&gt; --text "…" [--name …] [--complete]</code> / <code>rdv task ask &lt;task-id&gt; --text "…"</code> / <code>rdv task finish &lt;task-id&gt; [--failed] [--text …]</code></td>
@@ -573,6 +577,30 @@ npm run rdv -- --help                     # or: node packages/cli/dist/src/bin.j
 <tr>
 <td><code>rdv group leave &lt;group-id&gt;</code> / <code>rdv group remove &lt;group-id&gt; &lt;agent-id\|label&gt;</code></td>
 <td>Leave a group (every member is told), or as admin remove a member (the new member list goes to everyone, them included). Yours to run</td>
+</tr>
+<tr>
+<td><code>rdv group board &lt;group-id&gt;</code></td>
+<td>The group's tasks as your agent holds them: open ones, claims, who does what, their state and results (SPEC §7.8.4)</td>
+</tr>
+<tr>
+<td><code>rdv group request &lt;group-id&gt; --text "…" [--capability &lt;uri&gt;] [--assignee &lt;agent-id&gt;] [--private] [--ref &lt;task-id&gt;]…</code></td>
+<td>Put a task on the board: open for members to claim, or for one member whose group terms allow it (<code>--private</code>: only to them). <code>--ref</code> names earlier tasks it builds on</td>
+</tr>
+<tr>
+<td><code>rdv group claim &lt;group-id&gt; &lt;task-id&gt; [--text "…"]</code> / <code>rdv group assign &lt;group-id&gt; &lt;task-id&gt; &lt;agent-id&gt;</code></td>
+<td>Offer to do an open task; as its requester (or an admin, once the requester left), give it to one member</td>
+</tr>
+<tr>
+<td><code>rdv group unassign &lt;group-id&gt; &lt;task-id&gt;</code> / <code>rdv group cancel …</code> / <code>rdv group input … --text "…"</code></td>
+<td>Give back a task you were doing, or take back one you assigned (open again); withdraw your task; answer its assignee's question</td>
+</tr>
+<tr>
+<td><code>rdv group terms &lt;group-id&gt; [--invoke &lt;uri&gt;]… [--max-frequency f] [--newcomers ask\|trust-admin]</code></td>
+<td>Change what members may ask of your agent through the group (without <code>--invoke</code>: nothing) and your newcomer policy; members are told. Yours to run</td>
+</tr>
+<tr>
+<td><code>rdv group promote &lt;group-id&gt; &lt;agent-id\|label&gt;</code></td>
+<td>As admin, make another member an admin too: the last admin does this before leaving. Yours to run</td>
 </tr>
 <tr>
 <td><code>rdv file prepare &lt;path&gt; [--name …] [--mime …] [--plain]</code></td>
@@ -680,6 +708,21 @@ bots agree, then John runs <code>rdv dinner cancel</code>; both calendars free t
 evening and both end <code>canceled</code>). All seven run in <code>npm test</code>; <code>overlap</code> runs in
 <code>npm run test:live</code>; by hand:</p>
 <p><code>node packages/cli/dist/scenarios/dinner.js --relay ws://… [--variant overlap] [--variant …]</code>.</p>
+<h3 id="the-microsite-scenario-design-b5-issue-79">The microsite scenario (design B.5, issue #79)<a class="anchor" href="#the-microsite-scenario-design-b5-issue-79" title="Link to this section" aria-label="Link to this section">#</a></h3>
+<p><code>packages/cli/scenarios/microsite.ts</code>: Omer, John and Dana, three <code>rdv</code>
+processes. Omer is John's and Dana's contact; John and Dana never meet. Omer
+creates a group, John joins (members may ask him for <code>request/v1</code>; newcomers
+<code>trust-admin</code>), Dana joins (<code>ask</code>) and approves John. Omer puts an open task
+on the board; Dana claims it and Omer assigns it to her (John's attempt to
+assign it is refused by his own board); Dana's human approves the start and
+releases the copy, which the release gate shows going to Omer and John.
+Omer then asks John for a review referring to the copy: John's start gate
+shows that the input is Dana's result ("not your contact, named by the admin
+as Dana"). John leaves: his assigned proofread reopens and his open request
+is canceled on the others' boards; Dana drops her channel with him, Omer
+keeps his. Omer hands the admin role to Dana and leaves. It runs in <code>npm
+test</code> on the in-memory relay; by hand:
+<code>node packages/cli/dist/scenarios/microsite.js --relay wss://… [--timeout ms] [--keep]</code>.</p>
 <h3 id="the-contact-scenario-plan-45">The contact scenario (PLAN §4.5)<a class="anchor" href="#the-contact-scenario-plan-45" title="Link to this section" aria-label="Link to this section">#</a></h3>
 <p><code>packages/cli/scenarios/contact.ts</code> drives real <code>rdv</code> processes with separate
 homes: John listens, Omer requests by email, John grants, Omer sends, John's
@@ -731,7 +774,7 @@ the push if either fails.</p>
 implementation departs from or fills gaps in SPEC.md.</p>
     </div>
   </article>
-  <div class="docs-toc"><nav class="page-toc" aria-label="On this page"><p class="side-group">On this page</p><ul><li><a href="#rendezvouscore">@rendezvous/core</a></li><li><a href="#rendezvousa2a">@rendezvous/a2a</a></li><li><a href="#rdv-the-cli">rdv (the CLI)</a><ul><li><a href="#tasks-and-files-an-example-user-guide-docstasksmd">Tasks and files: an example (user guide: docs/tasks.md)</a></li><li><a href="#the-dinner-scenarios-plan-53">The dinner scenarios (PLAN §5.3)</a></li><li><a href="#the-contact-scenario-plan-45">The contact scenario (PLAN §4.5)</a></li></ul></li><li><a href="#rdv-mcp-the-mcp-server">rdv-mcp (the MCP server)</a></li><li><a href="#develop">Develop</a></li></ul></nav></div>
+  <div class="docs-toc"><nav class="page-toc" aria-label="On this page"><p class="side-group">On this page</p><ul><li><a href="#rendezvouscore">@rendezvous/core</a></li><li><a href="#rendezvousa2a">@rendezvous/a2a</a></li><li><a href="#rdv-the-cli">rdv (the CLI)</a><ul><li><a href="#tasks-and-files-an-example-user-guide-docstasksmd">Tasks and files: an example (user guide: docs/tasks.md)</a></li><li><a href="#the-dinner-scenarios-plan-53">The dinner scenarios (PLAN §5.3)</a></li><li><a href="#the-microsite-scenario-design-b5-issue-79">The microsite scenario (design B.5, issue #79)</a></li><li><a href="#the-contact-scenario-plan-45">The contact scenario (PLAN §4.5)</a></li></ul></li><li><a href="#rdv-mcp-the-mcp-server">rdv-mcp (the MCP server)</a></li><li><a href="#develop">Develop</a></li></ul></nav></div>
 </div>
 </main>
 

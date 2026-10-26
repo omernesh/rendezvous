@@ -1007,6 +1007,55 @@ export class GroupBook {
     return this.advance(r, next, ctx, now, { prevState: prev, before: prev });
   }
 
+  /**
+   * As admin: the next state with `member` an admin too (§7.8.5: the last
+   * admin hands the role on before leaving). The caller sends it to everyone.
+   */
+  promote(key: AgentKey, groupId: string, member: string, ctx: GroupContext): GroupChange {
+    const now = ctx.now ?? new Date();
+    const r = this.group(groupId);
+    if (!r || r.status !== 'active') throw new Error(`not a member of group ${groupId}`);
+    if (r.frozen) throw new Error('membership of this group is frozen (a fork was seen); re-sync it first');
+    if (!isAdmin(r.state, key.id)) throw new Error('only an admin of the group makes another member an admin');
+    const m = memberOf(r.state, member);
+    if (!m) throw new Error(`${member} is not a member of the group`);
+    if (m.role === 'admin') throw new Error(`${member} is already an admin`);
+    if (r.departed && Object.hasOwn(r.departed, member)) throw new Error(`${member} left the group`);
+    const prev = r.state;
+    const next = createGroupState(key, {
+      group: prev.group,
+      epoch: prev.epoch + 1,
+      prev: docHash(prev),
+      members: prev.members.map((x) => (x.id === member ? { ...x, role: 'admin' as const } : x)),
+      policy: prev.policy,
+      name: prev.name,
+      ts: ts(now),
+    });
+    return this.advance(r, next, ctx, now, { prevState: prev, before: prev });
+  }
+
+  /**
+   * Our human changes our own terms in a group (§7.8.2): what members may
+   * invoke on us through it, and our newcomer policy. Our join is signed
+   * again with the new scope (same card, invite and admin, the state we hold
+   * now); the caller sends it to the members in an rdv/group-members. Never
+   * on a model's or a peer's say-so.
+   */
+  updateTerms(key: AgentKey, groupId: string, opts: { scope: GroupScope; policy?: NewcomerPolicy; now?: Date }): GroupJoin {
+    const now = opts.now ?? new Date();
+    const r = this.group(groupId);
+    if (!r || r.status !== 'active') throw new Error(`not a member of group ${groupId}`);
+    const old = Object.hasOwn(r.joins, key.id) ? r.joins[key.id] : undefined;
+    if (!old) throw new Error('our own join for this group is missing');
+    if (opts.policy !== undefined && !NEWCOMER_POLICIES.includes(opts.policy)) throw new Error('newcomer policy is ask or trust-admin');
+    const scope = groupScope(opts.scope);
+    const join = createGroupJoin(key, { group: r.group, to: old.to, inviteRef: old.invite_ref, state: r.state, card: old.card, scope, now });
+    r.scope = scope;
+    r.joins[key.id] = join;
+    if (opts.policy !== undefined) r.policy = opts.policy;
+    return join;
+  }
+
   /** Why we may not leave `groupId` now, or null. The last admin hands the role on first, unless it is alone. */
   leaveProblem(groupId: string, me: string): string | null {
     const r = this.group(groupId);
@@ -1014,7 +1063,7 @@ export class GroupBook {
     if (r.status === 'joining') return null;
     const admins = r.state.members.filter((m) => m.role === 'admin');
     if (admins.length === 1 && admins[0].id === me && r.state.members.length > 1) {
-      return 'you are the last admin: another member must become admin before you leave (or remove the others first)';
+      return 'you are the last admin: make another member an admin first (rdv group promote), or remove the others';
     }
     return null;
   }
@@ -1048,7 +1097,9 @@ export class GroupBook {
     if (input.joins.length > GROUP_LIMITS.members) return { rejected: 'too many joins' };
     const r = this.group(input.group);
     if (!r || r.status !== 'active') return { rejected: 'not a group we are in' };
-    if (!isAdmin(r.state, from)) return { rejected: 'not from an admin of the group' };
+    // From an admin (members' joins after a state), or from a member with its own join only (its new terms, §7.8.2).
+    const own = !!memberOf(r.state, from) && input.joins.every((j) => isPlainObject(j) && j.from === from);
+    if (!isAdmin(r.state, from) && !own) return { rejected: 'not from an admin of the group' };
     const stored: string[] = [];
     for (const raw of input.joins) {
       const check = verifyGroupJoin(raw, now);
