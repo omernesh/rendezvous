@@ -17,9 +17,11 @@ import { isScope, SCOPES, type Scope } from './scopes.js';
 export const MAX_TOKENS = 50;
 export const PIN_MIN = 6;
 export const PIN_MAX = 128;
-/** Failures before the PIN locks, and the longest lockout. */
+/** Failures before the backoff starts, and the longest wait. */
 export const PIN_FREE_TRIES = 5;
 export const PIN_MAX_LOCK_MS = 60 * 60_000;
+/** Failed attempts are forgotten after this long without one. */
+export const PIN_FORGET_MS = 24 * 60 * 60_000;
 
 const SCRYPT = { N: 2 ** 15, r: 8, p: 1, maxmem: 64 * 1024 * 1024 };
 
@@ -35,7 +37,7 @@ export interface ApiToken {
 export interface StoreData {
   v: 1;
   owner?: { salt: string; hash: string; created: string };
-  lockout: { failures: number; until?: number };
+  lockout: { failures: number; until?: number; last?: number };
   tokens: Record<string, ApiToken>;
 }
 
@@ -112,17 +114,31 @@ export class GatewayStore {
   }
 
   /**
-   * Check the owner's PIN. After PIN_FREE_TRIES failures it locks for a
-   * minute, doubling per further failure up to an hour; while locked even
-   * the right PIN is refused, and the lockout survives a restart.
+   * Check the owner's PIN: an exponential backoff, never a permanent lock.
+   * After `freeTries` failures (default PIN_FREE_TRIES; more when the gateway
+   * also counts per client) each further miss waits one minute, doubling up
+   * to an hour; during a wait even the right PIN is refused, and the wait
+   * survives a restart. Failures are forgotten after PIN_FORGET_MS without
+   * one, and the owner clears them in their terminal (`rdv-gateway pin
+   * unlock`, clearLockout).
    */
-  checkPin(pin: string, now: number): Promise<PinCheck> {
-    const run = this.pinChain.then(() => this.checkPinNow(pin, now));
+  checkPin(pin: string, now: number, freeTries = PIN_FREE_TRIES): Promise<PinCheck> {
+    const run = this.pinChain.then(() => this.checkPinNow(pin, now, freeTries));
     this.pinChain = run.catch(() => {});
     return run;
   }
 
-  private async checkPinNow(pin: string, now: number): Promise<PinCheck> {
+  /** The owner, in their terminal: forget every failed PIN attempt and any wait. */
+  async clearLockout(): Promise<void> {
+    await this.update((d) => void (d.lockout = { failures: 0 }));
+  }
+
+  /** When the PIN was set (an unlocked page session ends when it changes). */
+  pinSetAt(): string | undefined {
+    return this.read().owner?.created;
+  }
+
+  private async checkPinNow(pin: string, now: number, freeTries: number): Promise<PinCheck> {
     this.cache = undefined;
     const d = this.read();
     if (!d.owner) return { ok: false, noPin: true };
@@ -134,8 +150,10 @@ export class GatewayStore {
       return { ok: true };
     }
     const lockout = await this.update((x) => {
+      if (x.lockout.last !== undefined && now - x.lockout.last > PIN_FORGET_MS) x.lockout = { failures: 0 };
       x.lockout.failures += 1;
-      const over = x.lockout.failures - PIN_FREE_TRIES;
+      x.lockout.last = now;
+      const over = x.lockout.failures - freeTries;
       if (over >= 0) x.lockout.until = now + Math.min(PIN_MAX_LOCK_MS, 60_000 * 2 ** over);
       return x.lockout;
     });

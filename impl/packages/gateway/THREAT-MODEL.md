@@ -62,12 +62,20 @@ in the terminal. The page has no JavaScript; its CSP allows only our
 stylesheet and same-origin forms, and forbids framing.
 
 **The PIN.** At least six characters, stored as salted scrypt in
-`gateway.json` (mode 600), set only from the terminal. After five wrong tries
-it locks for one minute, doubling per further miss up to an hour, persisted
-across restarts; checks run one at a time. Unlock attempts are also rate
-limited. An unlocked session is a random 256-bit cookie (HttpOnly,
-SameSite=Strict, `__Host-` and Secure behind https), 15 minutes idle, one hour
-at most, held only in memory.
+`gateway.json` (mode 600), set only from the terminal. Wrong PINs back off,
+they never lock for good: after five misses (globally) each further miss
+waits one minute, doubling up to an hour, persisted across restarts; misses
+are forgotten after a day without one, and the owner clears the wait at once
+with `rdv-gateway pin unlock` in their terminal. Checks run one at a time,
+and unlock posts are rate limited (30 a minute, a rate that refills, not a
+lock). With `--client-ip-header` (the header your tunnel sets, e.g.
+`cf-connecting-ip`) misses are also counted per client: a client backs off
+after three (30 s, doubling to an hour) while the global backoff starts only
+after twenty, so one guesser no longer locks the owner out, and spread-out
+guessing still meets the global cap. An unlocked session is a random 256-bit
+cookie (HttpOnly, SameSite=Strict, `__Host-` and Secure behind https), 15
+minutes idle, one hour at most, held only in memory, and ended by a new PIN.
+Behind https the page answers only on the public address.
 
 **CSRF and rebinding.** Every form carries an HMAC token bound to the session
 (or, before unlock, to a pre-session cookie). A post with a foreign `Origin`
@@ -83,7 +91,9 @@ table is refused for every token (deny by default).
 
 **What never leaves.** No tool result, error or event carries a phrase, the
 PIN, a key or `consent.json`; the home path is replaced in remote results and
-errors; `rdv_file` never returns a file's content or where it is saved. The
+errors (any case, either separator), as are the calendar locations and any
+other absolute path; `rdv_file` never returns a file's content or where it is
+saved. The
 assistant names no local path: no calendar argument, no `rdv_file "prepare"`,
 no `inline_files`. The owner's setup (`rdv_init`, addresses, relays, turning
 auto-approve on) stays in the terminal.
@@ -96,12 +106,22 @@ most 32 MCP sessions (30 minutes idle) and 64 pending approvals (24 hours).
 
 ## Known limits and open risks
 
-- Behind a tunnel every request comes from 127.0.0.1, so the page's per-address
-  rate limit is effectively global; the PIN lockout is what stops guessing,
-  and it also lets a stranger lock the owner out for up to an hour. Slice 2
+- The PIN backoff trades guessing against lock-out. Without
+  `--client-ip-header`, every request through a tunnel comes from 127.0.0.1,
+  so the backoff is global: a stranger who reaches the page can make the owner
+  wait (up to an hour, until `rdv-gateway pin unlock`). Counting per client
+  fixes that only if the header is trustworthy: set it only when every request
+  goes through the tunnel that writes it, since anyone reaching the gateway
+  directly can forge it (the global cap still bounds guessing). Slice 2
   (passkeys) removes the PIN as the only factor.
 - Pending approvals live in memory: a restart drops them, and the assistant
-  asks again.
+  asks again. A full page (64, or 16 per token) refuses new asks with an
+  error to the assistant; nothing waiting is ever dropped except after its
+  day expires or once decided.
+- An answer to a step that, by the time it runs, no longer needs the owner
+  (the state moved) runs as the assistant asked; the page and the `approval`
+  event say "not needed" instead of reporting a decision. The assistant could
+  have made that call itself.
 - Capabilities an assistant lists in `rdv_grant invoke` start ticked on the
   page, as in the elicitation form; the message names each one.
 - The approval page trusts the machine's clock for session lifetimes and the

@@ -72,6 +72,13 @@ export interface GatewayOptions {
   sweepMs?: number;
   /** Requests per minute per token (API and MCP together). */
   tokenRate?: number;
+  /**
+   * The header your tunnel puts the client's address in (e.g.
+   * cf-connecting-ip, x-forwarded-for: its last entry). Set it only when
+   * every request comes through that tunnel: anyone reaching the gateway
+   * directly could write it. With it, wrong PINs are also counted per client.
+   */
+  clientIpHeader?: string;
   now?: () => number;
 }
 
@@ -92,7 +99,15 @@ interface McpSession {
 interface OwnerSession {
   created: number;
   lastSeen: number;
+  /** When the PIN it was unlocked with was set: a new PIN ends the session. */
+  pinSetAt?: string;
 }
+
+/** Wrong PINs before a client's own backoff starts, and the global free tries when clients are told apart. */
+export const CLIENT_FREE_TRIES = 3;
+export const GLOBAL_FREE_TRIES_PER_CLIENT_MODE = 20;
+const CLIENT_MAX_WAIT_MS = 60 * 60_000;
+const CLIENT_FORGET_MS = 24 * 60 * 60_000;
 
 export class Gateway {
   readonly store: GatewayStore;
@@ -112,6 +127,9 @@ export class Gateway {
   private readonly tokenLimiter: RateLimiter;
   private readonly pageLimiter: RateLimiter;
   private readonly unlockLimiter: RateLimiter;
+  /** Wrong PINs per client (only told apart with clientIpHeader): a backoff, in memory, bounded. */
+  private readonly clientFailures = new Map<string, { failures: number; until?: number; last: number }>();
+  private openapi?: string;
   private readonly secure: boolean;
 
   constructor(private readonly opts: GatewayOptions) {
@@ -130,7 +148,8 @@ export class Gateway {
     this.secure = opts.publicUrl?.startsWith('https:') ?? false;
     this.tokenLimiter = new RateLimiter(opts.tokenRate ?? 120, 60_000, this.now);
     this.pageLimiter = new RateLimiter(120, 60_000, this.now);
-    this.unlockLimiter = new RateLimiter(10, 60_000, this.now);
+    // A rate, not a lock: it refills, so flooding it costs the owner at most a minute.
+    this.unlockLimiter = new RateLimiter(30, 60_000, this.now);
     this.approvals = new Approvals((id) => `${this.base}/approve/${id}`, this.now);
     this.server = new RdvMcpServer({
       home: opts.home,
@@ -223,7 +242,11 @@ export class Gateway {
         res.writeHead(200, { 'Content-Type': 'text/css; charset=utf-8', 'Content-Length': Buffer.byteLength(CSS), 'Cache-Control': 'max-age=3600' });
         return void res.end(CSS);
       }
-      if (path === '/openapi.json' && req.method === 'GET') return sendJson(res, 200, openApi(this.server.tools, this.base));
+      if (path === '/openapi.json' && req.method === 'GET') {
+        this.openapi ??= JSON.stringify(openApi(this.server.tools, this.base));
+        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Content-Length': Buffer.byteLength(this.openapi) });
+        return void res.end(this.openapi);
+      }
       if (path === '/mcp') return await this.mcp(req, res);
       if (path === '/api/v1/tools' || path.startsWith('/api/v1/tools/')) return await this.api(req, res, path);
       if (path === '/approve' || path.startsWith('/approve/')) return await this.page(req, res, path);
@@ -330,7 +353,7 @@ export class Gateway {
     if (!id) return undefined;
     const s = this.owners.get(id);
     const t = this.now();
-    if (!s || t - s.lastSeen > OWNER_IDLE_MS || t - s.created > OWNER_MAX_MS) {
+    if (!s || t - s.lastSeen > OWNER_IDLE_MS || t - s.created > OWNER_MAX_MS || s.pinSetAt !== this.store.pinSetAt()) {
       if (s) this.owners.delete(id);
       return undefined;
     }
@@ -363,8 +386,44 @@ export class Gateway {
     this.html(res, status, unlockPage({ csrf: this.csrfFor(`pre:${pre}`), next, message }), [this.cookie('rdvg_pre', pre, 600)]);
   }
 
+  /** The client's address: the trusted tunnel header when configured (its last entry), else the socket's. */
+  private client(req: IncomingMessage): string {
+    const name = this.opts.clientIpHeader?.toLowerCase();
+    const raw = name ? req.headers[name] : undefined;
+    const v = (Array.isArray(raw) ? raw.at(-1) : raw)?.split(',').at(-1)?.trim();
+    return (v && v.length <= 64 ? v : undefined) ?? req.socket.remoteAddress ?? '?';
+  }
+
+  /** A client's own backoff (with clientIpHeader): how long it must wait, if at all. */
+  private clientWait(key: string): number {
+    const c = this.clientFailures.get(key);
+    if (!c) return 0;
+    if (this.now() - c.last > CLIENT_FORGET_MS) {
+      this.clientFailures.delete(key);
+      return 0;
+    }
+    return c.until && c.until > this.now() ? c.until - this.now() : 0;
+  }
+
+  private clientFailed(key: string): void {
+    const t = this.now();
+    const c = this.clientFailures.get(key) ?? { failures: 0, last: t };
+    this.clientFailures.delete(key); // Map order is the LRU order
+    c.failures += 1;
+    c.last = t;
+    const over = c.failures - CLIENT_FREE_TRIES;
+    if (over >= 0) c.until = t + Math.min(CLIENT_MAX_WAIT_MS, 30_000 * 2 ** over);
+    this.clientFailures.set(key, c);
+    while (this.clientFailures.size > 10_000) this.clientFailures.delete(this.clientFailures.keys().next().value!);
+  }
+
   private async page(req: IncomingMessage, res: ServerResponse, path: string): Promise<void> {
-    this.pageLimiter.check(req.socket.remoteAddress ?? '?', 'requests');
+    const who = this.client(req);
+    this.pageLimiter.check(who, 'requests');
+    // Behind https the owner cookie is Secure: it never comes back over http://127.0.0.1, so say where to go.
+    if (this.secure && new URL(this.base).host !== String(req.headers.host ?? '').toLowerCase()) {
+      return this.html(res, 421, errorPage('Open the public address', `Behind https, approvals open at ${this.base}/approve only.`));
+    }
     const sid = this.ownerSession(req);
     if (path === '/approve/unlock') {
       if (req.method !== 'POST') return redirect(res, '/approve');
@@ -373,19 +432,25 @@ export class Gateway {
       const pre = parseCookies(req.headers.cookie).get('rdvg_pre') ?? '';
       this.checkPost(req, form, `pre:${pre}`);
       const next = /^\/approve(\/apr_[A-Za-z0-9_-]{8,64})?$/.test(form.get('next') ?? '') ? form.get('next')! : '/approve';
-      const check = await this.store.checkPin(form.get('pin') ?? '', this.now());
+      const perClient = this.opts.clientIpHeader !== undefined;
+      const wait = perClient ? this.clientWait(who) : 0;
+      if (wait) return this.unlock(res, next, { text: `Too many wrong PINs from here: try again in ${Math.ceil(wait / 1000)} s.`, bad: true }, 429);
+      // Every miss counts globally too (distributed guessing); clients told apart get more global tries before the backoff.
+      const check = await this.store.checkPin(form.get('pin') ?? '', this.now(), perClient ? GLOBAL_FREE_TRIES_PER_CLIENT_MODE : undefined);
       if (!check.ok) {
+        if (perClient && !check.noPin && !check.lockedFor) this.clientFailed(who);
         const text = check.lockedFor
-          ? `Too many wrong PINs: locked for ${Math.ceil(check.lockedFor / 60_000)} more minute(s).`
+          ? `Too many wrong PINs: try again in ${Math.ceil(check.lockedFor / 60_000)} minute(s), or clear it in your own terminal (rdv-gateway pin unlock).`
           : check.noPin
             ? 'No PIN is set: set one in your own terminal (rdv-gateway pin set).'
             : 'That is not the PIN.';
         if (!check.lockedFor) this.log('a wrong PIN was entered on the approval page');
         return this.unlock(res, next, { text, bad: true }, 403);
       }
+      if (perClient) this.clientFailures.delete(who);
       while (this.owners.size >= MAX_OWNER_SESSIONS) this.owners.delete(this.owners.keys().next().value!);
       const id = randomToken(32);
-      this.owners.set(id, { created: this.now(), lastSeen: this.now() });
+      this.owners.set(id, { created: this.now(), lastSeen: this.now(), pinSetAt: this.store.pinSetAt() });
       return redirect(res, next, { 'Set-Cookie': [this.cookie(this.cookieName(), id, OWNER_MAX_MS / 1000), this.cookie('rdvg_pre', '', 0)] });
     }
     if (!sid) {
@@ -446,6 +511,10 @@ export class Gateway {
     if (out.kind === 'error') {
       this.log(`approval ${item.id} (${item.tool}) failed: ${out.error}`);
       return this.html(res, 422, donePage({ title: 'Not done', text: out.error, csrf, bad: true }));
+    }
+    if (out.unneeded) {
+      this.log(`approval ${item.id} (${item.tool}): it no longer needed you; the call ran as your assistant asked`);
+      return this.html(res, 200, donePage({ title: 'No longer needed you', text: 'This changed so that it no longer needed your decision: it ran as your assistant asked, and your answer decided nothing. Your assistant sees the result in its inbox.', csrf }));
     }
     const v = out.value as { approved?: boolean; answer?: string } | undefined;
     const no = decision === 'decline' || v?.approved === false;

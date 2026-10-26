@@ -5,6 +5,7 @@
 //   rdv-gateway serve [--home <dir> | --profile <name>] [--port 8787] [--public-url https://…] [--host 127.0.0.1 --allow-remote-bind]
 //                     [--calendar cal.json] [--calendar-dir <dir>]… [--window "…"] [--tz +02:00]
 //   rdv-gateway pin set                      the approval page's PIN (asked twice, never echoed; one line on stdin when piped)
+//   rdv-gateway pin unlock                   clear the wait after wrong PINs
 //   rdv-gateway token create --name <n> --scope read,send[,contact:request,negotiate]
 //   rdv-gateway token list | token revoke <id>
 //
@@ -18,8 +19,9 @@ import { GatewayStore, StoreError } from './store.js';
 
 const USAGE = `usage:
   rdv-gateway serve [--home <dir> | --profile <name>] [--port ${DEFAULT_PORT}] [--public-url https://rdv.example.com]
-                    [--host 127.0.0.1] [--allow-remote-bind] [--calendar cal.json] [--calendar-dir <dir>]… [--window "next week evenings"] [--tz +02:00]
+                    [--client-ip-header cf-connecting-ip] [--host 127.0.0.1] [--allow-remote-bind] [--calendar cal.json] [--calendar-dir <dir>]… [--window "next week evenings"] [--tz +02:00]
   rdv-gateway pin set [--home <dir>]
+  rdv-gateway pin unlock [--home <dir>]      clear the wait after wrong PINs
   rdv-gateway token create --name <name> --scope <scope,…> [--home <dir>]
   rdv-gateway token list [--home <dir>]
   rdv-gateway token revoke <id> [--home <dir>]
@@ -36,6 +38,7 @@ const { values, positionals } = parseArgs({
     port: { type: 'string' },
     'public-url': { type: 'string' },
     'allow-remote-bind': { type: 'boolean' },
+    'client-ip-header': { type: 'string' },
     calendar: { type: 'string' },
     'calendar-dir': { type: 'string', multiple: true },
     window: { type: 'string' },
@@ -103,6 +106,12 @@ async function main(): Promise<void> {
     process.stderr.write(`PIN set for ${home.dir}. A serving gateway uses it at once.\n`);
     return;
   }
+  if (cmd === 'pin' && sub === 'unlock') {
+    await store.clearLockout();
+    process.stderr.write(`Wrong-PIN wait cleared for ${home.dir}. A serving gateway accepts the PIN again at once (a client's own wait ends within the hour, or on a restart).
+`);
+    return;
+  }
   if (cmd === 'token' && sub === 'create') {
     if (!values.name) die('token create needs --name', 2);
     if (!values.scope) die(`token create needs --scope (${SCOPES.join(', ')})`, 2);
@@ -128,6 +137,7 @@ async function main(): Promise<void> {
       host: values.host,
       port,
       allowRemoteBind: values['allow-remote-bind'] === true,
+      clientIpHeader: values['client-ip-header'],
       publicUrl: values['public-url'] ?? process.env.RDV_GATEWAY_PUBLIC_URL,
       calendar: values.calendar ?? process.env.RDV_CALENDAR,
       calendarDirs: [...(values['calendar-dir'] ?? []), ...(process.env.RDV_CALENDAR_DIR ? [process.env.RDV_CALENDAR_DIR] : [])],
