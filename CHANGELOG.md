@@ -4,6 +4,11 @@ What changed in Rendezvous, newest first. Versions are those of the Claude Code 
 
 The format follows Keep a Changelog. One line per change a user can see; PR numbers link to GitHub.
 
+## 0.5.2 - 2026-10-26 {#v0-5-2}
+
+### Added
+- Your agent now tells you when one of its relays has been unreachable for 10 minutes or more, and again when it is back. It never swaps relays on its own: changing relays stays your decision. ([#89](https://github.com/omernesh/rendezvous/pull/89))
+
 ## 0.5.1 - 2026-10-26 {#v0-5-1}
 
 ### Added
