@@ -604,9 +604,11 @@ export function inviteAsks(home: Home): PhraseTarget[] {
 
 /** An invite ask in words, for the human. */
 export function describeInviteAsk(a: InviteAsk, fingerprintOf: (id: string) => string): string {
+  // Everything but the IDs was typed by someone (the model, for name and greeting): quoted as data, never as prose.
+  const q = (v: string) => JSON.stringify(v);
   return (
-    `invite your contact ${fingerprintOf(a.peer)}${a.label !== null ? ` ("${a.label}")` : ''} to your group "${a.group_name}" (${a.group})` +
-    `${a.name !== null ? `, shown to the members as "${a.name}"` : ''}${a.greeting !== null ? `, with the greeting "${a.greeting}"` : ''}. ` +
+    `invite your contact ${fingerprintOf(a.peer)}${a.label !== null ? ` (${q(a.label)})` : ''} to your group ${q(a.group_name)} (${a.group})` +
+    `${a.name !== null ? `, shown to the members as ${q(a.name)}` : ''}${a.greeting !== null ? `, with the greeting ${q(a.greeting)}` : ''}. ` +
     'They see who is in the group, and if they join, every member\'s card and group terms'
   );
 }

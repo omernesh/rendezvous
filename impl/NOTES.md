@@ -2594,7 +2594,12 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       So two different states at one epoch are a fork whoever signed them,
       handled like one admin's equivocation; a rival that waits ahead of the
       chain (in the future buffer) counts too, rather than being dropped
-      when the chain reaches its epoch.
+      when the chain reaches its epoch. A rival counts only if it could
+      have been legitimate (second review): at our epoch, a valid successor
+      of the state before ours; ahead of us, signed by an admin of ours.
+      Anything else, a member's own state or an older epoch we cannot check,
+      is ignored, so a non-admin cannot freeze the group; and only an admin
+      of our state can queue a state ahead of it.
       (h) **Inviting needs the admin's human** (review of #80; the design
       gated only joining and newcomer approval). The invitee learns the
       members and, once admitted, gets every member's join (card and group
@@ -2604,8 +2609,13 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       to the group, the invitee (ID, so fingerprint, and our label) and the
       invite's name and greeting (consent action `group-invite`, keyed by
       group and invitee, issued only when asked and kept until used;
-      another contact, name or greeting is another approval). `rdv group
-      invite` is on the consent guard's list; `rdv group pending` shows the
+      another contact, name or greeting is another approval). The model's
+      name (at most 64 characters) and greeting (at most 200) must be one
+      line without control or format characters, and are shown quoted; the
+      terminal command suggested in the server log carries the IDs only, so
+      no text the model wrote lands in a line the human might paste into a
+      shell (`rdv group invite` prints the name and greeting it sent).
+      `rdv group invite` is on the consent guard's list; `rdv group pending` shows the
       open asks with their phrases. Creating a group stays ungated: it
       shares nothing.
     - **Forks (§7.8.1, §7.8.6 layer 4, the part that belongs to membership).**
@@ -2651,7 +2661,8 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
     - Tests: core `test/group.test.ts` (state shape and signature, the chain:
       epoch, prev, a signer that is not an admin of the state before; a
       fork freezes and resync thaws; two admins at one epoch freeze in either
-      order, a rival in the future buffer too; invites only from contacts that are admins, for
+      order, a rival in the future buffer too; a member's state at a held or
+      a future epoch neither freezes nor queues; invites only from contacts that are admins, for
       us, bounded 2 per admin and 16 in all; the 16 cap with open invites;
       joins only for our open invite, from the invitee, bound to the state
       it carried; the newcomer policy; three agents on the in-memory relay
@@ -2663,7 +2674,8 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       phrase, a default-terms phrase does not approve wider terms, Dana by
       form, Dana approves John; an invite without the admin's human sends
       nothing, and a phrase bound to John invites neither Dana nor John under
-      another name; no phrase reaches a model; a stranger cannot be invited;
+      another name; a greeting that fakes a prompt, or too long a name or
+      greeting, is refused; the suggested command carries IDs only; no phrase reaches a model; a stranger cannot be invited;
       decline), `plugin.test.ts` (the guard refuses the
       human-only group commands and the skill names them).
 

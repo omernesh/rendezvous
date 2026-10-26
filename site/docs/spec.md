@@ -1785,8 +1785,13 @@ the admin's own pairwise channels:
   with the admins, and the admins re-issue on top of the state that stands.
   Nothing picks a winner automatically: a rule such as "the lower hash
   wins" can be ground, since an admin can re-sign until its state wins, for
-  instance one that removes or demotes the other admin. A state for an
-  epoch a member already holds, or already waits for, counts the same way.
+  instance one that removes or demotes the other admin. A rival counts only
+  if it could have been legitimate: at the epoch a member holds, a valid
+  successor of the state before it (so signed by an admin of that state); for
+  an epoch it waits for, signed by an admin of the state it holds. A member's
+  own state, or one at an epoch it can no longer check, is ignored, so no
+  non-admin can freeze a group. Only an admin of the state a member holds can
+  queue a state ahead of it.
 - **Display.** A member who is not my contact has no local label; hosts show
   its fingerprint and "named by the admin as …", never treating the name as
   verified.
@@ -1816,7 +1821,8 @@ the admin's own pairwise channels:
   group-scoped grant, so the choice of whom to invite is a disclosure the
   admin's human makes: the approval is bound to the group, the invitee (its
   fingerprint and the admin's local label for it), and the name and
-  greeting the invite carries. Creating a group needs no approval: it
+  greeting the invite carries, each shown quoted, on one line, without
+  control characters (reference bounds: 64 and 200 characters). Creating a group needs no approval: it
   shares nothing.
 - **Joining needs the joiner's human** (§5.5), every time: no standing
   approval covers it, auto-approve included (§5.5.1). The host shows every

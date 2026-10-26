@@ -244,9 +244,12 @@ export async function groupInvite({ home, out, values, positionals }: Ctx): Prom
       throw new CliError((err as Error).message);
     }
   });
+  const name = str(values.name);
+  const greeting = str(values.greeting);
   out.emit(
-    { event: 'group-invited', group, invite: inv.id, to: inv.to, fingerprint: fingerprint(inv.to), expires: inv.expires },
-    `invited ${clean(fingerprint(inv.to))} to group ${clean(group)} (invite ${clean(inv.id)}, expires ${clean(inv.expires)}); their human decides whether to join`,
+    { event: 'group-invited', group, invite: inv.id, to: inv.to, fingerprint: fingerprint(inv.to), expires: inv.expires, ...(name !== undefined ? { name } : {}), ...(greeting !== undefined ? { greeting } : {}) },
+    `invited ${clean(fingerprint(inv.to))} to group ${clean(group)} (invite ${clean(inv.id)}, expires ${clean(inv.expires)})` +
+      `${name !== undefined ? `, shown to the members as ${clean(JSON.stringify(name))}` : ''}${greeting !== undefined ? `, greeting ${clean(JSON.stringify(greeting))}` : ''}; their human decides whether to join`,
   );
 }
 

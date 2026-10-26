@@ -2076,7 +2076,7 @@ export class RdvMcpServer {
           .describe('create: the group name; invite: how the other members see the invitee (at most 64 characters)'),
         greeting: z
           .string()
-          .max(280)
+          .max(1000) // checked (one line, at most 200 characters) where it is used, with a clear error
           .regex(/^[^\p{Cc}\p{Cf}\p{Zl}\p{Zp}]*$/u, 'printable characters only')
           .optional()
           .describe('invite: a short note'),
@@ -3318,6 +3318,14 @@ export class RdvMcpServer {
     const c = agent.book.contact(peer);
     if (!c || agent.book.isBlocked(peer)) throw new ToolError(`only contacts are invited, and ${safe(peer)} is not an active contact`);
     if (!(Array.isArray(c.card.capabilities) && c.card.capabilities.includes(GROUPS_EXTENSION))) throw new ToolError("the contact's card does not list groups, so its agent may not support them");
+    // What the model writes into the invite is shown to the human for approval: one short line each, no control or layout characters.
+    const line = /^[^\p{Cc}\p{Cf}\p{Zl}\p{Zp}]*$/u;
+    if (a.name !== undefined && (a.name.length > INVITE_NAME_MAX || a.name.trim() === '' || !line.test(a.name))) {
+      throw new ToolError(`name is 1 to ${INVITE_NAME_MAX} characters on one line, with no control characters`);
+    }
+    if (a.greeting !== undefined && (a.greeting.length > INVITE_GREETING_MAX || !line.test(a.greeting))) {
+      throw new ToolError(`greeting is at most ${INVITE_GREETING_MAX} characters on one line, with no control characters`);
+    }
     const r = agent.groups.group(group);
     if (!r || r.status !== 'active') throw new ToolError(`not a member of group ${safe(group)}`);
     if (!r.state.members.some((m) => m.id === agent.id && m.role === 'admin')) throw new ToolError('only an admin of the group invites');
@@ -3326,10 +3334,10 @@ export class RdvMcpServer {
   }
 
   private announceInviteAsk(ask: InviteAsk, phrase: string): void {
-    const flags = [...(ask.name !== null ? [`--name ${JSON.stringify(ask.name)}`] : []), ...(ask.greeting !== null ? [`--greeting ${JSON.stringify(ask.greeting)}`] : [])].join(' ');
+    // The command carries IDs only: a name or greeting the model wrote never goes into a line the human might paste into a shell.
     this.humanLog(
-      `your assistant asks to ${describeInviteAsk(ask, fingerprint)}. If you want that, tell your assistant this confirm phrase: ${phrase}  ` +
-        `(or send it yourself: rdv group invite ${ask.group} ${ask.peer}${flags ? ` ${flags}` : ''} --home "${this.home.dir}"; otherwise ignore this and nothing is sent)`,
+      `your assistant asks to ${clean(describeInviteAsk(ask, fingerprint))}. If you want that, tell your assistant this confirm phrase: ${phrase}  ` +
+        `(or send it yourself: rdv group invite ${ask.group} ${ask.peer} --home "${this.home.dir}", adding --name and --greeting if you want them; otherwise ignore this and nothing is sent)`,
     );
   }
 
@@ -3762,6 +3770,10 @@ function groupNewcomerWords(agent: Agent, records: GroupRecord[], id: string): N
   }
   return undefined;
 }
+
+/** Bounds on what the model writes into an invite (review of #80): shown to the human for approval. */
+const INVITE_NAME_MAX = 64;
+const INVITE_GREETING_MAX = 200;
 
 /** A group as the model sees it: our own fields plain, the admin's words (group and member names) untrusted. */
 function groupModelView(agent: Agent, r: GroupRecord) {
