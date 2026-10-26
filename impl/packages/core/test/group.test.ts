@@ -164,7 +164,7 @@ describe('GroupBook: the state chain at a member', () => {
     const fork = book.receiveState(b, omer.id, ctxFor(john, [omer], later(3000)));
     expect(fork.kind).toBe('fork');
     const r = book.group(GROUP)!;
-    expect(r.frozen).toMatchObject({ epoch: 2, signer: omer.id, hashes: [docHash(a), docHash(b)] });
+    expect(r.frozen).toMatchObject({ epoch: 2, signers: [omer.id], hashes: [docHash(a), docHash(b)] });
     expect(r.state).toEqual(a); // frozen at the last state we hold
     // Nothing applies while frozen, not even a correct successor.
     const c = state(omer, 3, a, [member(omer, 'admin'), member(john)], later(4000));
@@ -175,20 +175,35 @@ describe('GroupBook: the state chain at a member', () => {
     expect(book.receiveState(c, omer.id, ctxFor(john, [omer], later(5000))).kind).toBe('applied');
   });
 
-  it('two admins issue the same epoch: the lower hash wins, at every member, in either order', () => {
+  it('two admins issue the same epoch: frozen, not resolved, in either order and even when a hash would win (review of #80)', () => {
     const both = state(omer, 1, s0, [member(omer, 'admin'), member(dana, 'admin'), member(john)]);
     const fromOmer = state(omer, 2, both, [member(omer, 'admin'), member(dana, 'admin'), member(john)], later(1000));
-    const fromDana = createGroupState(dana, { group: GROUP, epoch: 2, prev: docHash(both), members: [member(omer, 'admin'), member(dana, 'admin'), member(john)], policy, name: 'renamed', ts: later(2000).toISOString() });
-    const removing = createGroupState(dana, { group: GROUP, epoch: 2, prev: docHash(both), members: [member(omer, 'admin'), member(dana, 'admin')], policy, name: 'x', ts: later(2500).toISOString() });
-    for (const rival of [fromDana, removing]) {
-      const [low, high] = docHash(fromOmer) < docHash(rival) ? [fromOmer, rival] : [rival, fromOmer];
-      for (const order of [[low, high], [high, low]]) {
-        const book = bookAt(john, both);
-        for (const s of order) book.receiveState(s, s.from, ctxFor(john, [omer, dana], later(3000)));
-        expect(docHash(book.group(GROUP)!.state)).toBe(docHash(low));
-        expect(book.group(GROUP)!.status).toBe(memberOf(low, john.id) ? 'active' : 'removed');
-      }
+    // Dana demotes Omer; any number of re-signings to get a lower hash changes nothing.
+    const demoting = createGroupState(dana, { group: GROUP, epoch: 2, prev: docHash(both), members: [member(omer), member(dana, 'admin'), member(john)], policy, name: 'x', ts: later(2000).toISOString() });
+    for (const order of [
+      [fromOmer, demoting],
+      [demoting, fromOmer],
+    ]) {
+      const book = bookAt(john, both);
+      const first = book.receiveState(order[0], order[0].from, ctxFor(john, [omer, dana], later(3000)));
+      expect(first.kind).toBe('applied');
+      const second = book.receiveState(order[1], order[1].from, ctxFor(john, [omer, dana], later(3000)));
+      expect(second.kind).toBe('fork');
+      const r = book.group(GROUP)!;
+      expect(r.state).toEqual(order[0]); // the state we held stays; nothing picked a winner
+      expect(r.frozen).toMatchObject({ epoch: 2, hashes: [docHash(order[0]), docHash(order[1])] });
+      expect([...r.frozen!.signers].sort()).toEqual([omer.id, dana.id].sort());
+      // A successor of either is refused until our human re-syncs.
+      const next = state(omer, 3, fromOmer, [member(omer, 'admin'), member(dana, 'admin'), member(john)], later(4000));
+      expect(book.receiveState(next, omer.id, ctxFor(john, [omer, dana], later(5000)))).toMatchObject({ kind: 'ignored', reason: expect.stringMatching(/frozen/) });
     }
+    // A rival waiting ahead of the chain is a fork too, not dropped when the chain reaches it.
+    const book = bookAt(john, both);
+    const s3a = state(omer, 3, fromOmer, [member(omer, 'admin'), member(dana, 'admin'), member(john)], later(4000));
+    const s3b = createGroupState(dana, { group: GROUP, epoch: 3, prev: docHash(fromOmer), members: [member(dana, 'admin'), member(john)], policy, name: 'x', ts: later(4000).toISOString() });
+    expect(book.receiveState(s3a, omer.id, ctxFor(john, [omer, dana], later(5000))).kind).toBe('future');
+    expect(book.receiveState(s3b, dana.id, ctxFor(john, [omer, dana], later(5000))).kind).toBe('fork');
+    expect(book.group(GROUP)!.state).toEqual(both);
   });
 });
 

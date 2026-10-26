@@ -27,7 +27,7 @@ import {
   type ReceivedInvite,
 } from '@rendezvous/core';
 import { contactFor, type Ctx, withAgent } from './commands.js';
-import { describeGroupTerms, dropPhrase, inviteSubject, joinTarget, newcomerDigest, newcomerKey, newcomerTarget, reissueForDisplay, type ShownPhrase } from './consent.js';
+import { describeGroupTerms, describeInviteAsk, dropPhrase, inviteAskOf, inviteAsks, inviteSubject, joinTarget, newcomerDigest, newcomerKey, newcomerTarget, reissueForDisplay, type ShownPhrase } from './consent.js';
 import { CliError, consentKey, type GroupTerms } from './home.js';
 import { clean } from './output.js';
 import { gateCode } from './tasks.js';
@@ -123,7 +123,7 @@ export function groupView(agent: Agent, r: GroupRecord) {
     /** What members may invoke on us through this group (our join). */
     invoke: Object.keys(r.scope.invoke ?? {}).sort(),
     ...(r.scope.max_frequency ? { max_frequency: r.scope.max_frequency } : {}),
-    ...(r.frozen ? { frozen: { epoch: r.frozen.epoch, signer: r.frozen.signer, since: r.frozen.since } } : {}),
+    ...(r.frozen ? { frozen: { epoch: r.frozen.epoch, signers: r.frozen.signers, since: r.frozen.since } } : {}),
   };
 }
 
@@ -140,8 +140,8 @@ export function groupText(agent: Agent, r: GroupRecord): string {
   ];
   if (r.frozen) {
     lines.push(
-      `  MEMBERSHIP FROZEN since ${clean(r.frozen.since)}: the admin ${clean(fingerprint(r.frozen.signer))} signed two different states at epoch ${r.frozen.epoch}. ` +
-        `Check with them, then run: rdv group resync ${clean(r.group)}`,
+      `  MEMBERSHIP FROZEN since ${clean(r.frozen.since)}: two different member lists at epoch ${r.frozen.epoch}, signed by ${signersText(r)}. ` +
+        `Check with the admins, then run: rdv group resync ${clean(r.group)}`,
     );
   }
   return lines.join('\n');
@@ -158,7 +158,6 @@ export function changeView(c: GroupChange) {
     newcomers: c.newcomers,
     admitted: c.admitted,
     left: c.left,
-    replaced: c.replaced,
   };
 }
 
@@ -170,7 +169,6 @@ export function changeText(c: GroupChange): string {
     ...(c.admitted ? ['you are in'] : []),
     ...(c.added.length && !c.admitted ? [`added ${fp(c.added)}`] : []),
     ...(c.removed.length ? [`removed ${fp(c.removed)}`] : []),
-    ...(c.replaced ? ['another admin’s state replaced the one you held'] : []),
   ];
   const ask = c.newcomers.length
     ? `. Not your contacts, so they get nothing from you until you approve them: ${fp(c.newcomers)} (see: rdv group pending)`
@@ -178,10 +176,12 @@ export function changeText(c: GroupChange): string {
   return `group ${name} (${clean(c.record.group)}) epoch ${c.record.state.epoch}: ${parts.join(', ') || 'updated'}${ask}`;
 }
 
+const signersText = (r: GroupRecord): string => (r.frozen?.signers ?? []).map((id) => clean(fingerprint(id))).join(' and ') || 'an admin';
+
 export function forkText(r: GroupRecord): string {
   return (
-    `group ${JSON.stringify(clean(r.state.name))} (${clean(r.group)}): the admin ${clean(fingerprint(r.frozen?.signer ?? r.state.from))} signed two different states at epoch ${r.frozen?.epoch}. ` +
-    `Membership is frozen at the state you hold; check with them, then run: rdv group resync ${clean(r.group)}`
+    `group ${JSON.stringify(clean(r.state.name))} (${clean(r.group)}): two different member lists at epoch ${r.frozen?.epoch}, signed by ${signersText(r)}. ` +
+    `Membership is frozen at the state you hold; check with the admins, then run: rdv group resync ${clean(r.group)}`
   );
 }
 
@@ -229,7 +229,11 @@ export async function groupCreate({ home, out, positionals }: Ctx): Promise<void
   out.emit({ ...r.view, event: 'group-created' }, `created group ${clean(r.view.group)} ${JSON.stringify(clean(r.view.name))}; invite contacts with: rdv group invite ${clean(r.view.group)} <agent-id|label>`);
 }
 
-/** `rdv group invite <group-id> <agent-id|label> [--name <shown to members>] [--greeting <text>]`: only your contacts. */
+/**
+ * `rdv group invite <group-id> <agent-id|label> [--name <shown to members>] [--greeting <text>]`:
+ * only your contacts. The human's command (review of #80): the invitee sees the
+ * members and, once it joins, their cards and terms.
+ */
 export async function groupInvite({ home, out, values, positionals }: Ctx): Promise<void> {
   const [group, target] = positionals;
   const inv = await withAgent(home, async (agent) => {
@@ -279,21 +283,36 @@ export async function groupPending({ home, out }: Ctx): Promise<void> {
         .groupList()
         .filter((r) => r.status === 'active')
         .flatMap((r) => Object.keys(r.newcomers).map((m) => ({ r, m })));
+      const asks = inviteAsks(home);
       const shown =
-        out.json || (invites.length === 0 && newcomers.length === 0)
+        out.json || (invites.length === 0 && newcomers.length === 0 && asks.length === 0)
           ? new Map<string, ShownPhrase>()
-          : reissueForDisplay(home, [...invites.map((i) => joinTarget(i, contact)), ...newcomers.map(({ r, m }) => newcomerTarget(r, m))]);
+          : reissueForDisplay(home, [...invites.map((i) => joinTarget(i, contact)), ...newcomers.map(({ r, m }) => newcomerTarget(r, m)), ...asks]);
       return {
         invites: invites.map((i) => ({ view: inviteView(agent, i), text: describeInvite(agent, i), code: inviteCode(agent, i), phrase: shown.get(consentKey('group-join', i.invite.id)) })),
         newcomers: newcomers.map(({ r, m }) => {
           const v = memberViews(agent, [memberOf(r.state, m)!])[0];
           return { group: r, member: v, code: newcomerCode(r, m), phrase: shown.get(consentKey('group-newcomer', newcomerKey(r.group, m))) };
         }),
+        asks: asks.flatMap((t) => {
+          const a = inviteAskOf(t);
+          const phrase = shown.get(consentKey('group-invite', t.id));
+          return a && phrase ? [{ ask: a, phrase }] : [];
+        }),
       };
     },
     { save: false },
   );
-  if (rows.invites.length === 0 && rows.newcomers.length === 0 && !out.json) out.emit({}, 'nothing waits for you in groups');
+  if (rows.invites.length === 0 && rows.newcomers.length === 0 && rows.asks.length === 0 && !out.json) out.emit({}, 'nothing waits for you in groups');
+  // Text mode only (asks is empty with --json): the assistant asked to send an invite.
+  for (const a of rows.asks) {
+    out.emit(
+      { event: 'group-invite-ask', group: a.ask.group, peer: a.ask.peer },
+      `your assistant asks to ${clean(describeInviteAsk(a.ask, fingerprint))}` +
+        `\n  confirm phrase (tell it to your MCP client to send it): ${clean(a.phrase.phrase)}  (replaces any phrase shown before)` +
+        `\n  or send it yourself: rdv group invite ${clean(a.ask.group)} ${clean(a.ask.peer)}`,
+    );
+  }
   for (const i of rows.invites) {
     const phrase = i.phrase
       ? `\n  confirm phrase (tell it to your MCP client to join): ${clean(i.phrase.phrase)}  (replaces any phrase shown before)\n  it approves: ${clean(describeGroupTerms(i.phrase.group!))}`

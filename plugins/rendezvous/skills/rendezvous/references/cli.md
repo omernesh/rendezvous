@@ -43,7 +43,7 @@ or without `--json`): `rdv contact grant`, `rdv contact confirm`,
 `rdv dinner cancel`, `rdv dinner list`, `rdv task approve`, `rdv task release`,
 `rdv task list`, `rdv contact auto-approve` (on or off), `rdv owner-secret set`, `rdv owner-secret reset`,
 `rdv file direct-transfer`, `rdv relays add`, `rdv relays remove`, `rdv relays list`, `rdv init --force`,
-`rdv group join`, `rdv group approve`, `rdv group resync`, `rdv group pending`,
+`rdv group invite`, `rdv group join`, `rdv group approve`, `rdv group resync`, `rdv group pending`,
 `rdv listen --auto-grant` and `rdv listen --auto-confirm`. Use
 `rdv_pending_requests`, `rdv_negotiate` (action `status`), `rdv_task`
 (action `list`), `rdv_file` (action `list`), `rdv_group` (action `list`) and `rdv_relays` instead.

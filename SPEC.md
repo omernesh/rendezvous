@@ -1777,13 +1777,16 @@ the admin's own pairwise channels:
   `max_frequency` format. `members_may_invite` is reserved: this version
   writes `false` and only admins invite. Unknown fields anywhere are refused,
   and so is a state larger than 8 KiB.
-- **Roles.** `admin` changes the state; `member` does not. With more than one
-  admin, two valid states with the same epoch (both on top of the same state)
-  are resolved by keeping the one with the lower hash; the other admin
-  re-issues on top. Two different states with the same epoch signed by the
-  *same* admin are a fork: the admin restored a backup, or lies. Members then
-  freeze membership at the state they hold, refuse later states, and tell
-  their humans; only the human thaws it, after checking with the admin.
+- **Roles and forks.** `admin` changes the state; `member` does not. Two
+  different states with the same epoch are a fork, whoever signed them: one
+  admin restored a backup or lies, or two admins changed the group at once.
+  Members then freeze membership at the state they hold, refuse later
+  states, and tell their humans; only the human thaws it, after checking
+  with the admins, and the admins re-issue on top of the state that stands.
+  Nothing picks a winner automatically: a rule such as "the lower hash
+  wins" can be ground, since an admin can re-sign until its state wins, for
+  instance one that removes or demotes the other admin. A state for an
+  epoch a member already holds, or already waits for, counts the same way.
 - **Display.** A member who is not my contact has no local label; hosts show
   its fingerprint and "named by the admin as …", never treating the name as
   verified.
@@ -1808,6 +1811,13 @@ the admin's own pairwise channels:
   non-contact payload. `greeting` (at most 280 characters) is peer text.
   `expires` is at most 14 days ahead (reference default: 7). An admin counts
   its open invites against the 16, so a group is never promised past its cap.
+- **Inviting needs the admin's human** (§5.5). The invitee learns who is in
+  the group, and once it joins it receives every member's card and
+  group-scoped grant, so the choice of whom to invite is a disclosure the
+  admin's human makes: the approval is bound to the group, the invitee (its
+  fingerprint and the admin's local label for it), and the name and
+  greeting the invite carries. Creating a group needs no approval: it
+  shares nothing.
 - **Joining needs the joiner's human** (§5.5), every time: no standing
   approval covers it, auto-approve included (§5.5.1). The host shows every
   member: fingerprint, and either "your contact `<label>`" or "not your
@@ -1866,14 +1876,15 @@ the admin's own pairwise channels:
   is welcome); groups per agent, 32; group control payloads, 60 an hour per
   peer (dropped over it, never revoking).
 
-The reference CLI's human-only commands are `rdv group pending` (invites and
+The reference CLI's human-only commands are `rdv group invite <group-id>
+<agent-id|label> [--name …] [--greeting …]`, `rdv group pending` (invites and
 newcomers with the `--code` that approves exactly what was shown, and the
 MCP server's confirm phrases), `rdv group join <invite-id> --code <code>
 [--invoke <uri>]… [--max-frequency f] [--newcomers ask|trust-admin]`,
 `rdv group approve <group-id> <agent-id> --code <code>` and `rdv group resync
-<group-id>`; `rdv group create`, `rdv group invite`, `rdv group list` and
-`rdv group decline` are not consent decisions. The MCP server's `rdv_group`
-asks through an approval form or a confirm phrase for "join" and "approve".
+<group-id>`; `rdv group create`, `rdv group list` and `rdv group decline` are
+not consent decisions. The MCP server's `rdv_group` asks through an approval
+form or a confirm phrase for "invite", "join" and "approve".
 
 ---
 
@@ -1898,7 +1909,8 @@ asks through an approval form or a confirm phrase for "join" and "approve".
 | Prompt injection through greetings or message text | Peer text is display-only data; only validated machine fields drive actions (§5.6) |
 | A task request (`request/v1`) tells the executor's model to send owner data, grant, or approve itself | Start gate before any work; release gate on everything that leaves; approvals and confirm phrases come only from the human and are bound to what they saw, so one written in the request is never valid; peer content marked untrusted and terminal-safe; the model drafts, never acts (§5.6, §7.6.4) |
 | A group admin adds members to everyone's audience | Each member approves every newcomer who is not its contact before sending it anything (`ask`, the default); an admin cannot change anyone's group-scoped grant, and a member can leave and block its key (§7.8.2) |
-| A group admin signs two member lists for one step (a restored backup, or a lie) | The same epoch from the same admin is a fork: members freeze membership and tell their humans, who re-sync after checking (§7.8.1) |
+| Two member lists for one step: an admin restored a backup or lies, or two admins race (one grinding its state's hash to win) | Any two states at one epoch are a fork, never resolved automatically: members freeze membership and tell their humans, who re-sync after checking (§7.8.1) |
+| An assistant invites someone into the user's group on its own | Inviting needs the admin's human, bound to the group, the invitee and what the invite says (§7.8.2) |
 | Group invite spam | Only contacts invite; at most 2 pending per admin and 16 in all; joining needs the human every time (§7.8.2) |
 | Stranger answers a topic probe | Grant recorded as `claimed`; grantor fingerprint shown before trust (§5.3) |
 | Relay logs metadata (who talks to whom) | Envelope minimizes metadata; fallback to human channels if metadata exposure is unacceptable |
@@ -2065,12 +2077,12 @@ Proposed MCP tool API (v0.3):
 | `rdv_send` | send an envelope (task, message, proposal) |
 | `rdv_inbox` | read events after a cursor (an event log; nothing is acknowledged to the peer) |
 | `rdv_negotiate` | A2A task exchange lifecycle |
-| `rdv_group` | groups (§7.8): create one, invite contacts, list groups and invites; joining and approving a newcomer only with the human's own approval (§5.5) |
+| `rdv_group` | groups (§7.8): create one, list groups and invites; inviting a contact, joining and approving a newcomer only with the human's own approval (§5.5) |
 | `rdv_task` | general tasks (§7.6): request one from a contact, list and show them, answer `input-required`, cancel; for a contact's task, approve its start and release each result, both only with the human's own approval (§5.5) |
 
 `rdv_grant` MUST NOT succeed on the model's say-so (§5.5), nor may
-`rdv_task` pass a start or release gate on it, nor `rdv_group` join a group
-or approve a newcomer, and peer text in any result
+`rdv_task` pass a start or release gate on it, nor `rdv_group` invite
+someone, join a group or approve a newcomer, and peer text in any result
 is returned marked as untrusted (§5.6). One server runs per home
 state directory.
 

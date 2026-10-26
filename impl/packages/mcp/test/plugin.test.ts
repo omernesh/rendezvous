@@ -959,8 +959,12 @@ describe('joining a group and approving a newcomer are the human’s (issue #77)
     'rdv group $(echo join) 0f1e',
     'echo join | xargs rdv group',
     'bash -c "rdv group join 0f1e --code 1"',
+    // Inviting is the admin's human's too (review of #80).
+    'rdv group invite g1 rdv1:abc --name John',
+    'npx rdv group invite g1 john',
+    'echo invite | xargs rdv group',
   ];
-  const allowed = ['rdv group create "Microsite launch"', 'rdv group invite g1 rdv1:abc --name John', 'rdv group list', 'rdv group list --json', 'rdv group decline 0f1e'];
+  const allowed = ['rdv group create "Microsite launch"', 'rdv group list', 'rdv group list --json', 'rdv group decline 0f1e'];
   it.each(denied)('the guard refuses %s', (c) => expect(checkCommand(c)).toBeTruthy());
   it.each(allowed)('the guard allows %s', (c) => expect(checkCommand(c)).toBeUndefined());
   it('the skill lint catches a skill that tells the assistant to join or approve', () => {
@@ -1000,6 +1004,7 @@ describe('the skill covers general tasks, files and auto-approve (issue #29)', (
     'rdv relays remove',
     'rdv relays list',
     // Groups (issue #77): joining and approving a newcomer are the human's; pending shows their phrases.
+    'rdv group invite',
     'rdv group join',
     'rdv group approve',
     'rdv group resync',

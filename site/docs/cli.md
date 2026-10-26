@@ -31,7 +31,7 @@ inbound loop), so `rdv` and `rdv-mcp` share profiles.
 | `envelope` | §6.4, §7 | Encrypted, signed envelopes; `seq`/`prev` ordering with gap detection |
 | `files` | §7.7 | File references (`FilePart` + files extension): strict validation, `encryptFile`, `verifyAndDecrypt`, inline parts |
 | `filefetch` | §7.7 | `fetchFileRef`: https only, SSRF-blocked and DNS-pinned, no credentials, capped, hash-verified |
-| `group` | §7.8 | Groups v1 membership: the signed `rdv/group-state` chain (`epoch`, `prev`, admin signer, forks, the tie rule), `rdv/group-invite`, `rdv/group-join` (a group-scoped grant), and the `GroupBook` (invites, newcomer policy, approvals; at most 16 members, NOTES 86) |
+| `group` | §7.8 | Groups v1 membership: the signed `rdv/group-state` chain (`epoch`, `prev`, admin signer; any two states at one epoch are a fork), `rdv/group-invite`, `rdv/group-join` (a group-scoped grant), and the `GroupBook` (invites, newcomer policy, approvals; at most 16 members, NOTES 86) |
 | `transfer` | §7.7 | `rdv/transfer` messages and their pure state machine (negotiation only, no transport) |
 | `transport/nostr` | §6.2 | Nostr relay transport (kind 30417): re-subscribes when a relay drops; publishes with retries, per-relay pacing and cooldowns, and per-relay status (`relayStatus()`); `setRelays()` moves a live transport; discovery mirrors (`mirrorRelays`, `mirrorTopics()`); `DEFAULT_RELAYS`, `DEFAULT_MIRROR_RELAYS` |
 | `agent` | — | Ties it together: listen, discover, request, grant, send, receive |
@@ -203,7 +203,7 @@ State lives in a directory: `--home <dir>`, else `$RDV_HOME`, else
 | `rdv task submit <task-id> --file <sha256>=<https-url>… [--inline <path>…]` | Attach files by reference (or up to 16 KiB inline) to the draft. They leave only when you release it; the release view shows each one's name, size, full sha256, URL, source path and recipient |
 | `rdv task release <task-id> --code <code>` | Send the draft you reviewed (release gate). Yours to run |
 | `rdv task cancel <task-id>` / `rdv task input <task-id> --text "…"` | Withdraw a task you requested, or answer its executor's question |
-| `rdv group create <name>` / `rdv group invite <group-id> <agent-id\|label> [--name …] [--greeting …]` | Make a group with you as its admin (at most 16 members), and invite your contacts to it (SPEC §7.8). Their humans decide |
+| `rdv group create <name>` / `rdv group invite <group-id> <agent-id\|label> [--name …] [--greeting …]` | Make a group with you as its admin (at most 16 members), and invite your contacts to it (SPEC §7.8). `invite` is yours to run (the invitee sees the members, and on joining their cards); their humans decide |
 | `rdv group list` | Your groups (members, who you approved, who waits for you) and the invites waiting for you; no codes |
 | `rdv group pending` | Invites and newcomers waiting for your decision, with the `--code` for `join` and `approve` (and, in text mode, the MCP server's confirm phrases). Yours to run |
 | `rdv group join <invite-id> --code <code> [--invoke <uri>]… [--max-frequency f] [--newcomers ask\|trust-admin]` / `rdv group decline <invite-id>` | Join a group on these terms (what members may ask of you; by default nothing, and you are asked about each newcomer who is not your contact), or say no. `--code` is refused if the invite changed since you read it. `join` is yours to run |

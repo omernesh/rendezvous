@@ -2546,14 +2546,14 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       and `rdv/group-join`, all strict (unknown fields refused), plus the
       unsigned `rdv/group-members` carrier. `GroupBook` (in `AgentState.groups`,
       written only once there is something in it, so old state files are
-      unchanged) keeps per group the state, the one before (for the tie
-      rule), 16 recent (epoch, hash, signer), 4 states ahead of ours, each
+      unchanged) keeps per group the state, the one before, 16 recent
+      (epoch, hash, signer), 4 states ahead of ours, each
       member's join, who our human approved (`approved`), who waits for them
       (`newcomers`), our newcomer policy and our own join scope. `Agent`
       adds `createGroup`, `inviteToGroup`, `groupInvites`, `joinGroup`,
       `declineGroupInvite`, `approveGroupNewcomer`, `resyncGroup` and the
       events `group-invite`, `group-invites-evicted`, `group-state` (a
-      `GroupChange`: added, removed, newcomers, admitted, left, replaced)
+      `GroupChange`: added, removed, newcomers, admitted, left)
       and `group-fork`. Nothing in core joins or approves on its own.
     - **Who may send what.** An invite and a join only from a current
       contact; a state and a members payload only from a contact or a
@@ -2587,21 +2587,33 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       for now: changing one's own group terms is slice 3).
       (f) `members_may_invite` is reserved (always `false`); only admins
       invite. Open invites count against the 16.
-      (g) A state that removes us can still lose a same-epoch tie: the
-      record stays `removed` but keeps its approvals, and a lower-hash state
-      that lists us reinstates it.
-    - **What `trust-admin` trusts.** Creating a group and inviting a contact
-      are not human gates (the design names only joining and newcomer
-      approval), so an admin's invites may come from its model. A member on
-      `trust-admin` therefore trusts the admin's *agent*, not only its human,
-      to pick the audience; `ask` stays the default, and the join form says
-      what `trust-admin` does. Revisit if invites should need the admin's
-      human too.
-    - **Forks (§7.8.6 layer 4, the part that belongs to membership).** A
-      different state at an epoch we hold, from the same admin, freezes the
-      group: later states are refused, our admin role cannot invite, and the
-      human is told (`group-fork`); `rdv group resync` thaws it at the state
-      we hold. The equivocating admin's other state is never adopted.
+      (g) **No tie-break** (review of #80). The design resolved two admins'
+      states at one epoch by "the lower hash wins". That can be ground: an
+      admin re-signs (a new `ts` each time) until its hash is lower, and
+      overrides the other admin's state, say one that removes or demotes it.
+      So two different states at one epoch are a fork whoever signed them,
+      handled like one admin's equivocation; a rival that waits ahead of the
+      chain (in the future buffer) counts too, rather than being dropped
+      when the chain reaches its epoch.
+      (h) **Inviting needs the admin's human** (review of #80; the design
+      gated only joining and newcomer approval). The invitee learns the
+      members and, once admitted, gets every member's join (card and group
+      terms), and a member on `trust-admin` relies on the admin's choice of
+      audience, so the admin's model alone must not make it. The MCP
+      server's "invite" asks through `askForm()` or a confirm phrase bound
+      to the group, the invitee (ID, so fingerprint, and our label) and the
+      invite's name and greeting (consent action `group-invite`, keyed by
+      group and invitee, issued only when asked and kept until used;
+      another contact, name or greeting is another approval). `rdv group
+      invite` is on the consent guard's list; `rdv group pending` shows the
+      open asks with their phrases. Creating a group stays ungated: it
+      shares nothing.
+    - **Forks (§7.8.1, §7.8.6 layer 4, the part that belongs to membership).**
+      Any different state at an epoch we hold or wait for, from the same
+      admin or another, freezes the group: later states are refused, our
+      admin role cannot invite, and the human is told (`group-fork`, with
+      the signers); `rdv group resync` thaws it at the state we hold. Neither
+      rival state is adopted on its own.
     - **The human gates.** Joining and approving a newcomer are the human's
       every time, and auto-approve never covers them (§5.5.1): its
       `covered()` drops the groups extension even from a hand-edited scope,
@@ -2638,8 +2650,8 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       co-members who are not contacts.
     - Tests: core `test/group.test.ts` (state shape and signature, the chain:
       epoch, prev, a signer that is not an admin of the state before; a
-      fork freezes and resync thaws; the tie rule in both orders, including
-      one that removes us; invites only from contacts that are admins, for
+      fork freezes and resync thaws; two admins at one epoch freeze in either
+      order, a rival in the future buffer too; invites only from contacts that are admins, for
       us, bounded 2 per admin and 16 in all; the 16 cap with open invites;
       joins only for our open invite, from the invitee, bound to the state
       it carried; the newcomer policy; three agents on the in-memory relay
@@ -2649,8 +2661,10 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       the homes converge), `test/autoapprove.test.ts` (groups are never
       covered); MCP `test/groups.test.ts` (three servers: John joins by
       phrase, a default-terms phrase does not approve wider terms, Dana by
-      form, Dana approves John; no phrase reaches a model; a stranger cannot
-      be invited; decline), `plugin.test.ts` (the guard refuses the
+      form, Dana approves John; an invite without the admin's human sends
+      nothing, and a phrase bound to John invites neither Dana nor John under
+      another name; no phrase reaches a model; a stranger cannot be invited;
+      decline), `plugin.test.ts` (the guard refuses the
       human-only group commands and the skill names them).
 
 ## Not implemented yet

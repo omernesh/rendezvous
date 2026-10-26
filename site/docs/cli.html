@@ -150,7 +150,7 @@ inbound loop), so <code>rdv</code> and <code>rdv-mcp</code> share profiles.</p>
 <tr>
 <td><code>group</code></td>
 <td>§7.8</td>
-<td>Groups v1 membership: the signed <code>rdv/group-state</code> chain (<code>epoch</code>, <code>prev</code>, admin signer, forks, the tie rule), <code>rdv/group-invite</code>, <code>rdv/group-join</code> (a group-scoped grant), and the <code>GroupBook</code> (invites, newcomer policy, approvals; at most 16 members, NOTES 86)</td>
+<td>Groups v1 membership: the signed <code>rdv/group-state</code> chain (<code>epoch</code>, <code>prev</code>, admin signer; any two states at one epoch are a fork), <code>rdv/group-invite</code>, <code>rdv/group-join</code> (a group-scoped grant), and the <code>GroupBook</code> (invites, newcomer policy, approvals; at most 16 members, NOTES 86)</td>
 </tr>
 <tr>
 <td><code>transfer</code></td>
@@ -539,7 +539,7 @@ npm run rdv -- --help                     # or: node packages/cli/dist/src/bin.j
 </tr>
 <tr>
 <td><code>rdv group create &lt;name&gt;</code> / <code>rdv group invite &lt;group-id&gt; &lt;agent-id\|label&gt; [--name …] [--greeting …]</code></td>
-<td>Make a group with you as its admin (at most 16 members), and invite your contacts to it (SPEC §7.8). Their humans decide</td>
+<td>Make a group with you as its admin (at most 16 members), and invite your contacts to it (SPEC §7.8). <code>invite</code> is yours to run (the invitee sees the members, and on joining their cards); their humans decide</td>
 </tr>
 <tr>
 <td><code>rdv group list</code></td>

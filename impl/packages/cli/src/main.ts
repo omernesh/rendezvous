@@ -185,7 +185,7 @@ const COMMANDS: Record<string, Command> = {
   },
   'group invite': {
     usage: 'rdv group invite <group-id> <agent-id|label> [--name <how members see them>] [--greeting "…"]',
-    summary: 'Invite one of your contacts (its card must list groups) to a group you administer; their human decides',
+    summary: 'Invite one of your contacts (its card must list groups) to a group you administer; their human decides. Yours to run',
     args: 2,
     options: { name: { type: 'string' }, greeting: { type: 'string' } },
     run: grp.groupInvite,

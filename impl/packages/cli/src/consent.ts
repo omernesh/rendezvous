@@ -221,7 +221,7 @@ export function inboundAsks(home: Home): Map<string, ConsentTerms> {
   return asks;
 }
 
-const ACTIONS: readonly string[] = ['request', 'candidate', 'meeting', 'cancel', 'inbound', 'task-start', 'task-release', 'relays', 'group-join', 'group-newcomer'];
+const ACTIONS: readonly string[] = ['request', 'candidate', 'meeting', 'cancel', 'inbound', 'task-start', 'task-release', 'relays', 'group-join', 'group-newcomer', 'group-invite'];
 const isStr = (v: unknown): v is string => typeof v === 'string' && v.length > 0;
 const isHash = (h: unknown): h is ConsentHash =>
   !!h && typeof h === 'object' && isStr((h as ConsentHash).salt) && isStr((h as ConsentHash).hash) && ((h as ConsentHash).digest === undefined || isStr((h as ConsentHash).digest));
@@ -559,4 +559,54 @@ export function describeGroupTerms(t: GroupTerms): string {
       ? "newcomers the admin adds get your group messages at once (trust-admin)"
       : 'you are asked before each newcomer who is not your contact gets anything from you (ask)';
   return `${invoke}${rate}; ${newcomers}`;
+}
+
+/**
+ * An invite the model asks to send (review of #80): inviting is the admin's
+ * human's decision, since the invitee then learns the group's members and,
+ * once it joins, gets their cards and terms. What the human approves: the
+ * group, the contact (its ID, so its fingerprint, and our label for it), and
+ * the name and greeting the invite carries.
+ */
+export interface InviteAsk {
+  group: string;
+  group_name: string;
+  peer: string;
+  label: string | null;
+  name: string | null;
+  greeting: string | null;
+}
+
+const INVITE_ASK = 'group-invite/v1\0';
+
+export function inviteAskTarget(a: InviteAsk): PhraseTarget {
+  const subject = INVITE_ASK + canonicalize(a);
+  return { action: 'group-invite', id: newcomerKey(a.group, a.peer), subject, digest: sha256('rdv1/group-invite-ask', { subject }) };
+}
+
+/** The ask a stored invite phrase was issued for, from its subject. */
+export function inviteAskOf(t: Pick<PhraseTarget, 'subject'>): InviteAsk | undefined {
+  if (!t.subject?.startsWith(INVITE_ASK)) return undefined;
+  try {
+    return JSON.parse(t.subject.slice(INVITE_ASK.length)) as InviteAsk;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Open invite asks (issued only when the model asks): kept by a re-sync until used. */
+export function inviteAsks(home: Home): PhraseTarget[] {
+  return Object.values(load(home).consent).flatMap((e) => {
+    const a = e.action === 'group-invite' ? inviteAskOf(e) : undefined;
+    return a ? [inviteAskTarget(a)] : [];
+  });
+}
+
+/** An invite ask in words, for the human. */
+export function describeInviteAsk(a: InviteAsk, fingerprintOf: (id: string) => string): string {
+  return (
+    `invite your contact ${fingerprintOf(a.peer)}${a.label !== null ? ` ("${a.label}")` : ''} to your group "${a.group_name}" (${a.group})` +
+    `${a.name !== null ? `, shown to the members as "${a.name}"` : ''}${a.greeting !== null ? `, with the greeting "${a.greeting}"` : ''}. ` +
+    'They see who is in the group, and if they join, every member\'s card and group terms'
+  );
 }

@@ -376,7 +376,7 @@ export function toModelEvent(e: Raw, negotiating: boolean): Omit<McpEvent, 'n' |
           ? 'Your user is no longer a member of this group.'
           : e.admitted === true
             ? 'Your user is now a member of this group.'
-            : `The group's members changed: ${added.length} added, ${removed.length} removed${e.replaced === true ? " (another admin's state replaced the one held)" : ''}.`;
+            : `The group's members changed: ${added.length} added, ${removed.length} removed.`;
       return {
         type: 'group_update',
         group_id: uuid(e.group),
@@ -399,9 +399,9 @@ export function toModelEvent(e: Raw, negotiating: boolean): Omit<McpEvent, 'n' |
         type: 'group_fork',
         group_id: uuid(e.group),
         group_name: untrusted(e.name),
-        signer: agentId((e.frozen as Record<string, unknown> | undefined)?.signer),
+        signers: ids((e.frozen as Record<string, unknown> | undefined)?.signers, 4),
         next_step:
-          "The group's admin signed two different member lists for the same step (it may have restored an old backup, or it lies). Its membership is frozen at what this agent holds. " +
+          "The group's admins signed two different member lists for the same step (one restored an old backup or lies, or two changed the group at once). Its membership is frozen at what this agent holds. " +
           'Tell your user; only they can thaw it, after checking with the admin, with `rdv group resync <group-id>` in their own terminal.',
       };
     case 'dropped':
