@@ -682,10 +682,10 @@ export class Home {
   }
 
   /** `rdv init --force`: drop everything derived from the old key. */
-  reset(): void {
+  reset(opts: { keepAgent?: boolean } = {}): void {
     for (const p of [
-      this.agentPath,
-      this.agentBackupPath,
+      // A restore writes the new agent.json (and .bak) first, then clears the rest (issue #88).
+      ...(opts.keepAgent ? [] : [this.agentPath, this.agentBackupPath]),
       this.configPath,
       this.inboxPath,
       this.cardsPath,

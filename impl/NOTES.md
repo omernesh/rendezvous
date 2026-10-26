@@ -3176,6 +3176,19 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       2^18. A restore writes the owner-secret marker (the audit log does not
       travel). Not changed: `restoreBackup` is exported from the CLI library
       (a same-user script can call any of it; item 77's honest limit).
+    - **Second review (PR #92).** The ack's resend walks back only over live
+      envelopes: an expired one (48 h ttl) would be dropped by the restored
+      side, whose skip would then wait at it forever, so `from_seq`, `prev`
+      and `floor` come from the oldest live envelope (or the next `seq` when
+      none is). A notice that expired unanswered, that our outbox no longer
+      holds, or that the peer asks for again in an `rdv/resend` is sent
+      afresh (`restoreNoticeStale`: before the next envelope, at a listener's
+      start, and in place of the replay); the peer's own checks (newer than
+      all it accepted, 3 a day) keep a repeat safe. A restore builds the new
+      state and loads it as an agent before touching the home, checks the
+      channels', groups' and contacts' shape, and writes the new `agent.json`
+      (the old one becoming `agent.json.bak`) before clearing anything; the
+      backup copy is then the new state too.
     - **Tests.** `core/test/backup.test.ts` (round trip, wrong passphrase,
       changed header or ciphertext, strict parsing, the restore over the
       in-memory relay: both directions continue without a resync and missed

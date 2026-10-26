@@ -35,6 +35,7 @@ import {
   type Payload,
   type RefusedChannel,
   envelopeHash,
+  isExpired,
   openEnvelope,
   sealEnvelope,
 } from './envelope.js';
@@ -427,6 +428,20 @@ export class Agent extends EventEmitter<AgentEvents> {
     return report;
   }
 
+  /**
+   * Our notice to `peer` went unanswered and can no longer arrive (NOTES 91):
+   * it expired, or our outbox no longer holds it, or `covered` (a resend
+   * range asking for it again) says the peer missed it. Such a notice is sent
+   * afresh; the peer's checks (newer than all it accepted, 3 a day) keep a
+   * repeat safe.
+   */
+  private restoreNoticeStale(peer: string, covered?: (seq: number) => boolean): boolean {
+    const hash = this.channels.state[peer]?.restoreNotice;
+    if (typeof hash !== 'string' || hash === 'due') return false;
+    const env = (this.outbox[peer] ?? []).find((e) => envelopeHash(e) === hash);
+    return !env || isExpired(env, new Date()) || covered?.(env.seq) === true;
+  }
+
   /** The `rdv/restored` payload for `peer`: where our inbound chain from it stood in the backup (NOTES 91). */
   private restoredNotice(peer: string): Payload {
     return { type: RESTORED_TYPE, v: 1, in_seq: this.channels.state[peer]?.inSeq ?? 0, backup_created: this.restored?.backup_created ?? null };
@@ -442,7 +457,7 @@ export class Agent extends EventEmitter<AgentEvents> {
   async sendRestoredNotices(): Promise<CardUpdateReport> {
     const report: CardUpdateReport = { sent: [], failed: [] };
     for (const [peer, c] of Object.entries(this.channels.state)) {
-      if (c.restoreNotice !== 'due' || !this.restorePeer(peer) || this.book.isBlocked(peer)) continue;
+      if (!(c.restoreNotice === 'due' || this.restoreNoticeStale(peer)) || !this.restorePeer(peer) || this.book.isBlocked(peer)) continue;
       try {
         await this.deliverTo(peer, this.restoredNotice(peer));
         report.sent.push(peer);
@@ -459,7 +474,7 @@ export class Agent extends EventEmitter<AgentEvents> {
     const due: string[] = [];
     const awaiting: string[] = [];
     for (const [peer, c] of Object.entries(this.channels.state)) {
-      if (c.restoreNotice === 'due') due.push(peer);
+      if (c.restoreNotice === 'due' || this.restoreNoticeStale(peer)) due.push(peer);
       else if (typeof c.restoreNotice === 'string') awaiting.push(peer);
     }
     return { ...this.restored, notice_due: due, awaiting_ack: awaiting };
@@ -993,7 +1008,7 @@ export class Agent extends EventEmitter<AgentEvents> {
   private async deliver(peer: string, payload: { type: string }, relays: string[]): Promise<Envelope> {
     // After a restore, the first envelope to each peer is our notice (NOTES 91), whatever we send.
     const notice = payload.type === RESTORED_TYPE;
-    if (!notice && this.channels.state[peer]?.restoreNotice === 'due') await this.deliver(peer, this.restoredNotice(peer), relays);
+    if (!notice && (this.channels.state[peer]?.restoreNotice === 'due' || this.restoreNoticeStale(peer))) await this.deliver(peer, this.restoredNotice(peer), relays);
     const { seq, prev } = this.channels.nextOutbound(peer);
     const env = sealEnvelope(this.key, peer, payload, { seq, prev });
     this.channels.commitOutbound(peer, env);
@@ -1318,8 +1333,16 @@ export class Agent extends EventEmitter<AgentEvents> {
         if (!card) return;
         const lo = Number(payload.from_seq);
         const hi = Number(payload.to_seq);
+        // After our restore: a notice the peer missed (asked for again) or one that expired unanswered is sent
+        // fresh, never replayed: an expired envelope would only be dropped there (NOTES 91).
+        let replaced: string | undefined;
+        if (this.restoreNoticeStale(from, (seq) => seq >= lo && seq <= hi)) {
+          replaced = this.channels.state[from].restoreNotice;
+          this.channels.state[from].restoreNotice = 'due';
+          await this.deliverTo(from, this.restoredNotice(from));
+        }
         for (const e of this.outbox[from] ?? []) {
-          if (e.seq >= lo && e.seq <= hi) await this.transport.sendEnvelope(e, relaysOf(card));
+          if (e.seq >= lo && e.seq <= hi && !(replaced && envelopeHash(e) === replaced)) await this.transport.sendEnvelope(e, relaysOf(card));
         }
         return;
       }
@@ -1386,7 +1409,9 @@ export class Agent extends EventEmitter<AgentEvents> {
     const out = this.channels.state[from];
     const resend: Envelope[] = [];
     const box = [...(this.outbox[from] ?? [])].sort((a, b) => a.seq - b.seq);
-    for (let i = box.length - 1, next = out.outSeq; i >= 0 && next > inSeq && box[i].seq === next; i--, next--) resend.unshift(box[i]);
+    // Stop at the first expired envelope: it would only be dropped there, and the gap it left would never close.
+    const now = new Date();
+    for (let i = box.length - 1, next = out.outSeq; i >= 0 && next > inSeq && box[i].seq === next && !isExpired(box[i], now); i--, next--) resend.unshift(box[i]);
     const fromSeq = resend.length ? resend[0].seq : out.outSeq + 1;
     const prev = resend.length ? resend[0].prev : out.outPrev;
     // What it can't get again is older than the first envelope it does get again: a replay of it is a duplicate there.
