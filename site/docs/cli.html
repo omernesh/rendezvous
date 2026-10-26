@@ -163,6 +163,11 @@ inbound loop), so <code>rdv</code> and <code>rdv-mcp</code> share profiles.</p>
 <td>Group messages: <code>rdv/group-msg</code> (a signed header committing to the body by hash), the per-sender chain (<code>gseq</code>/<code>gprev</code>) and <code>heads</code>, gaps and group resend, equivocation evidence (<code>rdv/group-proof</code>, headers only), <code>rdv/group-leave</code>, <code>member_rate</code> and the mute with its <code>rdv/group-report</code> (NOTES 87)</td>
 </tr>
 <tr>
+<td><code>backup</code></td>
+<td>§6.4.1</td>
+<td>The encrypted identity bundle (<code>sealBackup</code>, <code>openBackup</code>, strict <code>parseBackup</code>; scrypt + AES-256-GCM, the header as associated data) and the agent state for a backup and after a restore (<code>backupAgentState</code>, <code>restoredAgentState</code>: a new epoch per channel, each owing its peer an <code>rdv/restored</code> notice; NOTES 91)</td>
+</tr>
+<tr>
 <td><code>transfer</code></td>
 <td>§7.7</td>
 <td><code>rdv/transfer</code> messages and their pure state machine (negotiation only, no transport)</td>
@@ -497,7 +502,15 @@ npm run rdv -- --help                     # or: node packages/cli/dist/src/bin.j
 </tr>
 <tr>
 <td><code>rdv contact resync &lt;agent-id&gt;</code></td>
-<td>After <code>listen</code> reports an <code>envelope chain fork</code> (the contact restored an old backup), accept its current chain once you have checked with them; until then its messages are refused</td>
+<td>After <code>listen</code> reports an <code>envelope chain fork</code> (the contact restored an old copy of its home by hand, or two copies run), accept its current chain once you have checked with them; until then its messages are refused. A restore with <code>rdv restore</code> needs none of this</td>
+</tr>
+<tr>
+<td><code>rdv backup &lt;file&gt; [--stdin]</code></td>
+<td>Write an encrypted backup of this agent to a new file (mode 600, never over a file, never inside a home): its key, contacts, grants, channels, settings, owner passphrase record and auto-approve entries, never open approvals or confirm phrases. The passphrase is typed twice in your terminal (not shown; at least 12 characters), or read from stdin with <code>--stdin</code>; never an argument. Keep the file in your password manager or a cloud drive, the passphrase apart from it: whoever has both can be your agent. Yours to run (issue #88, NOTES 91)</td>
+</tr>
+<tr>
+<td><code>rdv restore &lt;file&gt; [--replace] [--stdin]</code></td>
+<td>Bring the agent back on a new machine: shows the agent ID, fingerprint and backup time in the file, asks for its passphrase, and refuses to replace an agent that exists here without <code>--replace</code>. On the next start (<code>rdv listen</code> or <code>rdv-mcp</code>) each contact is told (<code>rdv/restored</code>, SPEC §6.4.1), so conversations go on with no resync; <code>rdv whoami</code> shows who confirmed. Open tasks, dinners and pending requests are not in a backup. Yours to run</td>
 </tr>
 <tr>
 <td><code>rdv send &lt;agent-id&gt; --json '{"type":"a2a/message","text":"hi"}'</code></td>

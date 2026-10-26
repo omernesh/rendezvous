@@ -3063,6 +3063,133 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       up; one transition), `cli/test/relaywatch.test.ts` (monitor transitions,
       the merge), `mcp/test/relaydown.test.ts` (inbox gets each event once).
 
+## Identity backup and restore (issue #88)
+
+91. **An encrypted bundle, and a signed `rdv/restored` notice so peers follow
+    the restored chain** (**spec change**, §6.4.1, §8, §11; issue #88 and the
+    owner's decision of 2026-10-26: recovery is something the user asks their
+    agent for, with the passphrase typed only into the approval form). Choices:
+    - **Bundle** (`core/src/backup.ts`). JSON: `format: "rdv-backup"`, `v: 1`,
+      `agent` (the agent ID, in the clear so the restore form can show it and
+      its fingerprint before anything is decrypted), `created`, `kdf`
+      (scrypt, N 2^17, r 8, p 1, a 16-byte salt) and `cipher` (AES-256-GCM, a
+      12-byte nonce), then `ciphertext`. Key = scrypt over `rdv1/backup\0` and
+      the NFC passphrase. The associated data is the canonical JSON of the
+      whole header, so a changed agent ID, time or KDF parameter fails the
+      decryption exactly as a wrong passphrase does (one error, nothing to
+      tell them apart). Parsing is strict: exact keys, known format and
+      version, base64 of the right lengths, and N between 2^17 and 2^18
+      (never weaker than we write, never so high that opening a hostile file
+      exhausts memory). The decrypted state's key must be the header's agent.
+      XChaCha was not needed: the nonce is random per bundle under a fresh key.
+    - **Contents** (`cli/src/backup.ts`): the agent state through
+      `backupAgentState` (contacts, grants, channels, card, groups, rate
+      counters; never pending requests, probe answers or group invites, the
+      outbox or the gap buffer), `config.json`, and `owner-secret.json`, its
+      marker, `autoapprove.json`, `owner.json` and `cards.json` as stored. Never
+      `consent.json` (confirm phrases), tasks, negotiations, files, the inbox,
+      events or the audit log; open tasks and dinners do not survive a restore.
+    - **The owner passphrase record travels** (the owner's requirement: a
+      contact on auto-approve stays on it "until I say otherwise"). It is
+      safe: the record holds a salt and an scrypt hash, never the passphrase,
+      and it sits inside the encrypted bundle. Whoever can decrypt the bundle
+      holds the agent key already, and with it could forge auto-approve
+      entries anyway (item 77's honest limit), so an offline guess at the
+      owner passphrase gives them nothing more. Its failure count and lock
+      travel as they are. Because the entries are MACed with the agent key and
+      bound to that record (its `set` time and salt digest), they verify on
+      the new machine unchanged; nothing re-signs them.
+    - **The restore** writes the state through `restoredAgentState`: each
+      channel's next outbound `seq` becomes at least the restore time in ms
+      (a new epoch, beyond anything the lost copy can have sent, so a peer
+      reads our new envelopes as a gap, never a rollback) and owes its peer
+      an `rdv/restored` notice (`restoreNotice: "due"`). `Agent.deliver` sends
+      the notice before the first envelope to that peer, whatever it is, and
+      `sendRestoredNotices` runs first at every listener start (`rdv listen`,
+      `rdv-mcp`). Inbound state is kept.
+    - **The peer** takes a notice before ordering, only from a contact or
+      group co-member, only when it is newer than everything accepted from
+      that sender and above any re-sync floor (so a relay replay of it, or of
+      an older restore's notice, falls through to the ordinary checks as a
+      duplicate), at most `RESTORED_LIMIT` (3 a day) per sender, and never on
+      a channel refused after a fork (security review: the key holder, maybe
+      the very copy that forked, would otherwise lift the human's refusal on
+      its own; the human is told, `pending_resync`, and `rdv contact resync`
+      stays theirs). It re-bases (`Channels.rebase`: the notice is the head,
+      the floor is just below it), keeps only buffered envelopes after the notice,
+      emits `contact-restored` (an event for the human: `contact_restored` in
+      `rdv_inbox`, a line in `rdv listen`) and answers `rdv/restored-ack` with
+      where its own chain to us goes on: the first envelope after our `in_seq`
+      its outbox still holds without a hole (resent right after the ack), its
+      `prev`, and a `floor` just before it. Auto-approve on the peer's side is
+      untouched: the channel is never refused (item 77's `fork` reason).
+    - **The ack** is taken only for the notice we last sent that peer (by
+      hash), once. When `from_seq` is past our inbound head (the peer's outbox
+      no longer holds what the lost copy received), `Channels.skipTo` moves
+      the head there, only forward, and sets the floor, so what nobody holds
+      any more is not waited for forever; the buffer is drained first, then
+      the ack itself is ordered as usual. `restore-confirmed` is emitted
+      (`restore_confirmed` in `rdv_inbox`); `rdv whoami` and `rdv_status`
+      (`restore`) show who has not been told or not confirmed yet.
+    - **Replay and theft.** The notice is signed by the agent key, so no one
+      else can send one. A stolen backup with its passphrase is a stolen key:
+      the thief can restore it and peers follow, each human told; the defence
+      is the KDF and a strong passphrase (the form and the CLI require 12+
+      characters, 6+ distinct, and about 64 bits by a character-class
+      estimate). An old backup restored twice is two restores, each newer
+      than the last, each rate-limited and shown. A copy that keeps running
+      after a restore forks the re-based chain again and is refused, as any
+      fork. Left open: group message chains are not re-based (a member
+      restored from before its last group message can be reported as
+      equivocating, and is re-synced by its co-members' humans); a peer on
+      older software sees the jumped `seq` as a gap that never fills and needs
+      to update.
+    - **Hosts.** `rdv backup <file>` writes a new file only (O_EXCL, mode 600,
+      never inside a Rendezvous home); `rdv restore <file>` shows the header,
+      refuses an existing agent without `--replace`, refuses while a listener
+      holds the home, and clears the old home's files first. Both read the
+      passphrase from the terminal device (not echoed), or from stdin only with
+      an explicit `--stdin`, and refuse otherwise. Both are on the consent guard
+      (`rdv backup|restore` after any spelling of `rdv`, also after
+      `npm run rdv --`). `rdv_backup` "create" and "restore" take only a
+      path: the passphrase is typed into the elicitation form (twice, with the
+      strength check, for create; once for restore, which shows the agent ID,
+      fingerprint and backup time from the header of the bytes it then
+      decrypts), never a tool argument, result, event, log or error, with no
+      phrase path; without a form it refuses and names the terminal command.
+      Restore through MCP only into a home without an agent. Create reads the
+      new file back and opens it, and reports `verified_agent_id_matches`.
+      The gateway drops the tool (remote mode). Audited (`gate: "backup"`,
+      `create`/`restore`, `via`). The `rdv-backup` skill walks a non-technical
+      user through both, one step per turn.
+    - **Security review.** A restore brings back the standing decisions as
+      they were at backup time (auto-approve for a contact turned off since, an
+      owner passphrase changed since), and a bundle forged by someone else
+      would bring theirs: the restore result (CLI and `rdv_backup`) lists
+      every contact on auto-approve again, by fingerprint, and the owner
+      passphrase record's set time, the form says to restore only a backup
+      the user made, and the user turns any of them off with no form. Kept
+      rather than dropped: the owner asked for auto-approve to survive a
+      restore. A notice never lifts a fork refusal (above). The passphrase
+      check also refuses short ones built on common words or runs. The agent
+      shown in the create form is checked under the lock. N is capped at
+      2^18. A restore writes the owner-secret marker (the audit log does not
+      travel). Not changed: `restoreBackup` is exported from the CLI library
+      (a same-user script can call any of it; item 77's honest limit).
+    - **Tests.** `core/test/backup.test.ts` (round trip, wrong passphrase,
+      changed header or ciphertext, strict parsing, the restore over the
+      in-memory relay: both directions continue without a resync and missed
+      messages come again; the ack skips what no one holds; the notice goes
+      before anything else; a still-running copy forks; rate limit;
+      strangers), `cli/test/backup.test.ts` (TTY only or `--stdin`, weak or
+      mismatched passphrase, never over a file or into a home, no secret in
+      the file, `--replace`; a contact on auto-approve, backed up, restored on
+      a fresh home: its next task still starts without asking),
+      `mcp/test/backup.test.ts` (no form: refused, a passphrase argument
+      dropped; the forms; the passphrase in no result, event or log; the
+      contact follows), `plugin.test.ts` (guard, skill lint), gateway
+      `auth.test.ts` (not available remotely). Wire vectors unchanged.
+
 ## Not implemented yet
 
 

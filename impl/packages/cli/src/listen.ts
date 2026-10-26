@@ -29,7 +29,7 @@ import {
   type Transport,
   verifyContactRequest,
 } from '@rendezvous/core';
-import { cardSyncText, cardUpdateText, cardUpdateView, syncContactCards } from './cardupdate.js';
+import { cardSyncText, cardUpdateText, cardUpdateView, contactRestoredText, contactRestoredView, restoredSyncText, sendRestoredNotices, syncContactCards } from './cardupdate.js';
 import { appendEvents } from './events.js';
 import { LockTimeoutError, tryLongLock } from './fsutil.js';
 import { type AuditEntry, CliError, type Home, type InboxEntry } from './home.js';
@@ -319,6 +319,15 @@ async function handleLocked(
       );
       // A contact's newer card (NOTES 82): only how we reach it and what it supports changed, never consent.
       agent.on('card-update', (u) => events.push({ obj: cardUpdateView(u), human: cardUpdateText(u) }));
+      // A contact restored its agent from a backup (issue #88): its chain to us starts again; the human is told.
+      agent.on('contact-restored', (r) => {
+        const label = agent.book.state.contacts[r.peer]?.label;
+        events.push({ obj: contactRestoredView(r, label), human: contactRestoredText(r, label) });
+      });
+      // Our own restore: a contact confirmed our notice.
+      agent.on('restore-confirmed', (r) =>
+        events.push({ obj: { event: 'restore-confirmed', peer: r.peer, skipped: r.skipped }, human: `restore confirmed by ${clean(r.peer)}${r.skipped ? ` (${r.skipped} of its messages were lost with the old copy)` : ''}` }),
+      );
       agent.on('message', (from, payload, env) => {
         const entry: InboxEntry = { ts: new Date().toISOString(), from, seq: env.seq, payload };
         inbox.push(entry);
@@ -572,6 +581,14 @@ export async function listen(home: Home, out: Output, opts: ListenOptions): Prom
   const refresh = await refreshHostCard(home, hostCardCapabilities(hostRegistry()), real);
   const refreshText = cardRefreshText(refresh);
   if (refreshText) out.emit({ event: 'card-refreshed', capabilities: refresh.capabilities, published: refresh.published, ...(refresh.error ? { error: refresh.error } : {}) }, refreshText);
+  // Issue #88: after a restore, every contact is told first (`rdv/restored`), so its chain to us goes on.
+  try {
+    const told = await sendRestoredNotices(home, real);
+    const toldText = restoredSyncText(told);
+    if (toldText) out.emit({ event: 'restore-notified', sent: told.sent, failed: told.failed }, toldText);
+  } catch (err) {
+    out.emit({ event: 'error', message: (err as Error).message }, `error: ${clean((err as Error).message)}`);
+  }
   // Issue #45: contacts that do not hold our current card get it (`rdv/card-update`).
   try {
     const sync = await syncContactCards(home, real);

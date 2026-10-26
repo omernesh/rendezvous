@@ -2,7 +2,7 @@
 // goes to our contacts when it changes, and a contact's newer card replaces
 // the one we hold. Receiving runs in handleInbound (listen.ts); this file has
 // the sending at a listener's start and the views.
-import { Agent, type CardUpdate, type CardUpdateReport, fingerprint, type Transport } from '@rendezvous/core';
+import { Agent, type CardUpdate, type CardUpdateReport, type ContactRestored, fingerprint, type Transport } from '@rendezvous/core';
 import type { Home } from './home.js';
 import { clean } from './output.js';
 
@@ -22,6 +22,56 @@ export async function syncContactCards(home: Home, transport: Transport): Promis
     home.writeAgentState(agent.toJSON());
     return report;
   });
+}
+
+/**
+ * After a restore from a backup (issue #88, NOTES 91): tell every contact
+ * still owed it that this agent was restored (`rdv/restored`), first thing
+ * at a listener's start, under the home lock. Nothing due: nothing written.
+ */
+export async function sendRestoredNotices(home: Home, transport: Transport): Promise<CardUpdateReport> {
+  return home.locked(async () => {
+    const agent = Agent.fromJSON(home.readAgentState(), () => transport);
+    if ((agent.restoreStatus()?.notice_due.length ?? 0) === 0) return { sent: [], failed: [] };
+    agent.beforeSend = (a) => home.writeAgentState(a.toJSON());
+    const report = await agent.sendRestoredNotices();
+    home.writeAgentState(agent.toJSON());
+    return report;
+  });
+}
+
+/** The restore notices we sent, in words (null when none went out or failed). */
+export function restoredSyncText(r: CardUpdateReport): string | null {
+  if (r.sent.length === 0 && r.failed.length === 0) return null;
+  const failed = r.failed.length ? `; ${r.failed.length} failed (retried at the next start, or before the next message to them)` : '';
+  return `told ${r.sent.length} contact(s) that this agent was restored from a backup${failed}`;
+}
+
+/** A contact that restored its agent from a backup (`rdv/restored`), for events.jsonl and `rdv listen --json`. Ours, from a signed envelope. */
+export function contactRestoredView(r: ContactRestored, label?: string) {
+  return {
+    event: 'contact-restored',
+    peer: r.peer,
+    fingerprint: fingerprint(r.peer),
+    label,
+    backup_created: r.backup_created,
+    seq: r.seq,
+    previous_seq: r.previous_seq,
+    ...(r.was_refused ? { was_refused: r.was_refused } : {}),
+    ...(r.pending_resync ? { pending_resync: true } : {}),
+  };
+}
+
+export function contactRestoredText(r: ContactRestored, label?: string): string {
+  const who = `contact ${clean(r.peer)}${label ? ` (${clean(label)})` : ''} fingerprint ${clean(fingerprint(r.peer))}`;
+  const made = r.backup_created ? ` made ${clean(r.backup_created)}` : '';
+  if (r.pending_resync) {
+    return (
+      `${who} says it restored its agent from a backup${made}, but its chain is refused after a ${r.was_refused ?? 'fork'}: its messages stay refused. ` +
+      `Check with them first (two copies of their agent may be running), then run: rdv contact resync ${clean(r.peer)}`
+    );
+  }
+  return `${who} restored its agent from a backup${made}; its messages continue from here. If you did not expect this, check with them: whoever holds their backup and its passphrase holds their agent`;
 }
 
 /** The card updates we sent, in words (null when none went out or failed). */

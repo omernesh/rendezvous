@@ -171,6 +171,22 @@ const COMMANDS: Record<string, Command> = {
     args: 0,
     run: cmd.ownerSecretReset,
   },
+  backup: {
+    usage: 'rdv backup <file> [--stdin]',
+    summary:
+      'Write an encrypted backup of this agent (key, contacts, grants, settings; never open approvals) to a new file, under a passphrase you type twice (your own terminal; --stdin: read it from stdin)',
+    args: 1,
+    options: { stdin: { type: 'boolean' } },
+    run: cmd.backupCmd,
+  },
+  restore: {
+    usage: 'rdv restore <file> [--replace] [--stdin]',
+    summary:
+      'Bring this agent back from its backup on a new machine (your own terminal); contacts are told on the next start so conversations go on. --replace: replace an agent that exists here, for good',
+    args: 1,
+    options: { replace: { type: 'boolean' }, stdin: { type: 'boolean' } },
+    run: cmd.restoreCmd,
+  },
   'contact resync': {
     usage: 'rdv contact resync <agent-id>',
     summary: "Accept a contact's current chain after a fork or rollback was reported (check with them first)",

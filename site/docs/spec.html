@@ -1252,6 +1252,63 @@ where hole-punching fails (TURN relays carry the ciphertext).</p>
 <li><strong>No forward secrecy yet.</strong> The recipient key is static, so a later key
     compromise exposes recorded envelopes (§11).</li>
 </ul>
+<h4 id="641-restoring-from-a-backup-rdvrestored">6.4.1 Restoring from a backup (<code>rdv/restored</code>)<a class="anchor" href="#641-restoring-from-a-backup-rdvrestored" title="Link to this section" aria-label="Link to this section">#</a></h4>
+<p>An agent restored from a backup (the same key, older state) would fork every
+chain it had. To avoid that, a restored agent starts a new outbound epoch per
+channel and announces it, so peers re-base its chain instead of refusing it.</p>
+<ul>
+<li>
+<p><strong>The restored side.</strong> For every channel it holds, the next outbound <code>seq</code>
+    jumps to at least the restore time in milliseconds since the epoch (above
+    anything the lost copy can have sent), and the first envelope it sends on
+    that channel, before anything else, carries the notice:</p>
+<div class="codeblock"><pre tabindex="0"><code>{ "type": "rdv/restored", "v": 1, "in_seq": 17, "backup_created": "2026-10-20T08:00:00.000Z" }
+</code></pre></div>
+<p><code>in_seq</code> is the last <code>seq</code> it holds as accepted from that peer;
+<code>backup_created</code> is when its backup was made (or <code>null</code>). Its own inbound
+state is kept: the peer's newer envelopes arrive as a gap.</p>
+</li>
+<li>
+<p><strong>The peer.</strong> It acts on a notice only from a contact or group co-member
+    (the envelope's signature proves the key; only that key's own chain is
+    re-based), only when the envelope is newer (<code>created</code>) than everything it
+    accepted from that sender (a replayed notice is not), and at most a few per
+    sender per day (3 in the reference implementation). It then takes the
+    notice as the sender's new chain head whatever its <code>seq</code> and <code>prev</code>, and treats every envelope from that sender
+    not newer than the notice as a replay of the old chain (§6.4, re-sync
+    floor). A chain already refused after a fork (§6.4) is NOT re-based: a
+    notice from the key, perhaps from the very copy that forked, never lifts a
+    refusal; the receiver tells its human, and only the human's re-sync does.
+    It MUST tell its human (a "contact restored its agent" event) and answers:</p>
+<div class="codeblock"><pre tabindex="0"><code>{ "type": "rdv/restored-ack", "v": 1, "notice": "&lt;hash of the notice envelope&gt;", "from_seq": 9, "prev": "&lt;hash&gt;", "floor": "&lt;RFC 3339&gt;" }
+</code></pre></div>
+<p>meaning "my chain to you goes on at <code>from_seq</code>, after the envelope whose
+hash is <code>prev</code>". The peer resends what its outbox still holds of that chain
+after <code>in_seq</code>; <code>from_seq</code> is the first of those (or its next <code>seq</code> if it
+holds none), and <code>floor</code> is just before that envelope's <code>created</code>.</p>
+</li>
+<li>
+<p><strong>The ack.</strong> The restored side takes it only for the notice it sent that
+    peer last (by hash), once. If <code>from_seq</code> is past its inbound head, it moves
+    the head there (only forward) and treats envelopes not newer than <code>floor</code>
+    as replays: those messages were received by the copy that was lost and no
+    one holds them any more.</p>
+</li>
+<li><strong>What it does not change.</strong> A copy that still runs after the restore
+    forks the chain again and is refused as any fork (§6.4): the notice is no
+    way to run two copies. The notice re-bases pairwise channels only. A
+    member's group message chain (§7.8.3) is not re-based: a member restored
+    from a backup older than its last group message can be reported as
+    equivocating, and its co-members' humans re-sync it (§7.8.6).</li>
+<li><strong>A backup is the key.</strong> Whoever holds a backup and its passphrase holds
+    the agent, exactly as with a stolen key: they can restore it, and peers will
+    follow (each told). Backups MUST be encrypted under a passphrase with a
+    memory-hard KDF; the reference bundle (NOTES 91) uses scrypt (N 2^17, r 8,
+    p 1) and AES-256-GCM with the format, version, agent ID and KDF parameters
+    as associated data, and holds no open approvals or confirm phrases. A
+    restored-from-old-backup agent that is restored twice is two restores; each
+    is rate-limited and shown to the peer's human.</li>
+</ul>
 <hr>
 <h2 id="7-session-task-layer-a2a-semantics">7. Session &amp; task layer (A2A semantics)<a class="anchor" href="#7-session-task-layer-a2a-semantics" title="Link to this section" aria-label="Link to this section">#</a></h2>
 <ul>
@@ -2430,8 +2487,12 @@ replays of the old one stay duplicates.</p>
 <td>Rotation doc signed by old key; revocation; grants are revocable</td>
 </tr>
 <tr>
-<td>Key loss (no recovery path)</td>
-<td>§11 — open problem, mitigated by passkey custody</td>
+<td>Key loss</td>
+<td>An encrypted, passphrase-protected backup restores the agent, and peers follow its new chain (§6.4.1); without one, §11 (passkey custody, social recovery later)</td>
+</tr>
+<tr>
+<td>Stolen backup (file and passphrase)</td>
+<td>The same as a stolen key: the thief can restore the agent, and each peer's human is told it was restored (§6.4.1); a memory-hard KDF and a strong passphrase keep the file alone useless; rotation as for key compromise</td>
 </tr>
 <tr>
 <td>Government/relay takedown</td>
@@ -2497,8 +2558,9 @@ replays of the old one stay duplicates.</p>
 <h2 id="11-open-problems-honest">11. Open problems (honest)<a class="anchor" href="#11-open-problems-honest" title="Link to this section" aria-label="Link to this section">#</a></h2>
 <ol>
 <li><strong>Key recovery.</strong> The key is the identity; losing it loses the agent's
-    relationships. Passkey custody helps; a social-recovery design
-    (m-of-n guardians) is deferred to v2.</li>
+    relationships. An encrypted backup under the owner's passphrase restores
+    it (§6.4.1), but someone has to have made one. Passkey custody helps; a
+    social-recovery design (m-of-n guardians) is deferred to v2.</li>
 <li><strong>The fingerprint cliff.</strong> Humans won't compare hex strings. Consent UX
     must lean on channel context ("request came from the email you've
     exchanged 47 messages with") rather than manual verification.</li>

@@ -34,6 +34,7 @@ import {
   type Envelope,
   type Payload,
   type RefusedChannel,
+  envelopeHash,
   openEnvelope,
   sealEnvelope,
 } from './envelope.js';
@@ -105,7 +106,33 @@ export const REVERSE_GRANT_LIMIT = { count: 10, windowMs: 3_600_000 };
 /** Card updates we apply per contact (each one rewrites the contact; NOTES 82). */
 export const CARD_UPDATE_LIMIT = { count: 20, windowMs: 3_600_000 };
 export const CARD_UPDATE_TYPE = 'rdv/card-update';
-const CONTROL_TYPES = new Set(['rdv/contact-request', 'rdv/contact-grant', 'rdv/revoke', 'rdv/resend', CARD_UPDATE_TYPE, ...GROUP_TYPES, ...GROUP_MSG_TYPES]);
+/** A restored agent's notice to a peer (SPEC §6.4.1, NOTES 91): my chain to you starts again here. */
+export const RESTORED_TYPE = 'rdv/restored';
+/** The peer's answer: my chain to you goes on at `from_seq`. */
+export const RESTORED_ACK_TYPE = 'rdv/restored-ack';
+/** `rdv/restored` notices we act on per peer: each one re-bases its chain, so a few a day at most. */
+export const RESTORED_LIMIT = { count: 3, windowMs: 86_400_000 };
+const CONTROL_TYPES = new Set(['rdv/contact-request', 'rdv/contact-grant', 'rdv/revoke', 'rdv/resend', CARD_UPDATE_TYPE, RESTORED_TYPE, RESTORED_ACK_TYPE, ...GROUP_TYPES, ...GROUP_MSG_TYPES]);
+
+/** A peer restored its agent from a backup and re-based its chain to us (NOTES 91). */
+export interface ContactRestored {
+  peer: string;
+  /** When the peer says its backup was made (its claim: a timestamp, or null). */
+  backup_created: string | null;
+  /** Its new chain's first seq, and the last one we had accepted of the old one. */
+  seq: number;
+  previous_seq: number;
+  /** The old chain is refused after a fork or rollback. */
+  was_refused?: 'fork' | 'rollback';
+  /** True when the chain was refused: nothing was re-based, and the human re-syncs it after checking with them. */
+  pending_resync?: true;
+}
+
+/** After our own restore: a peer acknowledged our notice; `skipped`: its envelopes we lost with the old copy. */
+export interface RestoreConfirmed {
+  peer: string;
+  skipped: number;
+}
 
 /** What a contact's new card changed (NOTES 82): relays and capabilities, as lists. */
 export interface CardChange {
@@ -155,6 +182,8 @@ export interface AgentState {
   cardSent?: Record<string, string>;
   /** Groups (SPEC §7.8): their states, invites waiting for our human, our open invites. Absent until the first. */
   groups?: GroupBookState;
+  /** Set by a restore from a backup (NOTES 91): when, and when the backup was made. */
+  restored?: { at: string; backup_created: string };
 }
 
 /** A failed send in a group fan-out (the others still went). */
@@ -215,6 +244,10 @@ export interface AgentEvents {
   'group-report': [GroupReport];
   /** A member left a group (rdv/group-leave, §7.8.5): nothing more goes to it. */
   'group-left': [{ group: string; member: string }];
+  /** A contact restored its agent from a backup: its chain to us starts again (`rdv/restored`, NOTES 91). Tell the human. */
+  'contact-restored': [ContactRestored];
+  /** After our own restore: a contact acknowledged our notice; its chain to us goes on. */
+  'restore-confirmed': [RestoreConfirmed];
   dropped: [reason: string, detail?: unknown];
   error: [Error];
 }
@@ -226,6 +259,8 @@ export class Agent extends EventEmitter<AgentEvents> {
   private outbox: Record<string, Envelope[]>;
   private buffer: Record<string, Envelope[]>;
   private cardSent: Record<string, string>;
+  /** Our own restore from a backup, if this state came from one (NOTES 91). */
+  restored?: { at: string; backup_created: string };
   private unsubscribers: Array<() => void> = [];
   /** The discovery-topic subscription, kept apart so `setAddresses` can replace it. */
   private topicUnsub?: () => void;
@@ -243,7 +278,7 @@ export class Agent extends EventEmitter<AgentEvents> {
     readonly key: AgentKey,
     public card: AddressCard,
     readonly transport: Transport,
-    state?: Partial<Pick<AgentState, 'book' | 'channels' | 'outbox' | 'buffer' | 'cardSent' | 'groups'>>,
+    state?: Partial<Pick<AgentState, 'book' | 'channels' | 'outbox' | 'buffer' | 'cardSent' | 'groups' | 'restored'>>,
   ) {
     super();
     this.book = new ContactBook({ policy: card.policy.inbound, ...state?.book });
@@ -252,6 +287,8 @@ export class Agent extends EventEmitter<AgentEvents> {
     this.buffer = state?.buffer ?? {};
     this.cardSent = state?.cardSent && typeof state.cardSent === 'object' ? { ...state.cardSent } : {};
     this.groups = new GroupBook(state?.groups && typeof state.groups === 'object' ? state.groups : undefined);
+    const r = state?.restored;
+    if (r && typeof r === 'object' && typeof r.at === 'string' && typeof r.backup_created === 'string') this.restored = { at: r.at, backup_created: r.backup_created };
     this.pruneChannels(); // state saved before NOTES 64 may hold strangers' channels
   }
 
@@ -274,6 +311,7 @@ export class Agent extends EventEmitter<AgentEvents> {
       buffer: this.bufferToPersist(),
       cardSent: Object.fromEntries(Object.entries(this.cardSent).filter(([peer]) => Object.hasOwn(this.book.state.contacts, peer))),
       ...(this.groups.isEmpty() ? {} : { groups: this.groups.toJSON() }),
+      ...(this.restored ? { restored: this.restored } : {}),
     };
   }
 
@@ -387,6 +425,44 @@ export class Agent extends EventEmitter<AgentEvents> {
       }
     }
     return report;
+  }
+
+  /** The `rdv/restored` payload for `peer`: where our inbound chain from it stood in the backup (NOTES 91). */
+  private restoredNotice(peer: string): Payload {
+    return { type: RESTORED_TYPE, v: 1, in_seq: this.channels.state[peer]?.inSeq ?? 0, backup_created: this.restored?.backup_created ?? null };
+  }
+
+  /**
+   * After a restore from a backup (NOTES 91): send our `rdv/restored` notice
+   * to every contact and group co-member still owed one, so each re-bases our
+   * chain instead of refusing it. A peer we cannot reach now gets it before
+   * the next envelope we send it (deliver). One failed send does not stop the
+   * others; that peer stays due. Call it at a listener's start.
+   */
+  async sendRestoredNotices(): Promise<CardUpdateReport> {
+    const report: CardUpdateReport = { sent: [], failed: [] };
+    for (const [peer, c] of Object.entries(this.channels.state)) {
+      if (c.restoreNotice !== 'due' || !this.restorePeer(peer) || this.book.isBlocked(peer)) continue;
+      try {
+        await this.deliverTo(peer, this.restoredNotice(peer));
+        report.sent.push(peer);
+      } catch (err) {
+        report.failed.push({ peer, error: err instanceof Error ? err.message : String(err) });
+      }
+    }
+    return report;
+  }
+
+  /** After our restore: the peers still owed our notice, and those whose acknowledgement has not come yet. Null if not restored. */
+  restoreStatus(): { at: string; backup_created: string; notice_due: string[]; awaiting_ack: string[] } | null {
+    if (!this.restored) return null;
+    const due: string[] = [];
+    const awaiting: string[] = [];
+    for (const [peer, c] of Object.entries(this.channels.state)) {
+      if (c.restoreNotice === 'due') due.push(peer);
+      else if (typeof c.restoreNotice === 'string') awaiting.push(peer);
+    }
+    return { ...this.restored, notice_due: due, awaiting_ack: awaiting };
   }
 
   close(): void {
@@ -915,9 +991,13 @@ export class Agent extends EventEmitter<AgentEvents> {
   }
 
   private async deliver(peer: string, payload: { type: string }, relays: string[]): Promise<Envelope> {
+    // After a restore, the first envelope to each peer is our notice (NOTES 91), whatever we send.
+    const notice = payload.type === RESTORED_TYPE;
+    if (!notice && this.channels.state[peer]?.restoreNotice === 'due') await this.deliver(peer, this.restoredNotice(peer), relays);
     const { seq, prev } = this.channels.nextOutbound(peer);
     const env = sealEnvelope(this.key, peer, payload, { seq, prev });
     this.channels.commitOutbound(peer, env);
+    if (notice) this.channels.state[peer].restoreNotice = envelopeHash(env); // saved by beforeSend, with the envelope
     const box = (this.outbox[peer] ??= []);
     box.push(env);
     if (box.length > OUTBOX_LIMIT) box.splice(0, box.length - OUTBOX_LIMIT);
@@ -987,6 +1067,10 @@ export class Agent extends EventEmitter<AgentEvents> {
   }
 
   private async handleOpened(env: Envelope, payload: Payload): Promise<void> {
+    // A peer that restored from a backup starts its chain again: judged before ordering (NOTES 91).
+    if (payload.type === RESTORED_TYPE && (await this.handleRestored(env, payload))) return;
+    // What waited for the gap the ack closed is in order now: before the ack itself, which comes after it.
+    if (payload.type === RESTORED_ACK_TYPE && this.handleRestoredAck(env, payload)) await this.drainBuffer(env.from);
     const order = this.channels.acceptInbound(env, { adopt: !this.keepsChannel(env.from) });
     if (order.kind === 'duplicate') return;
     if (order.kind === 'fork' || order.kind === 'rollback' || order.kind === 'refused') return this.dropForked(env, order);
@@ -1214,6 +1298,10 @@ export class Agent extends EventEmitter<AgentEvents> {
         this.emit('group-report', out.report);
         return;
       }
+      // Handled before ordering (handleOpened); in order here, nothing more to do.
+      case RESTORED_TYPE:
+      case RESTORED_ACK_TYPE:
+        return;
       case 'rdv/resend': {
         const c = this.book.contact(from);
         const member = this.groups.admittedPeers(this.id).has(from);
@@ -1239,6 +1327,125 @@ export class Agent extends EventEmitter<AgentEvents> {
         if (!this.book.admitInbound(from)) return this.drop('no grant for sender', from);
         this.emit('message', from, payload, env);
     }
+  }
+
+  /** A peer whose chain a restore notice may re-base: a contact, or a group co-member (their pairwise channel). */
+  private restorePeer(peer: string): boolean {
+    return !!this.book.contact(peer) || this.groups.admittedPeers(this.id).has(peer);
+  }
+
+  /**
+   * A peer's `rdv/restored` notice (SPEC §6.4.1, NOTES 91): it restored its
+   * agent from a backup, so its chain to us starts again at this envelope.
+   * Acted on only from a contact or co-member (the envelope is signed by its
+   * key, and only its own chain is re-based), only when newer than everything
+   * we accepted from it (a relay replay of this or an older notice is not),
+   * and at most RESTORED_LIMIT a day. We answer `rdv/restored-ack` (where our
+   * chain to it goes on) and resend what our outbox still holds of that
+   * chain. The human is told (`contact-restored`). False: the envelope goes on
+   * to the ordinary checks (a replay, or a sender we keep no contact with).
+   */
+  private async handleRestored(env: Envelope, payload: Payload): Promise<boolean> {
+    const from = env.from;
+    if (!this.restorePeer(from)) return false;
+    const p = payload as Record<string, unknown>;
+    const created = parseTimestamp(env.created);
+    const c = this.channels.state[from];
+    // Not newer than all we accepted: a replay (of this notice, or of an older restore's). Nothing to act on.
+    if (created === null || (c?.inNewest !== undefined && !(created > c.inNewest)) || (c?.inFloor !== undefined && !(created > c.inFloor))) return false;
+    const inSeq = p.in_seq;
+    const backupCreated = p.backup_created === null ? null : parseTimestamp(p.backup_created) === null ? undefined : (p.backup_created as string);
+    const keys = Object.keys(p).sort().join(',');
+    if (keys !== 'backup_created,in_seq,type,v' || p.v !== 1 || typeof inSeq !== 'number' || !Number.isSafeInteger(inSeq) || inSeq < 0 || backupCreated === undefined) {
+      this.drop('restored notice malformed', { peer: from });
+      return true;
+    }
+    if (!this.book.admitControl('restored', from, RESTORED_LIMIT)) {
+      this.drop('restored notice rate-limited', { peer: from });
+      return true;
+    }
+    // A chain refused after a fork stays the human's to re-sync: a notice from the key (the very copy that forked,
+    // perhaps) never lifts that on its own. The human is told; the envelope is then refused as any other.
+    if (c?.refused) {
+      this.emit('contact-restored', { peer: from, backup_created: backupCreated, seq: env.seq, previous_seq: c.inSeq, was_refused: c.refused.kind, pending_resync: true });
+      return false;
+    }
+    const before = this.channels.rebase(env);
+    // What waited in the buffer for a gap of the old chain is that chain's.
+    const kept = this.buffer[from]?.filter((e) => e.seq > env.seq);
+    if (kept?.length) this.buffer[from] = kept;
+    else delete this.buffer[from];
+    this.emit('contact-restored', {
+      peer: from,
+      backup_created: backupCreated,
+      seq: env.seq,
+      previous_seq: before.inSeq,
+      ...(before.refused ? { was_refused: before.refused } : {}),
+    });
+    // Our chain to it: from what its backup had accepted, as far back as our outbox goes without a hole.
+    const out = this.channels.state[from];
+    const resend: Envelope[] = [];
+    const box = [...(this.outbox[from] ?? [])].sort((a, b) => a.seq - b.seq);
+    for (let i = box.length - 1, next = out.outSeq; i >= 0 && next > inSeq && box[i].seq === next; i--, next--) resend.unshift(box[i]);
+    const fromSeq = resend.length ? resend[0].seq : out.outSeq + 1;
+    const prev = resend.length ? resend[0].prev : out.outPrev;
+    // What it can't get again is older than the first envelope it does get again: a replay of it is a duplicate there.
+    const floor = (resend.length ? (parseTimestamp(resend[0].created) ?? Date.now()) : Date.now()) - 1;
+    const ack: Payload = { type: RESTORED_ACK_TYPE, v: 1, notice: envelopeHash(env), from_seq: fromSeq, prev, floor: new Date(floor).toISOString() };
+    try {
+      await this.deliverTo(from, ack);
+      const card = this.book.contact(from)?.card ?? this.groups.memberCard(from);
+      if (card) for (const e of resend) await this.transport.sendEnvelope(e, relaysOf(card));
+    } catch (err) {
+      this.drop('restored ack send failed', { peer: from, error: err instanceof Error ? err.message : String(err) });
+    }
+    await this.drainBuffer(from);
+    return true;
+  }
+
+  /**
+   * The answer to our own notice (NOTES 91): the peer's chain to us goes on
+   * at `from_seq`. Taken only for the notice we sent this peer last (by its
+   * hash), once; it moves our inbound chain only forward, past envelopes the
+   * copy we lost had received. The ack envelope itself then goes through the
+   * ordinary checks. True when it moved the chain.
+   */
+  private handleRestoredAck(env: Envelope, payload: Payload): boolean {
+    const from = env.from;
+    const c = this.channels.state[from];
+    const p = payload as Record<string, unknown>;
+    if (!c || typeof c.restoreNotice !== 'string' || c.restoreNotice === 'due' || p.notice !== c.restoreNotice) return false;
+    const fromSeq = p.from_seq;
+    const floor = parseTimestamp(p.floor);
+    const created = parseTimestamp(env.created);
+    const okPrev = p.prev === null || (typeof p.prev === 'string' && /^[0-9a-f]{64}$/.test(p.prev));
+    const keys = Object.keys(p).sort().join(',');
+    if (
+      keys !== 'floor,from_seq,notice,prev,type,v' ||
+      p.v !== 1 ||
+      typeof fromSeq !== 'number' ||
+      !Number.isSafeInteger(fromSeq) ||
+      fromSeq < 1 ||
+      fromSeq > env.seq ||
+      !okPrev ||
+      floor === null ||
+      created === null ||
+      floor > created
+    ) {
+      this.drop('restored ack malformed', { peer: from });
+      return false;
+    }
+    const was = c.inSeq;
+    const skipped = this.channels.skipTo(from, fromSeq, p.prev as string | null, floor);
+    if (skipped) {
+      const kept = this.buffer[from]?.filter((e) => e.seq >= fromSeq);
+      if (kept?.length) this.buffer[from] = kept;
+      else delete this.buffer[from];
+    }
+    delete c.restoreNotice;
+    // The peer's own count (its from_seq): bounded, it is only shown.
+    this.emit('restore-confirmed', { peer: from, skipped: skipped ? Math.min(Math.max(fromSeq - 1 - was, 0), OUTBOX_LIMIT * 1000) : 0 });
+    return skipped;
   }
 
   /**

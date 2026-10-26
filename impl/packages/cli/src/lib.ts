@@ -24,7 +24,9 @@ export {
   withAgent,
 } from './commands.js';
 export { checkOwnerSecret, hasOwnerSecret, OWNER_SECRET_MAX, ownerSecretInfo, ownerSecretLock } from './ownersecret.js';
-export { cardSyncText, cardUpdateText, cardUpdateView, syncContactCards } from './cardupdate.js';
+export { cardSyncText, cardUpdateText, cardUpdateView, contactRestoredText, contactRestoredView, restoredSyncText, sendRestoredNotices, syncContactCards } from './cardupdate.js';
+export { auditBackup, type BundleContents, createBackup, describeBackup, readBackupFile, restoreBackup, type RestoreResult, writeBackupFile } from './backup.js';
+export { restoreLine } from './commands.js';
 export { RelayLinkMonitor, relayWatchText, type RelayWatchEvent } from './relaywatch.js';
 export { appendEvents, EVENTS_FILE_KEPT, eventsStamp, isNoise, type LoggedEvent, readEvents, STRANGER_DROPS } from './events.js';
 export { acquireLock, LockTimeoutError, type LongLock, tryLongLock, writeAtomic } from './fsutil.js';

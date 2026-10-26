@@ -154,6 +154,15 @@ function writeMarker(home: Home, now: Date): void {
 }
 
 /**
+ * After a restore that brought a passphrase record back (issue #88): the
+ * marker, so a later deleted file still counts as a reset here too (the
+ * audit log does not travel). Inside the lock; nothing when one holds.
+ */
+export function markOwnerSecretRestored(home: Home, now = new Date()): void {
+  if (read(home)) writeMarker(home, now);
+}
+
+/**
  * What an auto-approve entry is bound to: the passphrase record it was set
  * under, by its `set` time and a digest of its salt (never the hash or the
  * passphrase). Every set, change or reset makes a new one, so every older

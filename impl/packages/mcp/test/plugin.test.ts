@@ -1000,6 +1000,37 @@ describe('joining a group and approving a newcomer are the human’s (issue #77)
   });
 });
 
+describe('backup and restore are the human’s (issue #88)', () => {
+  const denied = [
+    'rdv backup ~/Backups/agent.rdvbackup',
+    'rdv restore ./agent.rdvbackup',
+    'rdv restore ./agent.rdvbackup --replace',
+    'echo "pass phrase" | rdv backup b.json --stdin',
+    'npx rdv restore b.json',
+    'npx @rendezvous/cli backup b.json',
+    'npm run rdv -- restore b.json',
+    'node packages/cli/dist/src/bin.js backup b.json',
+    'bash -c "rdv restore b.json --stdin < pass.txt"',
+    'rdv.cmd BACKUP b.json',
+    'rdv {backup,x} b.json',
+    'echo restore | xargs rdv',
+  ];
+  const allowed = ['git restore src/a.ts', 'rdv whoami', 'restic backup ~/docs', 'rdv1:abc restore', 'cp agent.rdvbackup ~/Dropbox/'];
+  it.each(denied)('the guard refuses %s', (c) => expect(checkCommand(c)).toBeTruthy());
+  it.each(allowed)('the guard allows %s', (c) => expect(checkCommand(c)).toBeUndefined());
+  it('the rdv-backup skill names both as the human’s, never tells the model to run them, and keeps the passphrase out of the chat', () => {
+    const md = readFileSync(join(SKILLS, 'rdv-backup', 'SKILL.md'), 'utf8');
+    expect(/^name: (.+)$/m.exec(md)?.[1]).toBe('rdv-backup');
+    for (const c of ['rdv backup', 'rdv restore']) expect(md).toContain(c);
+    expect(consentViolations(md)).toEqual([]);
+    expect(consentViolations('Back it up: run `rdv backup ~/b.rdvbackup`.')).toHaveLength(1);
+    expect(md.replace(/\s+/g, ' ')).toMatch(/Never ask for it, never accept it in the chat/);
+    expect(md).toContain('verified_agent_id_matches');
+    expect(md).toMatch(/password manager/);
+    expect(readFileSync(join(SKILL_DIR, 'SKILL.md'), 'utf8')).toContain('rdv-backup');
+  });
+});
+
 describe('xargs cannot feed any human-only command group (issue #58)', () => {
   it.each(['contact', 'dinner', 'task', 'file', 'owner-secret', 'relays', 'group'])('echo x | xargs rdv %s is refused', (g) => {
     expect(checkCommand(`echo x | xargs rdv ${g}`)).toBeTruthy();

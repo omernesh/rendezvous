@@ -408,6 +408,8 @@ What it contains:
 - `skills/rdv-onboarding/SKILL.md`: the `/rdv-onboarding` command, a guided
   setup that asks one question at a time and follows the consent rules of the
   `rendezvous` skill.
+- `skills/rdv-backup/SKILL.md`: "back up my agent" and "recover my agent
+  from backup", one step per turn in plain language (below).
 - `skills/rendezvous/SKILL.md`: the setup and messaging workflow, with the
   consent rules. It uses the Agent Skills format, so other agents can load it
   too (`npx skills add omernesh/rendezvous`).
@@ -475,6 +477,21 @@ What it contains:
   `rdv_negotiate` need your approval form or a confirm phrase only you see,
   and the phrase is stored only as a hash. See "Threat model" in
   [`impl/packages/mcp/README.md`](https://rendezvous.nesher.co/docs/mcp.md).
+
+Backups (issue #88): ask "back up my agent". Claude asks where to keep the
+file (your password manager or a cloud drive is best: somewhere that
+survives this computer), then calls `rdv_backup`, and an approval form asks
+you for a passphrase, twice. Only the Rendezvous server sees it, never
+Claude; without a form it is refused (use `rdv backup <file>` in your own
+terminal). The file is encrypted (scrypt and AES-256-GCM) and holds the
+agent's key, contacts, grants and settings, never open approvals or confirm
+phrases. Whoever has the file and the passphrase can be your agent, as with
+the key itself, so choose a strong passphrase and keep it apart from the
+file. On a new computer, install Rendezvous and ask "recover my agent from
+backup": the form shows the agent ID and fingerprint in the file before you
+type the passphrase. Your contacts are told the agent was restored, so your
+conversations go on with no resync. `rdv backup` and `rdv restore` are
+yours, in your own terminal; the hook refuses them for Claude.
 
 Sending: Claude picks the recipient by its `local_label`, never by an address
 the other agent's card claims, and shows you the fingerprint before the first
@@ -812,6 +829,7 @@ inbound loop), so `rdv` and `rdv-mcp` share profiles.
 | `filefetch` | §7.7 | `fetchFileRef`: https only, SSRF-blocked and DNS-pinned, no credentials, capped, hash-verified |
 | `group` | §7.8 | Groups v1 membership: the signed `rdv/group-state` chain (`epoch`, `prev`, admin signer; any two states at one epoch are a fork), `rdv/group-invite`, `rdv/group-join` (a group-scoped grant), and the `GroupBook` (invites, newcomer policy, approvals; at most 16 members, NOTES 86) |
 | `groupmsg` | §7.8.3, §7.8.5–§7.8.7 | Group messages: `rdv/group-msg` (a signed header committing to the body by hash), the per-sender chain (`gseq`/`gprev`) and `heads`, gaps and group resend, equivocation evidence (`rdv/group-proof`, headers only), `rdv/group-leave`, `member_rate` and the mute with its `rdv/group-report` (NOTES 87) |
+| `backup` | §6.4.1 | The encrypted identity bundle (`sealBackup`, `openBackup`, strict `parseBackup`; scrypt + AES-256-GCM, the header as associated data) and the agent state for a backup and after a restore (`backupAgentState`, `restoredAgentState`: a new epoch per channel, each owing its peer an `rdv/restored` notice; NOTES 91) |
 | `transfer` | §7.7 | `rdv/transfer` messages and their pure state machine (negotiation only, no transport) |
 | `transport/nostr` | §6.2 | Nostr relay transport (kind 30417): re-subscribes when a relay drops; publishes with retries, per-relay pacing and cooldowns, and per-relay status (`relayStatus()`); `setRelays()` moves a live transport; discovery mirrors (`mirrorRelays`, `mirrorTopics()`); `DEFAULT_RELAYS`, `DEFAULT_MIRROR_RELAYS` |
 | `agent` | — | Ties it together: listen, discover, request, grant, send, receive |
@@ -970,7 +988,9 @@ State lives in a directory: `--home <dir>`, else `$RDV_HOME`, else
 | `rdv contact confirm <grant-id>` / `rdv contact reject <grant-id> [--block]` | Accept or turn down an answer to your topic probe (anyone who saw the probe can answer; check the fingerprint) |
 | `rdv contact decline <request-id> [--block]` | Decline |
 | `rdv contact list` / `rdv contact revoke <agent-id>` | Manage contacts |
-| `rdv contact resync <agent-id>` | After `listen` reports an `envelope chain fork` (the contact restored an old backup), accept its current chain once you have checked with them; until then its messages are refused |
+| `rdv contact resync <agent-id>` | After `listen` reports an `envelope chain fork` (the contact restored an old copy of its home by hand, or two copies run), accept its current chain once you have checked with them; until then its messages are refused. A restore with `rdv restore` needs none of this |
+| `rdv backup <file> [--stdin]` | Write an encrypted backup of this agent to a new file (mode 600, never over a file, never inside a home): its key, contacts, grants, channels, settings, owner passphrase record and auto-approve entries, never open approvals or confirm phrases. The passphrase is typed twice in your terminal (not shown; at least 12 characters), or read from stdin with `--stdin`; never an argument. Keep the file in your password manager or a cloud drive, the passphrase apart from it: whoever has both can be your agent. Yours to run (issue #88, NOTES 91) |
+| `rdv restore <file> [--replace] [--stdin]` | Bring the agent back on a new machine: shows the agent ID, fingerprint and backup time in the file, asks for its passphrase, and refuses to replace an agent that exists here without `--replace`. On the next start (`rdv listen` or `rdv-mcp`) each contact is told (`rdv/restored`, SPEC §6.4.1), so conversations go on with no resync; `rdv whoami` shows who confirmed. Open tasks, dinners and pending requests are not in a backup. Yours to run |
 | `rdv send <agent-id> --json '{"type":"a2a/message","text":"hi"}'` | Send any payload (`--payload '…'` is the same without JSON output) |
 | `rdv listen [--auto-grant <tier> [--auto-grant-any-tier]] [--exec <script>] [--negotiate --calendar cal.json [--window "…"] [--tz +02:00]]` | Long-running: print events; auto-grant is for demos only and stops at `stranger` unless `--auto-grant-any-tier`; `--exec` gets each event as a JSON line on stdin (`RDV_EVENT`, `RDV_HOME` set); `--negotiate` answers dinner proposals from the calendar (window default `next week evenings`) and holds a slot for you to confirm; `--auto-confirm` skips the human (bots, demos) |
 | `rdv dinner propose <agent-id> --calendar cal.json --window "next week evenings" [--tz +02:00] [--minutes 120] [--place …] [--area …] [--expires <rfc3339>]` | Offer up to 3 free slots; run `listen --negotiate` to handle the replies |
@@ -1313,6 +1333,7 @@ false`) that changes nothing; neither a cancel nor a timeout ever approves.
 | `rdv_grant` | request_id, tier, may_propose_meetings, invoke, limits, confirm_phrase, label; or grant_id (+ confirm_phrase, label) to confirm a probe answer; or agent_id (+ tier, may_propose_meetings, invoke, limits, confirm_phrase) to grant an existing contact more, which also sends it a reverse grant | contact (needs the human, below) |
 | `rdv_revoke` | agent_id, or request_id / grant_id (+ block) to decline | revoked / declined / rejected |
 | `rdv_auto_approve` | action `on` / `off`; agent_id or to (a `local_label`); all_contacts (off); until (on: 30m, 12h, 7d, 2w or RFC 3339, at most a year) | `off`: the contacts it was on for (no gate, audited `via: mcp`); `on`: the contact, what it covers and until when, only after the human typed the owner passphrase into the approval form (below). Never a passphrase or phrase |
+| `rdv_backup` | action `create` / `restore`; path (absolute: a new file for `create`, the backup for `restore`) | `create`: the file, the agent ID and fingerprint, and `verified_agent_id_matches` (read back and opened); `restore` (only into a home with no agent): the restored agent ID, fingerprint, backup time and contact count, then the agent starts and tells its contacts. The passphrase is typed only into the approval form (twice and at least 12 characters for `create`; once for `restore`, after the form shows the agent ID and fingerprint in the file); without a form it is refused, with no phrase. Not available through rdv-gateway (issue #88, NOTES 91) |
 | `rdv_send` | agent_id or to (a `local_label`), payload `{type, …}` (not `a2a/*`, `rdv/*`) | agent ID, fingerprint, envelope seq; `to` is refused when no contact, or more than one, has that label |
 | `rdv_inbox` | since cursor, limit, wait_seconds (≤ 60) | events + next_cursor |
 | `rdv_negotiate` | action propose / confirm / cancel / status; agent_id, intent `dinner`, window, calendar, tz, minutes, place, area, expires, task_id, reason, confirm_phrase | task ID and state; progress via `rdv_inbox`; `confirm` needs the human (below) |
@@ -2770,6 +2791,64 @@ where hole-punching fails (TURN relays carry the ciphertext).
 - **No forward secrecy yet.** The recipient key is static, so a later key
   compromise exposes recorded envelopes (§11).
 
+#### 6.4.1 Restoring from a backup (`rdv/restored`)
+
+An agent restored from a backup (the same key, older state) would fork every
+chain it had. To avoid that, a restored agent starts a new outbound epoch per
+channel and announces it, so peers re-base its chain instead of refusing it.
+
+- **The restored side.** For every channel it holds, the next outbound `seq`
+  jumps to at least the restore time in milliseconds since the epoch (above
+  anything the lost copy can have sent), and the first envelope it sends on
+  that channel, before anything else, carries the notice:
+
+  ```json
+  { "type": "rdv/restored", "v": 1, "in_seq": 17, "backup_created": "2026-10-20T08:00:00.000Z" }
+  ```
+
+  `in_seq` is the last `seq` it holds as accepted from that peer;
+  `backup_created` is when its backup was made (or `null`). Its own inbound
+  state is kept: the peer's newer envelopes arrive as a gap.
+- **The peer.** It acts on a notice only from a contact or group co-member
+  (the envelope's signature proves the key; only that key's own chain is
+  re-based), only when the envelope is newer (`created`) than everything it
+  accepted from that sender (a replayed notice is not), and at most a few per
+  sender per day (3 in the reference implementation). It then takes the
+  notice as the sender's new chain head whatever its `seq` and `prev`, and treats every envelope from that sender
+  not newer than the notice as a replay of the old chain (§6.4, re-sync
+  floor). A chain already refused after a fork (§6.4) is NOT re-based: a
+  notice from the key, perhaps from the very copy that forked, never lifts a
+  refusal; the receiver tells its human, and only the human's re-sync does.
+  It MUST tell its human (a "contact restored its agent" event) and answers:
+
+  ```json
+  { "type": "rdv/restored-ack", "v": 1, "notice": "<hash of the notice envelope>", "from_seq": 9, "prev": "<hash>", "floor": "<RFC 3339>" }
+  ```
+
+  meaning "my chain to you goes on at `from_seq`, after the envelope whose
+  hash is `prev`". The peer resends what its outbox still holds of that chain
+  after `in_seq`; `from_seq` is the first of those (or its next `seq` if it
+  holds none), and `floor` is just before that envelope's `created`.
+- **The ack.** The restored side takes it only for the notice it sent that
+  peer last (by hash), once. If `from_seq` is past its inbound head, it moves
+  the head there (only forward) and treats envelopes not newer than `floor`
+  as replays: those messages were received by the copy that was lost and no
+  one holds them any more.
+- **What it does not change.** A copy that still runs after the restore
+  forks the chain again and is refused as any fork (§6.4): the notice is no
+  way to run two copies. The notice re-bases pairwise channels only. A
+  member's group message chain (§7.8.3) is not re-based: a member restored
+  from a backup older than its last group message can be reported as
+  equivocating, and its co-members' humans re-sync it (§7.8.6).
+- **A backup is the key.** Whoever holds a backup and its passphrase holds
+  the agent, exactly as with a stolen key: they can restore it, and peers will
+  follow (each told). Backups MUST be encrypted under a passphrase with a
+  memory-hard KDF; the reference bundle (NOTES 91) uses scrypt (N 2^17, r 8,
+  p 1) and AES-256-GCM with the format, version, agent ID and KDF parameters
+  as associated data, and holds no open approvals or confirm phrases. A
+  restored-from-old-backup agent that is restored twice is two restores; each
+  is rate-limited and shown to the peer's human.
+
 ---
 
 ## 7. Session & task layer (A2A semantics)
@@ -3755,7 +3834,8 @@ replays of the old one stay duplicates.
 | Spam agents (Sybil) | Consent-first inbound; key-based block; tier-based rate caps; §10 reputation |
 | Replay | Envelope `seq`/`prev` + request/grant/probe IDs; TTL bounds window |
 | Key compromise | Rotation doc signed by old key; revocation; grants are revocable |
-| Key loss (no recovery path) | §11 — open problem, mitigated by passkey custody |
+| Key loss | An encrypted, passphrase-protected backup restores the agent, and peers follow its new chain (§6.4.1); without one, §11 (passkey custody, social recovery later) |
+| Stolen backup (file and passphrase) | The same as a stolen key: the thief can restore the agent, and each peer's human is told it was restored (§6.4.1); a memory-hard KDF and a strong passphrase keep the file alone useless; rotation as for key compromise |
 | Government/relay takedown | No single relay matters; card lists several; hint servers are swappable; human channels are last-resort always-on; nothing is required |
 
 ---
@@ -3819,8 +3899,9 @@ replays of the old one stay duplicates.
 ## 11. Open problems (honest)
 
 1. **Key recovery.** The key is the identity; losing it loses the agent's
-   relationships. Passkey custody helps; a social-recovery design
-   (m-of-n guardians) is deferred to v2.
+   relationships. An encrypted backup under the owner's passphrase restores
+   it (§6.4.1), but someone has to have made one. Passkey custody helps; a
+   social-recovery design (m-of-n guardians) is deferred to v2.
 2. **The fingerprint cliff.** Humans won't compare hex strings. Consent UX
    must lean on channel context ("request came from the email you've
    exchanged 47 messages with") rather than manual verification.
@@ -3982,6 +4063,11 @@ Source: https://rendezvous.nesher.co/changelog.md
 What changed in Rendezvous, newest first. Versions are those of the Claude Code plugin, which ships together with the `rdv` CLI, the `rdv-mcp` server and the skill. Rendezvous is alpha: expect changes between versions. Security fixes are marked **Security**.
 
 The format follows Keep a Changelog. One line per change a user can see; PR numbers link to GitHub.
+
+## 0.6.0 - 2026-10-26 {#v0-6-0}
+
+### Added
+- Back up your agent and recover it on a new computer: ask your assistant to "back up my agent" or "recover my agent from backup" (you type the passphrase only into an approval form, never into the chat), or use `rdv backup` and `rdv restore` in your own terminal. The backup is one encrypted file; keep it in your password manager or a cloud drive. After a restore your contacts are told, so your conversations go on without anyone re-syncing, and contacts on auto-approve stay on it. ([#88](https://github.com/omernesh/rendezvous/issues/88))
 
 ## 0.5.2 - 2026-10-26 {#v0-5-2}
 

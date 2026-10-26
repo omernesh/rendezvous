@@ -359,6 +359,33 @@ export function toModelEvent(e: Raw, negotiating: boolean): Omit<McpEvent, 'n' |
           : `${who(e.peer)} updated what you may do towards them; meetings are not allowed.`,
       };
     }
+    // A contact restored its agent from a backup (issue #88, NOTES 91): its signed notice re-based its chain to us.
+    case 'contact-restored':
+      return {
+        type: 'contact_restored',
+        peer: agentId(e.peer),
+        fingerprint: fp(e.peer),
+        local_label: typeof e.label === 'string' ? safe(e.label) : null,
+        backup_created: e.backup_created == null ? null : safe(e.backup_created),
+        pending_resync: e.pending_resync === true,
+        summary:
+          e.pending_resync === true
+            ? `${who(e.peer)} says it restored its agent from a backup, but its messages were already refused after a fork, so they stay refused.`
+            : `${who(e.peer)} restored its agent from a backup; its messages to this agent continue from here.`,
+        next_step:
+          e.pending_resync === true
+            ? 'Tell your user. Two copies of that agent may be running. Only they can accept its chain again, after checking with that person directly, in their own terminal; never do it for them.'
+            : 'Tell your user in plain language. If they did not expect it, they should check with that person directly: whoever holds a backup and its passphrase holds that agent. Nothing they approved changed.',
+      };
+    // Our own restore: a contact confirmed our notice.
+    case 'restore-confirmed':
+      return {
+        type: 'restore_confirmed',
+        peer: agentId(e.peer),
+        fingerprint: fp(e.peer),
+        lost_messages: count(e.skipped),
+        summary: `${who(e.peer)} knows this agent was restored; your conversation continues.`,
+      };
     case 'card-update': {
       // A contact's newer card (NOTES 82, issue #45). Its relays and capabilities are the peer's text: strict shape, else quarantined.
       const list = (v: unknown, max: number, shape: (x: unknown) => unknown) => (Array.isArray(v) ? v.slice(0, max).map(shape) : []);

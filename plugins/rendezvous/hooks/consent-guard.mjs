@@ -12,6 +12,8 @@
 // (`rdv group invite/join/approve/resync/leave/remove/terms/promote`;
 // `rdv group pending` shows their confirm phrases; SPEC §7.8.2),
 // the owner passphrase that turns auto-approve on (`rdv owner-secret`, issue #47),
+// the identity backup and restore (`rdv backup`, `rdv restore`, issue #88; the model's path is rdv_backup, whose
+// passphrase is typed into a form),
 // and the secret key, consent and auto-approve state (`agent.json`, `agent.json.bak`, `consent.json`,
 // `autoapprove.json`, `owner-secret.json`) in the Rendezvous home, through any tool. A command naming
 // `contact` and `auto-approve` is refused under any wrapper, quoted string or spelling (pty wrappers included).
@@ -95,6 +97,9 @@ const GROUP_PENDING =
   'rdv group pending is for the human, in their own terminal (it shows confirm phrases meant only for them). Use rdv_group with action "list".';
 const OWNER_SECRET =
   'The owner passphrase (rdv owner-secret, owner-secret.json) is for the human alone: it is what they type to turn auto-approve on. Never set, change, read, write or ask for it.';
+const BACKUP =
+  'rdv backup and rdv restore are for the human, in their own terminal: a backup holds the agent\'s key, and a restore replaces who the agent is. ' +
+  'Use the rdv_backup MCP tool when your user asks: it asks them for the passphrase in an approval form only they see. Never ask for the passphrase or pass it on.';
 const PTY_RDV =
   'That opens a pseudo-terminal (script, expect, unbuffer, winpty, node-pty, pty.spawn, pexpect), which nothing here needs but answering a prompt meant for the human. Run the command directly, or use the rdv_* MCP tools.';
 const OPAQUE =
@@ -384,6 +389,8 @@ const isGateway = (w) =>
     const p = progName(x);
     return p === 'rdv-gateway' || p === 'bin.js' || /^@rendezvous\/gateway(@|$)/i.test(x);
   });
+/** rdv commands of one word that are the human's (issue #88): the backup holds the key, the restore replaces the agent. */
+const ONE_WORD_HUMAN = ['backup', 'restore'];
 /** Every command group with human-only subcommands. The subcommand loop and the `xargs` tail check both read this, so a new group is covered in both. */
 const HUMAN_GROUPS = [
   ['contact', CONTACT_SUBS],
@@ -535,6 +542,11 @@ function checkWords(words, ctx, depth) {
     }
     // rdv's next word must be a literal: not built at run time, and no wildcard the shell could expand into a subcommand.
     if (isRdv(a) && (dynamic(b) || GLOB_CHARS.test(b))) throw new Refusal(OPAQUE);
+    // The one-word human-only commands (issue #88): rdv backup, rdv restore (also after `npm run rdv --`).
+    if (isRdv(a)) {
+      const next = b === '--' ? words[i + 2] : b;
+      if (next !== undefined && ONE_WORD_HUMAN.some((s) => couldBe(next, s, ctx.cwd))) throw new Refusal(BACKUP);
+    }
   }
   // rdv-gateway's pin and token commands: anywhere after an rdv-gateway word, in any order, since options may sit
   // between them (`rdv-gateway pin --stdin set`). Only after it: `pin` and `token` are common words (npm token create).

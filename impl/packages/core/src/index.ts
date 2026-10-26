@@ -1,4 +1,5 @@
 export * from './agent.js';
+export * from './backup.js';
 export * from './card.js';
 export * from './contact.js';
 export * from './discovery.js';

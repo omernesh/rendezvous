@@ -40,6 +40,8 @@ describe('scopes', () => {
     expect(requiredScope('rdv_task', { action: 'approve-start' })).toBe('send');
     expect(requiredScope('rdv_grant', {})).toBe('contact:request');
     expect(requiredScope('rdv_init', {})).toBeUndefined();
+    expect(requiredScope('rdv_backup', { action: 'create' })).toBeUndefined();
+    expect(requiredScope('rdv_backup', { action: 'restore' })).toBeUndefined();
     expect(requiredScope('rdv_auto_approve', { action: 'on' })).toBeUndefined();
     expect(requiredScope('rdv_file', { action: 'prepare' })).toBeUndefined();
     expect(authorizeCall(['read'], 'rdv_send', {})).toMatch(/lacks the "send" scope/);
@@ -148,6 +150,7 @@ describe('MCP over Streamable HTTP', () => {
     expect(names).toContain('rdv_inbox');
     expect(names).not.toContain('rdv_send');
     expect(names).not.toContain('rdv_init');
+    expect(names).not.toContain('rdv_backup');
     const s = await callJson(client, 'rdv_status');
     expect(s.isError).toBe(false);
     expect(s.json.agent_id).toMatch(/^rdv1:/);
