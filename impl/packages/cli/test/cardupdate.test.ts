@@ -13,7 +13,9 @@ import { Listener, rdv } from '../scenarios/harness.js';
 import { initHome } from '../src/commands.js';
 import { Home } from '../src/home.js';
 
-const T = 15_000;
+// Event waits return the moment the line arrives, so a long deadline costs nothing when healthy.
+// Under full-suite load on Windows, spawned rdv processes start slowly enough to exhaust a 15 s budget (issue #76).
+const T = 45_000;
 let root: string;
 const relays: TestRelay[] = [];
 beforeAll(() => {
