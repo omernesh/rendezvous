@@ -24,6 +24,7 @@ import {
   type Tier,
   TIERS,
   type MirrorOptions,
+  type RelayStatus,
   type TopicPublishOptions,
   type Transport,
   verifyContactRequest,
@@ -71,6 +72,7 @@ import {
 import { isTransferPayload, transferEventText, transfersInbound } from './files.js';
 import { cardRefreshText, hostCardCapabilities, hostRegistry, refreshHostCard, taskEventText, taskEventView, tasksExpiring, tasksInbound, tasksRoute } from './tasks.js';
 import { boardEventText, boardEventView, type GroupInbound, groupTaskEventText, groupTaskEventView, groupTasksInbound, isGroupTaskBody } from './grouptasks.js';
+import { RelayLinkMonitor, relayWatchText } from './relaywatch.js';
 import { relaySets, relayTransport } from './transport.js';
 
 /** How often `listen --negotiate` checks pending negotiations for expiry. */
@@ -628,6 +630,18 @@ export async function listen(home: Home, out: Output, opts: ListenOptions): Prom
   // Relay sockets come and go (the transport re-subscribes); this timer keeps
   // the process alive in between instead of exiting with nothing left to do.
   const keepAlive = setInterval(() => {}, 1 << 30);
+  // A listening relay that stays down is reported once (issue #87, NOTES 90), and once more when it returns.
+  const monitor = new RelayLinkMonitor(() => (real as { relayStatus?: () => RelayStatus[] }).relayStatus?.() ?? []);
+  const linkWatch = setInterval(() => {
+    const events = monitor.check();
+    if (events.length === 0) return;
+    chain = chain
+      .then(async () => {
+        await appendEvents(home, events);
+        for (const e of events) out.emit(e, relayWatchText(e));
+      })
+      .catch((err: Error) => out.emit({ event: 'error', message: err.message }, `error: ${clean(err.message)}`));
+  }, monitor.pollMs);
   // Negotiations (with --negotiate) and tasks (always) expire on the sweep.
   const sweeper = setInterval(() => {
     if (hasExpiring(home, { meetings: opts.negotiate !== undefined })) enqueue(() => {}, true);
@@ -637,6 +651,7 @@ export async function listen(home: Home, out: Output, opts: ListenOptions): Prom
     process.once('SIGTERM', resolve);
   });
   clearInterval(keepAlive);
+  clearInterval(linkWatch);
   clearInterval(sweeper);
   for (const u of unsubs) u();
   await chain;

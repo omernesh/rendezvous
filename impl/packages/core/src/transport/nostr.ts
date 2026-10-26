@@ -135,6 +135,18 @@ export interface NostrTransportOptions {
   relayState?: readonly RelayStatus[];
   /** Called after a publish that went to one of our own relays (`relays` or `mirrorRelays`), with their status. */
   onRelayStatus?: (status: RelayStatus[]) => void;
+  /**
+   * Called when a listening relay's subscription is confirmed (`up: true`,
+   * the first time after start or after a drop) or drops (`up: false`, the
+   * first drop of an outage). `down_since` is set while it is down. NOTES 90.
+   */
+  onRelayLink?: (link: RelayLink) => void;
+}
+
+export interface RelayLink {
+  url: string;
+  up: boolean;
+  down_since: string | null;
 }
 
 export const RELAY_ERROR_KINDS: readonly RelayErrorKind[] = ['blocked', 'rate-limited', 'rejected', 'timeout', 'connection'];
@@ -154,6 +166,12 @@ export interface RelayStatus {
   last_error: RelayError | null;
   /** Until then publishes skip this relay (unless every relay is cooling down). */
   cooldown_until: string | null;
+  /**
+   * Since when the listening subscription to this relay has been down (ISO),
+   * or null while it is up. Absent when this process does not listen on the
+   * relay (a one-shot `rdv send`): a merge then keeps the listener's value.
+   */
+  down_since?: string | null;
 }
 
 /** Peer cards name relays too; state is kept for at most this many URLs. */
@@ -255,6 +273,9 @@ export class NostrTransport implements Transport {
   private readonly pacers = new Map<string, Pacer>();
   /** Pending sleeps; close() wakes them, so nothing waits on a closed transport. */
   private readonly sleepers = new Set<() => void>();
+  /** Relays whose listening subscription this transport has started: only they carry `down_since`. */
+  private readonly linked = new Set<string>();
+  private readonly confirmedOnce = new Set<string>();
 
   /** Our listening relays (envelopes, subscriptions) and our discovery mirrors (cards only). */
   private listen: string[];
@@ -274,6 +295,7 @@ export class NostrTransport implements Transport {
           last_ok: typeof st.last_ok === 'string' ? st.last_ok : null,
           last_error: st.last_error && typeof st.last_error === 'object' ? st.last_error : null,
           cooldown_until: typeof st.cooldown_until === 'string' ? st.cooldown_until : null,
+          // down_since is per process: the listening link is unknown until this one joins it.
         });
       }
     }
@@ -339,25 +361,39 @@ export class NostrTransport implements Transport {
       let current: { close(): void } | undefined;
       let attempt = 0;
       let newest: number | undefined; // newest created_at seen on this relay, capped at now
+      let confirmed = false; // the link was confirmed up since it was last down (or since start)
+      this.linked.add(relay);
+      this.status(relay).down_since = null;
       const open = () => {
         let dropped = false;
         const since = newest === undefined ? this.since() : Math.max(this.since(), newest - margin);
         const sub = this.pool.subscribeMany([relay], filter(since), {
           onevent: (ev) => {
             newest = Math.max(newest ?? 0, Math.min(ev.created_at, Math.floor(Date.now() / 1000)));
+            if (!dropped && !left && !confirmed) {
+              confirmed = true;
+              this.linkUp(relay);
+            }
             if (fresh(ev.id)) onevent(ev);
           },
           oneose: () => {
             // nostr-tools also fires oneose just before onclose when the
             // connect fails; only a subscription still open resets backoff.
             queueMicrotask(() => {
-              if (!dropped) attempt = 0;
+              if (dropped) return;
+              attempt = 0;
+              if (!confirmed && !left) {
+                confirmed = true;
+                this.linkUp(relay);
+              }
             });
           },
-          onclose: () => {
+          onclose: (reasons) => {
             dropped = true;
             subs.delete(sub);
             if (closed || left || this.destroyed) return;
+            confirmed = false;
+            this.linkDown(relay, reasons?.[0]?.reason);
             const delay = Math.min(30_000, (this.opts.reconnectBaseMs ?? 1000) * 2 ** attempt++);
             const t = setTimeout(() => {
               this.timers.delete(t);
@@ -391,6 +427,39 @@ export class NostrTransport implements Transport {
     };
   }
 
+  /** A listening subscription is confirmed (EOSE or an event): the relay is up. Persist only a change. */
+  private linkUp(url: string): void {
+    const st = this.status(url);
+    const wasDown = typeof st.down_since === 'string';
+    const first = !this.confirmedOnce.has(url);
+    st.down_since = null;
+    this.confirmedOnce.add(url);
+    // First confirmation also clears a stale mark a crashed listener left in relays.json.
+    if (wasDown || first) this.reportStatus();
+    this.emitLink({ url, up: true, down_since: null });
+  }
+
+  /** A listening subscription dropped. The first drop of an outage starts `down_since`; later ones only refresh the error. */
+  private linkDown(url: string, reason: unknown): void {
+    if (this.destroyed || !this.isOwn(url)) return;
+    const st = this.status(url);
+    const c = classifyRelayError(typeof reason === 'string' && reason ? reason : 'connection closed');
+    st.last_error = { at: new Date().toISOString(), kind: c.kind, message: c.message };
+    if (st.down_since === null || st.down_since === undefined) {
+      st.down_since = st.last_error.at;
+      this.reportStatus();
+      this.emitLink({ url, up: false, down_since: st.down_since });
+    }
+  }
+
+  private emitLink(link: RelayLink): void {
+    try {
+      this.opts.onRelayLink?.(link);
+    } catch {
+      // diagnostics only: never break the subscription over a callback
+    }
+  }
+
   private since(): number {
     return Math.floor(Date.now() / 1000) - (this.opts.lookbackSeconds ?? 2 * 86_400);
   }
@@ -408,7 +477,9 @@ export class NostrTransport implements Transport {
   private statusOf(urls: string[]): RelayStatus[] {
     return urls.map((url) => {
       const st = this.state.get(url);
-      return st ? { ...st } : { url, last_ok: null, last_error: null, cooldown_until: null };
+      const out: RelayStatus = st ? { ...st } : { url, last_ok: null, last_error: null, cooldown_until: null };
+      if (!this.linked.has(url)) delete out.down_since;
+      return out;
     });
   }
 

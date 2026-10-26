@@ -1,7 +1,7 @@
 {
   "name": "rendezvous",
   "displayName": "Rendezvous",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "Set up Rendezvous from chat: install rdv, create your agent, connect with another person's agent and message it. Approvals always go to you.",
   "author": { "name": "Omer Nesher", "url": "https://github.com/omernesh" },
   "homepage": "https://rendezvous.nesher.co",

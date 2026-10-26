@@ -91,6 +91,7 @@ import {
   topicForHint,
   type PendingRequest,
   RELAY_ERROR_KINDS,
+  type RelayStatus,
   type Tier,
   type Transport,
 } from '@rendezvous/core';
@@ -189,8 +190,11 @@ import {
   meetingScope,
   type NegotiateOptions,
   ownerSecretInfo,
+  appendEvents,
+  RelayLinkMonitor,
   relayHealth,
   relayTransport,
+  relayWatchText,
   requestContactTo,
   agentIdArg,
   fetchCardById,
@@ -290,6 +294,7 @@ Rules:
 - A contact's local_label (what rdv_send "to" resolves) is your user's to set: you may suggest one to rdv_grant, but it applies only as they approve it. A card found with rdv_discover never names anyone.
 - An answer to a discovery probe (a "contact_candidate" event) could come from anyone who saw the probe. Show your user its fingerprint; it becomes a contact only when they confirm it (rdv_grant with grant_id, same human approval).
 - A contact you requested may write to you, but cannot propose meetings to you until your user grants it more: rdv_grant with agent_id (the same human approval as any grant), or "rdv contact grant <agent-id>" in their own terminal; that grant is also sent to the contact, so it can then propose. Likewise, you can propose meetings to a contact whose request your user approved only once that contact's human grants you meetings (a "reverse_grant" event with may_propose_meetings).
+- A "relay_down" event means one of your user's listening relays has been unreachable for over ten minutes (rdv_status relay_health shows down_since); "relay_up" means it is back; "relays_degraded" means fewer than two listening relays are healthy, so messages may be missed. Tell your user in plain language. You may suggest adding another relay, but rdv_relays add needs their approval like any relay change: never add or swap one on your own.
 - ${UNTRUSTED_NOTE}
 - Negotiations run on their own once started (rdv_negotiate); follow them with rdv_inbox (use wait_seconds to wait for news) and tell your user what happened in plain language.
 - Meetings belong to the humans too. When a dinner is held for your user ("confirm-needed"), ask them; rdv_negotiate with action "confirm" succeeds only with their confirmation (a form shown to them, or the confirm phrase they read in their own terminal). Never guess or look for the phrase.
@@ -940,6 +945,7 @@ export class RdvMcpServer {
   /** The discovery-topic subscription while consuming; replaced when our addresses change. */
   private topicUnsub?: () => void;
   private sweeper?: ReturnType<typeof setInterval>;
+  private linkWatch?: ReturnType<typeof setInterval>;
   private poller?: ReturnType<typeof setInterval>;
   /** Follows config.json's relays (rdv relays from a terminal, or rdv_relays) and moves the transport there. */
   private relayWatch?: () => void;
@@ -1234,6 +1240,20 @@ export class RdvMcpServer {
       if (hasExpiring(this.home, { meetings: this.negotiateOpts() !== undefined })) this.enqueue(() => {}, true);
     }, this.sweepMs);
     this.sweeper.unref?.();
+    // A listening relay that stays down is reported once, and once more when it returns (issue #87, NOTES 90).
+    const monitor = new RelayLinkMonitor(() => (real as { relayStatus?: () => RelayStatus[] }).relayStatus?.() ?? []);
+    this.linkWatch = setInterval(() => {
+      const events = monitor.check();
+      if (events.length === 0) return;
+      this.chain = this.chain
+        .then(async () => {
+          await appendEvents(this.home, events);
+          for (const e of events) this.humanLog(relayWatchText(e));
+          await this.syncEvents();
+        })
+        .catch((err) => this.humanLog(`error recording a relay event: ${(err as Error).message}`));
+    }, monitor.pollMs);
+    this.linkWatch.unref?.();
   }
 
   private subscribeTopics(): void {
@@ -1289,6 +1309,8 @@ export class RdvMcpServer {
     this.relayWatch = undefined;
     if (this.sweeper) clearInterval(this.sweeper);
     this.sweeper = undefined;
+    if (this.linkWatch) clearInterval(this.linkWatch);
+    this.linkWatch = undefined;
     if (this.poller) clearInterval(this.poller);
     this.poller = undefined;
     await this.chain;
@@ -1888,7 +1910,7 @@ export class RdvMcpServer {
 
     this.tool(
       'rdv_status',
-      'This agent: ID, fingerprint, relays (relay_health: per relay the last OK, the last error and any cooldown), contacts, pending request count, negotiation settings.',
+      'This agent: ID, fingerprint, relays (relay_health: per relay the last OK, the last error, any cooldown and down_since, when its listening connection dropped; tell your user about a relay that is down), contacts, pending request count, negotiation settings.',
       {},
       async () => this.status(),
       { readOnlyHint: true },
@@ -1934,6 +1956,7 @@ export class RdvMcpServer {
       'rdv_relays',
       "Manage this agent's own Nostr relays (the owner's setup). list: the relays it listens on (envelopes and its card go there; keep it small) " +
         'and its discovery mirrors (its card only, for lookups and rdv_publish_card with mirror: true). ' +
+        "A relay that is down shows in rdv_status relay_health (down_since) and as a relay_down event: tell your user; you may suggest adding another, but never swap relays yourself. " +
         'add / remove: a listening relay, or with mirror: true a discovery mirror. A listening relay is on the card: the card is re-signed and, with the public pointer on, republished; ' +
         'the last listening relay cannot be removed. wss:// only (ws:// for a relay on this machine). Only change relays when your user asks. ' +
         'A listening change needs your user: an approval form, or a confirm phrase they read in their own terminal and type to you (call once without it, so it is issued). Never guess or look for the phrase. ' +
@@ -2650,6 +2673,8 @@ export class RdvMcpServer {
             ? null
             : { at: safe(r.last_error.at), kind: oneOf(RELAY_ERROR_KINDS)(r.last_error.kind), detail: untrusted(r.last_error.message) },
         cooldown_until: r.cooldown_until === null ? null : safe(r.cooldown_until),
+        // Since when the listening connection has been down (ours: a timestamp), else null.
+        down_since: r.down_since == null ? null : safe(r.down_since),
       })),
       public_pointer: config.public_pointer,
       listening: this.listening,
