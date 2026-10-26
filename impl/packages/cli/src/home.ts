@@ -82,7 +82,7 @@ export interface InboxEntry {
  * dinner, canceling an agreed one, or granting an existing contact rights
  * towards us (`inbound`, issue #1: a reverse grant).
  */
-export type ConsentAction = 'request' | 'candidate' | 'meeting' | 'cancel' | 'inbound' | 'task-start' | 'task-release' | 'relays' | 'group-join' | 'group-newcomer';
+export type ConsentAction = 'request' | 'candidate' | 'meeting' | 'cancel' | 'inbound' | 'task-start' | 'task-release' | 'relays' | 'group-join' | 'group-newcomer' | 'group-invite';
 
 /**
  * One of the owner's files in a draft, as the release gate shows it: what

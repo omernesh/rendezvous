@@ -380,7 +380,7 @@ export interface GroupRecord {
    */
   status: 'joining' | 'active' | 'removed';
   state: GroupState;
-  /** The state before `state`, so a same-epoch state from another admin can be checked (tie rule, §7.8.1). */
+  /** The state before `state`: its admins may still send the state that follows it. */
   prevState?: GroupState;
   /** Recent states accepted, oldest first: a different state at a known epoch from the same admin is a fork. */
   history: Array<{ epoch: number; hash: string; from: string }>;
@@ -401,8 +401,12 @@ export interface GroupRecord {
   joined: string;
   /** States ahead of ours, waiting for the chain to reach them. */
   future: GroupState[];
-  /** Two states at one epoch from one admin (§7.8.6 layer 4): membership is frozen until our human re-syncs. */
-  frozen?: { epoch: number; hashes: string[]; signer: string; since: string };
+  /**
+   * Two different states at one epoch (§7.8.1, §7.8.6 layer 4), from one
+   * admin or from two: membership is frozen until our human re-syncs.
+   * `signers` are the admins that signed them.
+   */
+  frozen?: { epoch: number; hashes: string[]; signers: string[]; since: string };
 }
 
 export interface ReceivedInvite {
@@ -444,8 +448,6 @@ export interface GroupChange {
   admitted: boolean;
   /** The state removed us. */
   left: boolean;
-  /** It replaced a same-epoch state from another admin (lower hash wins). */
-  replaced: boolean;
 }
 
 export type InviteOutcome =
@@ -772,10 +774,12 @@ export class GroupBook {
   /**
    * A group state from `from`, the admin that signed it (it travels over the
    * signer's own pairwise channel). Applied only on top of the state we hold
-   * (§7.8.1). A newer epoch waits for the ones before it (at most 4); a
-   * same-epoch state from another admin replaces ours if its hash is lower;
-   * a different state at an epoch we hold, from the same admin, is a fork:
-   * membership freezes and our human is told (§7.8.6 layer 4).
+   * (§7.8.1). A newer epoch waits for the ones before it (at most 4). Two
+   * different states at one epoch are a fork, whoever signed them (one
+   * admin restored a backup or lies, or two admins changed the group at
+   * once): membership freezes and our human is told (§7.8.6 layer 4).
+   * Nothing picks a winner on its own; a hash-based tie-break could be
+   * ground by an admin re-signing until its state wins.
    */
   receiveState(input: unknown, from: string, ctx: GroupContext): StateOutcome {
     const now = ctx.now ?? new Date();
@@ -789,27 +793,14 @@ export class GroupBook {
     if (r.history.some((h) => h.hash === hash) || r.future.some((f) => docHash(f) === hash)) return { kind: 'duplicate' };
     if (r.status === 'joining') return this.receiveAdmission(r, s, from, ctx, now);
     if (!memberOf(r.state, from) && !(r.prevState && memberOf(r.prevState, from))) return { kind: 'ignored', reason: 'state from a non-member' };
-    const known = r.history.find((h) => h.epoch === s.epoch);
-    // The same admin, the same epoch, another state: it forked membership (restored a backup, or lies).
-    if (known && known.from === s.from) return r.status === 'removed' ? { kind: 'ignored', reason: 'not a group we are in' } : this.fork(r, s, known.hash, now);
-    if (r.frozen) return { kind: 'ignored', reason: 'membership is frozen until our human re-syncs' };
-    if (known) {
-      // Two admins issued the same epoch: the lower hash wins (§7.8.1); the other admin re-issues on top.
-      if (s.epoch !== r.state.epoch || !r.prevState || successorProblem(r.prevState, s) || hash >= known.hash) {
-        return { kind: 'ignored', reason: 'a same-epoch state that loses to the one we hold' };
-      }
-      const replaced = r.state;
-      r.history = r.history.filter((h) => h.hash !== known.hash);
-      // The state that removed us may be the one that loses: the winner decides (advance removes us again if it does not list us).
-      r.status = 'active';
-      const change = this.advance(r, s, ctx, now, { prevState: r.prevState, before: replaced });
-      change.replaced = true;
-      return { kind: 'applied', change, also: this.drainFuture(r, ctx, now) };
-    }
     if (r.status === 'removed') return { kind: 'ignored', reason: 'not a group we are in' };
+    // Another state at an epoch we hold or wait for, from any admin: a fork.
+    const rival = r.history.find((h) => h.epoch === s.epoch)?.hash ?? r.future.map(docHash).find((h, i) => r.future[i].epoch === s.epoch);
+    if (rival !== undefined) return this.fork(r, s, rival, now);
+    if (r.frozen) return { kind: 'ignored', reason: 'membership is frozen until our human re-syncs' };
     if (s.epoch < r.state.epoch) return { kind: 'ignored', reason: 'older than the state we hold' };
     if (s.epoch > r.state.epoch + 1) {
-      if (!r.future.some((f) => f.epoch === s.epoch && f.from === s.from)) {
+      if (!r.future.some((f) => f.epoch === s.epoch)) {
         r.future.push(s);
         r.future.sort((a, b) => a.epoch - b.epoch);
         if (r.future.length > GROUP_LIMITS.futureStates) r.future.splice(GROUP_LIMITS.futureStates);
@@ -867,10 +858,12 @@ export class GroupBook {
     r.future = r.future.filter((f) => f.epoch > next.epoch);
     const added = [...after].filter((id) => !before.has(id));
     const removed = [...before].filter((id) => !after.has(id));
-    const base = { record: r, added, removed, admitted: opts.admitted === true, replaced: false };
+    const base = { record: r, added, removed, admitted: opts.admitted === true };
     if (!after.has(ctx.me)) {
-      // Nothing more goes to anyone in it (admittedPeers skips a removed group); approvals are kept only for a same-epoch state that reinstates us.
+      // Nothing more goes to anyone in it (admittedPeers skips a removed group).
       r.status = 'removed';
+      r.approved = [];
+      r.newcomers = {};
       return { ...base, newcomers: [], left: true };
     }
     for (const id of Object.keys(r.joins)) {
@@ -911,7 +904,14 @@ export class GroupBook {
   private fork(r: GroupRecord, s: GroupState, knownHash: string, now: Date): StateOutcome {
     const hash = docHash(s);
     if (r.frozen && r.frozen.epoch === s.epoch && r.frozen.hashes.includes(hash)) return { kind: 'duplicate' };
-    r.frozen = { epoch: s.epoch, hashes: [...new Set([...(r.frozen?.epoch === s.epoch ? r.frozen.hashes : [knownHash]), hash])].slice(0, 4), signer: s.from, since: ts(now) };
+    const same = r.frozen?.epoch === s.epoch ? r.frozen : undefined;
+    const firstSigner = r.history.find((h) => h.hash === knownHash)?.from ?? r.future.find((f) => docHash(f) === knownHash)?.from;
+    r.frozen = {
+      epoch: s.epoch,
+      hashes: [...new Set([...(same ? same.hashes : [knownHash]), hash])].slice(0, 4),
+      signers: [...new Set([...(same ? same.signers : firstSigner ? [firstSigner] : []), s.from])].slice(0, 4),
+      since: ts(now),
+    };
     r.future = [];
     return { kind: 'fork', record: r };
   }

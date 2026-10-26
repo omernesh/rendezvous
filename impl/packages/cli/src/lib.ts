@@ -108,6 +108,11 @@ export {
 export {
   DEFAULT_GROUP_TERMS,
   describeGroupTerms,
+  describeInviteAsk,
+  type InviteAsk,
+  inviteAskOf,
+  inviteAskTarget,
+  inviteAsks,
   groupPhraseTargets,
   inviteSubject,
   joinTarget,
