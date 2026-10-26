@@ -1016,6 +1016,8 @@ MAY set <code>auto_approve: "all"</code> on that contact, optionally with an exp
     re-grants, widens or narrows that contact's grant, the setting stays on
     for what it covered and the new grant still allows; a capability the new
     grant adds is not covered until the owner turns the setting on for it.
+    Coverage only shrinks: a capability that a narrowing removed is not
+    covered again when a later grant adds it back.
     Re-enabling is a new human decision. A setting whose times cannot be read, that was set in the
     future, or whose integrity cannot be checked approves nothing.</li>
 <li><strong>Audit log.</strong> Every action approved this way appends one line to an
