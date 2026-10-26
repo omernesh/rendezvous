@@ -70,7 +70,8 @@ describe('pending approvals cannot be flooded away', () => {
     sides.push(john);
     await ok(john, 'rdv_init', { profile: 'john', email: `john.h${process.pid}.${n}@doe.com`, relays: [relay.url] });
     await new Promise((r) => setTimeout(r, 300));
-    for (let i = 0; i < MAX_APPROVALS_PER_PRINCIPAL; i++) g.gw.approvals.ask(fakeAsk(i, 'flood'));
+    const tokenId = g.gw.store.listTokens()[0].id;
+    for (let i = 0; i < MAX_APPROVALS_PER_PRINCIPAL; i++) g.gw.approvals.ask(fakeAsk(i, tokenId));
     const me = g.home.readConfig().addresses[0].value;
     await ok(john, 'rdv_request_contact', { target: me });
     const ev = await waitApi(g.base, t, (e) => e.type === 'contact_request', 'the request');
@@ -151,14 +152,21 @@ describe('sessions, limits, paths', () => {
     const redact = (v: unknown) => (g.gw.server as unknown as { redactPaths(v: unknown): unknown }).redactPaths(v);
     const homeOther = g.home.dir.replace(/\\/g, '/').toUpperCase();
     expect(redact({ a: `see ${g.home.dir}/x.json`, b: `in ${homeOther}/tasks.json` })).toEqual({ a: 'see <rendezvous home>/x.json', b: 'in <rendezvous home>/tasks.json' });
-    expect(redact('read from C:\\Users\\omer\\Documents\\x.pdf and /home/omer/notes/a.txt')).toBe('read from <local path> and <local path>');
+    // To the end of the field, quote or line: a path may hold spaces.
+    expect(redact('read from C:\\Users\\omer\\Documents\\x.pdf')).toBe('read from <local path>');
+    expect(redact({ a: 'D:\\My Documents\\Taxes\\2026.pdf', b: '/home/omer/My Files/x.pdf', c: 'see ~/secret/notes.txt', d: 'file "\\\\nas\\share\\a b.txt" (2 KB)' })).toEqual({
+      a: '<local path>',
+      b: '<local path>',
+      c: 'see <local path>',
+      d: 'file "<local path>" (2 KB)',
+    });
     // URLs, IDs and rates are not paths.
     const keep = 'wss://relay.example.com/nostr https://rendezvous.nesher.co/ext/meetings/v1 rdv1:abc 3/day';
     expect(redact(keep)).toBe(keep);
   });
 
   it('behind https, approvals open only at the public address', async () => {
-    const g = await gateway({ publicUrl: 'https://rdv.example.com' });
+    const g = await gateway({ publicUrl: 'https://rdv.example.com', clientIpHeader: 'cf-connecting-ip' });
     const port = (g.gw as unknown as { http: { address(): { port: number } } }).http.address().port;
     const r = await rawRequest(`http://127.0.0.1:${port}`, '/approve', { Host: `127.0.0.1:${port}` });
     expect(r.status).toBe(421);

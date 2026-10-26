@@ -12,6 +12,8 @@ export const APPROVAL_TTL_MS = 24 * 60 * 60_000;
 
 export interface PendingApproval extends ApprovalAsk {
   id: string;
+  /** Who asked, for the page: the token's name and id. */
+  askedBy?: string;
   created: number;
   /** The form was rebuilt (the item changed since it was asked). */
   changed?: boolean;
@@ -25,15 +27,17 @@ export class Approvals {
   constructor(
     private readonly urlFor: (id: string) => string,
     private readonly now: () => number = Date.now,
+    /** Whether the token that asked still exists: a revoked token's asks are dropped. */
+    private readonly alive: (principal: string | undefined) => boolean = () => true,
   ) {}
 
   /** Record an ask (the same call asked again reuses its entry) and return its approval page URL. */
-  ask(a: ApprovalAsk): string {
+  ask(a: ApprovalAsk, askedBy?: string): string {
     this.sweep();
     const key = callKey(a.tool, a.args);
     for (const p of this.byId.values()) {
       if (callKey(p.tool, p.args) === key) {
-        Object.assign(p, { form: a.form, suggestions: a.suggestions, principal: a.principal, changed: false });
+        Object.assign(p, { form: a.form, suggestions: a.suggestions, principal: a.principal, askedBy, changed: false });
         return this.urlFor(p.id);
       }
     }
@@ -44,7 +48,7 @@ export class Approvals {
     }
     if (this.byId.size >= MAX_APPROVALS) throw new ToolError('too many approvals already wait for your user; nothing new was asked. Let them decide those first.');
     const id = `apr_${randomToken(18)}`;
-    this.byId.set(id, { ...a, id, created: this.now() });
+    this.byId.set(id, { ...a, id, askedBy, created: this.now() });
     return this.urlFor(id);
   }
 
@@ -71,7 +75,7 @@ export class Approvals {
 
   private sweep(): void {
     const t = this.now();
-    for (const [id, p] of this.byId) if (t - p.created > APPROVAL_TTL_MS) this.byId.delete(id);
+    for (const [id, p] of this.byId) if (t - p.created > APPROVAL_TTL_MS || !this.alive(p.principal)) this.byId.delete(id);
   }
 }
 

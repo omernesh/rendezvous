@@ -370,7 +370,7 @@ choices: NOTES 89.
 ```bash
 node packages/gateway/dist/src/bin.js pin set --home ~/.rendezvous/omer
 node packages/gateway/dist/src/bin.js token create --name chatgpt --scope read,send,contact:request --home ~/.rendezvous/omer
-node packages/gateway/dist/src/bin.js serve --home ~/.rendezvous/omer --public-url https://rdv.example.com
+node packages/gateway/dist/src/bin.js serve --home ~/.rendezvous/omer --public-url https://rdv.example.com --client-ip-header cf-connecting-ip
 # MCP: https://rdv.example.com/mcp   REST: /api/v1/tools/<tool>   OpenAPI: /openapi.json   approvals: /approve
 ```
 

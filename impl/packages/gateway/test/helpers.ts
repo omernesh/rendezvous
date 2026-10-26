@@ -8,6 +8,7 @@ import { Home, initHome } from '@rendezvous/cli/lib';
 import { Gateway, type GatewayOptions } from '../src/index.js';
 
 export const PIN = '482916-blue';
+let tokens = 0;
 
 export interface TestGateway {
   gw: Gateway;
@@ -29,7 +30,7 @@ export async function startGateway(dir: string, opts: { relays?: string[]; email
     home,
     base,
     log,
-    async token(scopes, name = 'cloud') {
+    async token(scopes, name = `cloud-${++tokens}`) {
       return (await gw.store.createToken(name, scopes)).token;
     },
   };

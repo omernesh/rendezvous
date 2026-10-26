@@ -1072,6 +1072,17 @@ export class RdvMcpServer {
     if (!this.remote) throw new Error('answer() is for remote mode');
     const d = this.defs.find((x) => x.name === ask.tool);
     if (!d) return { kind: 'error', error: `no tool ${safe(ask.tool)}` };
+    if (answer.decision === 'decline') {
+      // A no runs nothing: re-running the step could reach a path that needs no one (the state moved) and do it.
+      // What a no to a held dinner or a waiting task would also do (release, refuse) stays a reduce-only call for the client or the owner.
+      const value = {
+        approved: false,
+        answer: 'declined',
+        note: 'Your user said no on their approval page. Nothing was done. Tell them; do not ask again unless they want to.',
+      };
+      await this.publish([{ type: 'approval', approval_id: approvalId, tool: ask.tool, outcome: 'declined', result: value }]).catch(() => {});
+      return { kind: 'done', value };
+    }
     let out: ApprovalOutcome;
     const approval: ApprovalAnswer & { used?: boolean } = { ...answer };
     try {
@@ -1085,7 +1096,7 @@ export class RdvMcpServer {
     // and the owner's answer decided nothing. Say so instead of reporting their decision.
     if (out.kind === 'done' && !approval.used) out = { kind: 'done', value: out.value, unneeded: true };
     // The client that asked learns the outcome from its inbox: what the tool would have returned (model-safe), or the error.
-    const outcome = out.kind !== 'done' ? 'failed' : out.unneeded ? 'not_needed' : answer.decision === 'approve' ? 'decided' : 'declined';
+    const outcome = out.kind !== 'done' ? 'failed' : out.unneeded ? 'not_needed' : 'decided';
     const event =
       out.kind === 'done'
         ? { type: 'approval', approval_id: approvalId, tool: ask.tool, outcome, result: out.value }
@@ -1127,9 +1138,11 @@ export class RdvMcpServer {
       if (typeof x === 'string') {
         let t = x;
         for (const [p, r] of known) t = t.replace(new RegExp(esc(p), 'gi'), r);
-        // Windows drive or UNC paths, and POSIX absolute paths of two or more segments that are not part of a URL.
-        t = t.replace(/(?:\b[A-Za-z]:[\\/]|\\\\)[^\s"'<>|*?]+/g, '<local path>');
-        t = t.replace(/(?<![\w:/.~-])\/(?:[^\s"'<>/]+\/)+[^\s"'<>]*/g, '<local path>');
+        // Any other path, to the end of its field, quote or line (a path may hold spaces): Windows drive or UNC paths,
+        // ~/…, and POSIX absolute paths of two or more segments that are not part of a URL.
+        t = t.replace(/(?:\b[A-Za-z]:[\\/]|\\\\[^\s\\/"'<>]+[\\/])[^"'<>|*?\r\n]*/g, '<local path>');
+        t = t.replace(/(?<![\w/])~[\\/][^"'<>\r\n]*/g, '<local path>');
+        t = t.replace(/(?<![\w:/.~>-])\/(?:[^\s"'<>/]+\/)+[^"'<>\r\n]*/g, '<local path>');
         return t;
       }
       if (Array.isArray(x)) return x.map(walk);

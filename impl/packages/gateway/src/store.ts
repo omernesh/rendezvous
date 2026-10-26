@@ -100,6 +100,25 @@ export class GatewayStore {
     return this.read().owner !== undefined;
   }
 
+  /**
+   * `rdv-gateway pin set`: the first PIN freely, a new one only with the
+   * current one (checked like the page does, so a wrong one counts toward the
+   * backoff). Otherwise anyone with a shell on this machine could replace
+   * the PIN and approve on the page.
+   */
+  async changePin(current: string | undefined, next: string, now: number): Promise<void> {
+    if (this.hasPin()) {
+      if (current === undefined) throw new StoreError('a PIN is set: give the current one to change it');
+      const check = await this.checkPin(current, now);
+      if (!check.ok) {
+        throw new StoreError(
+          check.lockedFor ? `too many wrong PINs: try again in ${Math.ceil(check.lockedFor / 60_000)} minute(s); nothing changed` : 'that is not the current PIN; nothing changed',
+        );
+      }
+    }
+    await this.setPin(next);
+  }
+
   async setPin(pin: string): Promise<void> {
     if (pin.length < PIN_MIN || pin.length > PIN_MAX) throw new StoreError(`the PIN must be ${PIN_MIN} to ${PIN_MAX} characters`);
     if (/^(.)\1*$/.test(pin) || '0123456789012345678901234567890'.includes(pin) || '9876543210987654321098765432109'.includes(pin)) {
@@ -173,6 +192,8 @@ export class GatewayStore {
     const info: ApiToken = { id: `tok_${randomToken(6)}`, name: n, hash: sha256(token), scopes: [...new Set(scopes as Scope[])], created: new Date().toISOString() };
     await this.update((d) => {
       if (Object.keys(d.tokens).length >= MAX_TOKENS) throw new StoreError(`at most ${MAX_TOKENS} tokens; revoke one first`);
+      // Names tell tokens apart on the approval page: one name, one token.
+      if (Object.values(d.tokens).some((t) => t.name.toLowerCase() === n.toLowerCase())) throw new StoreError(`a token named "${n}" exists already; pick another name or revoke it first`);
       d.tokens[info.id] = info;
     });
     return { token, info };

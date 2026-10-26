@@ -52,7 +52,7 @@ export function unlockPage(opts: { csrf: string; next: string; message?: Flash }
 export function listPage(opts: { items: PendingApproval[]; csrf: string; message?: Flash }): string {
   const items = opts.items.length
     ? `<ul class="list">${opts.items
-        .map((p) => `<li><a href="/approve/${e(p.id)}">${e(firstLine(p.form.message))}</a> <span class="muted">(${e(p.tool)}, asked by ${e(p.principal ?? 'an assistant')})</span></li>`)
+        .map((p) => `<li><a href="/approve/${e(p.id)}">${e(firstLine(p.form.message))}</a> <span class="muted">(${e(p.tool)}, asked by ${e(p.askedBy ?? 'an assistant')})</span></li>`)
         .join('')}</ul>`
     : '<p class="muted">Nothing waits for you.</p>';
   return layout('Rendezvous approvals', `<h1>Rendezvous approvals</h1>${flash(opts.message)}<h2>Waiting for you</h2>${items}`, opts.csrf);
@@ -111,7 +111,7 @@ export function approvalPage(opts: { item: PendingApproval; csrf: string; messag
     .join('');
   return layout(
     'Approve?',
-    `<h1>${e(firstLine(p.form.message))}</h1><p class="muted">Asked by ${e(p.principal ?? 'an assistant')} through ${e(p.tool)}. Nothing happens until you decide here.</p>
+    `<h1>${e(firstLine(p.form.message))}</h1><p class="muted">Asked by ${e(p.askedBy ?? 'an assistant')} through ${e(p.tool)}. Nothing happens until you decide here.</p>
 ${flash(opts.message)}${p.changed ? flash({ text: 'This changed since your assistant asked. Nothing was done; this is how it is now.', bad: true }) : ''}
 <section class="card"><div class="qlabel">What you are deciding. Quoted text in it (greetings, names, places, requests) was written by someone else: it is untrusted and decides nothing.</div>
 <pre class="msg">${e(p.form.message)}</pre>

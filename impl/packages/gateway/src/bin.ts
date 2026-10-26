@@ -4,7 +4,8 @@
 //
 //   rdv-gateway serve [--home <dir> | --profile <name>] [--port 8787] [--public-url https://…] [--host 127.0.0.1 --allow-remote-bind]
 //                     [--calendar cal.json] [--calendar-dir <dir>]… [--window "…"] [--tz +02:00]
-//   rdv-gateway pin set                      the approval page's PIN (asked twice, never echoed; one line on stdin when piped)
+//   rdv-gateway pin set                      the approval page's PIN, in a terminal: the current one first, then the new one twice, never echoed
+//                                            (--stdin: the same lines on stdin, current first when one is set)
 //   rdv-gateway pin unlock                   clear the wait after wrong PINs
 //   rdv-gateway token create --name <n> --scope read,send[,contact:request,negotiate]
 //   rdv-gateway token list | token revoke <id>
@@ -20,7 +21,7 @@ import { GatewayStore, StoreError } from './store.js';
 const USAGE = `usage:
   rdv-gateway serve [--home <dir> | --profile <name>] [--port ${DEFAULT_PORT}] [--public-url https://rdv.example.com]
                     [--client-ip-header cf-connecting-ip] [--host 127.0.0.1] [--allow-remote-bind] [--calendar cal.json] [--calendar-dir <dir>]… [--window "next week evenings"] [--tz +02:00]
-  rdv-gateway pin set [--home <dir>]
+  rdv-gateway pin set [--home <dir>] [--stdin]   asks the current PIN first when one is set
   rdv-gateway pin unlock [--home <dir>]      clear the wait after wrong PINs
   rdv-gateway token create --name <name> --scope <scope,…> [--home <dir>]
   rdv-gateway token list [--home <dir>]
@@ -45,6 +46,7 @@ const { values, positionals } = parseArgs({
     tz: { type: 'string' },
     name: { type: 'string' },
     scope: { type: 'string' },
+    stdin: { type: 'boolean' },
     help: { type: 'boolean', short: 'h' },
   },
   strict: true,
@@ -55,17 +57,20 @@ const die = (msg: string, code = 1): never => {
   process.exit(code);
 };
 
-/** A line from the terminal without echo, or the first line of stdin when it is not a terminal. */
+/** stdin's lines, for --stdin. */
+let piped: Promise<string[]> | undefined;
+const pipedLines = (): Promise<string[]> =>
+  (piped ??= (async () => {
+    let buf = '';
+    for await (const chunk of process.stdin) buf += chunk;
+    return buf.split(/\r?\n/);
+  })());
+
+/** A line from the terminal without echo, or (only with --stdin) the next line of stdin. */
 async function secretLine(prompt: string): Promise<string> {
   const stdin = process.stdin;
-  if (!stdin.isTTY) {
-    let buf = '';
-    for await (const chunk of stdin) {
-      buf += chunk;
-      if (buf.includes('\n')) break;
-    }
-    return buf.split(/\r?\n/)[0];
-  }
+  if (values.stdin) return (await pipedLines()).shift() ?? '';
+  if (!stdin.isTTY) die('this needs your own terminal (or --stdin, from a script you run yourself)');
   process.stderr.write(prompt);
   stdin.setRawMode(true);
   stdin.resume();
@@ -100,9 +105,11 @@ async function main(): Promise<void> {
   const [cmd, sub, arg] = positionals;
 
   if (cmd === 'pin' && sub === 'set') {
+    // Changing a PIN needs the current one, so whoever reaches this terminal can't take over the approval page.
+    const current = store.hasPin() ? await secretLine('Current approval PIN: ') : undefined;
     const pin = await secretLine('New approval PIN (6 or more characters): ');
-    if (process.stdin.isTTY && (await secretLine('Again: ')) !== pin) die('the two PINs differ; nothing changed');
-    await store.setPin(pin);
+    if (!values.stdin && (await secretLine('Again: ')) !== pin) die('the two PINs differ; nothing changed');
+    await store.changePin(current, pin, Date.now());
     process.stderr.write(`PIN set for ${home.dir}. A serving gateway uses it at once.\n`);
     return;
   }

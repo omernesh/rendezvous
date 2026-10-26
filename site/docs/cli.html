@@ -763,7 +763,7 @@ gateway's PIN-locked page. Threat model:
 choices: NOTES 89.</p>
 <div class="codeblock"><pre tabindex="0"><code class="language-bash">node packages/gateway/dist/src/bin.js pin set --home ~/.rendezvous/omer
 node packages/gateway/dist/src/bin.js token create --name chatgpt --scope read,send,contact:request --home ~/.rendezvous/omer
-node packages/gateway/dist/src/bin.js serve --home ~/.rendezvous/omer --public-url https://rdv.example.com
+node packages/gateway/dist/src/bin.js serve --home ~/.rendezvous/omer --public-url https://rdv.example.com --client-ip-header cf-connecting-ip
 # MCP: https://rdv.example.com/mcp   REST: /api/v1/tools/&lt;tool&gt;   OpenAPI: /openapi.json   approvals: /approve
 </code></pre></div>
 <h2 id="develop">Develop<a class="anchor" href="#develop" title="Link to this section" aria-label="Link to this section">#</a></h2>

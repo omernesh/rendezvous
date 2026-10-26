@@ -370,6 +370,20 @@ const GROUP_SUBS = {
   terms: GROUP_TERMS,
   promote: GROUP_PROMOTE,
 };
+// rdv-gateway (issue #12): its PIN unlocks the approval page and a token is a key to the agent. Setting or clearing the
+// PIN and making or revoking tokens are the owner's, in their own terminal; a model that ran them could approve itself.
+const GATEWAY_SECRET =
+  'rdv-gateway pin and token commands are for the human, in their own terminal: the PIN unlocks their approval page, and a token is a key to their agent. Never run them, and never ask for the PIN or a token.';
+const GATEWAY_GROUPS = [
+  ['pin', { set: GATEWAY_SECRET, unlock: GATEWAY_SECRET }],
+  ['token', { create: GATEWAY_SECRET, revoke: GATEWAY_SECRET }],
+];
+/** rdv-gateway under any of its names: the npm script or shim, the built bin.js, the npm package. */
+const isGateway = (w) =>
+  braces(w).some((x) => {
+    const p = progName(x);
+    return p === 'rdv-gateway' || p === 'bin.js' || /^@rendezvous\/gateway(@|$)/i.test(x);
+  });
 /** Every command group with human-only subcommands. The subcommand loop and the `xargs` tail check both read this, so a new group is covered in both. */
 const HUMAN_GROUPS = [
   ['contact', CONTACT_SUBS],
@@ -521,6 +535,20 @@ function checkWords(words, ctx, depth) {
     }
     // rdv's next word must be a literal: not built at run time, and no wildcard the shell could expand into a subcommand.
     if (isRdv(a) && (dynamic(b) || GLOB_CHARS.test(b))) throw new Refusal(OPAQUE);
+  }
+  // rdv-gateway's pin and token commands: anywhere after an rdv-gateway word, in any order, since options may sit
+  // between them (`rdv-gateway pin --stdin set`). Only after it: `pin` and `token` are common words (npm token create).
+  const gwAt = words.findIndex(isGateway);
+  if (gwAt >= 0) {
+    const later = words.slice(gwAt + 1);
+    const anyDynamic = later.some(dynamic);
+    for (const [cmd, subs] of GATEWAY_GROUPS) {
+      const named = later.some((w) => couldBe(w, cmd, ctx.cwd));
+      for (const [s, why] of Object.entries(subs)) {
+        const sub = later.some((w) => couldBe(w, s, ctx.cwd));
+        if ((named && (sub || anyDynamic)) || (anyDynamic && sub)) throw new Refusal(why);
+      }
+    }
   }
   // `… | xargs rdv contact`: the arguments come from stdin, unseen.
   const feeder = lw.findIndex((w) => ['xargs', 'parallel'].includes(progName(w)));
