@@ -27,6 +27,7 @@ const KINDS = [
   'duplicate',
   'ignored',
   'invalid',
+  'refused',
   'unsupported',
 ];
 const state = oneOf(TASK_STATES);
@@ -84,6 +85,8 @@ function dinnerSummary(e: Raw): string {
     case 'ignored':
     case 'invalid':
       return `Ignored a negotiation message from ${peer}.`;
+    case 'refused':
+      return `${peer} proposed another dinner over the meeting limits your user set in its grant; it was declined automatically and nothing was held.`;
     case 'unsupported':
       return `${peer}'s agent cannot process a dinner message we sent (its software does not support it).`;
     default:
@@ -305,7 +308,7 @@ export function toModelEvent(e: Raw, negotiating: boolean): Omit<McpEvent, 'n' |
         rejected: n(e.rejected),
         threshold: n(e.threshold),
         next_step:
-          `${who(e.peer)} sent far more tasks than its grant allows, so this agent revoked the contact and told it. ` +
+          `${who(e.peer)} sent far more tasks or dinner proposals than its grant allows, so this agent revoked the contact and told it. ` +
           'Tell your user; only they can grant it again (rdv_grant with their confirmation).',
       };
     }

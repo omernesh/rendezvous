@@ -176,7 +176,20 @@ export interface Ctx {
   autoConfirm?: boolean;
   /** The extensions we support (default SUPPORTED_EXTENSIONS); a verb of any other is answered as unsupported. */
   extensions?: readonly string[];
+  /**
+   * The per-capability limiter for the meetings URI (SPEC §5.3, issue #41),
+   * e.g. `(cap, o) => agent.admitTask(peer, cap, o, now)` from core. Called
+   * once for a new `meeting/propose` that passed every other check (scope,
+   * not a duplicate, room for the peer), with the peer's open proposals; it
+   * counts what it admits and refuses. A refusal declines that proposal only
+   * (`meeting/decline`, reason `rate: …`), keeps no state and emits
+   * `refused`. Absent: no per-capability limit (as before).
+   */
+  limit?: (capability: string, open: { open: number }) => MeetingLimitVerdict;
 }
+
+/** A limiter's answer (core's `TaskAdmission` is one). */
+export type MeetingLimitVerdict = { ok: true } | { ok: false; code: 'rate' | 'scope'; reason: string };
 
 export type EventKind =
   | 'proposed'
@@ -194,6 +207,8 @@ export type EventKind =
   | 'duplicate'
   | 'ignored'
   | 'invalid'
+  /** A new proposal over a per-capability limit of our grant (meetings URI): declined at once, nothing kept (issue #41). */
+  | 'refused'
   /** The peer's agent cannot process a message of ours (its reply, or its card, says so; SPEC §7.5). */
   | 'unsupported';
 
@@ -542,6 +557,28 @@ class Run {
     return true;
   }
 
+  /** Could makeRoom(peer) succeed? Changes nothing. */
+  hasRoom(peer: string): boolean {
+    const mine = Object.values(this.state.tasks).filter((t) => t.peer === peer);
+    return mine.length < MAX_TASKS_PER_PEER || mine.filter((t) => isTerminal(t.state)).length >= mine.length - MAX_TASKS_PER_PEER + 1;
+  }
+
+  /** The peer's proposals to us still pending (what `max_open` on the meetings URI bounds). */
+  openFrom(peer: string): number {
+    return Object.values(this.state.tasks).filter((t) => t.peer === peer && t.role === 'responder' && !isTerminal(t.state)).length;
+  }
+
+  /**
+   * Decline a new proposal over a per-capability limit without keeping state
+   * (issue #41): a `meeting/decline` for the peer's task, so its side ends
+   * the negotiation (`rejected`) as for any decline, and a `refused` event.
+   */
+  refuse(from: string, m: { taskId: string; contextId: string }, reason: string): void {
+    const stub = { id: m.taskId, contextId: m.contextId, peer: from } as NegotiationTask;
+    this.message(stub, { rdv: 'meeting/decline', reason }, `Sorry, I can't take another dinner proposal from you right now: ${reason}.`);
+    this.event({ kind: 'refused', taskId: m.taskId, peer: from, state: 'rejected', reason });
+  }
+
   /**
    * Make room for one more task with `peer`: evict its oldest finished tasks
    * (tombstones first) down to the per-peer cap. False if all are pending.
@@ -766,7 +803,17 @@ function handle(run: Run, from: string, payload: unknown, ctx: Ctx): void {
       }
       return invalid('a second proposal for the same task (use meeting/counter)');
     }
-    if (!run.makeRoom(from)) return invalid(`too many open negotiations with this peer (max ${MAX_TASKS_PER_PEER})`);
+    // The per-peer bound is not a per-capability limit: checked before the limiter, so it is never counted.
+    if (!run.hasRoom(from)) return invalid(`too many open negotiations with this peer (max ${MAX_TASKS_PER_PEER})`);
+    if (typeof ctx.limit === 'function') {
+      // Our grant's limits on the meetings URI (max_frequency, max_open): over them, this proposal only is declined (issue #41).
+      const verdict = ctx.limit(EXTENSIONS.meeting, { open: run.openFrom(from) });
+      if (!verdict.ok) {
+        if (verdict.code === 'scope') return invalid(verdict.reason);
+        return run.refuse(from, m, `rate: ${verdict.reason}`.slice(0, LIMITS.shortText));
+      }
+    }
+    run.makeRoom(from);
     const first = toSpan(data.slots[0]);
     const task: NegotiationTask = {
       id: m.taskId,

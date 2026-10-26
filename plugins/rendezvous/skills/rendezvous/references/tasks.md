@@ -13,6 +13,15 @@ one is `request/v1`, a free-form request: text, optionally
 `input: {"data": {…}}`. Results and questions are text, optionally a
 `{"rdv": "request/data", "data": {…}}` part, and files.
 
+A grant can limit each capability: `max_frequency` (`"5/day"`) and
+`max_open` (open at once, default 4). To grant one with limits, pass
+`rdv_grant` `invoke` and `limits` (`{"<capability-uri>": {"max_frequency":
+"5/day", "max_open": 2}}`), only with the limits the user asked for. They are
+a proposal: the user sees each limit in the approval form and can change it,
+and a confirm phrase approves exactly the limits it was shown with. A task
+over a limit is rejected (`rate`); far over it, the contact is revoked
+(`revoked_for_abuse`). Tell the user either way.
+
 Each capability has an approval class. `notify`: the human is told, nothing
 waits. `auto`: it starts on the grant and is written to the audit log.
 `confirm` and `free-form`: it waits for the human. `request/v1` is always

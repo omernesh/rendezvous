@@ -186,7 +186,7 @@ false</code>) that changes nothing; neither a cancel nor a timeout ever approves
 </tr>
 <tr>
 <td><code>rdv_grant</code></td>
-<td>request_id, tier, may_propose_meetings, invoke, confirm_phrase, label; or grant_id (+ confirm_phrase, label) to confirm a probe answer; or agent_id (+ tier, may_propose_meetings, invoke, confirm_phrase) to grant an existing contact more, which also sends it a reverse grant</td>
+<td>request_id, tier, may_propose_meetings, invoke, limits, confirm_phrase, label; or grant_id (+ confirm_phrase, label) to confirm a probe answer; or agent_id (+ tier, may_propose_meetings, invoke, limits, confirm_phrase) to grant an existing contact more, which also sends it a reverse grant</td>
 <td>contact (needs the human, below)</td>
 </tr>
 <tr>
@@ -228,7 +228,8 @@ arrive, so a client that subscribes needn't poll.</p>
 probe, confirmed through the same human gate as a grant), <code>contact</code>, <code>message</code>, <code>revoked</code>, <code>dropped</code>, <code>error</code>,
 <code>reverse_grant</code> (what a contact's human now lets us do: <code>may_propose_meetings</code> and <code>invoke</code>, the capability URIs),
 and <code>dinner</code> (kind proposed / offer-received / countered / confirm-needed /
-accepted / completed / released / rejected / canceled / expired / status, with
+accepted / completed / released / rejected / canceled / expired / status /
+refused (a proposal over the meeting limits of our grant, declined at once), with
 a plain-language <code>summary</code> we write from validated fields; <code>confirm-needed</code>
 also carries a <code>next_step</code>).</p>
 <p>Grants issued here always carry <code>may_initiate: true</code>,
@@ -239,6 +240,20 @@ URIs passed in <code>invoke</code>, nothing else (deny by default, no wildcard).
 names those capabilities with one checkbox, and a confirm phrase approves only
 the list it was shown with. The calendar adapter only ever shares free slots,
 never titles.</p>
+<p>Per-capability limits (issue #63, NOTES 84): <code>limits</code> maps a capability URI
+(the meetings URI, with <code>may_propose_meetings</code>, or one in <code>invoke</code>) to
+<code>{max_frequency: "&lt;n&gt;/&lt;minute|hour|day&gt;", max_open: 1..32}</code>, written into that
+capability's <code>scope.invoke</code> entry. The model only proposes them. The form has a
+frequency field and a max-open field for every capability the grant may allow
+(meetings first), prefilled with the proposal and shown even when there is
+none; what the human leaves is what is granted (blank frequency: no limit of
+its own; max-open unset: 4). A confirm phrase approves exactly the limits it was
+shown with: they are part of the scope its digest covers, and the human sees
+them in its terms (<code>may propose meetings (at most 2/day)</code>, <code>may invoke &lt;uri&gt;
+(at most 5/day, 2 open at once)</code>). Going over a limit rejects that task, or
+declines that dinner proposal with reason <code>rate</code>; more than 3x a capability's
+limit in its window, or more than 50 such rejections in 24 hours, revokes the
+contact (<code>revoked_for_abuse</code>).</p>
 <h2 id="consent-the-human-decides-demo-critical">Consent: the human decides (demo-critical)<a class="anchor" href="#consent-the-human-decides-demo-critical" title="Link to this section" aria-label="Link to this section">#</a></h2>
 <p><code>rdv_grant</code> must not succeed on the model's say-so. It succeeds only through
 one of these:</p>

@@ -791,6 +791,104 @@ describe('negotiation', () => {
   });
 });
 
+describe('per-capability limits on the meetings URI (issue #41)', () => {
+  type Verdict = { ok: true } | { ok: false; code: 'rate' | 'scope'; reason: string };
+  /** John's side with a limiter that records its calls and answers from `answers` (ok once they run out). */
+  const limited = (answers: Verdict[]) => {
+    const calls: Array<{ capability: string; open: number }> = [];
+    const john = side(JOHN, 2, { autoConfirm: false });
+    const ctx = (): Ctx => ({ ...ctxOf(john), limit: (capability, o) => (calls.push({ capability, open: o.open }), answers.shift() ?? { ok: true }) });
+    return { john, calls, ctx };
+  };
+  const proposal = (n: number) => {
+    const omer = side(OMER, 10 + n);
+    return propose(omer.state, JOHN, ctxOf(omer)).outgoing[0].payload;
+  };
+
+  it('a new proposal asks the limiter once, for the meetings URI, with the peer’s open proposals', () => {
+    const { john, calls, ctx } = limited([]);
+    for (let n = 1; n <= 3; n++) apply(john, receive(john.state, OMER, proposal(n), ctx()));
+    expect(calls).toEqual([0, 1, 2].map((open) => ({ capability: EXTENSIONS.meeting, open })));
+    expect(Object.keys(john.state.tasks)).toHaveLength(3);
+  });
+
+  it('a refusal declines that proposal only (meeting/decline, reason rate), keeps no state and holds nothing', () => {
+    const { john, calls, ctx } = limited([{ ok: true }, { ok: false, code: 'rate', reason: "over this capability's max_frequency (1/day)" }]);
+    apply(john, receive(john.state, OMER, proposal(1), ctx()));
+    const before = structuredClone(john.state);
+    const p = proposal(2);
+    const r = receive(john.state, OMER, p, ctx());
+    expect(r.state).toEqual(before);
+    expect(r.effects).toEqual([]);
+    expect(r.events).toEqual([expect.objectContaining({ kind: 'refused', peer: OMER, state: 'rejected', reason: expect.stringMatching(/^rate: /) })]);
+    expect(verbs(r.outgoing)).toEqual(['meeting/decline']);
+    const sent = r.outgoing[0];
+    const theirs = (p as { message: { taskId: string; contextId: string } }).message;
+    expect(sent.to).toBe(OMER);
+    expect(sent.payload).toMatchObject({ message: { taskId: theirs.taskId, contextId: theirs.contextId } });
+    expect(calls).toHaveLength(2);
+  });
+
+  it('the proposer ends its negotiation rejected on the decline, as for any decline', () => {
+    const omer = side(OMER, 1);
+    const john = side(JOHN, 2);
+    const step = propose(omer.state, JOHN, ctxOf(omer));
+    apply(omer, step);
+    const r = receive(john.state, OMER, step.outgoing[0].payload, { ...ctxOf(john), limit: () => ({ ok: false, code: 'rate', reason: 'too many open tasks for this capability (max_open 1)' }) });
+    apply(john, r);
+    apply(omer, receive(omer.state, JOHN, r.outgoing[0].payload, ctxOf(omer)));
+    expect(task(omer, step.taskId)).toMatchObject({ state: 'rejected', reason: expect.stringMatching(/^rate: too many open/) });
+    expect(john.state.tasks).toEqual({});
+  });
+
+  it('a scope verdict is dropped silently, like any proposal the grant does not allow', () => {
+    const { john, ctx } = limited([{ ok: false, code: 'scope', reason: 'not a contact' }]);
+    const r = receive(john.state, OMER, proposal(1), ctx());
+    expect(r.outgoing).toEqual([]);
+    expect(r.state.tasks).toEqual({});
+    expect(r.events[0]).toMatchObject({ kind: 'invalid', reason: 'not a contact' });
+  });
+
+  it('only new proposals are counted: counters, accepts, cancels, duplicates and refused scopes never reach the limiter', () => {
+    const omer = side(OMER, 1, { autoConfirm: false, busy: [evening(0), evening(1), evening(2)] });
+    const calls: string[] = [];
+    const limit = (c: string) => (calls.push(c), { ok: true as const });
+    const john = side(JOHN, 2, { autoConfirm: false, busy: [evening(3), evening(4), evening(5), evening(6)] });
+    const step = propose(omer.state, JOHN, ctxOf(omer));
+    apply(omer, step);
+    const r1 = receive(john.state, OMER, step.outgoing[0].payload, { ...ctxOf(john), limit });
+    apply(john, r1);
+    // A replay of the proposal: a duplicate, not counted again.
+    apply(john, receive(john.state, OMER, step.outgoing[0].payload, { ...ctxOf(john), limit }));
+    // John countered; Omer's counter back reaches John's engine without the limiter being asked.
+    const back = receive(omer.state, JOHN, r1.outgoing[0].payload, ctxOf(omer));
+    apply(omer, back);
+    if (back.outgoing.length) apply(john, receive(john.state, OMER, back.outgoing[0].payload, { ...ctxOf(john), limit }));
+    if (['submitted', 'working', 'input-required'].includes(task(omer, step.taskId).state)) {
+      apply(john, receive(john.state, OMER, cancel(omer.state, step.taskId, ctxOf(omer)).outgoing[0].payload, { ...ctxOf(john), limit }));
+    }
+    // A peer whose grant allows no meetings is refused before the limiter.
+    const none = receive(emptyState(), OMER, proposal(9), { ...ctxOf(john), scope: { may_propose_meetings: false }, limit });
+    expect(none.events[0]).toMatchObject({ kind: 'invalid' });
+    expect(calls).toEqual([EXTENSIONS.meeting]);
+  });
+
+  it('the per-peer bound is checked before the limiter and never counted', () => {
+    const { john, calls, ctx } = limited([]);
+    for (let n = 0; n < MAX_TASKS_PER_PEER; n++) apply(john, receive(john.state, OMER, proposal(100 + n), { ...ctxOf(john), autoConfirm: false }));
+    const before = calls.length;
+    const r = receive(john.state, OMER, proposal(500), ctx());
+    expect(r.events[0]).toMatchObject({ kind: 'invalid', reason: expect.stringMatching(/too many open negotiations/) });
+    expect(calls.length).toBe(before);
+  });
+
+  it('without a limiter nothing changes (as before)', () => {
+    const john = side(JOHN, 2, { autoConfirm: false });
+    for (let n = 1; n <= 6; n++) apply(john, receive(john.state, OMER, proposal(n), ctxOf(john)));
+    expect(Object.keys(john.state.tasks)).toHaveLength(6);
+  });
+});
+
 describe('canceling an agreed meeting (issue #20)', () => {
   type Msg = Extract<A2APayload, { type: 'a2a/message' }>;
   const agreed = () => {

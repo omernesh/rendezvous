@@ -1165,6 +1165,19 @@ describe('per-capability task limits and the gross-abuse threshold (issue #28)',
     expect(abuseOf(r)).toEqual({ peer: john.id, capability: LOOKUP, trigger: 'daily', rejected: 51, threshold: 50, windowMs: DAY });
   });
 
+  it('(b) meetings (issue #41): the meetings URI is one more capability, and its rejections count towards the 24-hour figure', () => {
+    const MEET = 'https://rendezvous.nesher.co/ext/meetings/v1';
+    const b = book({ ...INVOKE, [MEET]: { max_frequency: '2/day' } });
+    admitN(b, MEET, 2);
+    // A third proposal in the day: refused for the meetings limit, the grant stays.
+    expect(b.admitTask(john.id, MEET, { open: 0 }, at(10 * MIN))).toMatchObject({ ok: false, code: 'rate', limit: 'max_frequency' });
+    // The default max_open (4) applies to open proposals as to any capability.
+    expect(b.admitTask(john.id, MEET, { open: 4 }, at(11 * MIN))).toMatchObject({ ok: false, limit: 'max_open' });
+    // 2 meeting rejections + 49 task rejections = 51 in 24 hours: over the daily threshold.
+    for (let i = 0; i < 48; i++) expect(abuseOf(b.admitTask(john.id, LOOKUP, { open: 1 }, at(20 * MIN + i)))).toBeUndefined();
+    expect(abuseOf(b.admitTask(john.id, LOOKUP, { open: 1 }, at(80 * MIN)))).toMatchObject({ trigger: 'daily', rejected: 51 });
+  });
+
   it('(b) all capabilities: the 24-hour window slides', () => {
     const b = book();
     for (let i = 0; i < 50; i++) b.admitTask(john.id, LOOKUP, { open: 1 }, at(i * MIN));
