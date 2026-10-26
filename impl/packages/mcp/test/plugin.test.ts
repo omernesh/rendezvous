@@ -1050,6 +1050,28 @@ describe('the skill covers general tasks, files and auto-approve (issue #29)', (
     expect(consentViolations(`Then:\n\n\`\`\`sh\n${c} x\n\`\`\`\n`), c).toHaveLength(1);
   });
 
+  it('refuses rdv-gateway pin and token commands under any of its names (issue #12)', () => {
+    for (const c of [
+      'rdv-gateway pin set',
+      'echo 123456 | rdv-gateway pin set --stdin',
+      'rdv-gateway pin unlock --home x',
+      'rdv-gateway token create --name a --scope read',
+      'rdv-gateway token revoke tok_x',
+      'node packages/gateway/dist/src/bin.js pin set',
+      'npm run rdv-gateway -- token create --name a --scope send',
+      'npx @rendezvous/gateway pin unlock',
+      'rdv-gateway token $SUB',
+      // Options between the command and its subcommand.
+      'rdv-gateway pin --stdin set',
+      'rdv-gateway token --name a --scope read create',
+      'rdv-gateway --home x pin unlock',
+    ]) {
+      expect(checkCommand(c), c).toBeTruthy();
+    }
+    // Reading, serving, and other programs' own pin/token commands are not refused.
+    for (const c of ['rdv-gateway token list', 'rdv-gateway serve --port 8787', 'npm token create', 'git pin set']) expect(checkCommand(c), c).toBeUndefined();
+  });
+
   it('allows the commands the model may run, and the audit log', () => {
     for (const c of ['rdv audit', 'rdv audit --since 7d', 'rdv task request rdv1:abc --text "x"', 'rdv file prepare ./a.pdf', 'rdv file list', 'rdv card publish --mirror']) {
       expect(checkCommand(c), c).toBeUndefined();

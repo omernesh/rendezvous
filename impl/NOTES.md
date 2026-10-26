@@ -3005,6 +3005,18 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       results redact every absolute path, not only the home. An answer whose
       re-run opened no form reports `not_needed`. `rdv_file "fetch"` needs
       `send`.
+    - **Second review.** A local assistant with a shell could pipe a new
+      PIN into `pin set` and approve on 127.0.0.1: `pin set` now reads a
+      terminal only (or `--stdin`, explicitly) and needs the current PIN once
+      one exists (the boundary), and the consent guard refuses the gateway's
+      `pin set|unlock` and `token create|revoke` (a speed bump, #51). A "No"
+      on the page no longer re-runs the step (it could reach a path that needs
+      no one): it is dropped and published as `declined`. Path redaction runs
+      to the end of the field, quote or line and covers `~/`. The unlock rate
+      is spent only by posts that pass CSRF; https needs
+      `--client-ip-header`. One token holds at most 4 MCP sessions. Pending
+      approvals are keyed by token id (names are unique and shown with the
+      id) and dropped when the token is revoked.
     - **Page.** PIN (scrypt, backoff as above, persisted), in-memory sessions (15 min idle, 1 h max), HMAC CSRF
       tokens, Origin and Sec-Fetch-Site checks, a Host allow-list against
       DNS rebinding, no JavaScript, strict CSP. Threat model:

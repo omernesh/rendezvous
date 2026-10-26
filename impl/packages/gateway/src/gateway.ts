@@ -49,6 +49,8 @@ export const DEFAULT_PORT = 8787;
 export const API_BODY_MAX = 256 * 1024;
 export const FORM_BODY_MAX = 64 * 1024;
 export const MAX_MCP_SESSIONS = 32;
+/** MCP sessions one token may hold: a new one closes that token's least recently used. */
+export const MAX_MCP_SESSIONS_PER_TOKEN = 4;
 const MCP_IDLE_MS = 30 * 60_000;
 /** The owner's unlocked page: idle and absolute lifetimes, and how many at once. */
 const OWNER_IDLE_MS = 15 * 60_000;
@@ -146,17 +148,24 @@ export class Gateway {
       if (u.pathname !== '/' || u.search || u.hash || u.username || u.password) throw new Error('--public-url is an origin only, like https://rdv.example.com');
     }
     this.secure = opts.publicUrl?.startsWith('https:') ?? false;
+    // Behind a public tunnel every request comes from 127.0.0.1: without the tunnel's client header, any stranger's
+    // traffic would spend the same page and unlock budget as the owner's.
+    if (this.secure && !opts.clientIpHeader) {
+      throw new Error('--public-url https://… needs --client-ip-header (the header your tunnel puts the client address in, e.g. cf-connecting-ip), so strangers cannot use up the owner\'s PIN attempts');
+    }
     this.tokenLimiter = new RateLimiter(opts.tokenRate ?? 120, 60_000, this.now);
     this.pageLimiter = new RateLimiter(120, 60_000, this.now);
     // A rate, not a lock: it refills, so flooding it costs the owner at most a minute.
     this.unlockLimiter = new RateLimiter(30, 60_000, this.now);
-    this.approvals = new Approvals((id) => `${this.base}/approve/${id}`, this.now);
+    // An ask from a token that was revoked since is dropped: its owner said no more to that client.
+    this.approvals = new Approvals((id) => `${this.base}/approve/${id}`, this.now, (p) => p === undefined || this.store.listTokens().some((t) => t.id === p));
     this.server = new RdvMcpServer({
       home: opts.home,
       role: 'rdv-gateway',
       remote: {
         ask: (a) => {
-          const url = this.approvals.ask(a);
+          const t = a.principal ? this.store.listTokens().find((x) => x.id === a.principal) : undefined;
+          const url = this.approvals.ask(a, t ? `${t.name} (${t.id})` : undefined);
           this.log(`waiting for you: ${a.form.message.split('\n')[0]} (${url})`);
           return url;
         },
@@ -279,7 +288,7 @@ export class Gateway {
     const body = await readJson(req, API_BODY_MAX);
     let denied = false;
     const r = await this.server.invoke(name, body, {
-      principal: who.name,
+      principal: who.id,
       authorize: (tool, args) => {
         const why = authorizeCall(who.scopes, tool, args);
         if (why) denied = true;
@@ -309,10 +318,16 @@ export class Gateway {
     }
     if (req.method !== 'POST' || !isInitializeRequest(body)) throw new HttpError(400, 'start a session with an initialize request', 'bad_request');
     this.sweepSessions();
+    // One token may hold a few sessions: a new one closes its own least recently used, never another token's.
+    const mine = [...this.sessions].filter(([, s]) => s.principal === who.id).sort((x, y) => x[1].lastSeen - y[1].lastSeen);
+    for (const [id, s] of mine.slice(0, Math.max(0, mine.length - MAX_MCP_SESSIONS_PER_TOKEN + 1))) {
+      this.sessions.delete(id);
+      await s.transport.close().catch(() => {});
+    }
     if (this.sessions.size >= MAX_MCP_SESSIONS) throw new HttpError(503, 'too many open sessions; close one or retry later', 'busy', { 'Retry-After': '60' });
     const mcp = this.server.newSession({
       allow: (tool) => toolScopes(tool).some((s) => who.scopes.includes(s)),
-      caller: { principal: who.name, authorize: (tool, args) => authorizeCall(who.scopes, tool, args) },
+      caller: { principal: who.id, authorize: (tool, args) => authorizeCall(who.scopes, tool, args) },
     });
     const transport: StreamableHTTPServerTransport = new StreamableHTTPServerTransport({
       sessionIdGenerator: () => randomUUID(),
@@ -419,6 +434,7 @@ export class Gateway {
 
   private async page(req: IncomingMessage, res: ServerResponse, path: string): Promise<void> {
     const who = this.client(req);
+    // Per client when the tunnel says who it is (required behind https); on this machine alone, per socket address.
     this.pageLimiter.check(who, 'requests');
     // Behind https the owner cookie is Secure: it never comes back over http://127.0.0.1, so say where to go.
     if (this.secure && new URL(this.base).host !== String(req.headers.host ?? '').toLowerCase()) {
@@ -427,10 +443,11 @@ export class Gateway {
     const sid = this.ownerSession(req);
     if (path === '/approve/unlock') {
       if (req.method !== 'POST') return redirect(res, '/approve');
-      this.unlockLimiter.check('unlock', 'PIN attempts');
       const form = await readForm(req, FORM_BODY_MAX);
       const pre = parseCookies(req.headers.cookie).get('rdvg_pre') ?? '';
       this.checkPost(req, form, `pre:${pre}`);
+      // Only a post from our own unlock form spends the unlock budget, per client when clients are told apart.
+      this.unlockLimiter.check(this.opts.clientIpHeader ? who : 'unlock', 'PIN attempts');
       const next = /^\/approve(\/apr_[A-Za-z0-9_-]{8,64})?$/.test(form.get('next') ?? '') ? form.get('next')! : '/approve';
       const perClient = this.opts.clientIpHeader !== undefined;
       const wait = perClient ? this.clientWait(who) : 0;
