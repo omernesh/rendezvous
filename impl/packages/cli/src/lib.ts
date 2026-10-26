@@ -159,6 +159,7 @@ export {
   autoApproveTarget,
   autoApproveWarning,
   autoApproved,
+  autoApprovedFor,
   autoApprovedCounts,
   checkAutoApprove,
   meetingAutoApproved,

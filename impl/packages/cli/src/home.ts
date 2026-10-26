@@ -245,6 +245,12 @@ export interface AutoApproveEntry {
   scope: string;
   /** The owner passphrase record it was set under (ownerSecretBinding): another passphrase, or none, ends it. */
   owner: string;
+  /**
+   * What the owner was shown it covers when they set it (issue #44 review),
+   * under the MAC. It covers at most this, intersected with the grant now.
+   * Absent (set before #44): task capabilities only, never meetings.
+   */
+  covers?: string[];
   mac: string;
 }
 

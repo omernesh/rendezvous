@@ -126,7 +126,26 @@ export function checkAutoApprove(entry: AutoApproveEntry | undefined, subject: A
     return { ok: false, reason: 'grant-changed' };
   }
   if (subject.refused(peer)) return { ok: false, reason: 'fork' };
-  return { ok: true, entry, capabilities: covered(c.inboundScope) };
+  if (entry.covers !== undefined && !(Array.isArray(entry.covers) && entry.covers.every((u) => typeof u === 'string'))) return { ok: false, reason: 'invalid' };
+  return { ok: true, entry, capabilities: coveredBy(entry, c.inboundScope) };
+}
+
+/**
+ * What an entry covers now: what the owner was shown when setting it
+ * (`covers`, MACed), intersected with what the grant allows now, so never
+ * more than either. An entry from before issue #44 has no `covers`: task
+ * capabilities only, never the meeting confirm it was not set for.
+ */
+function coveredBy(entry: AutoApproveEntry, scope: GrantScope | null | undefined): string[] {
+  const now = covered(scope);
+  if (entry.covers === undefined) return now.filter((u) => u !== MEETINGS_CAPABILITY);
+  return now.filter((u) => entry.covers!.includes(u));
+}
+
+/** Auto-approve for one task capability of `peer` (a task gate): only if the entry covers that capability now. */
+export function autoApprovedFor(home: Home, subject: AutoApproveSubject, peer: string, capability: string, now = new Date()): boolean {
+  const r = autoApproved(home, subject, peer, now);
+  return r !== null && r.capabilities.includes(capability);
 }
 
 /**
@@ -336,6 +355,7 @@ export function setAutoApprove(
     since: contact.since,
     scope: scopeDigest(contact.inboundScope),
     owner,
+    covers: capabilities,
   };
   const entry: AutoApproveEntry = { ...body, mac: macOf(subject.secretKey, body) };
   all[peer] = entry;
