@@ -161,8 +161,14 @@ the audit log.
 - **It fails closed.** The entry is signed with your agent key and bound to
   the contact's grant. It is off when the signature is wrong, the time is
   odd, it expires, the contact is revoked, blocked or revoked for abuse, the
-  grant changes or is widened, or the channel shows a fork. `off` works from
-  any terminal.
+  grant changes in a way you did not make, or the channel shows a fork.
+  `off` works from any terminal.
+- **Changing the grant keeps it.** When you widen, narrow or re-grant that
+  contact's grant yourself, auto-approve stays on for what it already
+  covered and the new grant still allows. Capabilities the new grant adds
+  are not covered: they ask you, as before, until you turn auto-approve on
+  for them. `rdv contact list` and `rdv_status` show what is covered and
+  what is not, and the grant's output says so in one line.
 - **The risk is real.** It trusts the contact's *agent*, not only its human.
   A hacked or tricked agent on their side, or a prompt injection in what it
   sends, acts with your agent's tools and your authority, and nobody sees

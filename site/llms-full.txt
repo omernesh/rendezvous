@@ -684,8 +684,14 @@ the audit log.
 - **It fails closed.** The entry is signed with your agent key and bound to
   the contact's grant. It is off when the signature is wrong, the time is
   odd, it expires, the contact is revoked, blocked or revoked for abuse, the
-  grant changes or is widened, or the channel shows a fork. `off` works from
-  any terminal.
+  grant changes in a way you did not make, or the channel shows a fork.
+  `off` works from any terminal.
+- **Changing the grant keeps it.** When you widen, narrow or re-grant that
+  contact's grant yourself, auto-approve stays on for what it already
+  covered and the new grant still allows. Capabilities the new grant adds
+  are not covered: they ask you, as before, until you turn auto-approve on
+  for them. `rdv contact list` and `rdv_status` show what is covered and
+  what is not, and the grant's output says so in one line.
 - **The risk is real.** It trusts the contact's *agent*, not only its human.
   A hacked or tricked agent on their side, or a prompt injection in what it
   sends, acts with your agent's tools and your authority, and nobody sees
@@ -4063,6 +4069,11 @@ Source: https://rendezvous.nesher.co/changelog.md
 What changed in Rendezvous, newest first. Versions are those of the Claude Code plugin, which ships together with the `rdv` CLI, the `rdv-mcp` server and the skill. Rendezvous is alpha: expect changes between versions. Security fixes are marked **Security**.
 
 The format follows Keep a Changelog. One line per change a user can see; PR numbers link to GitHub.
+
+## 0.6.1 - 2026-10-26 {#v0-6-1}
+
+### Changed
+- Changing the grant of a contact on auto-approve no longer turns it off: it stays on for what it already covered and the new grant still allows, and anything the new grant adds asks you until you turn auto-approve on for it. `rdv contact list` and `rdv_status` show what is covered and what is not. ([#93](https://github.com/omernesh/rendezvous/issues/93))
 
 ## 0.6.0 - 2026-10-26 {#v0-6-0}
 

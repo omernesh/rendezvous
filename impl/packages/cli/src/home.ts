@@ -236,13 +236,21 @@ export interface AuditEntry {
   group?: string;
   /** Release lines: SHA-256 and size of each payload that left (ours, never the peer's). */
   sent?: Array<{ sha256: string; bytes: number }>;
-  /** gate `auto-approve`: what changed (`set`, `extend`, `off`); gate `owner-secret`: `set`, `changed` or `reset`; gate `backup`: `create` or `restore`. */
-  action?: 'set' | 'extend' | 'off' | 'changed' | 'reset' | 'create' | 'restore';
+  /**
+   * gate `auto-approve`: what changed (`set`, `extend`, `off`, or `keep`: our
+   * human changed the contact's grant and it stays on for what it still
+   * covers, issue #93); gate `owner-secret`: `set`, `changed` or `reset`;
+   * gate `backup`: `create` or `restore`.
+   */
+  action?: 'set' | 'extend' | 'off' | 'keep' | 'changed' | 'reset' | 'create' | 'restore';
   /** gate `auto-approve`, action `off`: why. */
   reason?: AutoApproveOff;
   /** gate `auto-approve`, set/extend: the expiry (null: until turned off) and the capabilities it covered then. */
   until?: string | null;
   capabilities?: string[];
+  /** gate `auto-approve`, action `keep`: what the new grant allows that it does not cover, and what it covered that the grant no longer allows. */
+  uncovered?: string[];
+  dropped?: string[];
   /** gate `meeting`: which step auto-approve took for our human (accepting the peer's time, or confirming our offer it accepted). */
   meeting?: 'accept' | 'confirm';
   /** gate `auto-approve`, a change our human made: from their terminal (`cli`) or through the MCP approval form (`mcp`, issue #44). */
@@ -258,7 +266,11 @@ export interface AutoApproveEntry {
   set: string;
   /** Expiry, or null: until turned off. */
   until: string | null;
-  /** The contact's grant and inbound scope when it was set: another grant (revoked and re-made, widened) ends it. */
+  /**
+   * The contact's grant and inbound scope when it was set, or when our human
+   * last changed that grant (issue #93: rebound then by our own code); any
+   * other grant ends it.
+   */
   grantId: string;
   since: string;
   scope: string;

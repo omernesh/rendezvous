@@ -129,22 +129,47 @@ describe('auto-approve through rdv-mcp', () => {
     expect((await ok(john, 'rdv_task', { action: 'status', task_id: r2.task_id })).auto_approve).toBeUndefined();
   });
 
-  it('never covers contacts or grants: a new contact request and widening the grant still ask the human, and widening ends it', async () => {
+  it('never covers contacts or grants: a new contact request and widening the grant still ask the human; a grant change keeps what it still covers (issue #93)', async () => {
+    const MORE = 'https://example.com/ext/more/v1';
     const f = forms();
     const { omer, john, omerId, johnId, tag } = await connected(f.handler);
     await humanTurnsOn(john, omerId);
     const asked = f.asked.length;
+    const statusOf = async () => (await ok(john, 'rdv_status')).contacts.find((x: { agent_id: string }) => x.agent_id === omerId).auto_approve;
 
     // A grant (widening this contact's own): the human's form, every time.
-    await ok(john, 'rdv_grant', { agent_id: omerId, invoke: [REQUEST_URI, 'https://example.com/ext/more/v1'] });
+    const wide = await ok(john, 'rdv_grant', { agent_id: omerId, invoke: [REQUEST_URI, MORE] });
     expect(f.asked.length).toBe(asked + 1);
-    // ...and the setting was bound to the grant it was set on: off, audited.
-    const ended = await waitEvent(john, (e) => e.type === 'auto_approve_off' && e.peer === omerId, 'auto-approve off (john)', T).catch(() => undefined);
-    const off = john.home.readAudit().filter((a) => a.gate === 'auto-approve' && a.action === 'off');
-    expect(ended ?? off.at(-1)).toMatchObject({ reason: 'grant-changed' });
-    expect((await ok(john, 'rdv_status')).contacts.find((x: { agent_id: string }) => x.agent_id === omerId).auto_approve).toBeNull();
+    // ...and it stays on for what it covered; the new capability is not covered. Told as information, never as a prompt.
+    expect(wide.auto_approve).toMatchObject({ state: 'on', covers: [MEETINGS_CAPABILITY, REQUEST_URI], not_covered: [MORE] });
+    expect(wide.auto_approve.note).toContain('Never suggest turning auto-approve on');
+    expect(wide.next).toContain('confirms without asking');
+    expect(await statusOf()).toMatchObject({ covers: [MEETINGS_CAPABILITY, REQUEST_URI], not_covered: [MORE] });
+    expect(john.home.readAudit().filter((a) => a.gate === 'auto-approve').at(-1)).toMatchObject({ action: 'keep', by: 'human', via: 'mcp', uncovered: [MORE] });
+    expect(john.home.readAudit().some((a) => a.gate === 'auto-approve' && a.action === 'off')).toBe(false);
     const r = await ok(omer, 'rdv_task', { action: 'request', agent_id: johnId, text: TASK_TEXT });
-    await waitEvent(john, taskEvent(r.task_id, 'start-needed'), 'gated (john)', T);
+    await waitEvent(john, (e) => taskEvent(r.task_id, 'started')(e) && e.auto_approved === true, 'still auto (john)', T);
+    expect(f.asked.length).toBe(asked + 1);
+
+    // Narrowed (no meetings): just the request capability; meetings granted back are not covered again.
+    const narrow = await ok(john, 'rdv_grant', { agent_id: omerId, may_propose_meetings: false, invoke: [REQUEST_URI] });
+    expect(narrow.auto_approve).toMatchObject({ state: 'on', covers: [REQUEST_URI], not_covered: [], no_longer_granted: [MEETINGS_CAPABILITY] });
+    const back = await ok(john, 'rdv_grant', { agent_id: omerId, invoke: [REQUEST_URI] });
+    expect(back.auto_approve).toMatchObject({ state: 'on', covers: [REQUEST_URI], not_covered: [MEETINGS_CAPABILITY] });
+    expect(back.next).toContain('still need your user to confirm');
+    // Re-granted on the same terms: still on, the same coverage, nothing new in the audit log.
+    const lines = john.home.readAudit().length;
+    const same = await ok(john, 'rdv_grant', { agent_id: omerId, invoke: [REQUEST_URI] });
+    expect(same.auto_approve).toMatchObject({ state: 'on', covers: [REQUEST_URI], not_covered: [MEETINGS_CAPABILITY] });
+    expect(john.home.readAudit().length).toBe(lines);
+    // Nothing left it covered: off, with the auto_approve_off event.
+    const none = await ok(john, 'rdv_grant', { agent_id: omerId, may_propose_meetings: false, invoke: [MORE] });
+    expect(none.auto_approve).toMatchObject({ state: 'off' });
+    await waitEvent(john, (e) => e.type === 'auto_approve_off' && e.peer === omerId && e.reason === 'grant-changed', 'auto-approve off (john)', T);
+    expect(await statusOf()).toBeNull();
+    await ok(john, 'rdv_grant', { agent_id: omerId, invoke: [REQUEST_URI] });
+    const r2 = await ok(omer, 'rdv_task', { action: 'request', agent_id: johnId, text: TASK_TEXT });
+    await waitEvent(john, taskEvent(r2.task_id, 'start-needed'), 'gated (john)', T);
 
     // A new contact: still the human's (Dana asks John while Omer is on auto-approve again).
     await humanTurnsOn(john, omerId);

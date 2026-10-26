@@ -4,6 +4,11 @@ What changed in Rendezvous, newest first. Versions are those of the Claude Code 
 
 The format follows Keep a Changelog. One line per change a user can see; PR numbers link to GitHub.
 
+## 0.6.1 - 2026-10-26 {#v0-6-1}
+
+### Changed
+- Changing the grant of a contact on auto-approve no longer turns it off: it stays on for what it already covered and the new grant still allows, and anything the new grant adds asks you until you turn auto-approve on for it. `rdv contact list` and `rdv_status` show what is covered and what is not. ([#93](https://github.com/omernesh/rendezvous/issues/93))
+
 ## 0.6.0 - 2026-10-26 {#v0-6-0}
 
 ### Added

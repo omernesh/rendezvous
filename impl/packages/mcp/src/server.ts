@@ -115,7 +115,10 @@ import {
   autoApproveTarget,
   autoApproveWarning,
   autoApprovedCounts,
+  type AutoApproveKept,
+  type AutoApproveShown,
   checkOwnerSecret,
+  grantKeepingAutoApprove,
   hasOwnerSecret,
   ownerBinding,
   OWNER_SECRET_MAX,
@@ -3389,9 +3392,10 @@ export class RdvMcpServer {
       const now = find(agent);
       if (!now) throw new ToolError(`${safe(peer)} is no longer a contact. Nothing was granted.`);
       if (inboundSubject(now) !== inboundSubject(contact)) return undefined;
-      const c = await agent.allowInbound(peer, { tier, scope });
+      // The human just approved this grant (form or phrase): if the contact is on auto-approve it keeps what it still covers (issue #93).
+      const r = await grantKeepingAutoApprove(home, subjectOf(agent), peer, () => agent.allowInbound(peer, { tier, scope }), 'mcp');
       dropPhrase(home, { action: 'inbound', id: peer });
-      return c;
+      return r;
     });
     if (!done) {
       await this.refreshPhrases();
@@ -3400,7 +3404,8 @@ export class RdvMcpServer {
           'Show your user the current contact (rdv_status) and ask them again; if they use a confirm phrase, a new one was issued to them and the old one no longer works.',
       );
     }
-    const v = contactView(done);
+    const v = contactView(done.result);
+    const meetingsAuto = !!done.autoApprove && !done.autoApprove.ended && done.autoApprove.capabilities.includes(MEETINGS_CAPABILITY);
     return {
       granted: true,
       agent_id: safe(v.peer),
@@ -3410,9 +3415,10 @@ export class RdvMcpServer {
       scope,
       next:
         (mayMeet
-          ? 'Their agent was told (a reverse grant): it may now propose meetings to your user, which still need your user to confirm.'
+          ? `Their agent was told (a reverse grant): it may now propose meetings to your user, ${meetingsAuto ? "which your user's auto-approve for this contact confirms without asking." : 'which still need your user to confirm.'}`
           : 'Their agent was told (a reverse grant) what it may do now.') +
         (invoke.length ? ` It may also invoke: ${invoke.join(', ')}.` : ''),
+      ...keptView(done.autoApprove),
     };
   }
 
@@ -4859,15 +4865,38 @@ const AUTO_NOTE =
   'Call "on" only when they ask; never suggest it or use it to get past a gate, and never ask for the passphrase. Turn it "off" whenever they ask (no confirmation). ' +
   'With it on, tasks from that contact start and their results leave without asking, and a dinner that contact proposes is confirmed without asking; tell your user what was done.';
 
-/** One contact's auto-approve for the model: on (until when, how many actions it passed), or null. */
-function autoView(a: { until: string | null; set: string; capabilities: string[] } | undefined, count: number) {
+/** One contact's auto-approve for the model: on (until when, what it covers and does not, how many actions it passed), or null. */
+function autoView(a: AutoApproveShown | undefined, count: number) {
   if (!a) return null;
   return {
     mode: 'all',
     until: a.until ?? 'until your user turns it off',
     since: a.set,
     covers: a.capabilities.slice(0, 32).map(asCapability),
+    not_covered: a.uncovered.slice(0, 32).map(asCapability),
     auto_approved_actions: count,
+  };
+}
+
+/** Told to the model after a grant change: informational only, never a reason to turn anything on. */
+const KEPT_NOTE =
+  'Your user changed the grant of a contact that is on auto-approve. It stays on for what it still covers; capabilities in not_covered ask your user as before. ' +
+  'Tell your user this in one line, as information. Never suggest turning auto-approve on for them: only your user decides that, on their own.';
+
+/** What a grant change our human approved did to the contact's auto-approve (issue #93), for the grant's result. */
+function keptView(k: AutoApproveKept | null) {
+  if (!k) return {};
+  if (k.ended) {
+    return { auto_approve: { state: 'off', note: 'The new grant allows nothing auto-approve covered for this contact, so it is off. Tell your user, as information.' } };
+  }
+  return {
+    auto_approve: {
+      state: 'on',
+      covers: k.capabilities.slice(0, 32).map(asCapability),
+      not_covered: k.uncovered.slice(0, 32).map(asCapability),
+      ...(k.dropped.length ? { no_longer_granted: k.dropped.slice(0, 32).map(asCapability) } : {}),
+      note: KEPT_NOTE,
+    },
   };
 }
 
