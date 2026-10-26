@@ -505,7 +505,7 @@ export class Gateway {
     const name = this.opts.clientIpHeader?.toLowerCase();
     const raw = name ? req.headers[name] : undefined;
     const v = (Array.isArray(raw) ? raw.at(-1) : raw)?.split(',').at(-1)?.trim();
-    return (v && v.length <= 64 ? v : undefined) ?? req.socket.remoteAddress ?? '?';
+    return addressKey((v && v.length <= 64 ? v : undefined) ?? req.socket.remoteAddress ?? '?');
   }
 
   /** A client's own backoff (with clientIpHeader): how long it must wait, if at all. */
@@ -542,10 +542,10 @@ export class Gateway {
     if (path === '/oauth/authorize') {
       if (req.method !== 'GET') throw new HttpError(405, 'GET only', 'method_not_allowed');
       // Checked and parked; the owner decides on the consent page (after the PIN), never automatically.
-      const id = this.oauth.authorize(req, res, url);
-      if (id === undefined) return;
+      const link = await this.oauth.authorize(req, res, url);
+      if (link === undefined) return;
       // Bound to this browser: a consent link forwarded to the owner (a stranger's own connect) opens nothing.
-      return redirect(res, `/approve/oauth/${id}`, { 'Set-Cookie': this.consentCookie(id) });
+      return redirect(res, `/approve/oauth/${link.id}`, { 'Set-Cookie': this.consentCookie(link.nonce) });
     }
     const sid = this.ownerSession(req);
     if (path === '/approve/unlock') {
@@ -555,7 +555,7 @@ export class Gateway {
       this.checkPost(req, form, `pre:${pre}`);
       // Only a post from our own unlock form spends the unlock budget, per client when clients are told apart.
       this.unlockLimiter.check(this.opts.clientIpHeader ? who : 'unlock', 'PIN attempts');
-      const next = /^\/approve(\/apr_[A-Za-z0-9_-]{8,64}|\/oauth\/oar_[A-Za-z0-9_-]{8,64})?$/.test(form.get('next') ?? '') ? form.get('next')! : '/approve';
+      const next = /^\/approve(\/apr_[A-Za-z0-9_-]{8,64}|\/oauth\/[A-Za-z0-9_-]{16,4000}\.[A-Za-z0-9_-]{43})?$/.test(form.get('next') ?? '') ? form.get('next')! : '/approve';
       const perClient = this.opts.clientIpHeader !== undefined;
       const wait = perClient ? this.clientWait(who) : 0;
       if (wait) return this.unlock(res, next, { text: `Too many wrong PINs from here: try again in ${Math.ceil(wait / 1000)} s.`, bad: true }, 429);
@@ -603,25 +603,25 @@ export class Gateway {
     return this.decide(res, item, form, csrf);
   }
 
-  /** Connecting an OAuth client: the consent page, and the owner's answer bound to the digest of what it showed. */
   /**
    * The cookie that binds a parked connection request to the browser that started it. SameSite=Lax, since that
    * browser arrives from the assistant's site (a cross-site top-level navigation, where a Strict cookie is not sent).
    */
-  private consentCookie(id: string): string {
+  private consentCookie(nonce: string): string {
     const name = this.secure ? '__Host-rdvg_oar' : 'rdvg_oar';
-    return `${name}=${hmac(this.key, `rdv1/gateway-oar\u0000${id}`)}; ${this.secure ? 'Path=/; Secure' : 'Path=/approve'}; HttpOnly; SameSite=Lax; Max-Age=600`;
+    return `${name}=${this.oauth.browserBinding(nonce)}; ${this.secure ? 'Path=/; Secure' : 'Path=/approve'}; HttpOnly; SameSite=Lax; Max-Age=600`;
   }
 
-  private startedHere(req: IncomingMessage, id: string): boolean {
+  private startedHere(req: IncomingMessage, nonce: string): boolean {
     const got = parseCookies(req.headers.cookie).get(this.secure ? '__Host-rdvg_oar' : 'rdvg_oar') ?? '';
-    return safeEqual(got, hmac(this.key, `rdv1/gateway-oar\u0000${id}`));
+    return safeEqual(got, this.oauth.browserBinding(nonce));
   }
 
+  /** Connecting an OAuth client: the consent page, and the owner's answer bound to the digest of what it showed. */
   private async consent(req: IncomingMessage, res: ServerResponse, id: string, sid: string, csrf: string): Promise<void> {
-    const item = /^oar_[A-Za-z0-9_-]{8,64}$/.test(id) ? this.oauth.consent(id) : undefined;
+    const item = this.oauth.consent(id);
     if (!item) return this.html(res, 404, errorPage('Nothing waits here', 'This connection request was decided already, or it expired (after ten minutes). Connect again from your assistant.'));
-    if (!this.startedHere(req, id)) {
+    if (!this.startedHere(req, item.nonce)) {
       this.log(`a connection request (${item.clientId}) was opened in a browser that did not start it; nothing was shown`);
       return this.html(
         res,
@@ -701,4 +701,23 @@ export class Gateway {
       }),
     );
   }
+}
+
+/**
+ * The key a client address is counted under: an IPv6 address by its /64 (one
+ * host usually holds a whole /64, so per-address counting would be no limit),
+ * an IPv4-mapped one as its IPv4 address, anything else as it is.
+ */
+export function addressKey(a: string): string {
+  const ip = a.toLowerCase().replace(/^\[|\]$/g, '').replace(/%.*$/, '');
+  if (!ip.includes(':')) return ip;
+  const mapped = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/.exec(ip);
+  if (mapped) return mapped[1];
+  const [head, tail] = ip.split('::');
+  const h = head ? head.split(':') : [];
+  const t = tail === undefined ? [] : tail ? tail.split(':') : [];
+  if (t.some((x) => x.includes('.')) || h.some((x) => x.includes('.'))) return ip;
+  const groups = tail === undefined ? h : [...h, ...Array(Math.max(0, 8 - h.length - t.length)).fill('0'), ...t];
+  if (groups.length !== 8 || groups.some((g) => !/^[0-9a-f]{1,4}$/.test(g))) return ip;
+  return `${groups.slice(0, 4).map((g) => g.replace(/^0+(?=.)/, '')).join(':')}::/64`;
 }

@@ -135,60 +135,78 @@ most 32 MCP sessions (4 per token, 30 minutes idle) and 64 pending approvals
 `resource_metadata` challenge on 401, RFC 7591 registration, RFC 7009
 revocation). Only the authorization code with PKCE S256: no implicit grant,
 no password or client-credentials grant, no `plain` PKCE; a request without
-`code_challenge_method=S256` is refused. Registration takes https redirect
-URIs only (no fragment, no credentials, at most five), records the name with
-control and format characters removed (at most 64), and is rate limited per
-client (30 per 10 minutes, a rate that refills; generous because a cloud
-assistant registers from its vendor's shared servers). Clients the owner never
-approved are kept at most 200: the oldest goes (it holds nothing), but never
-one registered in the last 15 minutes (it may be the owner's, mid-connect);
-then new registrations wait (429), so a flood cannot fill the store or remove
-the owner's client. The authorization
-endpoint shows an error on its own page, never a redirect, until the client
-exists and the `redirect_uri` equals one it registered, character for
-character (no open redirect); duplicated parameters are refused. **Consent is
-the PIN-locked page**: a valid request is parked (memory, ten minutes; 8 per
-client address, whose own oldest goes, and 256 in all, after which new ones
-wait, so a stranger cannot push out the owner's) and the browser goes to
-`/approve/oauth/<id>` with a cookie that binds the request to that browser
-(an HMAC of its id, HttpOnly, SameSite=Lax because the browser arrives from
-the assistant's site). The page needs that cookie as well as the unlocked
-owner session: a stranger who connects *their own* ChatGPT account to the
-owner's gateway and forwards the consent link gets a refusal page in the
-owner's browser, not a page that looks like the owner's own connect. It
-then shows
-the registered name as untrusted text, the return host, the full
-return address, the client id and the scopes asked for, each one a checkbox.
-The owner can only untick. The post carries the session CSRF token and a
-digest of everything shown (client, name, return address, scopes, resource,
-PKCE challenge, state). The gateway refuses a stale digest, re-reads the
-client and refuses if it was removed or changed, and drops the request once
-decided, so an answer runs once. Never auto-approved, even for a client
-approved before. The page's CSP adds only the return origin to
-`form-action`, since the decision answers with a redirect there. Codes are
-256-bit, single use, live 60 seconds, bound to the client, the return address,
-the challenge, the scopes kept and the resource; a code presented twice ends
-the grant it made (RFC 6749 §4.1.2). Access tokens live an hour; refresh
-tokens rotate on every use, and a rotated one presented again ends the whole
-grant (its tokens, its MCP sessions and its pending approvals). Refresh may
-narrow scopes, never widen them. Every token is bound to the resource
-`<public URL>/mcp` (RFC 8707; `/sse` and the origin are accepted as the same
-resource, and `/sse` has its own protected-resource metadata):
-a request for another resource is refused, and a token minted before the
-public URL changed no longer works. Clients authenticate with `none` (PKCE
-only), `client_secret_post` or `client_secret_basic`; secrets are 256-bit and
-compared in constant time. Everything is stored in `gateway-oauth.json` (mode
-600) as SHA-256 only, restart-safe; codes and parked consents are in memory.
+`code_challenge_method=S256` is refused.
+
+*Nothing a stranger does before the owner acts takes room.* Registration is
+stateless: it takes https redirect URIs only (no fragment, no credentials, at
+most five), cleans the name (no control or format characters, at most 64),
+and stores nothing. The client id it returns *is* the registration (name,
+return addresses, auth method, scope, time), HMAC-signed with a key kept in
+`gateway-oauth.json`; a client secret is derived from the id with the same
+key. A client is stored only when the owner approved it and it exchanged its
+first code. Registration is rate limited per client address (30 per 10
+minutes, a rate that refills, IPv6 counted per /64), but a flood fills
+nothing and so cannot block or remove the owner's client. A parked
+authorization request is stateless too: a signed link (ten minutes) to
+`/approve/oauth/<link>`, so there is no cap for a flood to fill.
+
+The authorization endpoint shows an error on its own page, never a redirect,
+until the client id verifies and the `redirect_uri` equals one it registered,
+character for character; duplicated parameters are refused. After that,
+errors go back to the client **only if the owner approved that client
+before**. Anyone can register any https return address, so an unapproved
+client's errors would otherwise bounce browsers from the gateway's address to
+any site (RFC 9700 §4.11.2). The owner's own "no" on the consent page does go
+back to the client.
+
+**Consent is the PIN-locked page.** The browser that started the request gets
+a cookie binding the link to it (an HMAC of the link's nonce, HttpOnly,
+SameSite=Lax because the browser arrives from the assistant's site). The page
+needs that cookie as well as the unlocked owner session. So a stranger who
+connects *their own* ChatGPT account to the owner's gateway and forwards the
+consent link gets a refusal page in the owner's browser, not a page that looks
+like the owner's own connect.
+
+The page shows the registered name as untrusted text, the return host, the
+full return address, the client id and the scopes asked for (never more than
+the client registered), each one a checkbox. The owner can only untick. The
+post carries the session CSRF token and a digest of everything shown (client,
+name, return address, scopes, resource, PKCE challenge, state). The gateway
+refuses a stale digest, and refuses a client the owner revoked after the page
+was issued. A decided link is remembered until it expires, so an answer runs
+once; only the owner's decisions are remembered. Never auto-approved, even
+for a client approved before. The page's CSP adds only the return origin to
+`form-action`, since the decision answers with a redirect there.
+
+Codes are 256-bit, single use, live 60 seconds, and are bound to the client,
+the return address, the challenge, the scopes kept, the resource and the
+consent's time. A code presented twice ends the grant it made (RFC 6749
+§4.1.2). A code for a client revoked since gets nothing. Access tokens live an
+hour. Refresh tokens rotate on every use, and a rotated one presented again
+ends the whole grant: its tokens, its MCP sessions and its pending approvals.
+Refresh may narrow scopes, never widen them.
+
+Every token is bound to the resource `<public URL>/mcp` (RFC 8707). `/sse`
+and the origin are accepted as the same resource, and `/sse` has its own
+protected-resource metadata. A request for another resource is refused, and a
+token minted before the public URL changed no longer works. Clients
+authenticate with `none` (PKCE only), `client_secret_post` or
+`client_secret_basic`; secrets and client ids are checked in constant time.
+`gateway-oauth.json` (mode 600) holds the signing key, approved clients and
+grants, with tokens as SHA-256 only. It is restart-safe; codes and decided
+links are in memory.
+
 An OAuth grant is a principal exactly like a static token: the same scope
-table, the same session cap (4 per principal), approvals keyed by grant id,
-and `rdv-gateway oauth revoke <client|grant>` (the consent guard refuses it
-to an assistant) ends it at the next request; open streams of a revoked
+table, the same session cap (4 per principal), and approvals keyed by grant
+id. `rdv-gateway oauth revoke <client|grant>` (the consent guard refuses it to
+an assistant) ends it at the next request, and open streams of a revoked
 token or grant are closed within 30 seconds. The consent guard also refuses
 an assistant's reads and writes of `gateway.json` and `gateway-oauth.json` in
-a home (writing a hash there would mint a principal). Token and revocation endpoints
-are rate limited per client (60 a minute). The legacy SSE transport (`/sse`,
-posts to `/messages`) uses the same bearer check, and a session belongs to
-the principal that opened it.
+a home: the OAuth file holds the signing key, and a hash written to either
+would mint a principal. Token and revocation endpoints are rate limited per
+client (60 a minute). The legacy SSE transport (`/sse`, posts to `/messages`)
+uses the same bearer check, and a session belongs to the principal that
+opened it.
 
 ## Known limits and open risks
 

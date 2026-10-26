@@ -2,12 +2,12 @@
 // 2), so ChatGPT connectors and claude.ai custom connectors connect without
 // a static token. NOTES 93.
 //
-//   /.well-known/oauth-protected-resource[/mcp]  RFC 9728: this gateway's MCP URL and its authorization server
-//   /.well-known/oauth-authorization-server      RFC 8414
-//   /oauth/register                              RFC 7591 dynamic client registration (https redirect URIs only, rate limited)
-//   /oauth/authorize                             authorization code + PKCE S256 only; the consent is the owner's PIN-locked page
-//   /oauth/token                                 code exchange, rotating refresh tokens with reuse detection
-//   /oauth/revoke                                RFC 7009
+//   /.well-known/oauth-protected-resource[/mcp|/sse]  RFC 9728: this gateway's MCP URL and its authorization server
+//   /.well-known/oauth-authorization-server           RFC 8414
+//   /oauth/register      RFC 7591 dynamic client registration (https redirect URIs only, rate limited, stateless)
+//   /oauth/authorize     authorization code + PKCE S256 only; the consent is the owner's PIN-locked page
+//   /oauth/token         code exchange, rotating refresh tokens with reuse detection
+//   /oauth/revoke        RFC 7009
 //
 // Nothing here can approve a Rendezvous step: an OAuth grant is a principal
 // with scopes, exactly like a static token. The owner approves each client
@@ -15,15 +15,24 @@
 // approval is bound to a digest of exactly what the page showed. Tokens are
 // bound to this gateway's resource (RFC 8707): one minted for another
 // resource, or before the public URL changed, is refused.
-import { createHash } from 'node:crypto';
+//
+// Nothing a stranger can do before the owner acts takes room (security
+// review of PR #97): a client id is its own signed registration, and a parked
+// authorization request is a signed, expiring link bound to the browser
+// that started it. Only the owner's decisions are remembered (single use).
+import { createHash, createHmac, randomBytes } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { escapeHtml, HttpError, mediaType, RateLimiter, randomToken, readBody, redirect, safeEqual, sendJson, sha256 } from './http.js';
-import { type ClientAuthMethod, type IssuedTokens, newGrantId, OAuthStore, OAuthStoreError } from './oauth-store.js';
+import { type ClientAuthMethod, type ClientMeta, type IssuedTokens, newGrantId, OAuthStore, OAuthStoreError } from './oauth-store.js';
 import { isScope, SCOPES, type Scope } from './scopes.js';
 
-/** An authorization request waiting for the owner's consent (memory; ten minutes). */
+/** An authorization request waiting for the owner's consent: decoded from its signed link (ten minutes). */
 export interface PendingConsent {
+  /** The signed link token (the consent page is /approve/oauth/<id>). */
   id: string;
+  /** Single use and the browser binding are keyed by it. */
+  nonce: string;
+  /** The client's ref (`cli_…`). */
   clientId: string;
   /** As registered (untrusted), and as shown. */
   clientName: string;
@@ -33,20 +42,19 @@ export interface PendingConsent {
   codeChallenge: string;
   state?: string;
   created: number;
-  /** Who asked (the client address key): each asker holds a few, so nobody can push out another's. */
-  asker: string;
   /** sha256 over everything the consent page shows and the code will carry. */
   digest: string;
-  busy?: boolean;
 }
 
 interface Code {
-  clientId: string;
+  ref: string;
   redirectUri: string;
   scopes: Scope[];
   resource: string;
   codeChallenge: string;
   expires: number;
+  /** When the consent page that made it was issued: a client revoked since gets nothing. */
+  consentAt: number;
   used: boolean;
   /** The grant this code's exchange made: a second presentation of the code ends it (RFC 6749 §4.1.2). */
   grantId?: string;
@@ -55,13 +63,13 @@ interface Code {
 
 export const CONSENT_TTL_MS = 10 * 60_000;
 export const CODE_TTL_MS = 60_000;
-/** Parked consents per asker (its own oldest goes) and in all (then new ones wait): one stranger can't evict the owner's. */
-const MAX_PENDING_PER_ASKER = 8;
-const MAX_PENDING = 256;
+/** Codes are made only by the owner's approvals, so this bound is never reached by others. */
 const MAX_CODES = 256;
 const REG_BODY_MAX = 16 * 1024;
 const TOKEN_BODY_MAX = 16 * 1024;
 const MAX_REDIRECTS = 5;
+const CLIENT_ID_MAX = 6200;
+const CONSENT_ID = /^([A-Za-z0-9_-]{16,4000})\.([A-Za-z0-9_-]{43})$/;
 
 export interface OAuthServerOptions {
   home: OAuthStore['home'];
@@ -92,8 +100,11 @@ const VERIFIER = /^[A-Za-z0-9._~-]{43,128}$/;
 
 export class OAuthServer {
   readonly store: OAuthStore;
-  private readonly pending = new Map<string, PendingConsent>();
   private readonly codes = new Map<string, Code>();
+  /** Consent links the owner decided (nonce → expiry): single use. Only the owner's own actions add here. */
+  private readonly decided = new Map<string, number>();
+  /** Signs consent links and their browser cookies; per process, like the consents (ten minutes). */
+  private readonly linkKey = randomBytes(32);
   /**
    * Registrations per client address: a rate that refills, never a lock. Generous, since a cloud assistant
    * registers from its vendor's servers, shared with everyone else on that vendor.
@@ -197,13 +208,11 @@ export class OAuthServer {
         if (!scope) throw new OAuthError(400, 'invalid_client_metadata', `scope: some of ${SCOPES.join(' ')}`);
       }
       const name = cleanName(m.client_name);
-      const { client, secret } = await this.store.registerClient({ name, redirectUris, authMethod: method, scope }, this.o.now()).catch((err) => {
-        if (err instanceof OAuthStoreError) throw new OAuthError(err.busy ? 429 : 400, err.busy ? 'slow_down' : 'invalid_client_metadata', err.message, err.busy ? { 'Retry-After': '300' } : {});
-        throw err;
-      });
-      this.o.log(`OAuth client registered: ${JSON.stringify(client.name)} (${client.id}), returning to ${redirectUris.map((u) => new URL(u).host).join(', ')}`);
+      // Nothing is stored: the client id is this registration, signed. A client is stored once the owner approved it.
+      const { meta: client, secret } = await this.store.issueClient({ name, redirectUris, authMethod: method, scope }, this.o.now());
+      this.o.log(`OAuth client registered: ${JSON.stringify(client.name)} (${client.ref}), returning to ${redirectUris.map((u) => new URL(u).host).join(', ')}`);
       sendJson(res, 201, {
-        client_id: client.id,
+        client_id: client.clientId,
         client_id_issued_at: Math.floor(Date.parse(client.created) / 1000),
         client_name: client.name,
         redirect_uris: client.redirectUris,
@@ -221,23 +230,29 @@ export class OAuthServer {
   // --- authorization endpoint ---------------------------------------------------------
 
   /**
-   * Validate an authorization request and park it for the owner's consent.
-   * Until the client and its exact redirect URI check out, an error is shown
-   * here and never redirected (no open redirect); after that, errors go back
-   * to the client. Returns the parked request's id (the gateway binds it to
-   * this browser), or undefined when answered.
+   * Validate an authorization request and park it for the owner's consent:
+   * a signed, expiring link (nothing is stored). Until the client and its
+   * exact redirect URI check out, an error is shown here and never
+   * redirected. Errors after that go back to the client only once the owner
+   * has approved that client before: anyone can register a client with any
+   * https return address, so an unapproved client's errors stay on our page
+   * too (no open redirect through registration, RFC 9700 §4.11.2). Returns
+   * the consent link's token and nonce (the gateway binds the nonce to this
+   * browser), or undefined when answered.
    */
-  authorize(req: IncomingMessage, res: ServerResponse, url: URL): string | undefined {
+  async authorize(_req: IncomingMessage, res: ServerResponse, url: URL): Promise<{ id: string; nonce: string } | undefined> {
     const q = url.searchParams;
     for (const k of new Set(q.keys())) if (q.getAll(k).length > 1) return this.authError(res, `the parameter ${k} appears twice`);
     const clientId = q.get('client_id') ?? '';
-    const client = /^cli_[A-Za-z0-9_-]{8,40}$/.test(clientId) ? this.store.client(clientId) : undefined;
-    if (!client) return this.authError(res, 'This client is not registered here (or was removed). Connect it again from your assistant.');
+    const client = clientId.length <= CLIENT_ID_MAX ? await this.store.resolveClient(clientId) : undefined;
+    if (!client) return this.authError(res, 'This client is not registered here. Connect it again from your assistant.');
     const redirectUri = q.get('redirect_uri') ?? '';
     // Exact string match against what the client registered: no prefix, no added path or query.
     if (!client.redirectUris.includes(redirectUri)) return this.authError(res, 'The return address does not match what this client registered; nothing was sent anywhere.');
     const state = q.get('state') ?? undefined;
+    const approved = this.store.client(client.ref) !== undefined;
     const back = (error: string, description: string): undefined => {
+      if (!approved) return this.authError(res, `This connection request cannot go on (${error}: ${description}). Nothing was sent anywhere.`);
       redirect(res, withParams(redirectUri, { error, error_description: description, state, iss: this.o.base() }), {}, 303);
       return undefined;
     };
@@ -254,21 +269,39 @@ export class OAuthServer {
     if (!scopes || scopes.length === 0) return back('invalid_scope', `scope: some of ${(client.scope ?? SCOPES).join(' ')}`);
     const resource = q.get('resource') ?? this.resource();
     if (!this.isOurResource(resource)) return back('invalid_target', 'resource: this gateway only');
-    this.sweep();
-    const asker = this.o.clientKey(req);
-    const mine = [...this.pending.values()].filter((x) => x.asker === asker);
-    for (const x of mine.slice(0, Math.max(0, mine.length - MAX_PENDING_PER_ASKER + 1))) this.pending.delete(x.id);
-    if (this.pending.size >= MAX_PENDING) return this.authError(res, 'Too many connection requests wait right now; try again in a few minutes.', 429);
-    const id = `oar_${randomToken(18)}`;
-    const p: PendingConsent = { id, clientId, clientName: client.name, redirectUri, scopes, resource: this.resource(), codeChallenge, state, created: this.o.now(), asker, digest: '' };
-    p.digest = consentDigest(p);
-    this.pending.set(id, p);
-    return id;
+    const nonce = randomToken(16);
+    const payload = Buffer.from(
+      JSON.stringify({ v: 1, k: client.ref, nm: client.name, r: redirectUri, s: scopes, res: this.resource(), ch: codeChallenge, ...(state !== undefined ? { st: state } : {}), t: this.o.now(), n: nonce }),
+    ).toString('base64url');
+    return { id: `${payload}.${this.linkMac('consent', payload)}`, nonce };
   }
 
+  private linkMac(label: string, s: string): string {
+    return createHmac('sha256', this.linkKey).update(`rdv1/oauth-${label}\u0000${s}`).digest('base64url');
+  }
+
+  /** The cookie value that binds a consent link to the browser that started it. */
+  browserBinding(nonce: string): string {
+    return this.linkMac('browser', nonce);
+  }
+
+  /** A consent link, if we signed it, it has not expired and it was not decided. */
   consent(id: string): PendingConsent | undefined {
-    this.sweep();
-    return this.pending.get(id);
+    const m = CONSENT_ID.exec(id);
+    if (!m || !safeEqual(m[2], this.linkMac('consent', m[1]))) return undefined;
+    let x: { v: number; k: string; nm: string; r: string; s: Scope[]; res: string; ch: string; st?: string; t: number; n: string };
+    try {
+      x = JSON.parse(Buffer.from(m[1], 'base64url').toString('utf8'));
+    } catch {
+      return undefined;
+    }
+    const now = this.o.now();
+    if (x.v !== 1 || now - x.t > CONSENT_TTL_MS || x.t > now + 60_000) return undefined;
+    this.sweepDecided();
+    if (this.decided.has(x.n)) return undefined;
+    const p: PendingConsent = { id, nonce: x.n, clientId: x.k, clientName: x.nm, redirectUri: x.r, scopes: x.s, resource: x.res, codeChallenge: x.ch, state: x.st, created: x.t, digest: '' };
+    p.digest = consentDigest(p);
+    return p;
   }
 
   /**
@@ -277,21 +310,21 @@ export class OAuthServer {
    * subset of those asked). Returns the URL to send the browser back to.
    */
   decide(p: PendingConsent, digest: string, decision: 'approve' | 'decline', kept: Scope[]): { redirect: string } | { error: string; stale?: boolean } {
-    if (p.busy) return { error: 'This is already being answered.' };
+    this.sweepDecided();
+    if (this.decided.has(p.nonce)) return { error: 'This was answered already.' };
     if (!safeEqual(digest, p.digest)) return { error: 'This changed since you opened the page. Nothing was done; review it again.', stale: true };
-    // The client as it is now must still be the one shown: same name and return address.
-    const client = this.store.client(p.clientId);
-    if (!client || client.name !== p.clientName || !client.redirectUris.includes(p.redirectUri) || consentDigest(p) !== p.digest) {
-      this.pending.delete(p.id);
-      return { error: 'This client was removed or changed since; nothing was approved.' };
+    // A client the owner revoked after this page was issued: nothing.
+    const revoked = this.store.revokedAt(p.clientId);
+    if (revoked !== undefined && revoked >= p.created) {
+      this.decided.set(p.nonce, p.created + CONSENT_TTL_MS);
+      return { error: 'You removed this client since; nothing was approved.' };
     }
     const scopes = SCOPES.filter((s) => kept.includes(s) && p.scopes.includes(s));
     if (decision === 'approve' && (scopes.length === 0 || kept.some((s) => !p.scopes.includes(s)))) {
       return { error: 'Keep at least one of the permissions it asked for (you cannot add others).' };
     }
-    // Decided: gone, so the same answer can never run again.
-    p.busy = true;
-    this.pending.delete(p.id);
+    // Decided: remembered until the link expires, so the same answer can never run again.
+    this.decided.set(p.nonce, p.created + CONSENT_TTL_MS);
     const iss = this.o.base();
     if (decision === 'decline') {
       this.o.log(`OAuth: you declined ${JSON.stringify(p.clientName)} (${p.clientId})`);
@@ -301,7 +334,8 @@ export class OAuthServer {
     this.sweepCodes();
     while (this.codes.size >= MAX_CODES) this.codes.delete(this.codes.keys().next().value!);
     this.codes.set(sha256(code), {
-      clientId: p.clientId,
+      ref: p.clientId,
+      consentAt: p.created,
       redirectUri: p.redirectUri,
       scopes,
       resource: p.resource,
@@ -320,13 +354,13 @@ export class OAuthServer {
       if (req.method !== 'POST') throw new OAuthError(405, 'invalid_request', 'POST only');
       this.limit(this.tokenLimiter, req, 'token requests');
       const form = await this.form(req);
-      const client = this.authenticateClient(req, form);
+      const client = await this.authenticateClient(req, form);
       const grantType = form.get('grant_type');
       const out =
         grantType === 'authorization_code'
-          ? await this.exchangeCode(client.id, form)
+          ? await this.exchangeCode(client, form)
           : grantType === 'refresh_token'
-            ? await this.refreshGrant(client.id, form)
+            ? await this.refreshGrant(client.ref, form)
             : (() => {
                 throw new OAuthError(400, 'unsupported_grant_type', 'authorization_code or refresh_token');
               })();
@@ -347,10 +381,10 @@ export class OAuthServer {
     }
   }
 
-  private async exchangeCode(clientId: string, form: URLSearchParams): Promise<IssuedTokens> {
+  private async exchangeCode(client: ClientMeta, form: URLSearchParams): Promise<IssuedTokens> {
     const key = sha256(form.get('code') ?? '');
     const c = this.codes.get(key);
-    if (!c || c.clientId !== clientId) throw new OAuthError(400, 'invalid_grant', 'unknown or expired code');
+    if (!c || c.ref !== client.ref) throw new OAuthError(400, 'invalid_grant', 'unknown or expired code');
     if (c.used) {
       // A code presented twice: whoever has it besides the client, the grant it made ends.
       if (c.grantId) {
@@ -374,13 +408,13 @@ export class OAuthServer {
     // The grant's id is known before the write, so a second presentation racing it still ends that grant.
     c.grantId = newGrantId();
     try {
-      const issued = await this.store.createGrant(clientId, c.scopes, c.resource, this.o.now(), c.grantId);
+      const issued = await this.store.createGrant(client, c.scopes, c.resource, this.o.now(), c.consentAt, c.grantId);
       if (c.replayed) {
         // Presented again while this grant was being written: it ends now.
         await this.store.revokeGrant(issued.grant.id);
         throw new OAuthError(400, 'invalid_grant', 'this code was used twice');
       }
-      this.o.log(`OAuth: grant ${issued.grant.id} for client ${clientId} (${issued.scopes.join(', ')})`);
+      this.o.log(`OAuth: grant ${issued.grant.id} for client ${client.ref} (${issued.scopes.join(', ')})`);
       return issued;
     } catch (err) {
       if (err instanceof OAuthStoreError) throw new OAuthError(400, 'invalid_grant', err.message);
@@ -388,7 +422,7 @@ export class OAuthServer {
     }
   }
 
-  private async refreshGrant(clientId: string, form: URLSearchParams): Promise<IssuedTokens> {
+  private async refreshGrant(ref: string, form: URLSearchParams): Promise<IssuedTokens> {
     const token = form.get('refresh_token') ?? '';
     if (!/^rdvr_[A-Za-z0-9_-]{20,80}$/.test(token)) throw new OAuthError(400, 'invalid_grant', 'unknown refresh token');
     let scopes: Scope[] | undefined;
@@ -399,7 +433,7 @@ export class OAuthServer {
     }
     const resource = form.get('resource');
     if (resource !== null && !this.isOurResource(resource)) throw new OAuthError(400, 'invalid_target', 'resource: this gateway only');
-    const r = await this.store.refresh(clientId, token, scopes, resource === null ? undefined : this.resource(), this.o.now());
+    const r = await this.store.refresh(ref, token, scopes, resource === null ? undefined : this.resource(), this.o.now());
     if ('error' in r) {
       if (r.reused) {
         this.o.onGrantEnded?.(r.reused.id);
@@ -417,13 +451,13 @@ export class OAuthServer {
       if (req.method !== 'POST') throw new OAuthError(405, 'invalid_request', 'POST only');
       this.limit(this.tokenLimiter, req, 'token requests');
       const form = await this.form(req);
-      const client = this.authenticateClient(req, form);
+      const client = await this.authenticateClient(req, form);
       const token = form.get('token') ?? '';
       if (token.length > 0 && token.length <= 200) {
-        const ended = await this.store.revokeToken(client.id, token);
+        const ended = await this.store.revokeToken(client.ref, token);
         if (ended) {
           this.o.onGrantEnded?.(ended.id);
-          this.o.log(`OAuth: client ${client.id} revoked grant ${ended.id}`);
+          this.o.log(`OAuth: client ${client.ref} revoked grant ${ended.id}`);
         }
       }
       res.writeHead(200, { 'Content-Length': 0 });
@@ -456,11 +490,11 @@ export class OAuthServer {
   }
 
   /** Client authentication: client_secret_basic, client_secret_post, or none (a public client: its client_id). */
-  private authenticateClient(req: IncomingMessage, form: URLSearchParams) {
+  private async authenticateClient(req: IncomingMessage, form: URLSearchParams): Promise<ClientMeta> {
     let id = form.get('client_id') ?? undefined;
     let secret = form.get('client_secret') ?? undefined;
     const h = String(req.headers.authorization ?? '');
-    const basic = /^Basic ([A-Za-z0-9+/=]{1,400})$/.exec(h);
+    const basic = /^Basic ([A-Za-z0-9+/=]{1,9000})$/.exec(h);
     if (basic) {
       const raw = Buffer.from(basic[1], 'base64').toString('utf8');
       const i = raw.indexOf(':');
@@ -477,7 +511,7 @@ export class OAuthServer {
       id = bid;
       secret = bsecret;
     }
-    const c = id && /^cli_[A-Za-z0-9_-]{8,40}$/.test(id) ? this.store.checkClient(id, secret) : undefined;
+    const c = id && id.length <= CLIENT_ID_MAX ? await this.store.checkClient(id, secret) : undefined;
     if (!c) throw new OAuthError(401, 'invalid_client', 'client authentication failed', basic ? { 'WWW-Authenticate': 'Basic realm="rendezvous"' } : {});
     return c;
   }
@@ -501,9 +535,9 @@ export class OAuthServer {
     sendJson(res, 500, { error: 'server_error', error_description: 'internal error; the details are in the gateway log' });
   }
 
-  private sweep(): void {
+  private sweepDecided(): void {
     const t = this.o.now();
-    for (const [id, p] of this.pending) if (t - p.created > CONSENT_TTL_MS) this.pending.delete(id);
+    for (const [n, until] of this.decided) if (until < t) this.decided.delete(n);
   }
 
   private sweepCodes(): void {

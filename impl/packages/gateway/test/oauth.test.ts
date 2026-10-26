@@ -3,7 +3,7 @@
 // PIN-locked page, rotating refresh tokens with reuse detection, revocation,
 // resource binding, and the grant as a principal like a static token.
 import { createHash, randomBytes } from 'node:crypto';
-import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { request } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -16,7 +16,7 @@ import { Home } from '@rendezvous/cli/lib';
 import { startTestRelay, type TestRelay } from '@rendezvous/core/testing';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { makeSide, ok, type Side } from '../../mcp/test/flow.js';
-import { ACCESS_TTL_MS, Gateway, OAuthStore } from '../src/index.js';
+import { ACCESS_TTL_MS, addressKey, clientRef, Gateway, OAuthStore } from '../src/index.js';
 import { api, Browser, callJson, hidden, mcpClient, PIN, startGateway, type TestGateway, waitApi } from './helpers.js';
 
 let relay: TestRelay;
@@ -96,7 +96,7 @@ async function toConsent(b: Browser, url: string): Promise<{ path: string; page:
   const r = await b.get(url);
   expect(r.status, r.text).toBe(303);
   const path = r.headers.get('location')!;
-  expect(path).toMatch(/^\/approve\/oauth\/oar_/);
+  expect(path).toMatch(/^\/approve\/oauth\/[A-Za-z0-9_-]+\.[A-Za-z0-9_-]{43}$/);
   const locked = await b.get(path);
   if (locked.text.includes('name="pin"')) {
     const u = await b.unlock(path);
@@ -281,24 +281,36 @@ describe('OAuth: PKCE, redirect URIs, codes', () => {
     expect((await exchange(g, f, { code_verifier: '' })).body.error).toBe('invalid_grant');
   });
 
-  it('refuses an authorization request without S256 PKCE (missing, or plain), back to the client', async () => {
+  it('refuses an authorization request without S256 PKCE (missing, or plain) or for implicit', async () => {
     const g = await gateway();
-    const reg = await register(g.local);
     const { challenge } = pkce();
-    for (const method of [undefined, 'plain']) {
-      const r = await fetch(authorizeUrl(g.local, { response_type: 'code', client_id: reg.body.client_id, redirect_uri: REDIRECT, code_challenge: challenge, code_challenge_method: method, state: 's1' }), { redirect: 'manual' });
+    const cases = (clientId: string) => [
+      { p: { code_challenge: challenge, code_challenge_method: undefined }, error: 'invalid_request' },
+      { p: { code_challenge: challenge, code_challenge_method: 'plain' }, error: 'invalid_request' },
+      { p: { code_challenge: undefined, code_challenge_method: 'S256' }, error: 'invalid_request' },
+      { p: { code_challenge: challenge, code_challenge_method: 'S256', response_type: 'token' }, error: 'unsupported_response_type' },
+    ].map((c) => ({ url: authorizeUrl(g.local, { response_type: 'code', client_id: clientId, redirect_uri: REDIRECT, state: 's1', ...c.p }), error: c.error }));
+    // A client the owner never approved: every error stays on the gateway's page (no open redirect through registration).
+    const fresh = await register(g.local);
+    for (const c of cases(fresh.body.client_id)) {
+      const r = await fetch(c.url, { redirect: 'manual' });
+      expect(r.status, c.url).toBe(400);
+      expect(r.headers.get('location')).toBeNull();
+      expect(await r.text()).toContain(c.error);
+    }
+    // A client the owner approved before: errors go back to it, with state and iss.
+    const b = new Browser(g.local);
+    const f = await approvedCode(g, b);
+    expect((await exchange(g, f)).status).toBe(200);
+    for (const c of cases(f.clientId)) {
+      const r = await fetch(c.url, { redirect: 'manual' });
       expect(r.status).toBe(303);
       const loc = new URL(r.headers.get('location')!);
       expect(`${loc.origin}${loc.pathname}`).toBe(REDIRECT);
-      expect(loc.searchParams.get('error')).toBe('invalid_request');
+      expect(loc.searchParams.get('error')).toBe(c.error);
       expect(loc.searchParams.get('state')).toBe('s1');
       expect(loc.searchParams.get('iss')).toBe(g.base);
     }
-    const noChallenge = await fetch(authorizeUrl(g.local, { response_type: 'code', client_id: reg.body.client_id, redirect_uri: REDIRECT, code_challenge_method: 'S256' }), { redirect: 'manual' });
-    expect(new URL(noChallenge.headers.get('location')!).searchParams.get('error')).toBe('invalid_request');
-    // Implicit (token) and other response types are refused.
-    const implicit = await fetch(authorizeUrl(g.local, { response_type: 'token', client_id: reg.body.client_id, redirect_uri: REDIRECT, code_challenge: challenge, code_challenge_method: 'S256' }), { redirect: 'manual' });
-    expect(new URL(implicit.headers.get('location')!).searchParams.get('error')).toBe('unsupported_response_type');
   });
 
   it('a redirect_uri that differs is never redirected to, and the token endpoint checks it too', async () => {
@@ -345,7 +357,10 @@ describe('OAuth: PKCE, redirect URIs, codes', () => {
     expect(ok.body.client_secret).toBeUndefined();
     const secret = await register(g.local, { token_endpoint_auth_method: 'client_secret_post' });
     expect(secret.body.client_secret).toMatch(/^rdvs_/);
-    expect(readFileSync(join(g.home.dir, 'gateway-oauth.json'), 'utf8')).not.toContain(secret.body.client_secret);
+    // Registration is stateless: nothing was stored (the file holds only the signing key).
+    const file = existsSync(join(g.home.dir, 'gateway-oauth.json')) ? JSON.parse(readFileSync(join(g.home.dir, 'gateway-oauth.json'), 'utf8')) : {};
+    expect(Object.keys(file.clients ?? {})).toEqual([]);
+    expect(JSON.stringify(file)).not.toContain(secret.body.client_secret);
   });
 
   it('registration is rate limited per client, a rate that refills', async () => {
@@ -472,10 +487,10 @@ describe('OAuth: refresh, reuse, revocation, expiry', () => {
     const grantId = g.gw.oauth.store.list().grants[0].id;
     expect((await b.get(new URL(asked.body.result.approve_url).pathname)).text).toContain(`ChatGPT (OAuth ${grantId})`);
     // `rdv-gateway oauth revoke <client>` from a terminal: another store on the same home.
-    const r = await new OAuthStore(new Home(g.home.dir)).revoke(f.clientId);
+    const r = await new OAuthStore(new Home(g.home.dir)).revoke(clientRef(f.clientId));
     expect(r?.grants.map((x) => x.id)).toEqual([grantId]);
     expect((await api(g.local, t.access_token, 'rdv_status')).status).toBe(401);
-    expect((await token(g.local, { grant_type: 'refresh_token', refresh_token: t.refresh_token, client_id: f.clientId })).status).toBe(401);
+    expect((await token(g.local, { grant_type: 'refresh_token', refresh_token: t.refresh_token, client_id: f.clientId })).body.error).toBe('invalid_grant');
     expect(g.gw.approvals.list()).toEqual([]);
   });
 
@@ -483,11 +498,12 @@ describe('OAuth: refresh, reuse, revocation, expiry', () => {
     const g = await gateway({ publicUrl: 'http://localhost:9' });
     expect(g.base).toBe('http://localhost:9');
     const b = new Browser(g.local);
-    // Asking for another resource at authorize: back to the client with invalid_target.
+    // Asking for another resource at authorize: invalid_target (on our page: the client is not approved yet).
     const reg = await register(g.local);
     const { challenge } = pkce();
     const wrong = await fetch(authorizeUrl(g.local, { response_type: 'code', client_id: reg.body.client_id, redirect_uri: REDIRECT, code_challenge: challenge, code_challenge_method: 'S256', resource: 'https://other.example/mcp' }), { redirect: 'manual' });
-    expect(new URL(wrong.headers.get('location')!).searchParams.get('error')).toBe('invalid_target');
+    expect(wrong.status).toBe(400);
+    expect(await wrong.text()).toContain('invalid_target');
     const f = await approvedCode(g, b);
     expect((await exchange(g, f, { resource: 'https://other.example/mcp' })).body.error).toBe('invalid_target');
     const f2 = await approvedCode(g, b);
@@ -537,7 +553,7 @@ describe('OAuth: the consent page', () => {
     // Approved once; the same client asking again gets the consent page again.
     await decide(b, c, 'approve');
     const again = await fetch(url, { redirect: 'manual' });
-    expect(again.headers.get('location')).toMatch(/^\/approve\/oauth\/oar_/);
+    expect(again.headers.get('location')).toMatch(/^\/approve\/oauth\//);
   });
 
   it('the owner narrows the scopes; widening is refused and issues nothing', async () => {
@@ -598,16 +614,26 @@ describe('OAuth: the consent page', () => {
     expect((await decide(b, c, 'approve')).status).toBe(303);
   });
 
-  it('a client removed while its consent waits is not approved', async () => {
+  it('a client revoked while its consent waits (or its code is out) gets nothing', async () => {
     const g = await gateway();
     const b = new Browser(g.local);
-    const reg = await register(g.local);
+    const f = await approvedCode(g, b);
+    expect((await exchange(g, f)).status).toBe(200);
     const { challenge } = pkce();
-    const c = await toConsent(b, authorizeUrl(g.local, { response_type: 'code', client_id: reg.body.client_id, redirect_uri: REDIRECT, code_challenge: challenge, code_challenge_method: 'S256' }));
-    await new OAuthStore(new Home(g.home.dir)).revoke(reg.body.client_id);
+    const c = await toConsent(b, authorizeUrl(g.local, { response_type: 'code', client_id: f.clientId, redirect_uri: REDIRECT, code_challenge: challenge, code_challenge_method: 'S256' }));
+    await new OAuthStore(new Home(g.home.dir)).revoke(clientRef(f.clientId));
     const r = await decide(b, c, 'approve');
     expect(r.status).toBe(409);
     expect(r.headers.get('location')).toBeNull();
+    // A code approved before a revoke cannot be exchanged after it.
+    expect((await exchange(g, f, { code: f.code })).body.error).toBe('invalid_grant'); // (spent anyway)
+    const again = pkce();
+    const c2 = await toConsent(b, authorizeUrl(g.local, { response_type: 'code', client_id: f.clientId, redirect_uri: REDIRECT, code_challenge: again.challenge, code_challenge_method: 'S256' }));
+    const code = new URL((await decide(b, c2, 'approve')).headers.get('location')!).searchParams.get('code')!;
+    await new OAuthStore(new Home(g.home.dir)).revoke(clientRef(f.clientId));
+    const late = await token(g.local, { grant_type: 'authorization_code', code, redirect_uri: REDIRECT, code_verifier: again.verifier, client_id: f.clientId });
+    expect(late.body.error).toBe('invalid_grant');
+    expect(g.gw.oauth.store.list().clients).toEqual([]);
   });
 });
 
@@ -620,7 +646,7 @@ describe('OAuth: security review fixes', () => {
     const stranger = new Browser(g.local);
     const started = await stranger.get(authorizeUrl(g.local, { response_type: 'code', client_id: reg.body.client_id, redirect_uri: REDIRECT, code_challenge: challenge, code_challenge_method: 'S256' }));
     const path = started.headers.get('location')!;
-    expect(path).toMatch(/^\/approve\/oauth\/oar_/);
+    expect(path).toMatch(/^\/approve\/oauth\/[A-Za-z0-9_-]+\.[A-Za-z0-9_-]{43}$/);
     // The owner, unlocked in their own browser, opens the forwarded link.
     const owner = new Browser(g.local);
     await owner.unlock(path);
@@ -653,19 +679,35 @@ describe('OAuth: security review fixes', () => {
     expect((await token(g.local, { grant_type: 'authorization_code', code, redirect_uri: REDIRECT, code_verifier: verifier, client_id: reg.body.client_id })).status).toBe(200);
   });
 
-  it('young unapproved clients are never evicted: registration waits instead', async () => {
-    let clock = Date.now();
-    const g = await gateway({ now: () => clock });
-    const store = g.gw.oauth.store;
-    const first = await store.registerClient({ name: 'owner app', redirectUris: [REDIRECT], authMethod: 'none' }, clock);
-    for (let i = 1; i < 200; i++) await store.registerClient({ name: `flood ${i}`, redirectUris: [REDIRECT], authMethod: 'none' }, clock);
-    await expect(store.registerClient({ name: 'one more', redirectUris: [REDIRECT], authMethod: 'none' }, clock)).rejects.toThrow(/retry in a few minutes/);
-    expect(store.client(first.client.id)).toBeDefined();
-    const r = await register(g.local);
-    expect(r.status).toBe(429);
-    clock += 16 * 60_000;
-    expect((await register(g.local)).status).toBe(201);
+  it('registration is stateless: a flood from many addresses stores nothing and never blocks the owner', async () => {
+    const g = await gateway({ clientIpHeader: 'cf-connecting-ip' });
+    // 7 addresses x 30 = 210 registrations: under the old design, 200 young clients that blocked everyone.
+    for (let a = 0; a < 7; a++) {
+      for (let i = 0; i < 30; i++) expect((await register(g.local, { client_name: `flood ${a}.${i}` }, { 'cf-connecting-ip': `198.51.100.${a}` })).status).toBe(201);
+    }
+    const file = existsSync(join(g.home.dir, 'gateway-oauth.json')) ? JSON.parse(readFileSync(join(g.home.dir, 'gateway-oauth.json'), 'utf8')) : {};
+    expect(Object.keys(file.clients ?? {})).toEqual([]);
+    // The owner's own registration (from the assistant's address) still works, and connects.
+    const b = new Browser(g.local);
+    const f = await approvedCode(g, b);
+    expect((await exchange(g, f)).status).toBe(200);
+    // A tampered client id is no client.
+    const forged = f.clientId.replace(/\.[A-Za-z0-9_-]{43}$/, `.${'A'.repeat(43)}`);
+    const r = await fetch(authorizeUrl(g.local, { response_type: 'code', client_id: forged, redirect_uri: REDIRECT, code_challenge: pkce().challenge, code_challenge_method: 'S256' }), { redirect: 'manual' });
+    expect(r.status).toBe(400);
   }, 60_000);
+
+  it('IPv6 clients are counted per /64', async () => {
+    expect(addressKey('2001:db8:1:2:aaaa::1')).toBe('2001:db8:1:2::/64');
+    expect(addressKey('2001:0db8:0001:0002:ffff:ffff:ffff:ffff')).toBe('2001:db8:1:2::/64');
+    expect(addressKey('[2001:db8:1:2::9]')).toBe('2001:db8:1:2::/64');
+    expect(addressKey('::ffff:192.0.2.7')).toBe('192.0.2.7');
+    expect(addressKey('192.0.2.7')).toBe('192.0.2.7');
+    const g = await gateway({ clientIpHeader: 'cf-connecting-ip' });
+    for (let i = 0; i < 30; i++) expect((await register(g.local, {}, { 'cf-connecting-ip': `2001:db8:5:6::${(i + 1).toString(16)}` })).status).toBe(201);
+    expect((await register(g.local, {}, { 'cf-connecting-ip': '2001:db8:5:6:ffff::1' })).status).toBe(429);
+    expect((await register(g.local, {}, { 'cf-connecting-ip': '2001:db8:5:7::1' })).status).toBe(201);
+  });
 
   it('two consent posts at once decide once', async () => {
     const g = await gateway();
@@ -700,7 +742,7 @@ describe('OAuth: security review fixes', () => {
     const transport = new SSEClientTransport(new URL(`${g.local}/sse`), { requestInit: { headers: { authorization: `Bearer ${t.body.access_token}` } } });
     await client.connect(transport);
     expect((await callJson(client, 'rdv_status')).isError).toBe(false);
-    await new OAuthStore(new Home(g.home.dir)).revoke(f.clientId);
+    await new OAuthStore(new Home(g.home.dir)).revoke(clientRef(f.clientId));
     (g.gw as unknown as { sweepSessions(): void }).sweepSessions();
     await new Promise((r) => setTimeout(r, 300));
     await expect(client.callTool({ name: 'rdv_status', arguments: {} })).rejects.toThrow();
@@ -716,7 +758,8 @@ describe('OAuth: security review fixes', () => {
     expect(c.page).toContain('name="s_read"');
     expect(c.page).not.toContain('name="s_send"');
     const none = await fetch(authorizeUrl(g.local, { response_type: 'code', client_id: reg.body.client_id, redirect_uri: REDIRECT, code_challenge: challenge, code_challenge_method: 'S256', scope: 'send' }), { redirect: 'manual' });
-    expect(new URL(none.headers.get('location')!).searchParams.get('error')).toBe('invalid_scope');
+    expect(none.status).toBe(400);
+    expect(await none.text()).toContain('invalid_scope');
   });
 
   it('behind https the consent works on the public host only, with __Host- cookies', async () => {
@@ -730,7 +773,7 @@ describe('OAuth: security review fixes', () => {
     const u = new URL(url);
     const r = await rawGet(g.local, `${u.pathname}${u.search}`, { host: 'rdv.example.com', 'cf-connecting-ip': '198.51.100.7' });
     expect(r.status).toBe(303);
-    expect(r.location).toMatch(/^\/approve\/oauth\/oar_/);
+    expect(r.location).toMatch(/^\/approve\/oauth\//);
     expect(r.cookie).toMatch(/^__Host-rdvg_oar=[^;]+; Path=\/; Secure; HttpOnly; SameSite=Lax/);
   });
 });

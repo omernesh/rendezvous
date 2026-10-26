@@ -3292,6 +3292,23 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
     `Gateway.authenticate` as the seam. `oauth.ts` (endpoints) and
     `oauth-store.ts` (state) use `node:crypto` only, no new dependency (the
     SDK's server-side auth router needs Express).
+    - **Stateless until the owner acts** (second review of PR #97: a flood
+      of 7 addresses × 30 registrations filled the 200 young clients, and 32
+      addresses × 8 parked requests filled the 256, so the owner's own
+      connect got 429). A client id is `rdvcl_<payload>.<mac>`: the
+      registration (name, return addresses, auth method, scope, time) as
+      base64url JSON, HMAC-SHA256 under a key kept in `gateway-oauth.json`
+      (made once, restart-safe); a client secret is derived from the id with
+      the same key. Its ref `cli_` + 24 hex of sha256(id) names it in grants,
+      `oauth list` and `oauth revoke`. A client is stored only when it
+      exchanges its first approved code (cap 50). A parked authorization
+      request is a signed link (`<payload>.<mac>`, a per-process key, ten
+      minutes; payload: ref, name, return address, scopes, resource,
+      challenge, state, time, nonce); the browser cookie binds the nonce.
+      Only the owner's decisions are kept (nonce until expiry: single use).
+      No caps for a stranger to fill; client addresses are counted with IPv6
+      per /64. A revoke remembers the ref and its time, so a consent page
+      issued before it, or a code it made, gets nothing.
     - **Endpoints.** `/.well-known/oauth-protected-resource` and
       `/.well-known/oauth-protected-resource/mcp` (RFC 9728: resource
       `<base>/mcp`, the gateway itself as authorization server, the four
@@ -3311,25 +3328,24 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       basic, when omitted; a secret is returned once and stored hashed). The
       name is cleaned of control and format characters (bidi overrides) and
       cut to 64; logos and URIs a client sends are ignored, never rendered.
-      Rate: 30 per 10 minutes per client address, a refilling rate (cloud
-      assistants register from shared vendor servers). Unapproved clients
-      are capped at 200 by evicting the oldest (they hold nothing), never one
-      under 15 minutes old (it may be mid-consent): then registration waits
-      (429), so a stranger's flood neither fills the file nor removes the
-      owner's client. Approved ones are capped at 50 (refuse).
+      Rate: 30 per 10 minutes per client address (IPv6 per /64), a
+      refilling rate (cloud assistants register from shared vendor
+      servers). Nothing is stored (above).
     - **Authorize → consent.** Until the client exists and `redirect_uri`
       equals a registered one exactly, errors render on our own page, never
-      redirect (no open redirect); after that they go back with `state` and
-      `iss`. A duplicated parameter is refused. Required:
+      redirect; after that they go back with `state` and `iss` only for a
+      client the owner approved before. An unapproved client's errors stay on
+      our page too (review of PR #97: anyone registers any https return
+      address, so error redirects were an open redirect through DCR, RFC
+      9700 §4.11.2); the owner's "no" on the consent page still goes back. A duplicated parameter is refused. Required:
       `response_type=code`, `code_challenge_method=S256`, a 43-character
       challenge; `scope` defaults to what the client registered, else all
       four, and never more than the client registered; `resource` must
       name this gateway (`<base>/mcp`, `<base>/sse`, or the origin with or
-      without `/`). The request is parked in memory (ten minutes; 8 per
-      client address, its own oldest going, 256 in all, then new ones
-      wait) and the browser goes to `/approve/oauth/oar_…`, behind the same
+      without `/`). The request becomes a signed link (above) and the
+      browser goes to `/approve/oauth/<link>`, behind the same
       unlock as the approval page (the unlock's `next` allows that path),
-      with a cookie binding the request to that browser (HMAC of the id,
+      with a cookie binding the request to that browser (HMAC of the nonce,
       SameSite=Lax: the arrival is a cross-site navigation). **Security
       review:** without it, a stranger could connect their own ChatGPT
       account to the owner's gateway and forward the consent link, which
@@ -3342,12 +3358,11 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       registration time, and one ticked checkbox per scope asked; the owner
       can untick, never add (a post naming a scope that was not asked, or
       none, is refused and nothing is issued). **Binding:** the form posts
-      the session CSRF token and `digest` = sha256 over client id, name,
+      the session CSRF token and `digest` = sha256 over client ref, name,
       return address, scopes asked, resource, PKCE challenge and state; the
-      gateway refuses a different digest (409, the page again), re-reads
-      the client and refuses if it was removed or its name or return
-      address changed, then deletes the parked request before answering, so
-      a replay finds nothing. Never auto-approved: a client approved before
+      gateway refuses a different digest (409, the page again) and a client
+      revoked after the page was issued, then records the link's nonce as
+      decided before answering, so a replay finds nothing. Never auto-approved: a client approved before
       gets the page again. The consent page's CSP adds only the return
       origin to `form-action`, since browsers apply `form-action` to the
       303 the decision answers with. Because the browser arrives from the
@@ -3374,8 +3389,9 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       either way. A code presented twice while its grant is being written
       still ends that grant (the id is chosen before the write).
     - **Storage.** `gateway-oauth.json` (mode 600, own lock), separate from
-      `gateway.json` since refreshes write often: clients (secret as
-      SHA-256), grants (refresh hash, retired hashes, live access hashes).
+      `gateway.json` since refreshes write often: the signing key, approved
+      clients, revoked refs, grants (refresh hash, retired hashes, live
+      access hashes).
       Restart-safe; lookups compare every stored hash in constant time.
     - **Principals.** A grant id (`grt_…`) is the principal: the same scope
       table, the same per-principal session cap (4) and global cap,
@@ -3413,7 +3429,10 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       narrowing and widening, "no", CSRF, foreign Origin, cross-site fetch,
       locked, stale digest, a client removed while its consent waits.
       Review fixes: a forwarded consent link, a flood of parked requests,
-      young clients never evicted, concurrent consent posts, a code raced
+      a registration flood from 7 addresses storing nothing, IPv6 per /64,
+      a forged client id, unapproved clients' errors never redirected and
+      approved ones' redirected, a revoke during consent or before a code
+      is exchanged, concurrent consent posts, a code raced
       twice, OAuth over SSE with a terminal revoke closing the stream, the
       registered scope as a ceiling, and behind https (public host only,
       `__Host-` cookie). `plugin.test.ts`: the guard refuses
