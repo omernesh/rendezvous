@@ -339,6 +339,8 @@ export function relayHealth(home: Home, config: Config): RelayStatus[] {
       last_ok: typeof r?.last_ok === 'string' ? r.last_ok : null,
       last_error: r?.last_error && typeof r.last_error === 'object' ? r.last_error : null,
       cooldown_until: typeof r?.cooldown_until === 'string' && Date.parse(r.cooldown_until) > Date.now() ? r.cooldown_until : null,
+      // Set by the process that listens (rdv listen, rdv-mcp); null when up or when nothing listens.
+      down_since: typeof r?.down_since === 'string' ? r.down_since : null,
     };
   });
 }
@@ -347,6 +349,7 @@ function relayHealthLine(r: RelayStatus): string {
   const parts = [r.last_ok ? `last ok ${r.last_ok}` : 'not published yet'];
   if (r.last_error) parts.push(`last error ${r.last_error.at} (${r.last_error.kind}): ${clean(r.last_error.message)}`);
   if (r.cooldown_until) parts.push(`cooling down until ${r.cooldown_until}`);
+  if (r.down_since) parts.push(`listening connection DOWN since ${r.down_since}`);
   return `  ${r.url}: ${parts.join('; ')}`;
 }
 

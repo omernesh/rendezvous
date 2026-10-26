@@ -25,6 +25,7 @@ export {
 } from './commands.js';
 export { checkOwnerSecret, hasOwnerSecret, OWNER_SECRET_MAX, ownerSecretInfo, ownerSecretLock } from './ownersecret.js';
 export { cardSyncText, cardUpdateText, cardUpdateView, syncContactCards } from './cardupdate.js';
+export { RelayLinkMonitor, relayWatchText, type RelayWatchEvent } from './relaywatch.js';
 export { appendEvents, EVENTS_FILE_KEPT, eventsStamp, isNoise, type LoggedEvent, readEvents, STRANGER_DROPS } from './events.js';
 export { acquireLock, LockTimeoutError, type LongLock, tryLongLock, writeAtomic } from './fsutil.js';
 export {

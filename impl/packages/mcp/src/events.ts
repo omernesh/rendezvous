@@ -311,6 +311,37 @@ export function toModelEvent(e: Raw, negotiating: boolean): Omit<McpEvent, 'n' |
         tier: oneOf(TIERS)(e.tier),
         binding: oneOf(BINDINGS)(e.binding),
       };
+    // The home's listener reports a listening relay that stays down (issue #87, NOTES 90). Our own text and our own relay URLs.
+    case 'relay-down':
+      return {
+        type: 'relay_down',
+        relay: safe(e.relay),
+        down_since: safe(e.down_since),
+        healthy_relays: count(e.healthy),
+        total_relays: count(e.total),
+        summary: `Your listening relay ${safe(e.relay)} has been unreachable since ${safe(e.down_since)}; messages sent while it is down may reach this agent late or not at all.`,
+        next_step:
+          'Tell your user. You may suggest adding another listening relay (rdv_relays add), which needs their approval; do not remove or swap relays yourself.',
+      };
+    case 'relay-up':
+      return {
+        type: 'relay_up',
+        relay: safe(e.relay),
+        down_since: e.down_since == null ? null : safe(e.down_since),
+        healthy_relays: count(e.healthy),
+        total_relays: count(e.total),
+        summary: `Your listening relay ${safe(e.relay)} is reachable again.`,
+        next_step: 'Tell your user it is back.',
+      };
+    case 'relays-degraded':
+      return {
+        type: 'relays_degraded',
+        healthy_relays: count(e.healthy),
+        total_relays: count(e.total),
+        summary: `Only ${count(e.healthy) ?? 0} of ${count(e.total) ?? 0} listening relays are healthy, so this agent has no spare route for incoming messages.`,
+        next_step:
+          'Tell your user and suggest adding another listening relay (rdv_relays add); that needs their approval, so never add one on your own.',
+      };
     case 'reverse-grant': {
       // The peer's human granted us rights towards it (NOTES 60). It changes only what we may do; tell the user.
       const meetings = e.outbound_meetings === true;

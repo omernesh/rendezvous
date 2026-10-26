@@ -3022,6 +3022,47 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       DNS rebinding, no JavaScript, strict CSP. Threat model:
       `packages/gateway/THREAT-MODEL.md`.
 
+## Relay health (issue #87)
+
+90. **A listening relay that stays down is recorded and reported; nothing is
+    swapped.** (No spec change: relay diagnostics and what the host tells its
+    user are local; SPEC §4 only asks for several relays.) Choices:
+    - **Core records the link, not the host.** `subscribe()`'s per-relay
+      `onclose` (reconnect and backoff unchanged) now sets
+      `RelayStatus.down_since` on the first drop of an outage and
+      `last_error` from the close reason (`classifyRelayError`: control
+      characters replaced, 200 chars, so quarantined like publish errors). EOSE or
+      the first event after a reconnect clears it. `onRelayLink({url, up,
+      down_since})` fires once per transition and `onRelayStatus` persists
+      it; retries inside one outage do not repeat either.
+    - **`down_since` is per process.** It is absent for a transport that does
+      not listen (a one-shot `rdv send`), and a transport starts with it
+      unknown, not loaded from relays.json, so a crashed listener's mark is
+      cleared by the next listener's first confirmation. In `relays.json` the
+      listener is the only authority for it: `saveRelayStatus` merges it
+      regardless of the `last_ok`/`last_error` stamps, and a record without it
+      keeps the saved one.
+    - **The ten minutes live in the CLI.** `RelayLinkMonitor` (`relaywatch.ts`),
+      run by the home's one consumer (`rdv listen` or `rdv-mcp`) on a timer,
+      compares the transport's in-memory state with what it has reported and
+      appends `relay-down` (over `RDV_RELAY_DOWN_AFTER_MS`, default 600000;
+      the variable is for tests), `relay-up` (only for a relay it reported
+      down; a blip under the threshold is silent) and `relays-degraded` (a
+      down report leaves fewer than 2 healthy; re-armed once all are back or 2
+      are healthy) to `events.jsonl`. One event per transition. An attached
+      `rdv-mcp` sees them through the log; with no consumer nobody listens, so
+      nothing is reported.
+    - **Event text is ours.** `rdv_inbox` maps them to `relay_down`,
+      `relay_up`, `relays_degraded` with our relay URL, timestamps and counts,
+      never the relay's error text (that stays in `rdv_status` relay_health
+      `last_error.detail`, quarantined). `rdv_status` and `rdv relays` show
+      `down_since`. The server instructions and the `rdv_relays`/`rdv_status`
+      descriptions tell the model to tell the user and that adding a relay
+      still needs the user's approval; no automatic swap.
+    - **Tests.** `core/test/linkstate.test.ts` (stop a relay, down, restart,
+      up; one transition), `cli/test/relaywatch.test.ts` (monitor transitions,
+      the merge), `mcp/test/relaydown.test.ts` (inbox gets each event once).
+
 ## Not implemented yet
 
 

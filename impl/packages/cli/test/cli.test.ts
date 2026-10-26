@@ -174,7 +174,7 @@ describe('rdv commands', () => {
     const state = JSON.parse(readFileSync(join(home, 'agent.json'), 'utf8'));
     expect(state.card.rendezvous).toEqual(DEFAULT_RELAYS.map((relay, i) => ({ type: 'nostr', relay, pref: i + 1 })));
     const who = await rdv(['whoami'], home);
-    expect(who.lines[0].relay_health).toEqual(DEFAULT_RELAYS.map((url) => ({ url, last_ok: null, last_error: null, cooldown_until: null })));
+    expect(who.lines[0].relay_health).toEqual(DEFAULT_RELAYS.map((url) => ({ url, last_ok: null, last_error: null, cooldown_until: null, down_since: null })));
 
     const own = join(root, 'own-relay');
     await rdv(['init', '--email', 'john@doe.com', '--relay', relay.url], own);
@@ -193,7 +193,7 @@ describe('rdv commands', () => {
       const [b, g] = who.lines[0].relay_health;
       expect(b).toMatchObject({ url: bad.url, last_ok: null, last_error: { kind: 'blocked', message: 'blocked: kind 30417 is not allowed here' } });
       expect(Date.parse(b.cooldown_until)).toBeGreaterThan(Date.now());
-      expect(g).toMatchObject({ url: relay.url, last_error: null, cooldown_until: null });
+      expect(g).toMatchObject({ url: relay.url, last_error: null, cooldown_until: null, down_since: null });
       expect(Date.parse(g.last_ok)).toBeGreaterThan(Date.now() - 60_000);
       const text = execFileSync(process.execPath, [RDV_BIN, 'whoami', '--home', home], { encoding: 'utf8', windowsHide: true });
       expect(text).toContain(`${bad.url}: not published yet; last error`);
@@ -203,7 +203,7 @@ describe('rdv commands', () => {
       expect(bad.received).toHaveLength(1);
       // init --force starts over: a new key, and the old one's bans are dropped.
       await rdv(['init', '--force', '--email', 'omer@example.com', '--relay', bad.url], home);
-      expect((await rdv(['whoami'], home)).lines[0].relay_health).toEqual([{ url: bad.url, last_ok: null, last_error: null, cooldown_until: null }]);
+      expect((await rdv(['whoami'], home)).lines[0].relay_health).toEqual([{ url: bad.url, last_ok: null, last_error: null, cooldown_until: null, down_since: null }]);
     } finally {
       await bad.close();
     }

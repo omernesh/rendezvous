@@ -15,7 +15,7 @@
 //   owner-secret.json  the owner passphrase that turns auto-approve on (issue #47; scrypt hash and failure count, mode 600)
 //   consent.json  confirm phrases for pending requests and meetings (written by the MCP server)
 //   holds.json   which calendar file holds each dinner hold, tentative or agreed (to release or finalize it)
-//   relays.json  per-relay diagnostics and cooldowns (last OK, last error), written after each publish
+//   relays.json  per-relay diagnostics and cooldowns (last OK, last error, listening down_since), written after each publish
 //   events.jsonl  inbound events written by the home's one listener, plus rdv-mcp's own (behind rdv_inbox)
 //   events.lock  held while appending to events.jsonl
 //   lock         held while a command reads and writes state
@@ -666,7 +666,13 @@ export class Home {
       const merged = new Map(this.readRelayStatus().map((r) => [r.url, r]));
       for (const r of status) {
         const old = merged.get(r.url);
-        if (!old || stamp(r) >= stamp(old)) merged.set(r.url, r);
+        const next = !old || stamp(r) >= stamp(old) ? { ...r } : { ...old };
+        // The listening link has one authority, the process that listens: its down_since wins whatever the
+        // timestamps say; a process that does not listen (down_since absent) leaves the saved one alone.
+        const down = r.down_since !== undefined ? r.down_since : old?.down_since;
+        if (down === undefined) delete next.down_since;
+        else next.down_since = down;
+        merged.set(r.url, next);
       }
       writeAtomic(this.relaysPath, JSON.stringify([...merged.values()].slice(-64), null, 2) + '\n', 0o644);
     } catch {
