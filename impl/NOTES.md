@@ -2457,6 +2457,21 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       (never meeting-cancel): the warning says so, `rdv_status` shows it
       in `covers`, and a grant with only meetings can be put on
       auto-approve. Cancelling an agreed dinner stays the human's.
+    - **Coverage is what the owner was shown** (review of #74). Recomputing
+      coverage from the scope would have let an entry set before this
+      change, under a warning that said tasks only, start confirming
+      meetings unseen. So each entry now stores `covers`, the capability
+      list the warning showed, inside the MACed body, and every check
+      (each task gate by its capability through `autoApprovedFor`, and
+      `meetingAutoApproved`) uses the stored list intersected with what the
+      grant allows now, never more than either (the scope binding already
+      ends an entry whose grant changes; the intersection is the second
+      line). A `covers` that is not a list of strings approves nothing.
+      **Entries without `covers` (set before #44) are taken as task-only:**
+      chosen over ending them, since they keep exactly what the owner
+      approved; the meeting confirm needs the owner to turn it on again
+      (an extend re-shows the warning, now naming meetings, and stores the
+      new list).
     - **`rdv_auto_approve` "off"** (one contact by agent ID or label, or
       `all_contacts`) needs nothing: reduce-only, audited `via: "mcp"`,
       and an `auto_approve_off` event (reason `owner`).

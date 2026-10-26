@@ -59,7 +59,7 @@ import { changedAttachment, describeFile, describeNote, fileSummaries, fileSumma
 import { type AuditEntry, CliError, type FileNote, type HeldRequest, type Home, type InboxEntry, type PendingRelease, type ReleaseContent, type TaskHostState } from './home.js';
 import { clean } from './output.js';
 import { sha, sha256, stable } from './hash.js';
-import { autoApproved, subjectOf } from './autoapprove.js';
+import { autoApprovedFor, subjectOf } from './autoapprove.js';
 
 /** What this host implements (and so advertises): the general capability. */
 export const HOST_CAPABILITIES: readonly Capability[] = [REQUEST_CAPABILITY];
@@ -323,7 +323,8 @@ export async function tasksInbound(home: Home, registry: CapabilityRegistry, age
       if (fx.kind !== 'start-gate' || fx.peer !== e.from) continue;
       const t = Object.hasOwn(s.engine.tasks, fx.taskId) ? s.engine.tasks[fx.taskId] : undefined;
       const digest = t ? startDigest(t) : undefined;
-      if (!digest || !autoApproved(home, subjectOf(agent), fx.peer, now)) continue;
+      // Only for a capability the entry covers (what the owner was shown, within the grant now).
+      if (!digest || !autoApprovedFor(home, subjectOf(agent), fx.peer, fx.capability, now)) continue;
       let started: TaskStep;
       try {
         started = startTask(s.engine, fx.taskId, taskCtx(registry, agent.book.contact(fx.peer), 'inbound', now));
@@ -504,7 +505,7 @@ export async function submitDraft(
     const digest = releaseDigest(s.engine.tasks[taskId], held);
     // auto_approve: all (SPEC §5.5.1, issue #25): our human's standing approval for this contact releases it now,
     // checked here under the lock; off, expired or no longer bound to the grant, and it is held as always.
-    if (digest && autoApproved(home, subjectOf(agent), t.peer, now)) {
+    if (digest && typeof t.capability === 'string' && autoApprovedFor(home, subjectOf(agent), t.peer, t.capability, now)) {
       return { run: await releaseHeld(home, agent, registry, s, taskId, held, digest, 'auto-approve', audits, now), autoReleased: true };
     }
     const run = await commit(home, agent, s, [], audits);

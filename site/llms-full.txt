@@ -2379,7 +2379,10 @@ MAY set `auto_approve: "all"` on that contact, optionally with an expiry
   accepts or confirms the time without asking (issue #44). A negotiation
   the owner started still waits for the owner's confirm, and the contact's
   meeting proposals stay under the same per-capability limits as its tasks
-  (§5.3). It widens nothing else: the grant, `invoke`, per-capability limits, bounds (§7.4),
+  (§5.3). It covers at most what the owner was shown when setting it,
+  intersected with what the grant allows now: a setting made when it
+  covered tasks only does not start covering meetings. It widens nothing
+  else: the grant, `invoke`, per-capability limits, bounds (§7.4),
   sizes, the untrusted-content rules (§5.6) and the file-fetch rules
   (§7.7) all still apply, and gross abuse still revokes (§5.3).
 - **What it never covers.** Creating a contact (approving a request or a

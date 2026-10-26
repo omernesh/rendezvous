@@ -12,6 +12,7 @@ import { startTestRelay, type TestRelay } from '@rendezvous/core/testing';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { Listener, rdv } from '../scenarios/harness.js';
 import {
+  autoApprovedFor,
   autoApproveWarning,
   checkAutoApprove,
   meetingAutoApproved,
@@ -361,6 +362,49 @@ describe('auto-approve in the gates', () => {
       ['off', 'owner', 'mcp'],
       ['off', 'owner', 'mcp'],
     ]);
+  });
+
+  it('covers at most what the owner was shown (stored, MACed), intersected with the grant now (issue #44 review)', () => {
+    const resign = (e: AutoApproveEntry, change: (b: Omit<AutoApproveEntry, 'mac'>) => void) => {
+      const { mac: _mac, ...body } = structuredClone(e);
+      change(body);
+      const mac = createHmac('sha256', f.agent.key.secretKey).update(`rdv1/auto-approve\0${stable(body)}`).digest('hex');
+      home.writeAutoApprove({ [PEER]: { ...body, mac } as AutoApproveEntry });
+    };
+    const wide: GrantScope = { invoke: { [MEETINGS_CAPABILITY]: {}, [REQUEST_URI]: {}, [CAP.uri]: {} }, may_propose_meetings: true };
+    f.contacts.set(PEER, granted(PEER, wide));
+    const set = setAutoApprove(home, subjectOf(f.agent), PEER, null);
+    expect(set.entry.covers).toEqual(set.capabilities);
+    expect(meetingAutoApproved(home, subjectOf(f.agent), PEER)).toBe(true);
+
+    // An entry from before issue #44 (no `covers`): tasks as before, never the meeting confirm it was not set for.
+    resign(set.entry, (b) => delete b.covers);
+    expect(meetingAutoApproved(home, subjectOf(f.agent), PEER)).toBe(false);
+    expect(autoApprovedFor(home, subjectOf(f.agent), PEER, REQUEST_URI)).toBe(true);
+
+    // Stored without meetings, though the grant now allows them: no meeting confirm.
+    resign(set.entry, (b) => (b.covers = [REQUEST_URI, CAP.uri]));
+    expect(meetingAutoApproved(home, subjectOf(f.agent), PEER)).toBe(false);
+    expect(autoApprovedFor(home, subjectOf(f.agent), PEER, CAP.uri)).toBe(true);
+    // A stored list that is not a list of strings approves nothing.
+    resign(set.entry, (b) => (b.covers = [42] as unknown as string[]));
+    expect(autoApprovedFor(home, subjectOf(f.agent), PEER, REQUEST_URI)).toBe(false);
+
+    // A narrower grant: coverage is the intersection, never more than the grant (an entry bound to the narrower scope).
+    const narrow: GrantScope = { invoke: { [REQUEST_URI]: {} } };
+    f.contacts.get(PEER)!.inboundScope = narrow;
+    resign(set.entry, (b) => (b.scope = scopeDigest(narrow)));
+    const r = checkAutoApprove(home.readAutoApprove()[PEER], subjectOf(f.agent), PEER, new Date(), ownerBinding(home));
+    expect(r.ok && r.capabilities).toEqual([REQUEST_URI]);
+    expect(autoApprovedFor(home, subjectOf(f.agent), PEER, CAP.uri)).toBe(false);
+    expect(meetingAutoApproved(home, subjectOf(f.agent), PEER)).toBe(false);
+    // And a real narrowing of the grant the entry was set on ends it outright (the scope binding).
+    f.contacts.set(PEER, granted(PEER, wide));
+    const again = setAutoApprove(home, subjectOf(f.agent), PEER, null);
+    f.contacts.get(PEER)!.inboundScope = narrow;
+    f.contacts.get(PEER)!.grantId = again.entry.grantId;
+    expect(autoApprovedFor(home, subjectOf(f.agent), PEER, REQUEST_URI)).toBe(false);
+    expect(home.readAudit().at(-1)).toMatchObject({ action: 'off', reason: 'grant-changed' });
   });
 
   it('the scope binding is the grant as shown: same scope, same digest', () => {
