@@ -12,6 +12,7 @@ import { type AddressCard, verifyCard } from './card.js';
 import { type InvokeLimits, invokeProblem, isDocId, parseFrequency } from './contact.js';
 import { bytesToHex, canonicalBytes, isPast, parseTimestamp } from './encoding.js';
 import { type AgentKey, isAgentId } from './identity.js';
+import type { GroupMsg, MemberChain, OutChain } from './groupmsg.js';
 import { type Signed, signDoc, verifyDoc } from './sign.js';
 
 /** The groups extension (SPEC §7.8): a profile extension listed on the card. Admins invite only peers that list it. */
@@ -407,7 +408,24 @@ export interface GroupRecord {
    * `signers` are the admins that signed them.
    */
   frozen?: { epoch: number; hashes: string[]; signers: string[]; since: string };
+  /** Board chains of the other members, as we accepted them (§7.8.6; groupmsg.ts). */
+  chains?: Record<string, MemberChain>;
+  /** Our own board chain, and our recent board messages for a group resend. */
+  out?: OutChain;
+  /** Members that sent `rdv/group-leave` and are still listed until an admin's next state: nothing goes to them, nothing is taken from them. */
+  departed?: Record<string, { epoch: number; since: string }>;
+  /** The epoch each member was last added at while we were in (a leave from before it is a replay). */
+  added?: Record<string, number>;
+  /** Group messages for a newer epoch, waiting for its state. */
+  waiting?: Array<{ from: string; payload: unknown }>;
+  /** Evidence we forwarded: "<member>:<gseq>:<to>". */
+  forwarded?: string[];
+  /** When we left (rdv/group-leave sent); the status is then `removed`. */
+  left?: string;
 }
+
+/** Group headers we hold as evidence are GroupMsg documents (re-exported for the record's users). */
+export type { GroupMsg };
 
 export interface ReceivedInvite {
   invite: GroupInvite;
@@ -477,6 +495,16 @@ export interface GroupContext {
 
 const ts = (now: Date) => now.toISOString();
 
+/** A group we are no longer in keeps its state for display only: its message records go. */
+function forgetMessages(r: GroupRecord): void {
+  delete r.chains;
+  delete r.out;
+  delete r.departed;
+  delete r.added;
+  delete r.waiting;
+  delete r.forwarded;
+}
+
 export class GroupBook {
   state: GroupBookState;
 
@@ -519,7 +547,7 @@ export class GroupBook {
         if (r.via) out.add(r.via);
         continue;
       }
-      for (const id of memberIds(r.state)) if (id !== me) out.add(id);
+      for (const id of memberIds(r.state)) if (id !== me && !(r.departed && Object.hasOwn(r.departed, id))) out.add(id);
     }
     return out;
   }
@@ -876,8 +904,18 @@ export class GroupBook {
       r.status = 'removed';
       r.approved = [];
       r.newcomers = {};
+      forgetMessages(r);
       return { ...base, newcomers: [], left: true };
     }
+    // Members gone or added again: their group chains and departures start over (§7.8.5).
+    for (const id of [...removed, ...added]) {
+      if (r.chains) delete r.chains[id];
+      if (r.departed) delete r.departed[id];
+      if (r.added) delete r.added[id];
+    }
+    if (r.waiting) r.waiting = r.waiting.filter((w) => after.has(w.from));
+    if (r.departed) for (const id of Object.keys(r.departed)) if (!after.has(id)) delete r.departed[id];
+    if (!opts.admitted) for (const id of added) if (id !== ctx.me) r.added = { ...(r.added ?? {}), [id]: next.epoch };
     for (const id of Object.keys(r.joins)) {
       if (id === ctx.me) continue;
       const m = memberOf(next, id);
@@ -937,6 +975,62 @@ export class GroupBook {
     const r = this.group(groupId);
     if (!r) throw new Error(`no group ${groupId}`);
     delete r.frozen;
+    return r;
+  }
+
+  // --- removal and leaving (§7.8.5) ----------------------------------------------------------
+
+  /**
+   * As admin: the next state without `member` (another admin may be
+   * removed too; to leave, use `leave`). Members stop sealing to it at once;
+   * the caller sends the state to everyone, the removed member included.
+   */
+  remove(key: AgentKey, groupId: string, member: string, ctx: GroupContext): GroupChange {
+    const now = ctx.now ?? new Date();
+    const r = this.group(groupId);
+    if (!r || r.status !== 'active') throw new Error(`not a member of group ${groupId}`);
+    if (r.frozen) throw new Error('membership of this group is frozen (a fork was seen); re-sync it first');
+    if (!isAdmin(r.state, key.id)) throw new Error('only an admin of the group removes members');
+    if (member === key.id) throw new Error('to leave the group yourself, leave it');
+    if (!memberOf(r.state, member)) throw new Error(`${member} is not a member of the group`);
+    const prev = r.state;
+    const next = createGroupState(key, {
+      group: prev.group,
+      epoch: prev.epoch + 1,
+      prev: docHash(prev),
+      members: prev.members.filter((m) => m.id !== member),
+      policy: prev.policy,
+      name: prev.name,
+      ts: ts(now),
+    });
+    for (const [id, s] of Object.entries(this.state.sent)) if (s.group === groupId && s.to === member) delete this.state.sent[id];
+    return this.advance(r, next, ctx, now, { prevState: prev, before: prev });
+  }
+
+  /** Why we may not leave `groupId` now, or null. The last admin hands the role on first, unless it is alone. */
+  leaveProblem(groupId: string, me: string): string | null {
+    const r = this.group(groupId);
+    if (!r || r.status === 'removed') return `not a member of group ${groupId}`;
+    if (r.status === 'joining') return null;
+    const admins = r.state.members.filter((m) => m.role === 'admin');
+    if (admins.length === 1 && admins[0].id === me && r.state.members.length > 1) {
+      return 'you are the last admin: another member must become admin before you leave (or remove the others first)';
+    }
+    return null;
+  }
+
+  /** We left (after our rdv/group-leave went out): nothing more goes to its members; the record stays for display. */
+  markLeft(groupId: string, now = new Date()): GroupRecord {
+    const r = this.group(groupId);
+    if (!r) throw new Error(`no group ${groupId}`);
+    r.status = 'removed';
+    r.left = ts(now);
+    r.approved = [];
+    r.newcomers = {};
+    r.future = [];
+    delete r.invite_expires;
+    forgetMessages(r);
+    for (const [id, s] of Object.entries(this.state.sent)) if (s.group === groupId) delete this.state.sent[id];
     return r;
   }
 

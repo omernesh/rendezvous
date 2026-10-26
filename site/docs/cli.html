@@ -153,6 +153,11 @@ inbound loop), so <code>rdv</code> and <code>rdv-mcp</code> share profiles.</p>
 <td>Groups v1 membership: the signed <code>rdv/group-state</code> chain (<code>epoch</code>, <code>prev</code>, admin signer; any two states at one epoch are a fork), <code>rdv/group-invite</code>, <code>rdv/group-join</code> (a group-scoped grant), and the <code>GroupBook</code> (invites, newcomer policy, approvals; at most 16 members, NOTES 86)</td>
 </tr>
 <tr>
+<td><code>groupmsg</code></td>
+<td>§7.8.3, §7.8.5–§7.8.7</td>
+<td>Group messages: <code>rdv/group-msg</code> (a signed header committing to the body by hash), the per-sender chain (<code>gseq</code>/<code>gprev</code>) and <code>heads</code>, gaps and group resend, equivocation evidence (<code>rdv/group-proof</code>, headers only), <code>rdv/group-leave</code>, <code>member_rate</code> and the mute with its <code>rdv/group-report</code> (NOTES 87)</td>
+</tr>
+<tr>
 <td><code>transfer</code></td>
 <td>§7.7</td>
 <td><code>rdv/transfer</code> messages and their pure state machine (negotiation only, no transport)</td>
@@ -558,8 +563,16 @@ npm run rdv -- --help                     # or: node packages/cli/dist/src/bin.j
 <td>Let a newcomer who is not your contact receive your group traffic. Yours to run</td>
 </tr>
 <tr>
-<td><code>rdv group resync &lt;group-id&gt;</code></td>
-<td>Thaw a group whose admin signed two member lists for one step, after checking with them. Yours to run</td>
+<td><code>rdv group resync &lt;group-id&gt; [--member &lt;agent-id&gt;]</code></td>
+<td>Thaw a group whose admin signed two member lists for one step, after checking with them; with <code>--member</code>, take the group messages of a member that equivocated or was muted again, after checking with them. Yours to run</td>
+</tr>
+<tr>
+<td><code>rdv group post &lt;group-id&gt; --json '&lt;body&gt;' [--to &lt;agent-id&gt;]…</code></td>
+<td>Say something to the group: to every member you send to (board-visible), or privately to those named (SPEC §7.8.3)</td>
+</tr>
+<tr>
+<td><code>rdv group leave &lt;group-id&gt;</code> / <code>rdv group remove &lt;group-id&gt; &lt;agent-id\|label&gt;</code></td>
+<td>Leave a group (every member is told), or as admin remove a member (the new member list goes to everyone, them included). Yours to run</td>
 </tr>
 <tr>
 <td><code>rdv file prepare &lt;path&gt; [--name …] [--mime …] [--plain]</code></td>

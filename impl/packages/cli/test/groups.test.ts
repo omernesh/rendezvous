@@ -108,6 +108,39 @@ describe('rdv group between rdv processes', () => {
       const log = readFileSync(join(homes.dana, 'events.jsonl'), 'utf8');
       expect(log).toContain('"group-invite"');
       expect(log).not.toContain(dcode);
+
+      // Slice 2 (issue #78): Omer posts to the board; John and Dana (not contacts of each other) both get it.
+      const body = { type: 'a2a/message', message: { role: 'user', parts: [{ kind: 'text', text: 'Draft the landing-page copy' }], messageId: '00000000-0000-4000-8000-0000000000c1' } };
+      const posted = (await rdv(['group', 'post', g, '--json', JSON.stringify(body)], homes.omer)).lines[0];
+      expect(posted).toMatchObject({ event: 'group-posted', group: g, gseq: 1, to: '*', failed: [] });
+      expect([...(posted.sent as string[])].sort()).toEqual([ids.john, ids.dana].sort());
+      for (const l of [johnL, danaL]) {
+        const m = await l.waitFor((x) => x.event === 'group-message' && x.from === ids.omer, `${l.name}: omer's post`, T);
+        expect(m).toMatchObject({ group: g, board: true, gseq: 1, payload: body });
+      }
+      // John answers on the board (Dana gets it from a non-contact); Dana tells Omer something privately.
+      await rdv(['group', 'post', g, '--json', JSON.stringify({ type: 'note', text: 'on it' })], homes.john);
+      await danaL.waitFor((x) => x.event === 'group-message' && x.from === ids.john, "dana: john's post", T);
+      const priv = (await rdv(['group', 'post', g, '--json', JSON.stringify({ type: 'note', text: 'just you' }), '--to', ids.omer], homes.dana)).lines[0];
+      expect(priv).toMatchObject({ gseq: null, to: [ids.omer], sent: [ids.omer] });
+      await omerL.waitFor((x) => x.event === 'group-message' && x.from === ids.dana && x.board === false, "omer: dana's private note", T);
+      // Group messages never land in the pairwise inbox (no task or dinner engine runs on them).
+      expect(readFileSync(join(homes.john, 'events.jsonl'), 'utf8')).toContain('"group-message"');
+      expect((await rdv(['inbox'], homes.john)).lines.filter((l) => (l as { payload?: { type?: string } }).payload?.type === 'note')).toEqual([]);
+      // Nobody is refused, so a member re-sync is refused.
+      expect((await rdv(['group', 'resync', g, '--member', ids.omer], homes.dana, { check: false })).code).not.toBe(0);
+
+      // John leaves: Dana drops their channel (not contacts), Omer issues epoch 3 without him.
+      await rdv(['group', 'leave', g], homes.john);
+      await danaL.waitFor((x) => x.event === 'group-state' && x.removed?.includes(ids.john), 'dana: john removed', T);
+      expect(group(homes.omer, g)!.state.epoch).toBe(3);
+      expect(state(homes.dana).channels[ids.john]).toBeUndefined();
+      expect(state(homes.omer).channels[ids.john]).toBeDefined();
+      expect(group(homes.john, g)).toMatchObject({ status: 'removed', left: expect.any(String) });
+      // Omer removes Dana: she gets the state that removes her.
+      await rdv(['group', 'remove', g, ids.dana], homes.omer);
+      await danaL.waitFor((x) => x.event === 'group-state' && x.left === true, 'dana: removed', T);
+      expect(group(homes.omer, g)!.state.members.map((m) => m.id)).toEqual([ids.omer]);
     } finally {
       await Promise.all([omerL.stop(), johnL.stop(), danaL.stop()]);
     }

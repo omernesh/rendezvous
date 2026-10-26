@@ -48,7 +48,26 @@ import {
   requestView,
 } from './output.js';
 import { meetingAutoApproved, subjectOf, sweepAutoApprove } from './autoapprove.js';
-import { changeText, changeView, describeInvite, forkText, groupView, inviteView } from './groups.js';
+import {
+  changeText,
+  changeView,
+  describeInvite,
+  equivocationText,
+  equivocationView,
+  forkText,
+  gapText,
+  gapView,
+  groupMessageText,
+  groupMessageView,
+  groupView,
+  inviteView,
+  leftText,
+  leftView,
+  muteText,
+  muteView,
+  reportText,
+  reportView,
+} from './groups.js';
 import { isTransferPayload, transferEventText, transfersInbound } from './files.js';
 import { cardRefreshText, hostCardCapabilities, hostRegistry, refreshHostCard, taskEventText, taskEventView, tasksExpiring, tasksInbound, tasksRoute } from './tasks.js';
 import { relaySets, relayTransport } from './transport.js';
@@ -313,6 +332,13 @@ async function handleLocked(
       );
       agent.on('group-state', (c) => events.push({ obj: changeView(c), human: changeText(c) }));
       agent.on('group-fork', (r) => events.push({ obj: { ...groupView(agent, r), event: 'group-fork' }, human: forkText(r) }));
+      // Group messages (issue #78): events only, never the inbox, so no pairwise engine (tasks, dinners, files) runs on a member's words.
+      agent.on('group-message', (d) => events.push({ obj: groupMessageView(d), human: groupMessageText(agent, d) }));
+      agent.on('group-equivocation', (e) => events.push({ obj: equivocationView(e), human: equivocationText(agent, e) }));
+      agent.on('group-gap', (g) => events.push({ obj: gapView(g), human: gapText(agent, g) }));
+      agent.on('group-mute', (m) => events.push({ obj: muteView(m), human: muteText(agent, m) }));
+      agent.on('group-report', (r) => events.push({ obj: reportView(r), human: reportText(agent, r) }));
+      agent.on('group-left', (l) => events.push({ obj: leftView(l), human: leftText(agent, l) }));
       // We revoked a contact for gross abuse of per-capability limits (§5.3, issue #28): an rdv/revoke went out.
       agent.on('task-abuse', (a) => events.push({ obj: { event: 'task-abuse', ...a }, human: abuseText(a) }));
       agent.on('dropped', (reason, detail) => {

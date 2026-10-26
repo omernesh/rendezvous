@@ -2679,6 +2679,122 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       decline), `plugin.test.ts` (the guard refuses the
       human-only group commands and the skill names them).
 
+## Groups v1: messages, equivocation, leaving (v0.4, issue #78)
+
+87. **Group messages, the per-sender chain, heads, evidence, group resend,
+    removal, leaving and the rate rules** (**spec change**, new §7.8.3,
+    §7.8.5–§7.8.7, and §4.6, §6.4, §8, §10, §11 item 14, §13; design Part B,
+    slice 2 of 3). Two new signed documents, `rdv/group-msg` (its header) and
+    `rdv/group-leave`, with new test vectors (`group_msg_omer`,
+    `group_msg_john`, `group_leave` in `vectors/v1.json`); every existing
+    vector is byte for byte unchanged.
+    - **Core** (`groupmsg.ts`, plus `GroupBook.remove`, `leaveProblem`,
+      `markLeft` in `group.ts` and the `Agent` wiring). The record gains
+      `chains` (per other member: newest accepted `gseq`, its hash, 64
+      recent hashes, 8 recent headers, a buffer of 16 after a gap, the gap
+      asked for, `refused`, `muted`, the rate windows), `out` (our chain and
+      our last 32 board messages, for a group resend), `departed`, `added`,
+      `waiting` (newer-epoch messages, 16 per group, 4 per sender) and
+      `forwarded`. `Agent` adds `sendGroup`, `leaveGroup`,
+      `removeGroupMember`, `resyncGroupMember` and the events
+      `group-message`, `group-equivocation`, `group-gap`, `group-mute`,
+      `group-report`, `group-left`. All receive paths are pure functions
+      over the book that return effects (deliveries, events, payloads to
+      send); the agent performs the sends.
+    - **Departures from the design, each for a reason:**
+      (a) **The signature covers a header, not the body.** The header
+      carries `body_hash`, and the payload is `{type, msg, body}`. Evidence
+      must reach a member that *claims* another version (layer 3), and that
+      member may be one the sender never approved (under `ask`), so
+      forwarding a whole message would disclose the sender's words to an
+      audience it did not choose. A header proves equivocation just as well
+      and reveals only `heads`, `ts` and a body hash. `heads` and `gprev`
+      are hashes of the header.
+      (b) **A `heads` mismatch is a claim, not proof.** The design had the
+      receiver refuse the sender on a mismatch; a lying member could then
+      make everyone refuse anyone. Only two headers signed by the sender
+      (same `gseq`, or a `gprev` that skips the header we hold) refuse it.
+      On a mismatch we send the claiming member our own header, once per
+      (sender, gseq, member) and only to a member we send to; it holds the
+      proof then, refuses the sender, and sends its header back, so both
+      humans see both signatures (design B.5 step 8, end to end in
+      `groupmsg.test.ts`). The new payload is `rdv/group-proof` (one or two
+      headers, unsigned: each header is). Evidence with a header written
+      before our human last re-synced that member is ignored: after a
+      restore the new chain reuses gseqs, so the old chain's headers would
+      otherwise refuse it again at once.
+      (c) **A message under another state at our epoch freezes nothing.** The
+      design read it as layer-4 evidence of an admin fork; but the `state`
+      hash in a member's message is that member's word, not the admin's
+      signature, so it is dropped, and only two admin-signed states freeze
+      membership (NOTES 86 (g)). Messages under any state we still hold in
+      `history` (16) are taken, so a group resend across an epoch change
+      fills its gap.
+      (d) **A gap that never fills moves on.** After 10 minutes (or a full
+      buffer) the human is told (`group-gap`) and the chain continues at
+      what we hold; otherwise one lost message would mute the sender. A
+      `heads` entry beyond our `gseq` asks the sender for a group resend
+      but reports nothing on its own (only the member's word).
+      (e) **Rate.** `member_rate` and our own ceiling (600 an hour, whatever
+      the state says) per member, in fixed windows. The joiner's scope
+      `max_frequency` limits invocations (tasks), not messages: it is for
+      issue #79. Over the rate: muted, `group-mute` for our human, and an
+      unsigned `rdv/group-report` to each other admin over the pairwise
+      channel; the admin's human sees `group-report`, and nothing is removed
+      on a report (any member could send one).
+      (f) **Who may send what.** From a member that is not a contact, only
+      group payloads for groups both are in; the group control payloads
+      (proof, leave, report) count against `GROUP_CONTROL_LIMIT`, a group
+      resend against `RESEND_LIMIT`. Every one is checked for a co-member
+      sender before its signature, and for legitimacy before any state
+      change, so a non-member's or a forged document triggers no freeze,
+      mute, refusal or queue (tests in `groupmsg.test.ts`). Pairwise gaps
+      between co-members who are not contacts are now asked for and
+      answered with `rdv/resend` too (§6.4): their group traffic rides that
+      channel.
+      (g) **Leaving and removal.** A leave is taken from its signer only,
+      for a state in our history (or a newer epoch), and not older than the
+      epoch the member was last added at; an admin issues the state without
+      the leaver at once (design B.5 step 9). Removal sends the new state to
+      the removed member too, on the card we held. Afterwards the pairwise
+      channel, outbox and buffer of a former co-member are forgotten unless
+      it is a contact, pending, or in another group with us, even though we
+      wrote to it (normally a channel we wrote on is kept, NOTES 64). The
+      last admin cannot leave while others remain; handing the role on (a
+      state that promotes a member) is not in this slice.
+      (h) Group messages go to `events.jsonl` only, never `inbox.jsonl`: the
+      inbox feeds the pairwise task, meeting and transfer engines, which
+      must not run on a member's words. The board projection is issue #79.
+    - **The human's.** `rdv group leave`, `rdv group remove` and `rdv group
+      resync --member` (lifts a refusal or a mute) are on the consent
+      guard's list; `rdv group post` (board or `--to` private) is not, like
+      `rdv send`. No MCP tool posts, leaves or removes yet (#79); the MCP
+      server maps the new events to `rdv_inbox` (`group_message` with the
+      body as `untrusted_peer_text`, `group_equivocation`, `group_gap`,
+      `group_muted`, `group_report`, `group_member_left`) and `rdv_group
+      list` shows refused and departed members. Auto-approve never covers
+      any of it. The skill says the user re-syncs, leaves and removes.
+    - Tests: core `test/groupmsg.test.ts` (shapes and the body hash;
+      equivocation proofs; the chain from the first gseq seen, duplicates,
+      gaps asked and filled, a gap that never fills; group resend only to a
+      member we send to; private messages; newer, older and other epochs;
+      equivocation at one gseq and by `gprev`, refusal and re-sync; heads
+      that differ send evidence and refuse no one; heads ahead ask for a
+      resend; a proof refuses and answers, a forged, harmless or
+      non-member's one triggers nothing; a stranger's message, proof, leave
+      or report changes no state; the epoch queue is bounded per sender;
+      member_rate and our ceiling mute and report; reports only to an
+      admin; leave, its replay, removal, the last admin; then three agents
+      on the in-memory relay: board and private messages between
+      non-contacts, B.5 step 8 (a member restored from a backup re-sends a
+      gseq with other text; the other two exchange headers and both
+      refuse it until re-synced), B.5 step 9 (leave, channels dropped and
+      kept), removal, and a non-member's and a forged proof), `vectors.test.ts`;
+      CLI `test/groups.test.ts` (post to the board and privately between
+      `rdv` processes, leave and remove); MCP `test/groups.test.ts` (a
+      hostile post arrives quarantined; the event mapping), `plugin.test.ts`
+      (the guard refuses leave, remove and member re-sync, allows post).
+
 ## Not implemented yet
 
 

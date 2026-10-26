@@ -963,8 +963,14 @@ describe('joining a group and approving a newcomer are the human’s (issue #77)
     'rdv group invite g1 rdv1:abc --name John',
     'npx rdv group invite g1 john',
     'echo invite | xargs rdv group',
+    // Slice 2 (issue #78): leaving, removing and re-syncing a member are the human's too.
+    'rdv group leave g1',
+    'rdv group remove g1 rdv1:abc',
+    'npx rdv group remove g1 dana',
+    'rdv group resync g1 --member rdv1:abc',
+    'echo leave | xargs rdv group',
   ];
-  const allowed = ['rdv group create "Microsite launch"', 'rdv group list', 'rdv group list --json', 'rdv group decline 0f1e'];
+  const allowed = ['rdv group create "Microsite launch"', 'rdv group list', 'rdv group list --json', 'rdv group decline 0f1e', `rdv group post g1 --json '{"type":"note"}'`];
   it.each(denied)('the guard refuses %s', (c) => expect(checkCommand(c)).toBeTruthy());
   it.each(allowed)('the guard allows %s', (c) => expect(checkCommand(c)).toBeUndefined());
   it('the skill lint catches a skill that tells the assistant to join or approve', () => {
@@ -1009,6 +1015,9 @@ describe('the skill covers general tasks, files and auto-approve (issue #29)', (
     'rdv group approve',
     'rdv group resync',
     'rdv group pending',
+    // Slice 2 (issue #78).
+    'rdv group leave',
+    'rdv group remove',
   ];
   it.each(humanOnly)('the skill names %s as the human’s, and the guard refuses it', (c) => {
     expect(skill).toContain(c);

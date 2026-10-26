@@ -47,6 +47,11 @@ export const STRANGER_DROPS = [
   'group join from a non-contact',
   'group state from a non-member',
   'group members from a non-member',
+  // Group messages (issue #78): only members talk in a group.
+  'group message from a non-member',
+  'group proof from a non-member',
+  'group leave from a non-member',
+  'group report from a non-member',
 ];
 
 /** Events not worth a line in the log: relay replays, stranger-caused drops, all but every 50th eviction. */
