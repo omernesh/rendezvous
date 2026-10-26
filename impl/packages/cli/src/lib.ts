@@ -37,6 +37,7 @@ export {
   describeRelaysAsk,
   describeLabel,
   describeTerms,
+  limitWords,
   dropPhrase,
   inboundAsks,
   inboundSubject,

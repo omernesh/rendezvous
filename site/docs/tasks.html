@@ -77,8 +77,12 @@ John's human approves Omer's contact request, or grants Omer more later, they
 choose which capabilities Omer may invoke (<code>rdv contact grant … --invoke
 &lt;capability-uri&gt;</code>, or the <code>invoke</code> field of <code>rdv_grant</code>). Nothing is allowed by
 default, there are no wildcards, and each capability can carry its own limits
-(<code>max_open</code>, <code>max_frequency</code>). A task that goes over a limit is rejected; a
-flood far over it revokes the contact. The older meeting rights are read the
+(<code>max_open</code>, <code>max_frequency</code>): <code>--scope-file</code> in the terminal, or the <code>limits</code>
+field of <code>rdv_grant</code>, which the human sees and can change in the approval form
+and which a confirm phrase approves exactly. A task that goes over a limit is
+rejected; a flood far over it revokes the contact. Meetings work the same way:
+limits on the meetings URI apply to new dinner proposals, and one over them is
+declined at once. The older meeting rights are read the
 same way, so existing contacts keep working and nothing is widened.</p>
 <p>The requester also needs the contact's card to list the capability. A card
 made before v0.3 is refreshed automatically the next time <code>rdv listen</code> or

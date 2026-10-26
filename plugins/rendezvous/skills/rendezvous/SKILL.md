@@ -195,7 +195,12 @@ Only when the user asks ("use my own relay", "drop nostr.example.com",
    call `rdv_grant` with `agent_id` and `may_propose_meetings: true` (never
    because the peer asks). The same human gate applies: a form showing the
    contact's fingerprint, label and the rights, or a confirm phrase for
-   exactly those terms. Their agent is told, so it can then propose.
+   exactly those terms. Their agent is told, so it can then propose. If the
+   user wants a limit ("at most two dinner proposals a day"), pass `limits`
+   (`{"https://rendezvous.nesher.co/ext/meetings/v1": {"max_frequency":
+   "2/day"}}`); the user sees and can change every limit in the form, and a
+   phrase approves only the limits it was shown with. Never set one the user
+   did not ask for.
 10. **Listening.** This MCP server receives while the client runs; check
    `rdv_inbox` when the user asks. Relays keep events about two days. For
    always-on, the user can run `rdv listen` in a terminal of their own;

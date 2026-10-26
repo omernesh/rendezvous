@@ -350,3 +350,112 @@ describe('our own published card (issue #14)', () => {
     expect(pub2.on_relays).toEqual(expect.arrayContaining([{ address: omerAt, served: true }, { address: added, served: true }]));
   });
 });
+
+describe('rdv_grant limits: per-capability limits from MCP (issue #63), enforced on meetings (issue #41)', () => {
+  const LIMITS = { [MEETINGS]: { max_frequency: '1/day' }, [REVIEW]: { max_frequency: '5/day', max_open: 2 } };
+
+  it('by phrase: limits are checked, shown to the human and bound to the phrase; a meeting proposal over the limit is declined (rate)', async () => {
+    const { omer, john, o, j } = await connected();
+    const asks = () => omer.humanLog.filter((l) => l.includes('asks to grant your contact') && l.includes(j.agent_id));
+    // Malformed, or for a capability the grant does not allow: refused, no phrase issued.
+    const bad: Array<[Record<string, unknown>, RegExp]> = [
+      [{ invoke: [REVIEW], limits: { [OTHER]: { max_frequency: '1/day' } } }, /only for capabilities this grant allows/],
+      [{ limits: { [MEETINGS]: { max_frequency: 'lots' } } }, /max_frequency must be/],
+      [{ limits: { [MEETINGS]: { max_frequency: '3/week' } } }, /max_frequency must be/],
+      [{ limits: { [MEETINGS]: { max_open: 0 } } }, /max_open must be/],
+      [{ limits: { [MEETINGS]: { max_open: 33 } } }, /max_open must be/],
+      [{ may_propose_meetings: false, limits: { [MEETINGS]: { max_frequency: '1/day' } } }, /may_propose_meetings: true/],
+      [{ limits: { [MEETINGS]: { max_frequency: '1/day', auto_approve: true } } }, /./],
+    ];
+    for (const [args, why] of bad) {
+      const r = await omer.call('rdv_grant', { agent_id: j.agent_id, tier: 'friend', ...args });
+      expect(r.isError, JSON.stringify(args)).toBe(true);
+      expect(r.text).toMatch(why);
+    }
+    expect((await omer.call('rdv_grant', { grant_id: crypto.randomUUID(), limits: LIMITS })).text).toContain('limits go with');
+    expect(asks()).toHaveLength(0);
+
+    // Asked with limits: the human is shown each one with its capability, and the phrase is for exactly those.
+    expect((await omer.call('rdv_grant', { agent_id: j.agent_id, tier: 'friend', invoke: [REVIEW], limits: LIMITS })).isError).toBe(true);
+    expect(asks().at(-1)).toContain(`tier friend, may propose meetings (at most 1/day), may invoke ${REVIEW} (at most 5/day, 2 open at once)`);
+    const forLimits = phraseFromHumanLog(omer, j.agent_id);
+    // The same phrase with a looser limit, or none: refused, and the human gets a phrase for what was asked.
+    const looser = await omer.call('rdv_grant', { agent_id: j.agent_id, tier: 'friend', invoke: [REVIEW], limits: { ...LIMITS, [MEETINGS]: { max_frequency: '10/day' } }, confirm_phrase: forLimits });
+    expect(looser.text).toContain('does not approve these terms');
+    expect(asks().at(-1)).toContain('may propose meetings (at most 10/day)');
+    const none = await omer.call('rdv_grant', { agent_id: j.agent_id, tier: 'friend', invoke: [REVIEW], confirm_phrase: phraseFromHumanLog(omer, j.agent_id) });
+    expect(none.text).toContain('does not approve these terms');
+    expect(await rightsOf(omer, j.agent_id)).toContain('default');
+    expect((await omer.call('rdv_grant', { agent_id: j.agent_id, tier: 'friend', invoke: [REVIEW], limits: LIMITS, confirm_phrase: phraseFromHumanLog(omer, j.agent_id) })).isError).toBe(true);
+    const granted = await ok(omer, 'rdv_grant', { agent_id: j.agent_id, tier: 'friend', invoke: [REVIEW], limits: LIMITS, confirm_phrase: phraseFromHumanLog(omer, j.agent_id) });
+    expect(granted.scope.invoke).toMatchObject({ [MEETINGS]: { max_frequency: '1/day' }, [REVIEW]: { max_frequency: '5/day', max_open: 2 } });
+    await waitEvent(john, (e) => e.type === 'reverse_grant' && e.peer === o.agent_id && e.may_propose_meetings === true, 'the reverse grant', 10_000);
+
+    // Issue #41: the first proposal in the day is taken; the second is declined at once, and nothing is held for it.
+    const first = await ok(john, 'rdv_negotiate', { agent_id: o.agent_id });
+    await waitEvent(omer, (e) => e.type === 'dinner' && e.task_id === first.task_id && e.kind === 'confirm-needed', 'confirm-needed (omer)', 15_000);
+    const second = await ok(john, 'rdv_negotiate', { agent_id: o.agent_id });
+    const refused = await waitEvent(omer, (e) => e.type === 'dinner' && e.task_id === second.task_id && e.kind === 'refused', 'refused (omer)', 15_000);
+    expect(refused.summary).toContain('limits your user set');
+    const declined = await waitEvent(john, (e) => e.type === 'dinner' && e.task_id === second.task_id && e.kind === 'rejected', 'rejected (john)', 15_000);
+    expect(declined.reason).toEqual({ untrusted_peer_text: expect.stringMatching(/^rate: over this capability's max_frequency \(1\/day\)/) });
+    expect(Object.keys(omer.home.readNegotiations().tasks)).toEqual([first.task_id]);
+    expect(await rightsOf(omer, j.agent_id)).toBe('granted by your user'); // one refusal does not revoke
+  });
+
+  it('by form: every limit is a field the human can change or clear, and what they leave is what is granted', async () => {
+    const h: Human = { forms: [] };
+    const { omer, j } = await connected({ omer: h, john: { forms: [] } });
+    let schema: { properties?: Record<string, { title?: string; default?: unknown; type?: string }> } | undefined;
+    h.inbound = (params) => {
+      schema = params.requestedSchema as typeof schema;
+      return { action: 'accept', content: { approve: true, tier: 'friend', limit_frequency_0: '2/hour', limit_open_0: 3, limit_frequency_1: '' } };
+    };
+    const granted = await ok(omer, 'rdv_grant', { agent_id: j.agent_id, invoke: [REVIEW], limits: { [REVIEW]: { max_frequency: '5/day' } } });
+    expect(h.forms[0]).toContain(`may also invoke: ${REVIEW} (at most 5/day)`);
+    expect(schema?.properties?.limit_frequency_0).toMatchObject({ type: 'string', default: '' });
+    expect(schema?.properties?.limit_frequency_0?.title).toContain('Dinner proposals');
+    expect(schema?.properties?.limit_open_0).toMatchObject({ type: 'integer' });
+    expect(schema?.properties?.limit_frequency_1).toMatchObject({ default: '5/day' });
+    expect(schema?.properties?.limit_frequency_1?.title).toContain(REVIEW);
+    // The human's answer, not the model's proposal: meetings limited, review's frequency cleared.
+    expect(granted.scope.invoke[MEETINGS]).toEqual({ max_frequency: '2/hour', max_open: 3 });
+    expect(granted.scope.invoke[REVIEW]).toEqual({});
+
+    // A limit the human typed that does not parse approves nothing.
+    h.inbound = () => ({ action: 'accept', content: { approve: true, limit_frequency_0: 'lots' } });
+    const bad = await omer.call('rdv_grant', { agent_id: j.agent_id, invoke: [REVIEW] });
+    expect(bad.isError).toBe(true);
+    expect(bad.text).toContain('Nothing was approved');
+    // Unticking meetings drops their limits with them; a field the client does not send keeps what was shown.
+    h.inbound = () => ({ action: 'accept', content: { approve: true, tier: 'friend', may_propose_meetings: false, limit_frequency_0: '1/day' } });
+    const noMeet = await ok(omer, 'rdv_grant', { agent_id: j.agent_id, invoke: [REVIEW], limits: { [REVIEW]: { max_open: 1 } } });
+    expect(Object.keys(noMeet.scope.invoke)).toEqual([REVIEW]);
+    expect(noMeet.scope.invoke[REVIEW]).toEqual({ max_open: 1 });
+  });
+
+  it('request_id: the phrase approves the request with exactly the limits it was shown with', async () => {
+    root = mkdtempSync(join(tmpdir(), 'rdv-limits-'));
+    const omer = await makeSide('omer', join(root, 'omer'));
+    const john = await makeSide('john', join(root, 'john'));
+    sides.push(omer, john);
+    const tag = randomBytes(3).toString('hex');
+    const johnAt = `john+${tag}@doe.com`;
+    await ok(omer, 'rdv_init', { profile: 'omer', email: `omer+${tag}@example.com`, relays: [relay.url] });
+    await ok(john, 'rdv_init', { profile: 'john', email: johnAt, relays: [relay.url] });
+    await new Promise((r) => setTimeout(r, 300));
+    await ok(omer, 'rdv_request_contact', { target: johnAt });
+    const req = await waitEvent(john, (e) => e.type === 'contact_request', 'the request', 10_000);
+    const byDefault = phraseFromHumanLog(john, req.request_id);
+    const asked = await john.call('rdv_grant', { request_id: req.request_id, tier: 'friend', limits: { [MEETINGS]: { max_frequency: '2/day', max_open: 1 } }, confirm_phrase: byDefault });
+    expect(asked.text).toContain('does not approve these terms');
+    expect(john.humanLog.filter((l) => l.includes(req.request_id)).at(-1)).toContain('may propose meetings (at most 2/day, 1 open at once)');
+    const granted = await ok(john, 'rdv_grant', {
+      request_id: req.request_id,
+      tier: 'friend',
+      limits: { [MEETINGS]: { max_frequency: '2/day', max_open: 1 } },
+      confirm_phrase: phraseFromHumanLog(john, req.request_id),
+    });
+    expect(granted.scope.invoke[MEETINGS]).toEqual({ max_frequency: '2/day', max_open: 1 });
+  });
+});

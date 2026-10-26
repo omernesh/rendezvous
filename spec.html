@@ -130,7 +130,9 @@ consent concept changed; see <strong>Changes in rev 3</strong> below.</p>
   (peer text is untrusted data). Amended: the reverse grant (§5.3, a grant
   with <code>grant_ref</code>) tells a contact what its peer's owner allows it, so the
   grantor side can propose meetings too (§7.4). A confirm phrase approves
-  only the tier and scope shown with it, and is stored hashed (§5.5).</li>
+  only the tier and scope shown with it, and is stored hashed (§5.5).
+  Amended: per-capability limits on the meetings URI apply to new
+  proposals, and one over them is declined with reason <code>rate</code> (§5.3).</li>
 <li><strong>A2A, §7:</strong> which A2A objects are sent, the meeting verbs, task states,
   slots, deduplication by <code>messageId</code>, cancellation, resend bounds, and
   persisting state before send. Amended: agreement is an accept → confirm
@@ -815,7 +817,16 @@ capped.</p>
     meetings and meeting-cancel URIs. A grant that has <code>invoke</code> MUST also
     write <code>may_propose_meetings</code>, consistent with it, until the field is
     retired; a receiver that finds the two inconsistent applies the narrower
-    (no meetings). <code>may_access_calendar</code> is unchanged.</li>
+    (no meetings). <code>may_access_calendar</code> is unchanged.
+    Limits on the meetings URI apply to the grantee's new proposals
+    (<code>meeting/propose</code>) exactly as to tasks: the same counting, <code>max_open</code>
+    over its proposals still pending, and the same gross-abuse rules (a
+    rejected proposal counts towards (b) for the meetings URI and for the
+    24-hour figure). A proposal over them is answered with a
+    <code>meeting/decline</code> whose reason starts with <code>rate</code>, and creates no state.
+    Counters, accepts, confirms and cancels of a negotiation already under
+    way are never counted; the meeting-cancel URI takes no limits, since a
+    cancel only frees time (<strong>spec change</strong>, issue #41).</li>
 <li><strong>Direction</strong> is unchanged: a received grant sets what we may invoke on
     the peer; the reverse grant is how our owner's grant reaches it.</li>
 <li><strong>Migration.</strong> <code>invoke</code> is a backward-compatible addition, since <code>scope</code>

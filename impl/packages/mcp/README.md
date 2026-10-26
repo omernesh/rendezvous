@@ -111,7 +111,7 @@ false`) that changes nothing; neither a cancel nor a timeout ever approves.
 | `rdv_discover` | address (email, +phone, or agent ID) | cards found (agent ID, fingerprint, claimed addresses, relays), from our relays and the discovery mirrors; never a label (anyone can publish a card for any address), never our own card (for our own address: `own_card_on_relays`). With an agent ID: the one card signed by that ID, fetched from its ID topic (NOTES 83); its claimed addresses still prove nothing |
 | `rdv_request_contact` | target (email, +phone, or agent ID), greeting, label (probes only) | request ID, fingerprint (by agent ID), local_label (a probe: the address probed, applied only when the human confirms the answer; by agent ID: none, and a `label` is refused). An agent ID whose card is not known yet (no contact, pending request or earlier `rdv_discover`) is fetched by ID from the relays and mirrors, and `card_source` says so; a malformed ID, or one with no card on the relays, is a clear error (NOTES 83) |
 | `rdv_pending_requests` | — | requests with fingerprint, binding, how they arrived, untrusted greeting |
-| `rdv_grant` | request_id, tier, may_propose_meetings, invoke, confirm_phrase, label; or grant_id (+ confirm_phrase, label) to confirm a probe answer; or agent_id (+ tier, may_propose_meetings, invoke, confirm_phrase) to grant an existing contact more, which also sends it a reverse grant | contact (needs the human, below) |
+| `rdv_grant` | request_id, tier, may_propose_meetings, invoke, limits, confirm_phrase, label; or grant_id (+ confirm_phrase, label) to confirm a probe answer; or agent_id (+ tier, may_propose_meetings, invoke, limits, confirm_phrase) to grant an existing contact more, which also sends it a reverse grant | contact (needs the human, below) |
 | `rdv_revoke` | agent_id, or request_id / grant_id (+ block) to decline | revoked / declined / rejected |
 | `rdv_send` | agent_id or to (a `local_label`), payload `{type, …}` (not `a2a/*`, `rdv/*`) | agent ID, fingerprint, envelope seq; `to` is refused when no contact, or more than one, has that label |
 | `rdv_inbox` | since cursor, limit, wait_seconds (≤ 60) | events + next_cursor |
@@ -127,7 +127,8 @@ Events: `contact_request`, `contact_candidate` (an answer to our discovery
 probe, confirmed through the same human gate as a grant), `contact`, `message`, `revoked`, `dropped`, `error`,
 `reverse_grant` (what a contact's human now lets us do: `may_propose_meetings` and `invoke`, the capability URIs),
 and `dinner` (kind proposed / offer-received / countered / confirm-needed /
-accepted / completed / released / rejected / canceled / expired / status, with
+accepted / completed / released / rejected / canceled / expired / status /
+refused (a proposal over the meeting limits of our grant, declined at once), with
 a plain-language `summary` we write from validated fields; `confirm-needed`
 also carries a `next_step`).
 
@@ -139,6 +140,21 @@ URIs passed in `invoke`, nothing else (deny by default, no wildcard). The form
 names those capabilities with one checkbox, and a confirm phrase approves only
 the list it was shown with. The calendar adapter only ever shares free slots,
 never titles.
+
+Per-capability limits (issue #63, NOTES 84): `limits` maps a capability URI
+(the meetings URI, with `may_propose_meetings`, or one in `invoke`) to
+`{max_frequency: "<n>/<minute|hour|day>", max_open: 1..32}`, written into that
+capability's `scope.invoke` entry. The model only proposes them. The form has a
+frequency field and a max-open field for every capability the grant may allow
+(meetings first), prefilled with the proposal and shown even when there is
+none; what the human leaves is what is granted (blank frequency: no limit of
+its own; max-open unset: 4). A confirm phrase approves exactly the limits it was
+shown with: they are part of the scope its digest covers, and the human sees
+them in its terms (`may propose meetings (at most 2/day)`, `may invoke <uri>
+(at most 5/day, 2 open at once)`). Going over a limit rejects that task, or
+declines that dinner proposal with reason `rate`; more than 3x a capability's
+limit in its window, or more than 50 such rejections in 24 hours, revokes the
+contact (`revoked_for_abuse`).
 
 ## Consent: the human decides (demo-critical)
 

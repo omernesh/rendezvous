@@ -22,6 +22,7 @@ export {
   describeApproval,
   describeLabel,
   describeTerms,
+  limitWords,
   dropPhrase,
   inboundAsks,
   inboundSubject,

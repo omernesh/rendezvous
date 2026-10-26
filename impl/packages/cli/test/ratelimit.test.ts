@@ -1,11 +1,19 @@
 // Per-capability task limits end to end (issue #28): two core agents over the
 // in-memory relay, the a2a task engine on Omer's side with core's limiter
 // (`Agent.admitTask`) as its `limit`. A hostile John sends raw task/requests
-// (our own requestTask would stop him first, which is checked too).
+// (our own requestTask would stop him first, which is checked too). Meetings
+// (issue #41) go through the same limiter, from the meeting engine.
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   CapabilityRegistry,
+  type Ctx as MeetingCtx,
+  emptyState,
   emptyTaskState,
+  type MeetingScope,
+  type NegotiationState,
+  parseWindow,
+  propose,
+  receive,
   outboundLimit,
   REASON_KEY,
   receiveTask,
@@ -14,7 +22,7 @@ import {
   type TaskEngineState,
   TASKS_URI,
 } from '@rendezvous/a2a';
-import { Agent, type AgentKey, effectiveInvoke, NostrTransport, type Payload, type TaskAbuse } from '@rendezvous/core';
+import { Agent, type AgentKey, effectiveInvoke, MEETINGS_CAPABILITY, NostrTransport, type Payload, type TaskAbuse } from '@rendezvous/core';
 import { startTestRelay, type TestRelay } from '@rendezvous/core/testing';
 
 const LOOKUP = 'https://rendezvous.nesher.co/ext/test-lookup/v1';
@@ -133,5 +141,75 @@ describe('per-capability limits end to end (issue #28)', () => {
     expect(omer.book.contact(john.id)).toBeUndefined();
     expect(john.book.contact(omer.id)).toBeUndefined();
     expect(states).toHaveLength(20); // no answer after the revoke
+  });
+
+  it('meetings (issue #41): a proposal over the meetings URI limit is declined (rate) and counted; past 3x the limit the grant is revoked', async () => {
+    const omer = make('omer@example.com');
+    const john = make('john@doe.com');
+    await new Promise((r) => setTimeout(r, 200));
+    const asked = new Promise<{ request: { id: string } }>((r) => omer.once('request', r));
+    await john.requestContact(omer.card, 'hi');
+    const contact = new Promise((r) => john.once('contact', r));
+    await omer.grant((await asked).request.id, {
+      tier: 'friend',
+      scope: { may_initiate: true, may_propose_meetings: true, max_frequency: '100/day', invoke: { [MEETINGS_CAPABILITY]: { max_frequency: '2/day', max_open: 100 } } },
+    });
+    await contact;
+
+    // Omer's host, as `rdv listen --negotiate` runs it: the meeting engine with core's limiter.
+    const now = () => new Date();
+    const window = (at: Date) => parseWindow('next week evenings', { now: at, offsetMinutes: 0 });
+    const ctx = (at: Date, scope: MeetingScope): MeetingCtx => ({
+      now: at,
+      busy: [],
+      busyRange: { start: new Date(at.getTime() - 86_400_000).toISOString(), end: new Date(at.getTime() + 180 * 86_400_000).toISOString() },
+      window: window(at),
+      offsetMinutes: 0,
+      scope,
+    });
+    let meetings: NegotiationState = emptyState();
+    const abuses: TaskAbuse[] = [];
+    omer.on('task-abuse', (a) => abuses.push(a));
+    omer.on('message', (from, payload) => {
+      const c = omer.book.contact(from);
+      if (!c) return;
+      const at = now();
+      const step = receive(meetings, from, payload, { ...ctx(at, c.inboundScope as MeetingScope), limit: (cap, o) => omer.admitTask(from, cap, o, at) });
+      meetings = step.state;
+      for (const o of step.outgoing) if (omer.book.contact(o.to)) void omer.send(o.to, o.payload as unknown as Payload);
+    });
+    const declines: string[] = [];
+    john.on('message', (_from, payload) => {
+      const m = (payload as unknown as { message?: { parts: Array<{ kind: string; data?: { rdv?: string; reason?: string } }> } }).message;
+      const data = m?.parts.find((p) => p.kind === 'data')?.data;
+      if (data?.rdv === 'meeting/decline') declines.push(String(data.reason));
+    });
+    let revoked = false;
+    john.on('revoked', () => (revoked = true));
+    const proposeOne = async () => {
+      const step = propose(emptyState(), omer.id, ctx(now(), john.book.contact(omer.id)!.outboundScope as MeetingScope));
+      await john.send(omer.id, step.outgoing[0].payload as unknown as Payload);
+    };
+
+    // Two proposals in the day are taken (held for Omer's human); the third is declined for the limit, nothing kept.
+    for (let n = 0; n < 3; n++) await proposeOne();
+    await until(() => declines.length === 1);
+    expect(declines[0]).toMatch(/^rate: over this capability's max_frequency \(2\/day\)/);
+    expect(Object.keys(meetings.tasks)).toHaveLength(2);
+    expect(omer.book.contact(john.id)).toBeDefined(); // the grant stays
+    expect(omer.book.taskRejections(john.id)).toBe(1);
+
+    // 6 rejections in the window (3 x 2) are tolerated; the 7th revokes.
+    for (let n = 0; n < 5; n++) await proposeOne();
+    await until(() => declines.length === 6);
+    expect(omer.book.contact(john.id)).toBeDefined();
+    expect(abuses).toEqual([]);
+    await proposeOne();
+    await until(() => revoked);
+    expect(abuses).toEqual([expect.objectContaining({ peer: john.id, capability: MEETINGS_CAPABILITY, trigger: 'capability', rejected: 7, threshold: 6 })]);
+    expect(omer.book.contact(john.id)).toBeUndefined();
+    expect(john.book.contact(omer.id)).toBeUndefined();
+    expect(declines).toHaveLength(6); // no answer after the revoke
+    expect(Object.keys(meetings.tasks)).toHaveLength(2);
   });
 });

@@ -1419,10 +1419,10 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       `limit: (cap, o) => agent.admitTask(peer, cap, o, now)` with
       `invoke: effectiveInvoke(contact.inboundScope)`, and send no reply to
       a peer the limiter just revoked (the cli end-to-end test does both).
-    - **Meetings and messages** are untouched: per-capability limits apply
-      to tasks/v1 only, and the grant-wide `max_frequency` still counts
-      every envelope and revokes as before (item 16). A `max_frequency`
-      on the meetings URI is not enforced yet.
+    - **Meetings and messages** were untouched here: per-capability limits
+      applied to tasks/v1 only (meetings since item 84, issue #41), and the
+      grant-wide `max_frequency` still counts every envelope and revokes as
+      before (item 16).
 
 ## Tasks in the hosts: routing and the two gates (v0.3)
 
@@ -2349,6 +2349,80 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       by phrase, contact without a label, message; `label` refused; malformed
       and not found; `rdv_discover` by ID with a hostile claimed address
       quarantined and a forgery on the topic ignored).
+
+## Per-capability limits on meetings and from MCP (v0.3)
+
+84. **Meetings go through the per-capability limiter; `rdv_grant` sets
+    limits** (**spec change**, §5.3; issues #41, #63). No wire change: the
+    limits are the `scope.invoke` values item 74 already defines, and the
+    test vectors are unchanged.
+    - **Meetings (issue #41).** The meeting engine's `Ctx` gains `limit(cap,
+      { open })`, the same hook as `TaskCtx.limit` (core's `TaskAdmission`
+      fits `MeetingLimitVerdict`). `receive` calls it once per new
+      `meeting/propose`, with `EXTENSIONS.meeting` and the peer's proposals
+      still pending (role responder), after the scope, duplicate and
+      per-peer room checks (`hasRoom`, which changes nothing; the 32-task
+      bound is never counted) and before `makeRoom`. `max_open` comes from
+      the grant (default 4, as for any capability: the spec already said so
+      for every `invoke` key, now it holds for meetings too). A `rate`
+      refusal sends a `meeting/decline` for the peer's task with reason
+      `rate: <why>` (an existing peer ends its negotiation `rejected`, as
+      for any decline; a status update would leave it pending until
+      expiry), keeps no state, places no hold and emits `refused`; a `scope`
+      refusal is dropped like any proposal the grant does not allow.
+      Counters, accepts, confirms, `rdv/cancel` and `meeting/cancel` never
+      reach the limiter, nor does a duplicate. Without a limiter nothing
+      changes. Core is untouched: `admitTask` takes the meetings URI like
+      any capability, so its rejections count towards (b) for the meetings
+      URI (more than 3x its `max_frequency` in its window) and towards the
+      50-in-24-hours figure together with the tasks', and the revoke,
+      `task-abuse` and the counters' lifecycle are item 75's. The
+      grant-wide `max_frequency` (a) already counted every envelope.
+      `rdv listen --negotiate` and `rdv-mcp` (`negotiateInbound`) pass
+      `limit: (cap, o) => agent.admitTask(peer, cap, o, now)` and send no
+      reply to a peer the limiter just revoked. MCP shows `refused` as a
+      `dinner` event (the reason quarantined, as every dinner reason).
+      Not done: a proposer does not check the peer's meeting limits before
+      sending (SHOULD in §5.3 "Senders check first"; the decline tells it).
+    - **`rdv_grant` limits (issue #63).** A `limits` argument, capability URI
+      → `{ max_frequency, max_open }` (zod `.strict()`, so no other field),
+      with `request_id` or `agent_id` (refused with `grant_id`, like
+      `invoke`). Keys: the meetings URI (only with `may_propose_meetings`)
+      or a URI in `invoke`; meeting-cancel takes none. `max_frequency`
+      parses with core's `parseFrequency`, `max_open` is 1 to 32 (the
+      per-peer task bound; more means nothing). The model only proposes:
+      - **Form.** For every capability the grant may allow (meetings first:
+        always in the `agent_id` form, which can tick meetings on; then each
+        `invoke` URI), a frequency field (`"3/day"`, blank for none) and an
+        integer max-open field, prefilled with the proposal and shown even
+        when there is none, so the human can set limits the model did not
+        propose. What the human leaves is what is granted: a field the
+        client does not send keeps what the form showed (as for the label),
+        a blank frequency means none, anything that does not parse approves
+        nothing, and limits of capabilities the human unticked are dropped.
+        The form's text names each limit too.
+      - **Phrase.** `scopeFor(mayMeet, invoke, limits)` puts them in the
+        scope, so the terms digest (items 57, 66) covers them: a phrase
+        shown for some limits is refused for any other, and the human is
+        shown a phrase for exactly what was asked. `describeTerms` (and so
+        `rdv contact pending`, the server's log and every refusal) prints
+        them: `may propose meetings (at most 2/day)`, `may invoke <uri> (at
+        most 5/day, 2 open at once)`; a scope without limits reads as
+        before.
+    - **Tests.** a2a `engine.test.ts` (the hook: once per new proposal, with
+      the open count; a refusal declines and keeps nothing; the proposer
+      ends rejected; scope verdicts; only new proposals counted; the
+      per-peer bound first; no limiter, no change); core `unit.test.ts`
+      (meeting rejections and task rejections share the 24-hour figure;
+      the default `max_open` of 4); cli `ratelimit.test.ts` (two agents on
+      the test relay: the third proposal on `2/day` is declined `rate`, six
+      rejections are tolerated, the seventh revokes); MCP `inbound.test.ts`
+      (malformed and out-of-grant limits refused with no phrase; the phrase
+      bound to the exact limits; the form's fields, the human's answer
+      winning, a bad entry approving nothing, unticked meetings dropping
+      theirs; `request_id` by phrase; and through the real host, a second
+      proposal on `1/day` is `refused` on Omer's side and `rejected` with a
+      quarantined `rate` reason on John's).
 
 ## Not implemented yet
 

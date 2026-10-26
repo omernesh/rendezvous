@@ -439,9 +439,12 @@ async function negotiateInbound(
   const before = JSON.stringify(state);
   const steps: Step[] = [];
   for (const e of a2a) {
-    const ctx = await buildCtx(n, inboundMeetingScope(agent.book.contact(e.from), state, e.payload));
-    const step = receive(state, e.from, e.payload, ctx);
-    steps.push(step);
+    const now = new Date();
+    const ctx = await buildCtx(n, inboundMeetingScope(agent.book.contact(e.from), state, e.payload), now);
+    // Core's per-capability limiter on the meetings URI (issue #41): max_open and max_frequency from our grant; gross abuse revokes.
+    const step = receive(state, e.from, e.payload, { ...ctx, limit: (cap, o) => agent.admitTask(e.from, cap, o, now) });
+    // No reply to a peer that is no longer a contact (the limiter just revoked it for abuse).
+    steps.push({ ...step, outgoing: step.outgoing.filter((o) => agent.book.contact(o.to)) });
     state = step.state;
   }
   if (sweep) {

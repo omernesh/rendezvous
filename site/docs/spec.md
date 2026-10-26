@@ -56,6 +56,8 @@
   with `grant_ref`) tells a contact what its peer's owner allows it, so the
   grantor side can propose meetings too (§7.4). A confirm phrase approves
   only the tier and scope shown with it, and is stored hashed (§5.5).
+  Amended: per-capability limits on the meetings URI apply to new
+  proposals, and one over them is declined with reason `rate` (§5.3).
 - **A2A, §7:** which A2A objects are sent, the meeting verbs, task states,
   slots, deduplication by `messageId`, cancellation, resend bounds, and
   persisting state before send. Amended: agreement is an accept → confirm
@@ -747,6 +749,15 @@ Rules:
     write `may_propose_meetings`, consistent with it, until the field is
     retired; a receiver that finds the two inconsistent applies the narrower
     (no meetings). `may_access_calendar` is unchanged.
+    Limits on the meetings URI apply to the grantee's new proposals
+    (`meeting/propose`) exactly as to tasks: the same counting, `max_open`
+    over its proposals still pending, and the same gross-abuse rules (a
+    rejected proposal counts towards (b) for the meetings URI and for the
+    24-hour figure). A proposal over them is answered with a
+    `meeting/decline` whose reason starts with `rate`, and creates no state.
+    Counters, accepts, confirms and cancels of a negotiation already under
+    way are never counted; the meeting-cancel URI takes no limits, since a
+    cancel only frees time (**spec change**, issue #41).
   - **Direction** is unchanged: a received grant sets what we may invoke on
     the peer; the reverse grant is how our owner's grant reaches it.
   - **Migration.** `invoke` is a backward-compatible addition, since `scope`

@@ -415,15 +415,28 @@ export function dropPhrase(home: Home, target: PhraseTarget): void {
   home.writeConsent(consent);
 }
 
+/**
+ * A capability's limits in words, " (at most 3/day, 2 open at once)", or ""
+ * when it sets none (the defaults: no frequency of its own, 4 open).
+ */
+export function limitWords(l: unknown): string {
+  if (!l || typeof l !== 'object') return '';
+  const { max_frequency: f, max_open: o } = l as { max_frequency?: unknown; max_open?: unknown };
+  const words = [...(typeof f === 'string' ? [`at most ${f}`] : []), ...(typeof o === 'number' ? [`${o} open at once`] : [])];
+  return words.length ? ` (${words.join(', ')})` : '';
+}
+
 /** "tier friend, may propose meetings, calendar free_busy": the terms in words for the human. */
 export function describeTerms(t: ConsentTerms): string {
   const s = t.scope;
   // Read like any grant (scope.invoke first, §5.3), so the words match what the peer will be allowed.
   const others = allowedCapabilities(s).filter((u) => !MEETING_CAPABILITIES.includes(u));
+  // Per-capability limits are part of what the human approves (issue #63): named with their capability.
+  const limited = (u: string) => `${u}${limitWords(s.invoke?.[u])}`;
   return [
     `tier ${t.tier}`,
-    scopeAllows(s, MEETINGS_CAPABILITY) ? 'may propose meetings' : 'no meetings',
-    ...(others.length ? [`may invoke ${others.join(' ')}`] : []),
+    scopeAllows(s, MEETINGS_CAPABILITY) ? `may propose meetings${limitWords(s.invoke?.[MEETINGS_CAPABILITY])}` : 'no meetings',
+    ...(others.length ? [`may invoke ${others.map(limited).join(' ')}`] : []),
     `calendar ${s.may_access_calendar ?? 'none'}`,
     ...(s.max_frequency ? [`up to ${s.max_frequency}`] : []),
   ].join(', ');
