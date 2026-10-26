@@ -114,9 +114,13 @@ describe('rdv_grant agent_id: grant an existing contact more (issue #1)', () => 
     expect(early.text).toContain('may_propose_meetings');
 
     // Declined or left unchecked: nothing changes, nothing is sent.
-    expect((await omer.call('rdv_grant', { agent_id: j.agent_id })).text).toContain('did not grant');
+    // A no is a plain result, not an error (issue #64).
+    const no = await omer.call('rdv_grant', { agent_id: j.agent_id });
+    expect([no.isError, no.json.approved, no.json.answer]).toEqual([false, false, 'declined']);
+    expect(no.text).toContain('declined in the approval form');
     h.inbound = () => ({ action: 'accept', content: { approve: false } });
-    expect((await omer.call('rdv_grant', { agent_id: j.agent_id })).isError).toBe(true);
+    const unticked = await omer.call('rdv_grant', { agent_id: j.agent_id });
+    expect([unticked.isError, unticked.json.approved, unticked.json.answer]).toEqual([false, false, 'left unticked']);
     expect(await rightsOf(omer, j.agent_id)).toContain('default');
     expect(h.forms[0]).toContain(`Fingerprint: ${j.fingerprint}`);
     expect(h.forms[0]).toContain(`Your local label: "${johnAt}"`);

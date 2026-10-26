@@ -18,11 +18,12 @@
 //             an existing contact more (rdv_grant agent_id, issue #1).
 //   injection peer-written text comes back only as `untrusted_peer_text`;
 //             only `data` parts drive the negotiation engine.
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { realpathSync } from 'node:fs';
 import { dirname, isAbsolute, relative, resolve } from 'node:path';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { Transport as McpTransport } from '@modelcontextprotocol/sdk/shared/transport.js';
-import { type CallToolResult, SubscribeRequestSchema, UnsubscribeRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import { type CallToolResult, type ElicitResult, ErrorCode, McpError, SubscribeRequestSchema, UnsubscribeRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import {
   agreedSnapshot,
   awaitingHuman,
@@ -244,8 +245,16 @@ export interface RdvMcpOptions {
   sweepMs?: number;
   /** How often to follow the shared event log and, when attached, retry `listener.lock` (default 1000). */
   pollMs?: number;
-  /** How long to wait for the human to answer an approval form (default 10 min). */
+  /**
+   * How long to wait for the human to answer an approval form (default
+   * DEFAULT_ELICIT_TIMEOUT_MS; bin.ts reads RDV_ELICIT_TIMEOUT_MS). Unanswered
+   * by then, the form is withdrawn (the SDK sends notifications/cancelled),
+   * the gate falls back to its confirm phrase, and this server uses phrases
+   * for the rest of its life (issue #65).
+   */
   elicitTimeoutMs?: number;
+  /** false: never send approval forms, always use confirm phrases (bin.ts: RDV_ELICIT=off). Default true. */
+  forms?: boolean;
   /**
    * Directories a calendar path from the model may live in (M2). Always
    * allowed too: the home dir and the directory of `calendar`. The model
@@ -265,6 +274,63 @@ export interface RdvMcpOptions {
 }
 
 class ToolError extends Error {}
+
+/**
+ * Your user said no in an approval form (declined it, or sent it back with the
+ * box unticked). Not an error: the tool result says plainly what happened
+ * (issue #64).
+ */
+class Declined extends Error {
+  constructor(readonly body: Record<string, unknown>) {
+    super('declined');
+  }
+}
+
+/** Default wait for an approval form: short, because some clients show a form only after the turn ends (issue #65). */
+export const DEFAULT_ELICIT_TIMEOUT_MS = 60_000;
+
+/**
+ * The approval-form settings from the environment (bin.ts):
+ * RDV_ELICIT_TIMEOUT_MS (a positive number of ms) and RDV_ELICIT=off (never
+ * send forms; confirm phrases only). An invalid timeout is reported and the
+ * default used.
+ */
+export function elicitOptionsFromEnv(env: NodeJS.ProcessEnv, warn: (line: string) => void = () => {}): { elicitTimeoutMs?: number; forms: boolean } {
+  const raw = env.RDV_ELICIT_TIMEOUT_MS?.trim();
+  let elicitTimeoutMs: number | undefined;
+  if (raw) {
+    const n = Number(raw);
+    if (Number.isSafeInteger(n) && n > 0) elicitTimeoutMs = n;
+    else warn(`RDV_ELICIT_TIMEOUT_MS must be a positive whole number of milliseconds, not ${JSON.stringify(raw)}; using ${DEFAULT_ELICIT_TIMEOUT_MS}`);
+  }
+  const off = ['off', '0', 'false', 'no'].includes((env.RDV_ELICIT ?? '').trim().toLowerCase());
+  return { elicitTimeoutMs, forms: !off };
+}
+
+/** What became of an approval form. `unanswered`: withdrawn or dismissed, so the gate falls back to its confirm phrase. */
+type FormAnswer =
+  | { kind: 'accept'; content: Record<string, unknown> }
+  | { kind: 'no'; why: 'declined' | 'unchecked' }
+  | { kind: 'unanswered'; note: string };
+
+/** Every approval form says how to approve: `approve` starts unticked, and Accept alone approves nothing. */
+export const TICK_NOTE = 'To approve, tick the box below first, then Accept. Accept with the box unticked approves nothing; Decline says no.';
+
+/** Throws the result for a no in a form: never an error, never an approval. */
+function declined(why: 'declined' | 'unchecked', outcome: string, extra: Record<string, unknown> = {}): never {
+  throw new Declined({
+    approved: false,
+    answer: why === 'declined' ? 'declined' : 'left unticked',
+    ...extra,
+    note:
+      why === 'declined'
+        ? `Your user declined in the approval form. ${outcome} Tell them; do not ask again unless they want to.`
+        : `Your user sent the approval form back without ticking the box, which approves nothing. ${outcome} If they meant yes, call again: they must tick the box before Accept.`,
+  });
+}
+
+/** The start of a phrase-path result after a form went unanswered (empty when no form was sent). */
+const unansweredNote = (form: FormAnswer | undefined): string => (form?.kind === 'unanswered' ? `${form.note} ` : '');
 
 /** A label from the model (its user's words), checked before anything is sent. */
 function checkLabel(label: string | undefined): string | undefined {
@@ -584,6 +650,12 @@ export class RdvMcpServer {
   private readonly defaultRelays: string[];
   private readonly pollMs: number;
   private readonly elicitTimeoutMs: number;
+  /** Approval forms allowed (RDV_ELICIT not off). */
+  private readonly formsEnabled: boolean;
+  /** Set once a form got no answer in time: this client doesn't show forms during a tool call, so use phrases from now on (issue #65). */
+  private formsUnanswered = false;
+  /** The tool call being handled, so a form is tied to it (related request) and withdrawn if the call is cancelled. */
+  private readonly calls = new AsyncLocalStorage<{ requestId: string | number; signal: AbortSignal }>();
   private readonly calendarDirs: string[];
   /** The task capabilities routed to the tasks engine and advertised on a new card (issue #36). */
   readonly registry: CapabilityRegistry;
@@ -608,7 +680,8 @@ export class RdvMcpServer {
     this.sweepMs = opts.sweepMs ?? SWEEP_MS;
     this.defaultRelays = [...(opts.defaultRelays ?? DEFAULT_RELAYS)];
     this.pollMs = opts.pollMs ?? 1000;
-    this.elicitTimeoutMs = opts.elicitTimeoutMs ?? 10 * 60_000;
+    this.elicitTimeoutMs = opts.elicitTimeoutMs ?? DEFAULT_ELICIT_TIMEOUT_MS;
+    this.formsEnabled = opts.forms ?? true;
     this.events = new EventLog(this.home, (raw) => this.beforeVisible(raw));
     this.mcp = new McpServer({ name: 'rendezvous', version: '0.1.0' }, { instructions: INSTRUCTIONS });
     this.registerTools();
@@ -918,33 +991,20 @@ export class RdvMcpServer {
           : refusal(check, 'this relay change', 'Nothing changed.'),
       );
     }
-    if (this.supportsElicitation()) {
-      const res = await this.mcp.server.elicitInput(
-        {
-          mode: 'form',
-          message:
-            `Rendezvous: change the relays your agent listens on?\n\n${clean(words)}.\n\n` +
-            'Your messages and your card go to every relay your agent listens on. Only allow a relay you chose yourself.',
-          requestedSchema: {
-            type: 'object',
-            properties: { approve: { type: 'boolean', title: 'Make this change', default: false } },
-            required: ['approve'],
-          },
-        },
-        { timeout: this.elicitTimeoutMs },
-      );
-      if (res.action !== 'accept' || res.content?.approve !== true) {
-        throw new ToolError(`your user did not approve the relay change (${res.action === 'accept' ? 'left unchecked' : res.action}). Nothing changed.`);
-      }
-      return target;
-    }
+    const form = await this.askForm(
+      `Rendezvous: change the relays your agent listens on?\n\n${clean(words)}.\n\n` +
+        'Your messages and your card go to every relay your agent listens on. Only allow a relay you chose yourself.',
+      { approve: { type: 'boolean', title: 'Make this change', default: false } },
+    );
+    if (form?.kind === 'accept') return target;
+    if (form?.kind === 'no') declined(form.why, `Nothing changed: the relays stay as they were (asked: ${words}).`);
     const issued = await home.locked(async () => {
       const stored = relaysAsk(home);
       return stored && stored.digest === target.digest ? undefined : issuePhrase(home, target);
     });
     if (issued) this.announceRelaysPhrase(target, issued.phrase);
     throw new ToolError(
-      `not changed: a change to the relays this agent listens on needs your user. A confirm phrase for exactly this change (${words}) was shown to them: ` +
+      `${unansweredNote(form)}not changed: a change to the relays this agent listens on needs your user. A confirm phrase for exactly this change (${words}) was shown to them: ` +
         `they can see it by running "rdv relays list --home \"${home.dir}\"" in their own terminal (it is also in this server's log). ` +
         'Then call rdv_relays again with the same action and url, and confirm_phrase. Or they can make the change themselves in their own terminal.',
     );
@@ -1097,6 +1157,62 @@ export class RdvMcpServer {
     return !!e && (e.form !== undefined || e.url === undefined);
   }
 
+  /** Whether the next human gate opens an approval form: the client can show one, forms aren't off, and none went unanswered. */
+  private formsUsable(): boolean {
+    return this.formsEnabled && !this.formsUnanswered && this.supportsElicitation();
+  }
+
+  /** How approvals go now, for rdv_status. */
+  private approvalMode(): string {
+    if (!this.supportsElicitation()) return 'confirm phrase from the human';
+    if (!this.formsEnabled) return 'confirm phrase from the human (approval forms are turned off: RDV_ELICIT=off)';
+    if (this.formsUnanswered) return 'confirm phrase from the human (an approval form went unanswered in this client, so this server stopped sending them)';
+    return 'approval form (elicitation)';
+  }
+
+  /**
+   * Ask the human with an approval form, or undefined when forms can't be
+   * used (the gate then issues its confirm phrase, as for a client without
+   * elicitation). The wait is bounded by elicitTimeoutMs: then the SDK
+   * withdraws the request (notifications/cancelled), so a form the client
+   * shows later answers nothing, and from then on this server uses confirm
+   * phrases (issue #65). Only accept with `approve` ticked approves; a
+   * dismissed (cancelled) or withdrawn form is `unanswered`, never a yes.
+   */
+  private async askForm(message: string, properties: Record<string, unknown>): Promise<FormAnswer | undefined> {
+    if (!this.formsUsable()) return undefined;
+    const call = this.calls.getStore();
+    let res: ElicitResult;
+    try {
+      res = await this.mcp.server.elicitInput(
+        { mode: 'form', message: `${message}\n\n${TICK_NOTE}`, requestedSchema: { type: 'object', properties: properties as never, required: ['approve'] } },
+        { timeout: this.elicitTimeoutMs, ...(call ? { relatedRequestId: call.requestId, signal: call.signal } : {}) },
+      );
+    } catch (err) {
+      if (call?.signal.aborted) throw new ToolError('the tool call was cancelled while the approval form was open. Nothing was approved.');
+      if (err instanceof McpError && err.code === ErrorCode.RequestTimeout) {
+        this.formsUnanswered = true;
+        const secs = Math.round(this.elicitTimeoutMs / 1000);
+        this.humanLog(
+          `an approval form got no answer within ${secs} s (this client seems to show forms only after the assistant's turn ends). ` +
+            'It was withdrawn: answering it now does nothing. From now on approvals use confirm phrases, shown here and in your own terminal.',
+        );
+        return {
+          kind: 'unanswered',
+          note: `The approval form got no answer within ${secs} s (this client seems not to show forms while a tool call runs), so it was withdrawn and nothing was approved; from now on this server asks with confirm phrases instead.`,
+        };
+      }
+      if (err instanceof McpError && err.code === ErrorCode.InvalidParams) {
+        throw new ToolError('the approval form came back with an answer that does not fit the form. Nothing was approved; ask your user again.');
+      }
+      throw err;
+    }
+    if (res.action === 'accept') return res.content?.approve === true ? { kind: 'accept', content: res.content } : { kind: 'no', why: 'unchecked' };
+    if (res.action === 'decline') return { kind: 'no', why: 'declined' };
+    this.humanLog('an approval form was closed without an answer; nothing was approved. Your assistant can ask with a confirm phrase instead, shown here and in your own terminal.');
+    return { kind: 'unanswered', note: 'The approval form was closed without an answer (cancelled), so nothing was approved.' };
+  }
+
   // --- tools ------------------------------------------------------------------
 
   private tool<S extends z.ZodRawShape>(
@@ -1107,10 +1223,11 @@ export class RdvMcpServer {
     annotations: { readOnlyHint?: boolean; destructiveHint?: boolean } = {},
   ): void {
     // The SDK's generic callback types don't line up with a generic shape; the schema still validates the input.
-    const cb = (async (args: z.infer<z.ZodObject<S>>) => {
+    const cb = (async (args: z.infer<z.ZodObject<S>>, extra: { requestId: string | number; signal: AbortSignal }) => {
       try {
-        return result(await fn(args));
+        return result(await this.calls.run({ requestId: extra.requestId, signal: extra.signal }, () => fn(args)));
       } catch (err) {
+        if (err instanceof Declined) return result(err.body);
         if (err instanceof RelayPublishError) return relayFailure(err);
         return failure(this.modelSafeError(name, err));
       }
@@ -1401,7 +1518,7 @@ export class RdvMcpServer {
                 advice: 'Too many answers: the real one may have been dropped. Redo this contact by card (in person or a trusted channel).',
               }))
             : undefined,
-          how_to_approve: this.supportsElicitation()
+          how_to_approve: this.formsUsable()
             ? 'Call rdv_grant with the request_id; your user gets an approval form.'
             : `Ask your user to read the confirm phrase for this request in their own terminal ("rdv contact pending --home \\"${home.dir}\\"", also printed in this server's log) and type it to you; then call rdv_grant with confirm_phrase. Or they can approve directly with "rdv contact grant <request_id> --home \\"${home.dir}\\"".`,
         };
@@ -1780,7 +1897,7 @@ export class RdvMcpServer {
       negotiation: this.settings.calendar
         ? { calendar: this.settings.calendar, window: this.settings.window ?? DEFAULT_LISTEN_WINDOW, tz: this.settings.tz ?? '(calendar or machine offset)' }
         : 'no calendar configured: incoming dinner proposals are listed but not answered',
-      approval: this.supportsElicitation() ? 'approval form (elicitation)' : 'confirm phrase from the human',
+      approval: this.approvalMode(),
       tasks: this.taskCounts(),
     };
   }
@@ -1866,43 +1983,34 @@ export class RdvMcpServer {
         }
         throw new ToolError(refusal(check, `probe answer ${grantId}`, 'Not confirmed.'));
       }
-    } else if (this.supportsElicitation()) {
-      const res = await this.mcp.server.elicitInput(
-        {
-          mode: 'form',
-          message:
-            `Rendezvous: is this the agent you were looking for?\n\n${describeCandidate(cand)}\n\n` +
-            `If confirmed it becomes a contact with ${describeLabel(label)}${label !== byDefault ? ', as your assistant suggests' : ''}; ` +
-            'change or clear the label below if that is not how you want to find them. It may write to you but not propose meetings until you grant more.',
-          requestedSchema: {
-            type: 'object',
-            properties: {
-              approve: { type: 'boolean', title: 'Yes, this is them', default: false },
-              label: labelField(label),
-            },
-            required: ['approve'],
-          },
-        },
-        { timeout: this.elicitTimeoutMs },
-      );
-      if (res.action !== 'accept' || res.content?.approve !== true) {
-        throw new ToolError(`your user did not confirm ${grantId} (${res.action === 'accept' ? 'left unchecked' : res.action}). Not confirmed.`);
-      }
-      label = formLabel(res.content, label);
     } else {
-      if (label !== byDefault) {
-        // So the phrase the human is asked for approves exactly the label the model asks for.
-        const issued = await home.locked(async () => {
-          const stored = home.readConsent()[consentKey('candidate', grantId)];
-          return stored?.action === 'candidate' && stored.digest === target.digest ? undefined : issuePhrase(home, target);
-        });
-        if (issued) this.announceCandidatePhrase(cand, issued.phrase, label, true);
-      }
-      throw new ToolError(
-        `not confirmed: this needs your user. Ask them for the confirm phrase of ${grantId}: they can see it by running ` +
-          `"rdv contact pending --home \\"${home.dir}\\"" in their own terminal (it is also in this server's log). Then call rdv_grant again with grant_id and confirm_phrase. ` +
-          `Or they can confirm directly: "rdv contact confirm ${grantId} --home \\"${home.dir}\\"".`,
+      const form = await this.askForm(
+        `Rendezvous: is this the agent you were looking for?\n\n${describeCandidate(cand)}\n\n` +
+          `If confirmed it becomes a contact with ${describeLabel(label)}${label !== byDefault ? ', as your assistant suggests' : ''}; ` +
+          'change or clear the label below if that is not how you want to find them. It may write to you but not propose meetings until you grant more.',
+        {
+          approve: { type: 'boolean', title: 'Yes, this is them', default: false },
+          label: labelField(label),
+        },
       );
+      if (form?.kind === 'no') declined(form.why, `Probe answer ${grantId} was not confirmed; nothing changed.`, { grant_id: safe(grantId) });
+      if (form?.kind === 'accept') label = formLabel(form.content, label);
+      else {
+        // No form, or it went unanswered: the confirm phrase, exactly as for a client without forms.
+        if (label !== byDefault) {
+          // So the phrase the human is asked for approves exactly the label the model asks for.
+          const issued = await home.locked(async () => {
+            const stored = home.readConsent()[consentKey('candidate', grantId)];
+            return stored?.action === 'candidate' && stored.digest === target.digest ? undefined : issuePhrase(home, target);
+          });
+          if (issued) this.announceCandidatePhrase(cand, issued.phrase, label, true);
+        }
+        throw new ToolError(
+          `${unansweredNote(form)}not confirmed: this needs your user. Ask them for the confirm phrase of ${grantId}: they can see it by running ` +
+            `"rdv contact pending --home \\"${home.dir}\\"" in their own terminal (it is also in this server's log). Then call rdv_grant again with grant_id and confirm_phrase. ` +
+            `Or they can confirm directly: "rdv contact confirm ${grantId} --home \\"${home.dir}\\"".`,
+        );
+      }
     }
     const contact = await this.withAgent(async (agent) => {
       // Under the same lock as the confirm: the answer must still be the one the human approved, not another under the same ID.
@@ -1963,50 +2071,42 @@ export class RdvMcpServer {
         }
         throw new ToolError(refusal(check, `request ${a.request_id}`, 'Not granted.'));
       }
-    } else if (this.supportsElicitation()) {
-      const res = await this.mcp.server.elicitInput(
-        {
-          mode: 'form',
-          message:
-            `Rendezvous: approve this contact request?\n\n${describeRequest(pending)}\n\n` +
-            `If approved: tier "${tier}", ${mayMeet ? 'may propose meetings' : 'no meetings'}${invokeWords(invoke)}, calendar shared as free/busy slots only, ` +
-            `${describeLabel(label)}${label !== undefined ? ', as your assistant suggests' : ''}. ` +
-            'The label is how your assistant finds them later; set, change or clear it below.',
-          requestedSchema: {
-            type: 'object',
-            properties: {
-              approve: { type: 'boolean', title: 'Approve this contact', default: false },
-              tier: { type: 'string', title: 'Tier', enum: TIERS, default: tier },
-              label: labelField(label),
-              ...invokeField(invoke),
-            },
-            required: ['approve'],
-          },
-        },
-        { timeout: this.elicitTimeoutMs },
-      );
-      if (res.action !== 'accept' || res.content?.approve !== true) {
-        throw new ToolError(`your user did not approve request ${a.request_id} (${res.action === 'accept' ? 'left unchecked' : res.action}). Not granted.`);
-      }
-      const chosen = res.content?.tier;
-      if (typeof chosen === 'string' && (TIERS as string[]).includes(chosen)) tier = chosen as Tier;
-      label = formLabel(res.content, label);
-      invoke = formInvoke(res.content, invoke);
     } else {
-      if (PHRASE_TIERS.includes(tier)) {
-        // So the phrase the human is asked for approves exactly what the model asks for, label included.
-        const target = requestTarget(pending, tier, scopeFor(mayMeet, invoke), label);
-        const issued = await home.locked(async () => {
-          const stored = home.readConsent()[consentKey('request', a.request_id)];
-          return stored?.action === 'request' && stored.digest === target.digest ? undefined : issuePhrase(home, target);
-        });
-        if (issued) this.announcePhrase(pending, issued.phrase, target.terms, true, label);
-      }
-      throw new ToolError(
-        `not granted: approving contact needs your user. Ask them for the confirm phrase of request ${a.request_id}: they can see it by running ` +
-          `"rdv contact pending --home \\"${home.dir}\\"" in their own terminal (it is also in this server's log). Then call rdv_grant again with confirm_phrase. ` +
-          `Or they can approve directly: "rdv contact grant ${a.request_id} --home \\"${home.dir}\\"".`,
+      const form = await this.askForm(
+        `Rendezvous: approve this contact request?\n\n${describeRequest(pending)}\n\n` +
+          `If approved: tier "${tier}", ${mayMeet ? 'may propose meetings' : 'no meetings'}${invokeWords(invoke)}, calendar shared as free/busy slots only, ` +
+          `${describeLabel(label)}${label !== undefined ? ', as your assistant suggests' : ''}. ` +
+          'The label is how your assistant finds them later; set, change or clear it below.',
+        {
+          approve: { type: 'boolean', title: 'Approve this contact', default: false },
+          tier: { type: 'string', title: 'Tier', enum: TIERS, default: tier },
+          label: labelField(label),
+          ...invokeField(invoke),
+        },
       );
+      if (form?.kind === 'no') declined(form.why, `Request ${a.request_id} was not granted; it stays pending and nothing changed.`, { request_id: safe(a.request_id) });
+      if (form?.kind === 'accept') {
+        const chosen = form.content.tier;
+        if (typeof chosen === 'string' && (TIERS as string[]).includes(chosen)) tier = chosen as Tier;
+        label = formLabel(form.content, label);
+        invoke = formInvoke(form.content, invoke);
+      } else {
+        // No form, or it went unanswered: the confirm phrase, exactly as for a client without forms.
+        if (PHRASE_TIERS.includes(tier)) {
+          // So the phrase the human is asked for approves exactly what the model asks for, label included.
+          const target = requestTarget(pending, tier, scopeFor(mayMeet, invoke), label);
+          const issued = await home.locked(async () => {
+            const stored = home.readConsent()[consentKey('request', a.request_id)];
+            return stored?.action === 'request' && stored.digest === target.digest ? undefined : issuePhrase(home, target);
+          });
+          if (issued) this.announcePhrase(pending, issued.phrase, target.terms, true, label);
+        }
+        throw new ToolError(
+          `${unansweredNote(form)}not granted: approving contact needs your user. Ask them for the confirm phrase of request ${a.request_id}: they can see it by running ` +
+            `"rdv contact pending --home \\"${home.dir}\\"" in their own terminal (it is also in this server's log). Then call rdv_grant again with confirm_phrase. ` +
+            `Or they can approve directly: "rdv contact grant ${a.request_id} --home \\"${home.dir}\\"".`,
+        );
+      }
     }
 
     const contact = await this.withAgent(async (agent) => {
@@ -2080,53 +2180,45 @@ export class RdvMcpServer {
             : refusal(check, what, 'Not granted.'),
         );
       }
-    } else if (this.supportsElicitation()) {
-      const res = await this.mcp.server.elicitInput(
-        {
-          mode: 'form',
-          message:
-            `Rendezvous: let this contact do more towards you?\n\n${describeContact(contact)}\n\n` +
-            `If approved: tier "${tier}", ${mayMeet ? 'MAY propose meetings to you (dinner negotiation)' : 'no meetings'}${invokeWords(invoke)}, calendar shared as free/busy slots only, up to 100 messages a day. ` +
-            'Nothing else may be invoked. Your agent also tells theirs, so it can use these rights. You can change the tier and the choices below.',
-          requestedSchema: {
-            type: 'object',
-            properties: {
-              approve: { type: 'boolean', title: 'Grant this contact these rights', default: false },
-              tier: { type: 'string', title: 'Tier', enum: TIERS, default: tier },
-              may_propose_meetings: { type: 'boolean', title: 'They may propose meetings to you', default: mayMeet },
-              ...invokeField(invoke),
-            },
-            required: ['approve'],
-          },
-        },
-        { timeout: this.elicitTimeoutMs },
-      );
-      if (res.action !== 'accept' || res.content?.approve !== true) {
-        throw new ToolError(`your user did not grant ${what} more (${res.action === 'accept' ? 'left unchecked' : res.action}). Nothing changed.`);
-      }
-      // What the human leaves in the form is what is granted.
-      const chosen = res.content?.tier;
-      if (typeof chosen === 'string' && (TIERS as string[]).includes(chosen)) tier = chosen as Tier;
-      if (typeof res.content?.may_propose_meetings === 'boolean') mayMeet = res.content.may_propose_meetings;
-      invoke = formInvoke(res.content, invoke);
     } else {
-      if (PHRASE_TIERS.includes(tier)) {
-        // Issued only when asked, for exactly the terms the model asks for; asking again for the same terms issues none.
-        const target = inboundTarget(contact, tier, scopeFor(mayMeet, invoke));
-        const issued = await home.locked(async () => {
-          const stored = home.readConsent()[consentKey('inbound', peer)];
-          return stored?.action === 'inbound' && stored.digest === target.digest ? undefined : issuePhrase(home, target);
-        });
-        if (issued) this.announceInboundPhrase(contact, issued.phrase, target.terms!);
-      }
-      throw new ToolError(
-        `not granted: granting a contact more needs your user. ` +
-          (PHRASE_TIERS.includes(tier)
-            ? `A confirm phrase for ${what} on exactly these terms (${describeTerms({ tier, scope: scopeFor(mayMeet, invoke) })}) was shown to them: they can see it by running ` +
-              `"rdv contact pending --home \\"${home.dir}\\"" in their own terminal (it is also in this server's log). Then call rdv_grant again with agent_id, the same terms and confirm_phrase. `
-            : `A confirm phrase can approve tiers ${PHRASE_TIERS.join(', ')} only. `) +
-          `Or they can grant it directly: "rdv contact grant ${peer} --tier ${tier} --home \\"${home.dir}\\"".`,
+      const form = await this.askForm(
+        `Rendezvous: let this contact do more towards you?\n\n${describeContact(contact)}\n\n` +
+          `If approved: tier "${tier}", ${mayMeet ? 'MAY propose meetings to you (dinner negotiation)' : 'no meetings'}${invokeWords(invoke)}, calendar shared as free/busy slots only, up to 100 messages a day. ` +
+          'Nothing else may be invoked. Your agent also tells theirs, so it can use these rights. You can change the tier and the choices below.',
+        {
+          approve: { type: 'boolean', title: 'Grant this contact these rights', default: false },
+          tier: { type: 'string', title: 'Tier', enum: TIERS, default: tier },
+          may_propose_meetings: { type: 'boolean', title: 'They may propose meetings to you', default: mayMeet },
+          ...invokeField(invoke),
+        },
       );
+      if (form?.kind === 'no') declined(form.why, `${what} was granted nothing more; nothing changed.`, { agent_id: safe(peer) });
+      if (form?.kind === 'accept') {
+        // What the human leaves in the form is what is granted.
+        const chosen = form.content.tier;
+        if (typeof chosen === 'string' && (TIERS as string[]).includes(chosen)) tier = chosen as Tier;
+        if (typeof form.content.may_propose_meetings === 'boolean') mayMeet = form.content.may_propose_meetings;
+        invoke = formInvoke(form.content, invoke);
+      } else {
+        // No form, or it went unanswered: the confirm phrase, exactly as for a client without forms.
+        if (PHRASE_TIERS.includes(tier)) {
+          // Issued only when asked, for exactly the terms the model asks for; asking again for the same terms issues none.
+          const target = inboundTarget(contact, tier, scopeFor(mayMeet, invoke));
+          const issued = await home.locked(async () => {
+            const stored = home.readConsent()[consentKey('inbound', peer)];
+            return stored?.action === 'inbound' && stored.digest === target.digest ? undefined : issuePhrase(home, target);
+          });
+          if (issued) this.announceInboundPhrase(contact, issued.phrase, target.terms!);
+        }
+        throw new ToolError(
+          `${unansweredNote(form)}not granted: granting a contact more needs your user. ` +
+            (PHRASE_TIERS.includes(tier)
+              ? `A confirm phrase for ${what} on exactly these terms (${describeTerms({ tier, scope: scopeFor(mayMeet, invoke) })}) was shown to them: they can see it by running ` +
+                `"rdv contact pending --home \\"${home.dir}\\"" in their own terminal (it is also in this server's log). Then call rdv_grant again with agent_id, the same terms and confirm_phrase. `
+              : `A confirm phrase can approve tiers ${PHRASE_TIERS.join(', ')} only. `) +
+            `Or they can grant it directly: "rdv contact grant ${peer} --tier ${tier} --home \\"${home.dir}\\"".`,
+        );
+      }
     }
 
     const scope = scopeFor(mayMeet, invoke);
@@ -2212,35 +2304,31 @@ export class RdvMcpServer {
         if (check.reason === 'wrong' && check.rotated) this.announceMeetingPhrase(task, check.rotated);
         throw new ToolError(refusal(check, `dinner ${taskId}`, 'Not confirmed.'));
       }
-    } else if (this.supportsElicitation()) {
-      const res = await this.mcp.server.elicitInput(
-        {
-          mode: 'form',
-          message: `Rendezvous: confirm this dinner?\n\n${describeMeeting(task)}\n\nIt stays held in your calendar until you answer.`,
-          requestedSchema: {
-            type: 'object',
-            properties: { approve: { type: 'boolean', title: 'Yes, confirm this dinner', default: false } },
-            required: ['approve'],
-          },
-        },
-        { timeout: this.elicitTimeoutMs },
-      );
-      if (res.action === 'decline') {
+    } else {
+      const form = await this.askForm(`Rendezvous: confirm this dinner?\n\n${describeMeeting(task)}\n\nIt stays held in your calendar until you answer.`, {
+        approve: { type: 'boolean', title: 'Yes, confirm this dinner', default: false },
+      });
+      if (form?.kind === 'no' && form.why === 'declined') {
         // An explicit no from the human: give the slot back and tell the peer. Only for the meeting they saw.
         const step = await this.boundStep(snap, () => cancel(home.readNegotiations(), taskId, { now: new Date() }, 'declined by owner'));
         if (!step) return this.meetingChanged(taskId);
         await this.publishSteps(step.events);
-        return { task_id: safe(taskId), state: step.state.tasks[taskId]?.state, note: 'Your user declined this dinner; the negotiation was canceled and the hold released.' };
+        return {
+          task_id: safe(taskId),
+          state: step.state.tasks[taskId]?.state,
+          approved: false,
+          answer: 'declined',
+          note: 'Your user declined this dinner; the negotiation was canceled and the hold released.',
+        };
       }
-      if (res.action !== 'accept' || res.content?.approve !== true) {
-        throw new ToolError(`your user did not confirm dinner ${taskId} (${res.action === 'accept' ? 'left unchecked' : res.action}). Not confirmed; it stays held.`);
+      if (form?.kind === 'no') declined(form.why, `Dinner ${taskId} was not confirmed; it stays held.`, { task_id: safe(taskId) });
+      if (form?.kind !== 'accept') {
+        throw new ToolError(
+          `${unansweredNote(form)}not confirmed: this dinner needs your user (it stays held). Ask them for the confirm phrase of dinner ${taskId}: they can see it by running ` +
+            `"rdv dinner list --home \\"${home.dir}\\"" in their own terminal (it is also in this server's log). Then call rdv_negotiate again with action "confirm", task_id and confirm_phrase. ` +
+            `Or they can confirm directly with the "rdv dinner confirm" command "rdv dinner list" shows for it.`,
+        );
       }
-    } else {
-      throw new ToolError(
-        `not confirmed: this dinner needs your user. Ask them for the confirm phrase of dinner ${taskId}: they can see it by running ` +
-          `"rdv dinner list --home \\"${home.dir}\\"" in their own terminal (it is also in this server's log). Then call rdv_negotiate again with action "confirm", task_id and confirm_phrase. ` +
-          `Or they can confirm directly with the "rdv dinner confirm" command "rdv dinner list" shows for it.`,
-      );
     }
     const step = await this.boundStep(snap, () => confirmMeeting(home.readNegotiations(), taskId, { now: new Date() }, snap));
     if (!step) return this.meetingChanged(taskId);
@@ -2282,29 +2370,20 @@ export class RdvMcpServer {
             : refusal(check, `canceling dinner ${taskId}`, 'Not canceled.'),
         );
       }
-    } else if (this.supportsElicitation()) {
-      const res = await this.mcp.server.elicitInput(
-        {
-          mode: 'form',
-          message: `Rendezvous: cancel this agreed dinner?\n\n${describeAgreed(task)}`,
-          requestedSchema: {
-            type: 'object',
-            properties: { approve: { type: 'boolean', title: 'Yes, cancel this dinner', default: false } },
-            required: ['approve'],
-          },
-        },
-        { timeout: this.elicitTimeoutMs },
-      );
-      if (res.action !== 'accept' || res.content?.approve !== true) {
-        throw new ToolError(`your user did not cancel dinner ${taskId} (${res.action === 'accept' ? 'left unchecked' : res.action}). It stays agreed.`);
-      }
     } else {
-      await this.refreshPhrases(taskId);
-      throw new ToolError(
-        `not canceled: only your user can call off an agreed dinner. A cancel phrase for dinner ${taskId} was shown to them (in "rdv dinner list --home \\"${home.dir}\\"" ` +
-          `in their own terminal, and in this server's log). If they want it canceled, they type it to you; then call rdv_negotiate again with action "cancel", task_id and confirm_phrase. ` +
-          `Or they can run "rdv dinner cancel ${taskId}" themselves.`,
-      );
+      const form = await this.askForm(`Rendezvous: cancel this agreed dinner?\n\n${describeAgreed(task)}`, {
+        approve: { type: 'boolean', title: 'Yes, cancel this dinner', default: false },
+      });
+      if (form?.kind === 'no') declined(form.why, `Dinner ${taskId} was not canceled; it stays agreed.`, { task_id: safe(taskId) });
+      if (form?.kind !== 'accept') {
+        // No form, or it went unanswered: the cancel phrase, exactly as for a client without forms.
+        await this.refreshPhrases(taskId);
+        throw new ToolError(
+          `${unansweredNote(form)}not canceled: only your user can call off an agreed dinner (it stays agreed). A cancel phrase for dinner ${taskId} was shown to them (in "rdv dinner list --home \\"${home.dir}\\"" ` +
+            `in their own terminal, and in this server's log). If they want it canceled, they type it to you; then call rdv_negotiate again with action "cancel", task_id and confirm_phrase. ` +
+            `Or they can run "rdv dinner cancel ${taskId}" themselves.`,
+        );
+      }
     }
     const step = await this.boundStep(snap, () => {
       // The peer's card says whether its agent understands meeting/cancel (SPEC §7.5).
@@ -2676,7 +2755,7 @@ export class RdvMcpServer {
           task_id: safe(id),
           held_for_release: true,
           draft: safe(describeDraft(r.held.content)),
-          next: this.supportsElicitation()
+          next: this.formsUsable()
             ? 'Nothing was sent yet. Call rdv_task with action "approve-release" and this task_id: your user gets a form showing exactly this.'
             : `Nothing was sent yet. Your user must release it: ask them for the confirm phrase of task ${safe(id)} (shown in their own terminal by "rdv task list --home \\"${home.dir}\\"", and in this server's log), ` +
               'then call rdv_task with action "approve-release", task_id and confirm_phrase. Or they send it themselves with the "rdv task release" command "rdv task list" shows.',
@@ -2722,27 +2801,19 @@ export class RdvMcpServer {
         if (check.reason === 'wrong' && check.rotated) this.announceTaskPhrase(view.task, check.rotated, view.digest, view.release);
         throw new ToolError(refusal(check, what, notDone));
       }
-    } else if (this.supportsElicitation()) {
-      const res = await this.mcp.server.elicitInput(
-        {
-          mode: 'form',
-          message: gate === 'start' ? `Rendezvous: let your agent do this task?\n\n${describeTaskStart(view.task)}` : `Rendezvous: send this to the other agent?\n\n${describeTaskRelease(view.task, view.release!)}`,
-          requestedSchema: {
-            type: 'object',
-            properties: { approve: { type: 'boolean', title: gate === 'start' ? 'Yes, my agent may do this task' : 'Yes, send exactly this', default: false } },
-            required: ['approve'],
-          },
-        },
-        { timeout: this.elicitTimeoutMs },
+    } else {
+      const form = await this.askForm(
+        gate === 'start' ? `Rendezvous: let your agent do this task?\n\n${describeTaskStart(view.task)}` : `Rendezvous: send this to the other agent?\n\n${describeTaskRelease(view.task, view.release!)}`,
+        { approve: { type: 'boolean', title: gate === 'start' ? 'Yes, my agent may do this task' : 'Yes, send exactly this', default: false } },
       );
-      if (res.action === 'decline') {
+      if (form?.kind === 'no' && form.why === 'declined') {
         // An explicit no from the human, for what they saw: the task is refused, or the draft thrown away.
         if (gate === 'release') {
           await home.locked(async () => {
             if (releaseView(home, taskId).digest === view.digest) discardDraft(home, taskId);
           }).catch(() => {});
           await this.refreshPhrases();
-          return { task_id: safe(taskId), released: false, note: 'Your user declined: the draft was thrown away and nothing was sent.' };
+          return { task_id: safe(taskId), released: false, approved: false, answer: 'declined', note: 'Your user declined: the draft was thrown away and nothing was sent.' };
         }
         let run: TaskRun;
         try {
@@ -2753,17 +2824,17 @@ export class RdvMcpServer {
         }
         await this.publishTaskRun(run);
         await this.refreshPhrases();
-        return { task_id: safe(taskId), state: 'rejected', note: 'Your user declined the task; the peer was told and nothing was done.' };
+        return { task_id: safe(taskId), state: 'rejected', approved: false, answer: 'declined', note: 'Your user declined the task; the peer was told and nothing was done.' };
       }
-      if (res.action !== 'accept' || res.content?.approve !== true) {
-        throw new ToolError(`your user did not approve ${what} (${res.action === 'accept' ? 'left unchecked' : res.action}). ${notDone}`);
+      if (form?.kind === 'no') declined(form.why, `${notDone} ${gate === 'start' ? 'The task still waits for your user.' : 'The draft is still held.'}`, { task_id: safe(taskId) });
+      if (form?.kind !== 'accept') {
+        // No form, or it went unanswered: the confirm phrase (issued with the task, see refreshPhrases), as for a client without forms.
+        throw new ToolError(
+          `${unansweredNote(form)}${notDone} This needs your user. Ask them for the confirm phrase of task ${safe(taskId)}: they can see it by running ` +
+            `"rdv task list --home \\"${home.dir}\\"" in their own terminal (it is also in this server's log). Then call rdv_task again with action "approve-${gate}", task_id and confirm_phrase. ` +
+            `Or they can do it directly with the "rdv task ${gate === 'start' ? 'approve' : 'release'}" command "rdv task list" shows.`,
+        );
       }
-    } else {
-      throw new ToolError(
-        `${notDone} This needs your user. Ask them for the confirm phrase of task ${safe(taskId)}: they can see it by running ` +
-          `"rdv task list --home \\"${home.dir}\\"" in their own terminal (it is also in this server's log). Then call rdv_task again with action "approve-${gate}", task_id and confirm_phrase. ` +
-          `Or they can do it directly with the "rdv task ${gate === 'start' ? 'approve' : 'release'}" command "rdv task list" shows.`,
-      );
     }
     let run: TaskRun;
     try {
@@ -2822,35 +2893,26 @@ export class RdvMcpServer {
         if (check.reason === 'wrong' && check.rotated) this.announceHeldRequestPhrase(view.held, check.rotated);
         throw new ToolError(refusal(check, `the request ${safe(id)}`, notDone));
       }
-    } else if (this.supportsElicitation()) {
-      const res = await this.mcp.server.elicitInput(
-        {
-          mode: 'form',
-          message: `Rendezvous: send this request, with your files, to the other agent?\n\n${clean(content)}`,
-          requestedSchema: {
-            type: 'object',
-            properties: { approve: { type: 'boolean', title: 'Yes, send exactly this', default: false } },
-            required: ['approve'],
-          },
-        },
-        { timeout: this.elicitTimeoutMs },
-      );
-      if (res.action === 'decline') {
+    } else {
+      const form = await this.askForm(`Rendezvous: send this request, with your files, to the other agent?\n\n${clean(content)}`, {
+        approve: { type: 'boolean', title: 'Yes, send exactly this', default: false },
+      });
+      if (form?.kind === 'no' && form.why === 'declined') {
         await home.locked(async () => {
           if (heldRequestView(home, id).digest === view.digest) discardHeldRequest(home, id);
         }).catch(() => {});
         await this.refreshPhrases();
-        return { request_id: safe(id), released: false, note: 'Your user declined: the request was dropped and nothing was sent.' };
+        return { request_id: safe(id), released: false, approved: false, answer: 'declined', note: 'Your user declined: the request was dropped and nothing was sent.' };
       }
-      if (res.action !== 'accept' || res.content?.approve !== true) {
-        throw new ToolError(`your user did not approve the request ${safe(id)} (${res.action === 'accept' ? 'left unchecked' : res.action}). ${notDone}`);
+      if (form?.kind === 'no') declined(form.why, `${notDone} The request is still held.`, { request_id: safe(id) });
+      if (form?.kind !== 'accept') {
+        // No form, or it went unanswered: the confirm phrase (issued with the held request), as for a client without forms.
+        throw new ToolError(
+          `${unansweredNote(form)}${notDone} This needs your user. Ask them for the confirm phrase of request ${safe(id)}: they can see it by running ` +
+            `"rdv task list --home \\"${home.dir}\\"" in their own terminal (it is also in this server's log). Then call rdv_task again with action "approve-release", task_id and confirm_phrase. ` +
+            'Or they can send it directly with the "rdv task release" command "rdv task list" shows.',
+        );
       }
-    } else {
-      throw new ToolError(
-        `${notDone} This needs your user. Ask them for the confirm phrase of request ${safe(id)}: they can see it by running ` +
-          `"rdv task list --home \\"${home.dir}\\"" in their own terminal (it is also in this server's log). Then call rdv_task again with action "approve-release", task_id and confirm_phrase. ` +
-          'Or they can send it directly with the "rdv task release" command "rdv task list" shows.',
-      );
     }
     let run: TaskRun & { taskId: string };
     try {

@@ -43,7 +43,8 @@ export interface Side {
   close(): Promise<void>;
 }
 
-export type ElicitHandler = (params: ElicitRequest['params']) => ElicitResult | Promise<ElicitResult>;
+/** A human answering forms. `extra.signal` aborts when the server withdraws the form (notifications/cancelled). */
+export type ElicitHandler = (params: ElicitRequest['params'], extra: { signal: AbortSignal }) => ElicitResult | Promise<ElicitResult>;
 
 export function parseResult(text: string): unknown {
   const i = text.indexOf('{');
@@ -57,15 +58,15 @@ export function parseResult(text: string): unknown {
 export async function makeSide(
   name: string,
   dir: string,
-  opts: { elicit?: ElicitHandler; defaultRelays?: string[]; capabilities?: Capability[]; fileFetch?: FetchTestOptions } = {},
+  opts: { elicit?: ElicitHandler; defaultRelays?: string[]; capabilities?: Capability[]; fileFetch?: FetchTestOptions; elicitTimeoutMs?: number; forms?: boolean } = {},
 ): Promise<Side> {
   const home = new Home(dir);
   const humanLog: string[] = [];
   // The flows keep calendars next to the homes: the human allows that directory (--calendar-dir).
-  const server = new RdvMcpServer({ home, humanLog: (l) => humanLog.push(l), sweepMs: 3_600_000, calendarDirs: [dirname(dir)], defaultRelays: opts.defaultRelays, capabilities: opts.capabilities, fileFetch: opts.fileFetch });
+  const server = new RdvMcpServer({ home, humanLog: (l) => humanLog.push(l), sweepMs: 3_600_000, calendarDirs: [dirname(dir)], defaultRelays: opts.defaultRelays, capabilities: opts.capabilities, fileFetch: opts.fileFetch, elicitTimeoutMs: opts.elicitTimeoutMs, forms: opts.forms });
   const [clientT, serverT] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: `${name}-claude`, version: '0.0.0' }, { capabilities: opts.elicit ? { elicitation: {} } : {} });
-  if (opts.elicit) client.setRequestHandler(ElicitRequestSchema, async (req) => opts.elicit!(req.params));
+  if (opts.elicit) client.setRequestHandler(ElicitRequestSchema, async (req, extra) => opts.elicit!(req.params, { signal: extra.signal }));
   const side: Side = {
     name,
     home,
