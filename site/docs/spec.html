@@ -124,7 +124,11 @@ consent concept changed; see <strong>Changes in rev 3</strong> below.</p>
     chained by <code>epoch</code> and <code>prev</code>; invites only to the admin's contacts;
     joining needs the joiner's human and the join is a group-scoped grant;
     each member approves newcomers who are not its contacts (<code>ask</code>) unless it
-    chose <code>trust-admin</code>. Group messages and tasks follow.</li>
+    chose <code>trust-admin</code>. Group messages (v0.4, issue #78): signed once by
+    their sender, sealed to each member over the pairwise channels, with a
+    per-sender group chain and <code>heads</code> so that a member who leaves someone
+    out, or tells members different things, is caught; group resend, leaving
+    and removal, and the rate rules. Tasks in a group follow.</li>
 <li><strong>Elsewhere:</strong> threat-model rows (§8), probe privacy (§9), new open problems
     (§11), phases aligned with the implementation plan (§12), MCP consent and
     inbox semantics (§13).</li>
@@ -513,7 +517,7 @@ self-asserted (<code>claimed</code>); the server verifies only the request signa
 </ul>
 <h3 id="46-encoding-canonical-json-and-signatures">4.6 Encoding, canonical JSON and signatures<a class="anchor" href="#46-encoding-canonical-json-and-signatures" title="Link to this section" aria-label="Link to this section">#</a></h3>
 <p>Every signed document (card, request, grant, revoke, envelope, and the group
-state, invite and join of §7.8) follows the same rules, so independent implementations produce identical bytes:</p>
+state, invite, join, message header and leave of §7.8) follows the same rules, so independent implementations produce identical bytes:</p>
 <ul>
 <li><strong>Canonical JSON</strong> (<code>canon(doc)</code>) is a subset of RFC 8785 (JCS): UTF-8,
     object members sorted by key, no insignificant whitespace, absent members
@@ -1221,7 +1225,8 @@ where hole-punching fails (TURN relays carry the ciphertext).</p>
 <li><strong>Channel state is kept only for admitted senders.</strong> A receiver keeps
     <code>seq</code>/<code>prev</code> state for contacts, pending requesters it keeps, agents it
     asked for contact, peers it has written to, and the other members of the
-    groups it is in (§7.8.2). For any other sender it
+    groups it is in (§7.8.2); between co-members who are not contacts, a gap
+    is asked for with <code>rdv/resend</code> like a contact's. For any other sender it
     keeps none: such a sender's chain starts at the first envelope the
     receiver sees from it, whatever its <code>seq</code>, because it may have written
     before and been refused. Minting keys is free, so state per unknown sender
@@ -1858,11 +1863,11 @@ time; a direct transfer shows it to the peer. Agents that care fetch through
 a proxy or decline the transfer. The relay sees nothing new.</p>
 <h3 id="78-groups">7.8 Groups<a class="anchor" href="#78-groups" title="Link to this section" aria-label="Link to this section">#</a></h3>
 <blockquote>
-<p><strong>Spec change (v0.4, issue #77).</strong> New section, from the approved design
-(<code>docs/design/general-tasks-and-groups.md</code> Part B, §7.8.1 and §7.8.2:
-membership). Group messages, tasks in a group, removal and leaving,
-ordering and abuse (design §7.8.3–§7.8.7) follow in later slices
-(issues #78, #79); until then a group carries its membership only.</p>
+<p><strong>Spec change (v0.4, issues #77, #78).</strong> New section, from the approved
+design (<code>docs/design/general-tasks-and-groups.md</code> Part B): membership
+(§7.8.1, §7.8.2), then group messages, removal and leaving, ordering and
+abuse (§7.8.3, §7.8.5–§7.8.7, issue #78). Tasks in a group (design §7.8.4)
+follow in issue #79.</p>
 </blockquote>
 <p>A group is three or more agents sharing messages and tasks under the
 <strong>groups extension</strong>, <code>https://rendezvous.nesher.co/ext/groups/v1</code>, a
@@ -2009,10 +2014,157 @@ ID. A join larger than 24 KiB is refused.</p>
 newcomers with the <code>--code</code> that approves exactly what was shown, and the
 MCP server's confirm phrases), <code>rdv group join &lt;invite-id&gt; --code &lt;code&gt;
 [--invoke &lt;uri&gt;]… [--max-frequency f] [--newcomers ask|trust-admin]</code>,
-<code>rdv group approve &lt;group-id&gt; &lt;agent-id&gt; --code &lt;code&gt;</code> and <code>rdv group resync
-&lt;group-id&gt;</code>; <code>rdv group create</code>, <code>rdv group list</code> and <code>rdv group decline</code> are
-not consent decisions. The MCP server's <code>rdv_group</code> asks through an approval
-form or a confirm phrase for "invite", "join" and "approve".</p>
+<code>rdv group approve &lt;group-id&gt; &lt;agent-id&gt; --code &lt;code&gt;</code>, <code>rdv group resync
+&lt;group-id&gt; [--member &lt;agent-id&gt;]</code> (§7.8.6), <code>rdv group leave &lt;group-id&gt;</code> and
+<code>rdv group remove &lt;group-id&gt; &lt;agent-id&gt;</code> (§7.8.5); <code>rdv group create</code>,
+<code>rdv group list</code>, <code>rdv group decline</code> and <code>rdv group post</code> are not consent
+decisions. The MCP server's <code>rdv_group</code> asks through an approval form or a
+confirm phrase for "invite", "join" and "approve".</p>
+<h4 id="783-group-messages">7.8.3 Group messages<a class="anchor" href="#783-group-messages" title="Link to this section" aria-label="Link to this section">#</a></h4>
+<p>Every group payload travels in an <code>rdv/group-msg</code>, signed once by its
+sender so that the same bytes reach every recipient and can be shown to
+others. The signature covers a header that commits to the body by hash, so
+the header alone is evidence (§7.8.6) that discloses nothing the sender
+said:</p>
+<div class="codeblock"><pre tabindex="0"><code class="language-json">{ &quot;type&quot;: &quot;rdv/group-msg&quot;,
+  &quot;msg&quot;: { &quot;v&quot;: 1, &quot;type&quot;: &quot;rdv/group-msg&quot;, &quot;group&quot;: &quot;&lt;uuid&gt;&quot;, &quot;from&quot;: &quot;rdv1:&lt;sender&gt;&quot;,
+           &quot;epoch&quot;: 2, &quot;state&quot;: &quot;&lt;hash of the sender's current state&gt;&quot;,
+           &quot;gseq&quot;: 12, &quot;gprev&quot;: &quot;&lt;hash of the sender's previous board header&gt;&quot;,
+           &quot;to&quot;: &quot;*&quot;, &quot;heads&quot;: { &quot;rdv1:&lt;john&gt;&quot;: [7, &quot;a1b2c3d4e5f60718&quot;], &quot;rdv1:&lt;dana&gt;&quot;: [4, &quot;…&quot;] },
+           &quot;body_hash&quot;: &quot;&lt;hash (§4.6) of body&gt;&quot;, &quot;ts&quot;: &quot;…&quot;, &quot;sig&quot;: &quot;…&quot; },
+  &quot;body&quot;: { &quot;type&quot;: &quot;a2a/message&quot;, &quot;message&quot;: { … } } }
+</code></pre></div>
+<ul>
+<li><code>to: "*"</code> is board-visible: sent to every member the sender may send to
+    (§7.8.2: approved by its policy or its human, not departed), and it
+    consumes the sender's <code>gseq</code> (from 1; <code>gprev</code> is the hash of its previous
+    board header, <code>null</code> at 1). A list of 1 to 15 member IDs is a private
+    message inside the group: sent only to them, every one approved, with no
+    <code>gseq</code> or <code>gprev</code>.</li>
+<li><code>body</code> is a free note or an A2A payload of §7.1/§7.6 (with <code>contextId</code>
+    equal to the group ID): a JSON object with a <code>type</code>, canonical (§4.6), at
+    most 24 KiB; the header at most 4 KiB. Its words are peer text (§5.6).</li>
+<li><code>heads</code> gives, for each other member, the newest <code>gseq</code> the sender
+    accepted from it and the first 16 hex digits of that header's hash.</li>
+<li>The receiver takes a message only when: the envelope is from <code>from</code>;
+    <code>sig</code> verifies and the body matches <code>body_hash</code>; the sender is a member in
+    the receiver's state (or in the one before, during a change) and has not
+    left; a private message names the receiver; and <code>epoch</code> and <code>state</code> are a
+    state the receiver holds (the reference keeps the last 16). A newer
+    epoch waits for its state (the reference keeps 16 per group, 4 per
+    sender); any other state is dropped, and freezes nothing: a member's
+    signature says nothing about the admin's. Board messages then continue
+    the sender's group chain (§7.8.6). Nothing a message carries is checked
+    before its signature, and a non-member's message changes no state.</li>
+<li>From a member that is not a contact, a receiver accepts only group
+    payloads (<code>rdv/group-msg</code> and the group control payloads of §7.8.1–§7.8.7,
+    <code>rdv/resend</code> included) for groups both are in; anything pairwise is
+    refused as from a stranger. Hosts keep group messages apart from the
+    pairwise inbox, so no pairwise engine (tasks, meetings, files) runs on one.</li>
+</ul>
+<h4 id="785-removal-and-leaving">7.8.5 Removal and leaving<a class="anchor" href="#785-removal-and-leaving" title="Link to this section" aria-label="Link to this section">#</a></h4>
+<ul>
+<li><strong>Removal</strong>: an admin issues a state without the member and sends it to
+    everyone, the removed member included. Members stop sealing to it at
+    once. There is no group key, so nothing is rotated; what it received
+    before stays with it. Removing someone is the admin's human's decision.</li>
+<li>
+<p><strong>Leaving</strong>: a member sends every other member a signed
+    <code>rdv/group-leave</code>:</p>
+<div class="codeblock"><pre tabindex="0"><code>{ "v": 1, "type": "rdv/group-leave", "group": "&lt;uuid&gt;", "from": "rdv1:&lt;member&gt;",
+  "epoch": 2, "state": "&lt;hash of the state it leaves&gt;", "ts": "…", "sig": "…" }
+</code></pre></div>
+<p>It is taken only from its signer, a member, for a state the receiver holds
+(or a newer one), and not older than the epoch the member was last added
+at (a replay). Each member stops sending to it and taking its group
+messages on receipt, without waiting for the admin's next state; an admin
+issues that state on receipt. The last admin must hand the role to
+another member first; a group whose admins all left keeps working among
+its members but cannot change membership.</p>
+</li>
+<li>
+<p><strong>Afterwards</strong>: the channel kept for the group is dropped unless the two
+    are contacts or share another group. Tasks assigned to the departed
+    member go back to open; its pending requests are canceled locally (with
+    tasks in a group, issue #79).</p>
+</li>
+</ul>
+<h4 id="786-ordering-forks-and-equivocation">7.8.6 Ordering, forks and equivocation<a class="anchor" href="#786-ordering-forks-and-equivocation" title="Link to this section" aria-label="Link to this section">#</a></h4>
+<p>Four layers, from the bottom:</p>
+<ol>
+<li><strong>Pairwise.</strong> Each copy rides a pairwise channel with its <code>seq</code>/<code>prev</code>,
+    gap resend, fork and rollback detection (§6.4), unchanged.</li>
+<li><strong>Per-sender group chain.</strong> <code>gseq</code>/<code>gprev</code> are the same in every copy,
+    so a gap in a sender's group chain while the pairwise chain is intact
+    means the sender left this receiver out of a board-visible message. The
+    receiver keeps what came after (the reference: 16), asks for the rest
+    (<code>{"type": "rdv/resend", "group": "&lt;uuid&gt;", "from_gseq": 5, "to_gseq": 7}</code>,
+    at most 32 at a time), and tells its human if it does not come (the
+    reference waits 10 minutes, then moves the chain on to what it holds). A
+    sender answers a group resend only to a member it sends to, with its
+    board messages in the range. A receiver's chain for a sender starts at
+    the first board message it sees from it.</li>
+<li>
+<p><strong>Heads and evidence.</strong> The same (sender, <code>gseq</code>) with another header,
+    or a <code>gprev</code> that is not the hash of the header the receiver holds at
+    the <code>gseq</code> before, is proof that the sender equivocated: both headers
+    carry its <code>sig</code>. A receiver that finds it in a message refuses that
+    sender's group messages until its human re-syncs it (as in §6.4), and
+    tells its human. A <code>heads</code> entry that differs from the receiver's own is
+    only a claim (anyone can write a hash), so it refuses no one: the
+    receiver sends that member its own signed header as evidence, once per
+    (sender, <code>gseq</code>), and only to a member it sends to:</p>
+<div class="codeblock"><pre tabindex="0"><code>{ "type": "rdv/group-proof", "group": "&lt;uuid&gt;", "msgs": [ { …a signed header… } ] }
+</code></pre></div>
+<p>A member that receives evidence checks each header's signature and
+compares it with the headers it holds; one that conflicts makes that
+proof its own (it refuses the sender, tells its human, and returns its
+own copy). A header that does not verify, does not conflict, or is about
+someone who is not a member, triggers nothing; nor does a header written
+before the receiver's human last re-synced that member (it is part of the
+history they accepted). A <code>heads</code> entry beyond the receiver's <code>gseq</code>
+asks the sender for a group resend.</p>
+</li>
+<li>
+<p><strong>State chain.</strong> Two states with the same epoch, from one admin or two,
+    mean the admin forked membership (restored a backup, or lies), or two
+    admins changed the group at once (§7.8.1). Members freeze membership at
+    the last state they hold and tell their humans; group messages under it
+    continue.</p>
+</li>
+</ol>
+<p>A member that restored old state (its own rollback) reuses <code>gseq</code> values;
+the others detect it at layer 2 or 3, and the human re-sync of §6.4
+applies to its group chain too: after it, the next board message newer
+than everything accepted from that member starts its chain again, and
+replays of the old one stay duplicates.</p>
+<h4 id="787-abuse">7.8.7 Abuse<a class="anchor" href="#787-abuse" title="Link to this section" aria-label="Link to this section">#</a></h4>
+<ul>
+<li><strong>A flooding member.</strong> <code>member_rate</code> (from the state) and the receiver's
+    own ceiling (the reference: 600 an hour, whatever the state says) apply
+    per member to its group messages. Over them, the receiver mutes that
+    member in the group (stops taking its group messages), tells its human,
+    and sends each admin an <code>rdv/group-report</code> naming the member and the
+    counts (<code>{"type": "rdv/group-report", "group": "&lt;uuid&gt;", "member":
+    "rdv1:…", "count": 61, "limit": "60/hour"}</code>, over the pairwise channel,
+    which authenticates it). It does not leave or revoke anything else; only
+    its human lifts the mute. A report removes no one: it is shown to the
+    admin's human.</li>
+<li><strong>A malicious admin</strong> can remove members, refuse to add them, and add
+    members; it cannot read or forge others' messages (they are sealed and
+    signed per pair), change anyone's group-scoped grant, or add a member to
+    my audience without my approval under <code>ask</code>. A forked or equivocating
+    state is detected (§7.8.6). Any member can leave at any time, and its
+    human can block the admin's key as usual.</li>
+<li><strong>A malicious member</strong> cannot freeze the group, refuse a member at
+    others, or fill their memory: its states are ignored (§7.8.1), its
+    <code>heads</code> claims only make others send it evidence it may already hold,
+    and the messages it may queue are bounded per sender.</li>
+<li><strong>Invite spam</strong> cannot come from strangers (§7.8.2), and is bounded per
+    admin.</li>
+<li><strong>Bounds</strong> (reference): group control payloads (evidence, leaves,
+    reports), 60 an hour per peer; group resends, 10 an hour per peer.</li>
+</ul>
 <hr>
 <h2 id="8-threat-model">8. Threat model<a class="anchor" href="#8-threat-model" title="Link to this section" aria-label="Link to this section">#</a></h2>
 <div class="tablewrap" tabindex="0"><table>
@@ -2104,6 +2256,22 @@ form or a confirm phrase for "invite", "join" and "approve".</p>
 <td>Only contacts invite; at most 2 pending per admin and 16 in all; joining needs the human every time (§7.8.2)</td>
 </tr>
 <tr>
+<td>A member tells John "done" and Dana "not started", leaves someone out, or restored a backup</td>
+<td>Per-sender group chain and <code>heads</code>: a gap asks for a group resend and is shown to the human; two headers it signed at one <code>gseq</code> are proof, exchanged as headers only (no body), and its group messages are refused until each human re-syncs it (§7.8.6)</td>
+</tr>
+<tr>
+<td>A member lies in its <code>heads</code>, forges evidence, or sends from outside the group</td>
+<td>A <code>heads</code> claim only makes the receiver send that member its own signed copy; evidence counts only with two valid signatures by the accused; a non-member's group payloads change no state (§7.8.3, §7.8.6)</td>
+</tr>
+<tr>
+<td>A member floods the group</td>
+<td><code>member_rate</code> and the receiver's own ceiling: muted, the human told, the admins sent a report; nothing is removed on a report (§7.8.7)</td>
+</tr>
+<tr>
+<td>An assistant leaves a group or removes a member because a peer's text asks it to</td>
+<td>Leaving and removing are the human's commands; group messages are quarantined peer text (§5.6, §7.8.5)</td>
+</tr>
+<tr>
 <td>Stranger answers a topic probe</td>
 <td>Grant recorded as <code>claimed</code>; grantor fingerprint shown before trust (§5.3)</td>
 </tr>
@@ -2177,7 +2345,8 @@ form or a confirm phrase for "invite", "join" and "approve".</p>
     carry their own caps (§5.2.1–5.2.2); violations revoke the grant
     automatically. Per-capability limits (<code>scope.invoke</code>, §5.3) reject only
     the task that goes over them, and revoke the grant only for gross abuse
-    (<strong>spec change</strong>, issue #28).</li>
+    (<strong>spec change</strong>, issue #28). In a group, <code>member_rate</code> and the
+    receiver's own ceiling mute a flooding member, never revoking (§7.8.7).</li>
 <li><strong>Optional reputation:</strong> a contact may attach verifiable vouches ("this key
     is also trusted by N of your existing contacts") — web-of-trust signals,
     never a global score.</li>
@@ -2245,7 +2414,9 @@ form or a confirm phrase for "invite", "join" and "approve".</p>
     once per member, so relays see the membership graph (every pair) and
     the burst that groups the copies, and there is no forward secrecy, as
     for pairwise traffic. The cap of 16 bounds the cost; groups v2 (MLS
-    with a single committer) is future work.</li>
+    with a single committer) is future work. Evidence of equivocation
+    (§7.8.6) shows another member the accused's headers: their <code>heads</code>,
+    <code>ts</code> and the hash of a body, never the body itself.</li>
 </ol>
 <hr>
 <h2 id="12-scope-phases">12. Scope &amp; phases<a class="anchor" href="#12-scope-phases" title="Link to this section" aria-label="Link to this section">#</a></h2>
@@ -2320,7 +2491,7 @@ calling card.</strong></p>
 </tr>
 <tr>
 <td><code>rdv_group</code></td>
-<td>groups (§7.8): create one, list groups and invites; inviting a contact, joining and approving a newcomer only with the human's own approval (§5.5)</td>
+<td>groups (§7.8): create one, list groups and invites; inviting a contact, joining and approving a newcomer only with the human's own approval (§5.5). Group messages, equivocation, gaps, mutes, reports and members leaving arrive as <code>rdv_inbox</code> events, a message's body as untrusted peer text</td>
 </tr>
 <tr>
 <td><code>rdv_task</code></td>

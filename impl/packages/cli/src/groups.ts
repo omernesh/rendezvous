@@ -3,6 +3,11 @@
 // commands. Peer text (the group's name, a member's admin-written name, an
 // invite's greeting) goes through clean() before any terminal sees it.
 //
+// Slice 2 (issue #78): group messages (`rdv group post`, a minimal send; the
+// board, claim and assign are #79), what the listener reports about them
+// (messages, equivocation, gaps, mutes, reports, members leaving), and the
+// human's `rdv group leave`, `rdv group remove` and `rdv group resync --member`.
+//
 // Joining a group and approving a newcomer are the human's (§5.5), every time
 // (§5.5.1: auto-approve never covers either): `rdv group join` and `rdv group
 // approve` take the code `rdv group pending` shows for exactly what the human
@@ -15,8 +20,15 @@ import {
   type Agent,
   docHash,
   fingerprint,
+  type GroupBody,
   type GroupChange,
+  type GroupDelivery,
+  type GroupEquivocation,
+  type GroupGap,
+  type GroupMute,
   type GroupRecord,
+  type GroupReport,
+  isAgentId,
   type GroupScope,
   groupScope,
   isCapabilityUri,
@@ -25,6 +37,7 @@ import {
   NEWCOMER_POLICIES,
   parseFrequency,
   type ReceivedInvite,
+  refusedMembers,
 } from '@rendezvous/core';
 import { contactFor, type Ctx, withAgent } from './commands.js';
 import { describeGroupTerms, describeInviteAsk, dropPhrase, inviteAskOf, inviteAsks, inviteSubject, joinTarget, newcomerDigest, newcomerKey, newcomerTarget, reissueForDisplay, type ShownPhrase } from './consent.js';
@@ -124,16 +137,32 @@ export function groupView(agent: Agent, r: GroupRecord) {
     invoke: Object.keys(r.scope.invoke ?? {}).sort(),
     ...(r.scope.max_frequency ? { max_frequency: r.scope.max_frequency } : {}),
     ...(r.frozen ? { frozen: { epoch: r.frozen.epoch, signers: r.frozen.signers, since: r.frozen.since } } : {}),
+    // Members whose group messages we refuse until our human re-syncs them (§7.8.6, §7.8.7).
+    ...(refusedMembers(r).length ? { refused: refusedMembers(r) } : {}),
+    ...(r.departed && Object.keys(r.departed).length ? { departed: Object.keys(r.departed) } : {}),
+    ...(r.left ? { left: r.left } : {}),
   };
 }
 
 export function groupText(agent: Agent, r: GroupRecord): string {
   const v = groupView(agent, r);
-  const status = r.status === 'joining' ? 'JOINING (waiting for the admin to add you)' : r.status === 'removed' ? 'REMOVED' : 'member';
+  const status = r.status === 'joining' ? 'JOINING (waiting for the admin to add you)' : r.left ? 'LEFT' : r.status === 'removed' ? 'REMOVED' : 'member';
   const lines = [
     `${clean(r.group)}  ${JSON.stringify(clean(v.name))}  ${status}, epoch ${v.epoch}, newcomers ${v.newcomers}`,
     ...v.members.map((m) => {
-      const mark = m.id === agent.id ? '' : m.waiting_for_you ? '  WAITING FOR YOUR APPROVAL (gets nothing from you yet)' : m.approved ? '' : '  not approved';
+      const refused = refusedMembers(r).find((x) => x.member === m.id);
+      const mark =
+        m.id === agent.id
+          ? ''
+          : refused
+            ? `  ${refused.kind === 'equivocation' ? 'REFUSED: signed two different messages' : 'MUTED: over the rate'}; check with them, then: rdv group resync ${clean(r.group)} --member ${clean(m.id)}`
+            : r.departed && Object.hasOwn(r.departed, m.id)
+              ? '  LEFT (until the admin removes them)'
+              : m.waiting_for_you
+                ? '  WAITING FOR YOUR APPROVAL (gets nothing from you yet)'
+                : m.approved
+                  ? ''
+                  : '  not approved';
       return `  - ${memberText(m, agent.id)}${mark}`;
     }),
     `  members may invoke on you: ${v.invoke.length ? v.invoke.map((u) => clean(u)).join(', ') : 'nothing'}${v.max_frequency ? ` (at most ${v.max_frequency})` : ''}`,
@@ -184,6 +213,62 @@ export function forkText(r: GroupRecord): string {
     `Membership is frozen at the state you hold; check with the admins, then run: rdv group resync ${clean(r.group)}`
   );
 }
+
+// --- group messages and what happens to them (§7.8.3, §7.8.5–§7.8.7) -------------------------------
+
+const groupName = (agent: Agent, group: string): string => {
+  const r = agent.groups.group(group);
+  return r ? `${JSON.stringify(clean(r.state.name))} (${clean(group)})` : clean(group);
+};
+
+/** A member's group message. The body is that member's words: peer text, shown through clean(). */
+export function groupMessageView(d: GroupDelivery) {
+  return {
+    event: 'group-message',
+    group: d.group,
+    from: d.from,
+    fingerprint: fingerprint(d.from),
+    board: d.board,
+    gseq: d.msg.gseq ?? null,
+    to: d.board ? '*' : d.msg.to,
+    ts: d.msg.ts,
+    payload: d.body,
+  };
+}
+
+export function groupMessageText(agent: Agent, d: GroupDelivery): string {
+  const { type, ...rest } = d.body;
+  return `group ${groupName(agent, d.group)} ${clean(fingerprint(d.from))} ${d.board ? `#${d.msg.gseq}` : 'privately'}  ${clean(type)}  ${clean(JSON.stringify(rest))}`;
+}
+
+export function equivocationView(e: GroupEquivocation) {
+  return { event: 'group-equivocation', group: e.group, member: e.member, fingerprint: fingerprint(e.member), gseq: e.gseq, hashes: e.hashes, ...(e.via ? { via: e.via } : {}), headers: e.headers };
+}
+
+export function equivocationText(agent: Agent, e: GroupEquivocation): string {
+  return (
+    `group ${groupName(agent, e.group)}: ${clean(fingerprint(e.member))} signed ${e.hashes.length > 1 ? 'two different' : 'a conflicting'} board message(s) as #${e.gseq}` +
+    `${e.via ? ` (shown by ${clean(fingerprint(e.via))})` : ''}: it restored an old backup, two copies of it run, or it tells members different things. ` +
+    `Its group messages are refused until you check with them and run: rdv group resync ${clean(e.group)} --member ${clean(e.member)}`
+  );
+}
+
+export const gapView = (g: GroupGap) => ({ event: 'group-gap', group: g.group, member: g.member, fingerprint: fingerprint(g.member), from: g.from, to: g.to });
+export const gapText = (agent: Agent, g: GroupGap): string =>
+  `group ${groupName(agent, g.group)}: ${clean(fingerprint(g.member))}'s board messages #${g.from}${g.to > g.from ? `-${g.to}` : ''} never reached you (asked again, not resent): it may have left you out`;
+
+export const muteView = (m: GroupMute) => ({ event: 'group-mute', group: m.group, member: m.member, fingerprint: fingerprint(m.member), count: m.count, limit: m.limit });
+export const muteText = (agent: Agent, m: GroupMute): string =>
+  `group ${groupName(agent, m.group)}: ${clean(fingerprint(m.member))} sent more than ${clean(m.limit)}; muted (its group messages are refused) and the admins were told. ` +
+  `To take them again: rdv group resync ${clean(m.group)} --member ${clean(m.member)}`;
+
+export const reportView = (r: GroupReport) => ({ event: 'group-report', group: r.group, from: r.from, member: r.member, count: r.count, limit: r.limit });
+export const reportText = (agent: Agent, r: GroupReport): string =>
+  `group ${groupName(agent, r.group)}: ${clean(fingerprint(r.from))} muted ${clean(fingerprint(r.member))} for sending more than ${clean(r.limit)} (${r.count}). ` +
+  `Nothing was removed; you decide: rdv group remove ${clean(r.group)} ${clean(r.member)}`;
+
+export const leftView = (l: { group: string; member: string }) => ({ event: 'group-left', group: l.group, member: l.member, fingerprint: fingerprint(l.member) });
+export const leftText = (agent: Agent, l: { group: string; member: string }): string => `group ${groupName(agent, l.group)}: ${clean(fingerprint(l.member))} left; nothing more goes to them`;
 
 /** The code `rdv group pending` shows for an invite: you join exactly the invite you read. */
 export const inviteCode = (agent: Agent, i: ReceivedInvite): string => gateCode(inviteSubject(i, isContactOf(agent)));
@@ -388,14 +473,91 @@ export async function groupApprove({ home, out, values, positionals }: Ctx): Pro
   out.emit({ ...v, event: 'group-approved', member }, `approved ${clean(fingerprint(member))} in group ${JSON.stringify(clean(v.name))}`);
 }
 
-/** `rdv group resync <group-id>`: after a membership fork, once you checked with the admin: the group thaws at the state you hold. */
-export async function groupResync({ home, out, positionals }: Ctx): Promise<void> {
+/**
+ * `rdv group resync <group-id> [--member <agent-id>]`: after a membership fork,
+ * once you checked with the admin, the group thaws at the state you hold.
+ * With --member, after that member equivocated or was muted, once you
+ * checked with its human: its group messages are taken again.
+ */
+export async function groupResync({ home, out, values, positionals }: Ctx): Promise<void> {
+  const member = str(values.member);
+  if (member !== undefined && !isAgentId(member)) throw new CliError('--member takes the agent ID the listener named', 2);
   const v = await withAgent(home, async (agent) => {
     try {
-      return groupView(agent, agent.resyncGroup(positionals[0]));
+      if (member === undefined) return groupView(agent, agent.resyncGroup(positionals[0]));
+      agent.resyncGroupMember(positionals[0], member);
+      return groupView(agent, agent.groups.group(positionals[0])!);
     } catch (err) {
       throw new CliError((err as Error).message);
     }
   });
-  out.emit({ ...v, event: 'group-resynced' }, `group ${clean(v.group)} re-synced at epoch ${v.epoch}`);
+  out.emit(
+    { ...v, event: 'group-resynced', ...(member ? { member } : {}) },
+    member ? `group ${clean(v.group)}: ${clean(fingerprint(member))}'s next group message starts its chain again` : `group ${clean(v.group)} re-synced at epoch ${v.epoch}`,
+  );
+}
+
+/**
+ * `rdv group post <group-id> --json '<payload>' [--to <agent-id>]...`: say
+ * something to the group, signed once and sealed to each member you send to
+ * (board-visible; with --to, privately to those members). A minimal send for
+ * issue #78; the board, tasks, claim and assign come with #79.
+ */
+export async function groupPost({ home, out, values, positionals }: Ctx): Promise<void> {
+  const group = positionals[0];
+  const raw = str(values.json) ?? str(values.payload);
+  if (raw === undefined) throw new CliError('give the body with --json \'{"type":"…"}\' (or --payload)', 2);
+  let body: GroupBody;
+  try {
+    body = JSON.parse(raw) as GroupBody;
+  } catch (err) {
+    throw new CliError(`body is not JSON: ${(err as Error).message}`, 2);
+  }
+  const to = list(values.to);
+  for (const id of to) if (!isAgentId(id)) throw new CliError(`--to takes a member's agent ID: ${clean(id)}`, 2);
+  const report = await withAgent(home, async (agent) => {
+    try {
+      return await agent.sendGroup(group, body, to.length ? { to } : {});
+    } catch (err) {
+      throw new CliError((err as Error).message);
+    }
+  });
+  out.emit(
+    { event: 'group-posted', group, gseq: report.msg.gseq ?? null, to: report.msg.to, sent: report.sent, failed: report.failed },
+    `posted to group ${clean(group)}${report.msg.gseq ? ` as #${report.msg.gseq}` : ' privately'}: sent to ${report.sent.length}` +
+      `${report.failed.length ? `, failed for ${report.failed.length} (kept for a resend)` : ''}`,
+  );
+}
+
+/** `rdv group leave <group-id>`: the human leaves; every other member is told, and nothing more goes to them. */
+export async function groupLeave({ home, out, positionals }: Ctx): Promise<void> {
+  const v = await withAgent(home, async (agent) => {
+    try {
+      return groupView(agent, await agent.leaveGroup(positionals[0]));
+    } catch (err) {
+      throw new CliError((err as Error).message);
+    }
+  });
+  out.emit({ ...v, event: 'group-left-sent' }, `you left group ${JSON.stringify(clean(v.name))} (${clean(v.group)}); its members were told`);
+}
+
+/** `rdv group remove <group-id> <agent-id>`: as admin, the human removes a member; the state without it goes to everyone, it included. */
+export async function groupRemove({ home, out, positionals }: Ctx): Promise<void> {
+  const [group, member] = positionals;
+  const c = await withAgent(home, async (agent) => {
+    try {
+      return await agent.removeGroupMember(group, contactOrMember(agent, group, member));
+    } catch (err) {
+      throw err instanceof CliError ? err : new CliError((err as Error).message);
+    }
+  });
+  out.emit({ ...changeView(c), event: 'group-removed' }, changeText(c));
+}
+
+function contactOrMember(agent: Agent, group: string, target: string): string {
+  if (isAgentId(target)) return target;
+  const r = agent.groups.group(group);
+  const peer = contactFor(agent, target);
+  if (r && !memberOf(r.state, peer)) throw new CliError(`${clean(target)} is not a member of group ${clean(group)}`);
+  return peer;
 }

@@ -778,6 +778,7 @@ inbound loop), so `rdv` and `rdv-mcp` share profiles.
 | `files` | §7.7 | File references (`FilePart` + files extension): strict validation, `encryptFile`, `verifyAndDecrypt`, inline parts |
 | `filefetch` | §7.7 | `fetchFileRef`: https only, SSRF-blocked and DNS-pinned, no credentials, capped, hash-verified |
 | `group` | §7.8 | Groups v1 membership: the signed `rdv/group-state` chain (`epoch`, `prev`, admin signer; any two states at one epoch are a fork), `rdv/group-invite`, `rdv/group-join` (a group-scoped grant), and the `GroupBook` (invites, newcomer policy, approvals; at most 16 members, NOTES 86) |
+| `groupmsg` | §7.8.3, §7.8.5–§7.8.7 | Group messages: `rdv/group-msg` (a signed header committing to the body by hash), the per-sender chain (`gseq`/`gprev`) and `heads`, gaps and group resend, equivocation evidence (`rdv/group-proof`, headers only), `rdv/group-leave`, `member_rate` and the mute with its `rdv/group-report` (NOTES 87) |
 | `transfer` | §7.7 | `rdv/transfer` messages and their pure state machine (negotiation only, no transport) |
 | `transport/nostr` | §6.2 | Nostr relay transport (kind 30417): re-subscribes when a relay drops; publishes with retries, per-relay pacing and cooldowns, and per-relay status (`relayStatus()`); `setRelays()` moves a live transport; discovery mirrors (`mirrorRelays`, `mirrorTopics()`); `DEFAULT_RELAYS`, `DEFAULT_MIRROR_RELAYS` |
 | `agent` | — | Ties it together: listen, discover, request, grant, send, receive |
@@ -954,7 +955,9 @@ State lives in a directory: `--home <dir>`, else `$RDV_HOME`, else
 | `rdv group pending` | Invites and newcomers waiting for your decision, with the `--code` for `join` and `approve` (and, in text mode, the MCP server's confirm phrases). Yours to run |
 | `rdv group join <invite-id> --code <code> [--invoke <uri>]… [--max-frequency f] [--newcomers ask\|trust-admin]` / `rdv group decline <invite-id>` | Join a group on these terms (what members may ask of you; by default nothing, and you are asked about each newcomer who is not your contact), or say no. `--code` is refused if the invite changed since you read it. `join` is yours to run |
 | `rdv group approve <group-id> <agent-id> --code <code>` | Let a newcomer who is not your contact receive your group traffic. Yours to run |
-| `rdv group resync <group-id>` | Thaw a group whose admin signed two member lists for one step, after checking with them. Yours to run |
+| `rdv group resync <group-id> [--member <agent-id>]` | Thaw a group whose admin signed two member lists for one step, after checking with them; with `--member`, take the group messages of a member that equivocated or was muted again, after checking with them. Yours to run |
+| `rdv group post <group-id> --json '<body>' [--to <agent-id>]…` | Say something to the group: to every member you send to (board-visible), or privately to those named (SPEC §7.8.3) |
+| `rdv group leave <group-id>` / `rdv group remove <group-id> <agent-id\|label>` | Leave a group (every member is told), or as admin remove a member (the new member list goes to everyone, them included). Yours to run |
 | `rdv file prepare <path> [--name …] [--mime …] [--plain]` | Encrypt one of your files under a fresh key and write the copy (`files/outgoing/<sha256>.bin`) for you to upload anywhere a peer can fetch over https. Nothing is sent. Refuses anything inside a Rendezvous home (NOTES 77) |
 | `rdv file list` | Prepared files, files peers sent for your tasks (not fetched), direct-transfer requests and the setting |
 | `rdv file fetch <task-id> [--file <n\|sha256>]` | Fetch one file a peer sent, only for a task you started (or a result of a task you requested): https only, no credentials, no private addresses, 25 MiB cap, hash and decryption checked. Saved in quarantine (`files/incoming/<task>/`, mode 600) |
@@ -1567,7 +1570,11 @@ Source: https://rendezvous.nesher.co/docs/spec.md
   chained by `epoch` and `prev`; invites only to the admin's contacts;
   joining needs the joiner's human and the join is a group-scoped grant;
   each member approves newcomers who are not its contacts (`ask`) unless it
-  chose `trust-admin`. Group messages and tasks follow.
+  chose `trust-admin`. Group messages (v0.4, issue #78): signed once by
+  their sender, sealed to each member over the pairwise channels, with a
+  per-sender group chain and `heads` so that a member who leaves someone
+  out, or tells members different things, is caught; group resend, leaving
+  and removal, and the rate rules. Tasks in a group follow.
 - **Elsewhere:** threat-model rows (§8), probe privacy (§9), new open problems
   (§11), phases aligned with the implementation plan (§12), MCP consent and
   inbox semantics (§13).
@@ -1916,7 +1923,7 @@ self-asserted (`claimed`); the server verifies only the request signature.
 ### 4.6 Encoding, canonical JSON and signatures
 
 Every signed document (card, request, grant, revoke, envelope, and the group
-state, invite and join of §7.8) follows the same rules, so independent implementations produce identical bytes:
+state, invite, join, message header and leave of §7.8) follows the same rules, so independent implementations produce identical bytes:
 
 - **Canonical JSON** (`canon(doc)`) is a subset of RFC 8785 (JCS): UTF-8,
   object members sorted by key, no insignificant whitespace, absent members
@@ -2658,7 +2665,8 @@ where hole-punching fails (TURN relays carry the ciphertext).
 - **Channel state is kept only for admitted senders.** A receiver keeps
   `seq`/`prev` state for contacts, pending requesters it keeps, agents it
   asked for contact, peers it has written to, and the other members of the
-  groups it is in (§7.8.2). For any other sender it
+  groups it is in (§7.8.2); between co-members who are not contacts, a gap
+  is asked for with `rdv/resend` like a contact's. For any other sender it
   keeps none: such a sender's chain starts at the first envelope the
   receiver sees from it, whatever its `seq`, because it may have written
   before and been refused. Minting keys is free, so state per unknown sender
@@ -3231,11 +3239,11 @@ a proxy or decline the transfer. The relay sees nothing new.
 
 ### 7.8 Groups
 
-> **Spec change (v0.4, issue #77).** New section, from the approved design
-> (`docs/design/general-tasks-and-groups.md` Part B, §7.8.1 and §7.8.2:
-> membership). Group messages, tasks in a group, removal and leaving,
-> ordering and abuse (design §7.8.3–§7.8.7) follow in later slices
-> (issues #78, #79); until then a group carries its membership only.
+> **Spec change (v0.4, issues #77, #78).** New section, from the approved
+> design (`docs/design/general-tasks-and-groups.md` Part B): membership
+> (§7.8.1, §7.8.2), then group messages, removal and leaving, ordering and
+> abuse (§7.8.3, §7.8.5–§7.8.7, issue #78). Tasks in a group (design §7.8.4)
+> follow in issue #79.
 
 A group is three or more agents sharing messages and tasks under the
 **groups extension**, `https://rendezvous.nesher.co/ext/groups/v1`, a
@@ -3384,10 +3392,160 @@ The reference CLI's human-only commands are `rdv group invite <group-id>
 newcomers with the `--code` that approves exactly what was shown, and the
 MCP server's confirm phrases), `rdv group join <invite-id> --code <code>
 [--invoke <uri>]… [--max-frequency f] [--newcomers ask|trust-admin]`,
-`rdv group approve <group-id> <agent-id> --code <code>` and `rdv group resync
-<group-id>`; `rdv group create`, `rdv group list` and `rdv group decline` are
-not consent decisions. The MCP server's `rdv_group` asks through an approval
-form or a confirm phrase for "invite", "join" and "approve".
+`rdv group approve <group-id> <agent-id> --code <code>`, `rdv group resync
+<group-id> [--member <agent-id>]` (§7.8.6), `rdv group leave <group-id>` and
+`rdv group remove <group-id> <agent-id>` (§7.8.5); `rdv group create`,
+`rdv group list`, `rdv group decline` and `rdv group post` are not consent
+decisions. The MCP server's `rdv_group` asks through an approval form or a
+confirm phrase for "invite", "join" and "approve".
+
+#### 7.8.3 Group messages
+
+Every group payload travels in an `rdv/group-msg`, signed once by its
+sender so that the same bytes reach every recipient and can be shown to
+others. The signature covers a header that commits to the body by hash, so
+the header alone is evidence (§7.8.6) that discloses nothing the sender
+said:
+
+```json
+{ "type": "rdv/group-msg",
+  "msg": { "v": 1, "type": "rdv/group-msg", "group": "<uuid>", "from": "rdv1:<sender>",
+           "epoch": 2, "state": "<hash of the sender's current state>",
+           "gseq": 12, "gprev": "<hash of the sender's previous board header>",
+           "to": "*", "heads": { "rdv1:<john>": [7, "a1b2c3d4e5f60718"], "rdv1:<dana>": [4, "…"] },
+           "body_hash": "<hash (§4.6) of body>", "ts": "…", "sig": "…" },
+  "body": { "type": "a2a/message", "message": { … } } }
+```
+
+- `to: "*"` is board-visible: sent to every member the sender may send to
+  (§7.8.2: approved by its policy or its human, not departed), and it
+  consumes the sender's `gseq` (from 1; `gprev` is the hash of its previous
+  board header, `null` at 1). A list of 1 to 15 member IDs is a private
+  message inside the group: sent only to them, every one approved, with no
+  `gseq` or `gprev`.
+- `body` is a free note or an A2A payload of §7.1/§7.6 (with `contextId`
+  equal to the group ID): a JSON object with a `type`, canonical (§4.6), at
+  most 24 KiB; the header at most 4 KiB. Its words are peer text (§5.6).
+- `heads` gives, for each other member, the newest `gseq` the sender
+  accepted from it and the first 16 hex digits of that header's hash.
+- The receiver takes a message only when: the envelope is from `from`;
+  `sig` verifies and the body matches `body_hash`; the sender is a member in
+  the receiver's state (or in the one before, during a change) and has not
+  left; a private message names the receiver; and `epoch` and `state` are a
+  state the receiver holds (the reference keeps the last 16). A newer
+  epoch waits for its state (the reference keeps 16 per group, 4 per
+  sender); any other state is dropped, and freezes nothing: a member's
+  signature says nothing about the admin's. Board messages then continue
+  the sender's group chain (§7.8.6). Nothing a message carries is checked
+  before its signature, and a non-member's message changes no state.
+- From a member that is not a contact, a receiver accepts only group
+  payloads (`rdv/group-msg` and the group control payloads of §7.8.1–§7.8.7,
+  `rdv/resend` included) for groups both are in; anything pairwise is
+  refused as from a stranger. Hosts keep group messages apart from the
+  pairwise inbox, so no pairwise engine (tasks, meetings, files) runs on one.
+
+#### 7.8.5 Removal and leaving
+
+- **Removal**: an admin issues a state without the member and sends it to
+  everyone, the removed member included. Members stop sealing to it at
+  once. There is no group key, so nothing is rotated; what it received
+  before stays with it. Removing someone is the admin's human's decision.
+- **Leaving**: a member sends every other member a signed
+  `rdv/group-leave`:
+
+  ```json
+  { "v": 1, "type": "rdv/group-leave", "group": "<uuid>", "from": "rdv1:<member>",
+    "epoch": 2, "state": "<hash of the state it leaves>", "ts": "…", "sig": "…" }
+  ```
+
+  It is taken only from its signer, a member, for a state the receiver holds
+  (or a newer one), and not older than the epoch the member was last added
+  at (a replay). Each member stops sending to it and taking its group
+  messages on receipt, without waiting for the admin's next state; an admin
+  issues that state on receipt. The last admin must hand the role to
+  another member first; a group whose admins all left keeps working among
+  its members but cannot change membership.
+- **Afterwards**: the channel kept for the group is dropped unless the two
+  are contacts or share another group. Tasks assigned to the departed
+  member go back to open; its pending requests are canceled locally (with
+  tasks in a group, issue #79).
+
+#### 7.8.6 Ordering, forks and equivocation
+
+Four layers, from the bottom:
+
+1. **Pairwise.** Each copy rides a pairwise channel with its `seq`/`prev`,
+   gap resend, fork and rollback detection (§6.4), unchanged.
+2. **Per-sender group chain.** `gseq`/`gprev` are the same in every copy,
+   so a gap in a sender's group chain while the pairwise chain is intact
+   means the sender left this receiver out of a board-visible message. The
+   receiver keeps what came after (the reference: 16), asks for the rest
+   (`{"type": "rdv/resend", "group": "<uuid>", "from_gseq": 5, "to_gseq": 7}`,
+   at most 32 at a time), and tells its human if it does not come (the
+   reference waits 10 minutes, then moves the chain on to what it holds). A
+   sender answers a group resend only to a member it sends to, with its
+   board messages in the range. A receiver's chain for a sender starts at
+   the first board message it sees from it.
+3. **Heads and evidence.** The same (sender, `gseq`) with another header,
+   or a `gprev` that is not the hash of the header the receiver holds at
+   the `gseq` before, is proof that the sender equivocated: both headers
+   carry its `sig`. A receiver that finds it in a message refuses that
+   sender's group messages until its human re-syncs it (as in §6.4), and
+   tells its human. A `heads` entry that differs from the receiver's own is
+   only a claim (anyone can write a hash), so it refuses no one: the
+   receiver sends that member its own signed header as evidence, once per
+   (sender, `gseq`), and only to a member it sends to:
+
+   ```json
+   { "type": "rdv/group-proof", "group": "<uuid>", "msgs": [ { …a signed header… } ] }
+   ```
+
+   A member that receives evidence checks each header's signature and
+   compares it with the headers it holds; one that conflicts makes that
+   proof its own (it refuses the sender, tells its human, and returns its
+   own copy). A header that does not verify, does not conflict, or is about
+   someone who is not a member, triggers nothing; nor does a header written
+   before the receiver's human last re-synced that member (it is part of the
+   history they accepted). A `heads` entry beyond the receiver's `gseq`
+   asks the sender for a group resend.
+4. **State chain.** Two states with the same epoch, from one admin or two,
+   mean the admin forked membership (restored a backup, or lies), or two
+   admins changed the group at once (§7.8.1). Members freeze membership at
+   the last state they hold and tell their humans; group messages under it
+   continue.
+
+A member that restored old state (its own rollback) reuses `gseq` values;
+the others detect it at layer 2 or 3, and the human re-sync of §6.4
+applies to its group chain too: after it, the next board message newer
+than everything accepted from that member starts its chain again, and
+replays of the old one stay duplicates.
+
+#### 7.8.7 Abuse
+
+- **A flooding member.** `member_rate` (from the state) and the receiver's
+  own ceiling (the reference: 600 an hour, whatever the state says) apply
+  per member to its group messages. Over them, the receiver mutes that
+  member in the group (stops taking its group messages), tells its human,
+  and sends each admin an `rdv/group-report` naming the member and the
+  counts (`{"type": "rdv/group-report", "group": "<uuid>", "member":
+  "rdv1:…", "count": 61, "limit": "60/hour"}`, over the pairwise channel,
+  which authenticates it). It does not leave or revoke anything else; only
+  its human lifts the mute. A report removes no one: it is shown to the
+  admin's human.
+- **A malicious admin** can remove members, refuse to add them, and add
+  members; it cannot read or forge others' messages (they are sealed and
+  signed per pair), change anyone's group-scoped grant, or add a member to
+  my audience without my approval under `ask`. A forked or equivocating
+  state is detected (§7.8.6). Any member can leave at any time, and its
+  human can block the admin's key as usual.
+- **A malicious member** cannot freeze the group, refuse a member at
+  others, or fill their memory: its states are ignored (§7.8.1), its
+  `heads` claims only make others send it evidence it may already hold,
+  and the messages it may queue are bounded per sender.
+- **Invite spam** cannot come from strangers (§7.8.2), and is bounded per
+  admin.
+- **Bounds** (reference): group control payloads (evidence, leaves,
+  reports), 60 an hour per peer; group resends, 10 an hour per peer.
 
 ---
 
@@ -3415,6 +3573,10 @@ form or a confirm phrase for "invite", "join" and "approve".
 | Two member lists for one step: an admin restored a backup or lies, or two admins race (one grinding its state's hash to win) | Any two states at one epoch are a fork, never resolved automatically: members freeze membership and tell their humans, who re-sync after checking (§7.8.1) |
 | An assistant invites someone into the user's group on its own | Inviting needs the admin's human, bound to the group, the invitee and what the invite says (§7.8.2) |
 | Group invite spam | Only contacts invite; at most 2 pending per admin and 16 in all; joining needs the human every time (§7.8.2) |
+| A member tells John "done" and Dana "not started", leaves someone out, or restored a backup | Per-sender group chain and `heads`: a gap asks for a group resend and is shown to the human; two headers it signed at one `gseq` are proof, exchanged as headers only (no body), and its group messages are refused until each human re-syncs it (§7.8.6) |
+| A member lies in its `heads`, forges evidence, or sends from outside the group | A `heads` claim only makes the receiver send that member its own signed copy; evidence counts only with two valid signatures by the accused; a non-member's group payloads change no state (§7.8.3, §7.8.6) |
+| A member floods the group | `member_rate` and the receiver's own ceiling: muted, the human told, the admins sent a report; nothing is removed on a report (§7.8.7) |
+| An assistant leaves a group or removes a member because a peer's text asks it to | Leaving and removing are the human's commands; group messages are quarantined peer text (§5.6, §7.8.5) |
 | Stranger answers a topic probe | Grant recorded as `claimed`; grantor fingerprint shown before trust (§5.3) |
 | Relay logs metadata (who talks to whom) | Envelope minimizes metadata; fallback to human channels if metadata exposure is unacceptable |
 | Spam agents (Sybil) | Consent-first inbound; key-based block; tier-based rate caps; §10 reputation |
@@ -3469,7 +3631,8 @@ form or a confirm phrase for "invite", "join" and "approve".
   carry their own caps (§5.2.1–5.2.2); violations revoke the grant
   automatically. Per-capability limits (`scope.invoke`, §5.3) reject only
   the task that goes over them, and revoke the grant only for gross abuse
-  (**spec change**, issue #28).
+  (**spec change**, issue #28). In a group, `member_rate` and the
+  receiver's own ceiling mute a flooding member, never revoking (§7.8.7).
 - **Optional reputation:** a contact may attach verifiable vouches ("this key
   is also trusted by N of your existing contacts") — web-of-trust signals,
   never a global score.
@@ -3535,7 +3698,9 @@ form or a confirm phrase for "invite", "join" and "approve".
     once per member, so relays see the membership graph (every pair) and
     the burst that groups the copies, and there is no forward secrecy, as
     for pairwise traffic. The cap of 16 bounds the cost; groups v2 (MLS
-    with a single committer) is future work.
+    with a single committer) is future work. Evidence of equivocation
+    (§7.8.6) shows another member the accused's headers: their `heads`,
+    `ts` and the hash of a body, never the body itself.
 
 ---
 
@@ -3580,7 +3745,7 @@ Proposed MCP tool API (v0.3):
 | `rdv_send` | send an envelope (task, message, proposal) |
 | `rdv_inbox` | read events after a cursor (an event log; nothing is acknowledged to the peer) |
 | `rdv_negotiate` | A2A task exchange lifecycle |
-| `rdv_group` | groups (§7.8): create one, list groups and invites; inviting a contact, joining and approving a newcomer only with the human's own approval (§5.5) |
+| `rdv_group` | groups (§7.8): create one, list groups and invites; inviting a contact, joining and approving a newcomer only with the human's own approval (§5.5). Group messages, equivocation, gaps, mutes, reports and members leaving arrive as `rdv_inbox` events, a message's body as untrusted peer text |
 | `rdv_task` | general tasks (§7.6): request one from a contact, list and show them, answer `input-required`, cancel; for a contact's task, approve its start and release each result, both only with the human's own approval (§5.5) |
 
 `rdv_grant` MUST NOT succeed on the model's say-so (§5.5), nor may

@@ -92,6 +92,7 @@ export {
 } from './negotiate.js';
 export { candidateView, clean, contactView, jsonLine, overflowView, requestView } from './output.js';
 export {
+  equivocationText as groupEquivocationText,
   changeText as groupChangeText,
   changeView as groupChangeView,
   describeInvite,

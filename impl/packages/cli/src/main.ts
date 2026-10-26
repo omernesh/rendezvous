@@ -223,10 +223,30 @@ const COMMANDS: Record<string, Command> = {
     run: grp.groupApprove,
   },
   'group resync': {
-    usage: 'rdv group resync <group-id>',
-    summary: "Thaw a group's membership after a fork was reported (check with the admin first)",
+    usage: 'rdv group resync <group-id> [--member <agent-id>]',
+    summary: "Thaw a group's membership after a fork was reported (check with the admin first); with --member, take a refused or muted member's group messages again (check with them first)",
     args: 1,
+    options: { member: { type: 'string' } },
     run: grp.groupResync,
+  },
+  'group post': {
+    usage: 'rdv group post <group-id> --json \'{"type":"a2a/message",…}\' [--to <agent-id>]...',
+    summary: 'Say something to a group: to every member you send to, or with --to privately to those members (--json carries the body and also selects JSON output)',
+    args: 1,
+    options: { json: { type: 'string' }, payload: { type: 'string' }, to: { type: 'string', multiple: true } },
+    run: grp.groupPost,
+  },
+  'group leave': {
+    usage: 'rdv group leave <group-id>',
+    summary: 'Leave a group: every member is told and nothing more goes to them (the last admin hands the role on first)',
+    args: 1,
+    run: grp.groupLeave,
+  },
+  'group remove': {
+    usage: 'rdv group remove <group-id> <agent-id|label>',
+    summary: 'As admin, remove a member: the member list without them goes to everyone, them included',
+    args: 2,
+    run: grp.groupRemove,
   },
   send: {
     usage: 'rdv send <agent-id> --json \'{"type":"a2a/message","text":"hi"}\'   (or --payload \'…\')',

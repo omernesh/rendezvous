@@ -9,6 +9,8 @@ import {
   bytesToHex,
   canonicalize,
   createCard,
+  createGroupLeave,
+  createGroupMsg,
   createGroupState,
   docHash,
   dtopic,
@@ -29,6 +31,8 @@ import {
   verifyGrant,
   verifyGroupInvite,
   verifyGroupJoin,
+  verifyGroupLeave,
+  verifyGroupMsgPayload,
   verifyGroupState,
   verifyReverseGrant,
   successorProblem,
@@ -157,6 +161,23 @@ function deterministic() {
     name: 'Microsite launch',
     ts: now.toISOString(),
   });
+  // Group messages (SPEC §7.8.3, issue #78): Omer posts the first board message (gseq 1), John answers
+  // with his own gseq 1, whose heads name Omer's; the signed header commits to the body by hash. Then John leaves.
+  const omerBody = { type: 'a2a/message', message: { role: 'user', parts: [{ kind: 'text', text: 'Draft the landing-page copy?' }], messageId: '00000000-0000-4000-8000-000000000020', contextId: groupId } };
+  const omerMsg = createGroupMsg(omer, { group: groupId, epoch: 1, state: docHash(state1), to: '*', gseq: 1, gprev: null, body: omerBody, ts: now.toISOString() });
+  const johnBody = { type: 'a2a/message', message: { role: 'user', parts: [{ kind: 'text', text: 'On it.' }], messageId: '00000000-0000-4000-8000-000000000021', contextId: groupId } };
+  const johnMsg = createGroupMsg(john, {
+    group: groupId,
+    epoch: 1,
+    state: docHash(state1),
+    to: '*',
+    gseq: 1,
+    gprev: null,
+    heads: { [omer.id]: [1, docHash(omerMsg).slice(0, 16)] },
+    body: johnBody,
+    ts: now.toISOString(),
+  });
+  const leave = createGroupLeave(john, { group: groupId, state: state1 }, now);
   return {
     keys: [omer, john].map((k) => ({
       seed_hex: bytesToHex(k.secretKey),
@@ -181,6 +202,9 @@ function deterministic() {
     group_invite: { canonical: canonicalize(invite), doc: invite },
     group_join: { canonical: canonicalize(join), doc: join },
     group_state_1: { canonical: canonicalize(state1), hash: docHash(state1), doc: state1 },
+    group_msg_omer: { canonical: canonicalize(omerMsg), hash: docHash(omerMsg), body_hash: docHash(omerBody), payload: { type: 'rdv/group-msg', msg: omerMsg, body: omerBody } },
+    group_msg_john: { canonical: canonicalize(johnMsg), hash: docHash(johnMsg), body_hash: docHash(johnBody), payload: { type: 'rdv/group-msg', msg: johnMsg, body: johnBody } },
+    group_leave: { canonical: canonicalize(leave), doc: leave },
   };
 }
 
@@ -223,6 +247,16 @@ describe('test vectors', () => {
     expect(j.doc.state).toBe(s0.hash);
     expect(s1.doc.prev).toBe(s0.hash);
     expect(s1.doc.members[1].card).toBe(docHash(j.doc.card));
+  });
+
+  it('verifies the group messages, their heads and the leave (issue #78)', () => {
+    const { group_state_1: s1, group_msg_omer: o, group_msg_john: j, group_leave: l } = saved;
+    const [vo, vj] = [verifyGroupMsgPayload(o.payload, now), verifyGroupMsgPayload(j.payload, now)];
+    expect([vo.ok, vj.ok, verifyGroupLeave(l.doc, now).ok]).toEqual([true, true, true]);
+    expect(o.payload.msg.state).toBe(s1.hash);
+    expect(o.payload.msg.body_hash).toBe(o.body_hash);
+    expect(j.payload.msg.heads[o.payload.msg.from]).toEqual([1, o.hash.slice(0, 16)]);
+    expect(l.doc.state).toBe(s1.hash);
   });
 
   it('opens the sample envelope', () => {

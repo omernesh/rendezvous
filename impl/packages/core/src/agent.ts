@@ -58,6 +58,31 @@ import {
   type NewcomerPolicy,
   type ReceivedInvite,
 } from './group.js';
+import {
+  GROUP_LEAVE_TYPE,
+  GROUP_MSG_TYPE,
+  GROUP_MSG_TYPES,
+  GROUP_PROOF_TYPE,
+  GROUP_REPORT_TYPE,
+  type GroupBody,
+  type GroupDelivery,
+  type GroupEffects,
+  type GroupEquivocation,
+  type GroupGap,
+  type GroupMsg,
+  type GroupMute,
+  type GroupReport,
+  createGroupLeave,
+  groupResend,
+  leaveRecipients,
+  prepareGroupMessage,
+  receiveGroupLeave,
+  receiveGroupMessage,
+  receiveGroupProof,
+  receiveGroupReport,
+  resyncMember,
+  takeWaiting,
+} from './groupmsg.js';
 import { type AgentKey, generateKey, keyFromSecret } from './identity.js';
 import type { MirrorOptions, MirrorReport, Transport } from './transport/transport.js';
 
@@ -79,7 +104,7 @@ export const REVERSE_GRANT_LIMIT = { count: 10, windowMs: 3_600_000 };
 /** Card updates we apply per contact (each one rewrites the contact; NOTES 82). */
 export const CARD_UPDATE_LIMIT = { count: 20, windowMs: 3_600_000 };
 export const CARD_UPDATE_TYPE = 'rdv/card-update';
-const CONTROL_TYPES = new Set(['rdv/contact-request', 'rdv/contact-grant', 'rdv/revoke', 'rdv/resend', CARD_UPDATE_TYPE, ...GROUP_TYPES]);
+const CONTROL_TYPES = new Set(['rdv/contact-request', 'rdv/contact-grant', 'rdv/revoke', 'rdv/resend', CARD_UPDATE_TYPE, ...GROUP_TYPES, ...GROUP_MSG_TYPES]);
 
 /** What a contact's new card changed (NOTES 82): relays and capabilities, as lists. */
 export interface CardChange {
@@ -137,6 +162,13 @@ export interface GroupSendFailure {
   error: string;
 }
 
+/** What `sendGroup` did: the signed header, and who got it. */
+export interface GroupSendReport {
+  msg: GroupMsg;
+  sent: string[];
+  failed: GroupSendFailure[];
+}
+
 export interface AgentEvents {
   request: [PendingRequest];
   /** A grant answering one of our topic probes, waiting for our human (confirmCandidate / rejectCandidate). */
@@ -170,6 +202,18 @@ export interface AgentEvents {
   'group-state': [GroupChange];
   /** Two states at one epoch from one admin (§7.8.6): the group's membership is frozen until our human re-syncs it. */
   'group-fork': [GroupRecord];
+  /** A member's group message (§7.8.3), in its chain's order. The body is that member's words (peer text). */
+  'group-message': [GroupDelivery];
+  /** A member signed two conflicting board messages (§7.8.6): its group messages are refused until our human re-syncs it. */
+  'group-equivocation': [GroupEquivocation];
+  /** A member's board messages never came (a group resend did not fill the gap): it may have left us out. The chain moved on. */
+  'group-gap': [GroupGap];
+  /** A member went over member_rate or our ceiling (§7.8.7): muted until our human re-syncs it; the admins were told. */
+  'group-mute': [GroupMute];
+  /** As admin: a member reported muting another (§7.8.7). Nothing was removed. */
+  'group-report': [GroupReport];
+  /** A member left a group (rdv/group-leave, §7.8.5): nothing more goes to it. */
+  'group-left': [{ group: string; member: string }];
   dropped: [reason: string, detail?: unknown];
   error: [Error];
 }
@@ -663,6 +707,113 @@ export class Agent extends EventEmitter<AgentEvents> {
     return this.groups.resync(groupId);
   }
 
+  /**
+   * Say something to a group (§7.8.3): signed once, sealed to each member we
+   * send to over its pairwise channel. Board-visible by default (every member
+   * our human approved, or our policy did; consumes our group chain); with
+   * `to`, private to those members. One failed send does not stop the rest;
+   * its envelope stays in the outbox for a resend.
+   */
+  async sendGroup(groupId: string, body: GroupBody, opts: { to?: string[] } = {}): Promise<GroupSendReport> {
+    const { payload, recipients } = prepareGroupMessage(this.groups, this.key, groupId, body, { to: opts.to, isBlocked: (p) => this.book.isBlocked(p) });
+    const report: GroupSendReport = { msg: payload.msg, sent: [], failed: [] };
+    for (const peer of recipients) {
+      try {
+        await this.deliverTo(peer, payload);
+        report.sent.push(peer);
+      } catch (err) {
+        report.failed.push({ peer, error: err instanceof Error ? err.message : String(err) });
+      }
+    }
+    return report;
+  }
+
+  /**
+   * Our human leaves a group (§7.8.5): a signed rdv/group-leave to every other
+   * member, then nothing more goes to them, and the channels kept only for
+   * the group are dropped. The last admin hands the role on first.
+   */
+  async leaveGroup(groupId: string): Promise<GroupRecord> {
+    const problem = this.groups.leaveProblem(groupId, this.id);
+    if (problem) throw new Error(problem);
+    const r = this.groups.group(groupId)!;
+    const peers = r.status === 'active' ? leaveRecipients(r, this.id) : [];
+    if (r.status === 'active') {
+      const leave = createGroupLeave(this.key, r);
+      for (const peer of peers) {
+        if (this.book.isBlocked(peer)) continue;
+        try {
+          await this.deliverTo(peer, leave);
+        } catch (err) {
+          this.drop('group leave send failed', { peer, group: groupId, error: err instanceof Error ? err.message : String(err) });
+        }
+      }
+    } else if (r.via) peers.push(r.via);
+    const out = this.groups.markLeft(groupId);
+    this.dropGroupChannels(peers);
+    return out;
+  }
+
+  /**
+   * As admin, our human removes a member (§7.8.5): the next state without it,
+   * sent to every member and to it. Nothing is rotated (there is no group
+   * key); its channel is dropped unless we are contacts or share a group.
+   */
+  async removeGroupMember(groupId: string, member: string): Promise<GroupChange> {
+    const removedCard = this.book.contact(member)?.card ?? this.groups.memberCard(member);
+    const change = this.groups.remove(this.key, groupId, member, this.groupCtx());
+    this.emit('group-state', change);
+    await this.fanOutState(change.record, change.added, change.removed.map((id) => ({ id, card: id === member ? removedCard : undefined })));
+    this.dropGroupChannels(change.removed);
+    return change;
+  }
+
+  /** Our human checked with a member's human after it equivocated or was muted: its group messages are taken again (§7.8.6). */
+  resyncGroupMember(groupId: string, member: string): void {
+    resyncMember(this.groups, groupId, member);
+  }
+
+  /**
+   * Forget the pairwise channels of former co-members (§7.8.5): unless they
+   * are contacts, pending, or share another group with us, nothing of the
+   * channel stays (even though we wrote to them).
+   */
+  private dropGroupChannels(peers: string[]): void {
+    const kept = this.keptPeers();
+    for (const peer of peers) {
+      if (peer === this.id || kept.has(peer)) continue;
+      this.channels.forget(peer);
+      delete this.outbox[peer];
+      delete this.buffer[peer];
+    }
+  }
+
+  /** Emit a group item's effects and perform its sends (resend requests, evidence, reports). */
+  private async applyGroupEffects(fx: GroupEffects, from: string): Promise<void> {
+    for (const e of fx.equivocations) this.emit('group-equivocation', e);
+    for (const g of fx.gaps) this.emit('group-gap', g);
+    for (const m of fx.mutes) this.emit('group-mute', m);
+    for (const d of fx.delivered) this.emit('group-message', d);
+    for (const s of fx.send) {
+      if (this.book.isBlocked(s.to)) continue;
+      try {
+        await this.deliverTo(s.to, s.payload);
+      } catch (err) {
+        this.drop('group send failed', { peer: s.to, type: s.payload.type, error: err instanceof Error ? err.message : String(err) });
+      }
+    }
+    if (fx.drop && !fx.drop.endsWith('duplicate')) this.drop(fx.drop, { peer: from });
+  }
+
+  /** After a state applied: the channels of members it removed (all of them if it removed us), and messages that waited for its epoch. */
+  private async afterGroupChange(change: GroupChange): Promise<void> {
+    if (change.left) this.dropGroupChannels([...memberIds(change.record.prevState ?? change.record.state), ...change.removed]);
+    else if (change.removed.length) this.dropGroupChannels(change.removed);
+    for (const w of takeWaiting(this.groups, change.record.group)) {
+      await this.applyGroupEffects(receiveGroupMessage(this.groups, w.payload, w.from, this.groupCtx()), w.from);
+    }
+  }
+
   /** Send to a contact, or to a group co-member on the card its join carries (pinned by the state). */
   private async deliverTo(peer: string, payload: { type: string }): Promise<Envelope> {
     const c = this.book.contact(peer);
@@ -677,9 +828,20 @@ export class Agent extends EventEmitter<AgentEvents> {
    * everyone else's joins to the newcomers (§7.8.2). One failed send does not
    * stop the rest; its envelope stays in the outbox for a resend.
    */
-  private async fanOutState(r: GroupRecord, added: string[]): Promise<void> {
+  private async fanOutState(r: GroupRecord, added: string[], removed: Array<{ id: string; card?: AddressCard }> = []): Promise<void> {
     const state = r.state;
     const joinsOf = (ids: string[]): GroupJoin[] => ids.flatMap((id) => (Object.hasOwn(r.joins, id) ? [r.joins[id]] : []));
+    // The removed get the state that removes them (§7.8.5), on the card we held for them.
+    for (const { id, card } of removed) {
+      if (id === this.id || this.book.isBlocked(id)) continue;
+      const to = this.book.contact(id)?.card ?? card;
+      if (!to) continue;
+      try {
+        await this.deliver(id, state, relaysOf(to));
+      } catch (err) {
+        this.drop('group fan-out send failed', { peer: id, group: state.group, error: err instanceof Error ? err.message : String(err) });
+      }
+    }
     for (const peer of memberIds(state)) {
       if (peer === this.id || this.book.isBlocked(peer)) continue;
       try {
@@ -793,10 +955,11 @@ export class Agent extends EventEmitter<AgentEvents> {
     if (order.kind === 'fork' || order.kind === 'rollback' || order.kind === 'refused') return this.dropForked(env, order);
     if (order.kind === 'gap') {
       this.bufferEnvelope(env);
-      const c = this.book.contact(env.from);
-      if (c) {
+      // A contact, or a co-member (group traffic between non-contacts rides this channel too, §7.8.2).
+      const card = this.book.contact(env.from)?.card ?? (this.groups.admittedPeers(this.id).has(env.from) ? this.groups.memberCard(env.from) : undefined);
+      if (card) {
         const resend: Payload = { type: 'rdv/resend', from_seq: order.missingFrom, to_seq: order.missingTo };
-        await this.deliver(c.peer, resend, relaysOf(c.card));
+        await this.deliver(env.from, resend, relaysOf(card));
       }
       return;
     }
@@ -963,6 +1126,7 @@ export class Agent extends EventEmitter<AgentEvents> {
         const out = this.groups.receiveState(payload, from, this.groupCtx());
         if (out.kind === 'applied') {
           for (const change of [out.change, ...out.also]) this.emit('group-state', change);
+          for (const change of [out.change, ...out.also]) await this.afterGroupChange(change);
           return;
         }
         if (out.kind === 'fork') {
@@ -979,14 +1143,58 @@ export class Agent extends EventEmitter<AgentEvents> {
         if ('rejected' in out) return this.drop(`group members refused: ${out.rejected}`, { peer: from });
         return;
       }
+      // Group messages (§7.8.3, §7.8.5–§7.8.7). From a member that is not a contact, only these and the
+      // group control payloads above are taken, for groups both are in: nothing pairwise (§7.8.2).
+      case GROUP_MSG_TYPE: {
+        if (!this.groups.admittedPeers(this.id).has(from)) return this.drop('group message from a non-member', from);
+        return this.applyGroupEffects(receiveGroupMessage(this.groups, payload, from, this.groupCtx()), from);
+      }
+      case GROUP_PROOF_TYPE: {
+        if (!this.groups.admittedPeers(this.id).has(from)) return this.drop('group proof from a non-member', from);
+        if (!this.book.admitControl('group', from, GROUP_CONTROL_LIMIT)) return this.drop('group payload rate-limited', { peer: from });
+        return this.applyGroupEffects(receiveGroupProof(this.groups, payload, from, this.groupCtx()), from);
+      }
+      case GROUP_LEAVE_TYPE: {
+        if (!this.groups.admittedPeers(this.id).has(from)) return this.drop('group leave from a non-member', from);
+        if (!this.book.admitControl('group', from, GROUP_CONTROL_LIMIT)) return this.drop('group payload rate-limited', { peer: from });
+        // The leaver's card, before its join goes with the state that removes it.
+        const card = this.book.contact(from)?.card ?? this.groups.memberCard(from);
+        const out = receiveGroupLeave(this.groups, this.key, payload, from, this.groupCtx());
+        if (!out.ok) return this.drop(out.reason, { peer: from });
+        this.emit('group-left', { group: out.group, member: out.member });
+        if (out.change) {
+          this.emit('group-state', out.change);
+          await this.fanOutState(out.change.record, out.change.added, out.change.removed.map((id) => ({ id, card: id === from ? card : undefined })));
+        }
+        this.dropGroupChannels([from]);
+        return;
+      }
+      case GROUP_REPORT_TYPE: {
+        if (!this.groups.admittedPeers(this.id).has(from)) return this.drop('group report from a non-member', from);
+        if (!this.book.admitControl('group', from, GROUP_CONTROL_LIMIT)) return this.drop('group payload rate-limited', { peer: from });
+        const out = receiveGroupReport(this.groups, payload, from, this.groupCtx());
+        if (!out.ok) return this.drop(out.reason, { peer: from });
+        this.emit('group-report', out.report);
+        return;
+      }
       case 'rdv/resend': {
         const c = this.book.contact(from);
-        if (!c) return;
+        const member = this.groups.admittedPeers(this.id).has(from);
+        if (!c && !member) return;
         if (!this.book.admitControl('resend', from, RESEND_LIMIT)) return this.drop('resend rate-limited', from);
+        if (payload.group !== undefined) {
+          // A group resend (§7.8.6 layer 2): our board messages in the range, re-sealed to this member only.
+          const got = groupResend(this.groups, payload.group, from, payload.from_gseq, payload.to_gseq, this.id);
+          if ('rejected' in got) return this.drop(`group resend refused: ${got.rejected}`, { peer: from });
+          for (const p of got) await this.deliverTo(from, p);
+          return;
+        }
+        const card = c?.card ?? this.groups.memberCard(from);
+        if (!card) return;
         const lo = Number(payload.from_seq);
         const hi = Number(payload.to_seq);
         for (const e of this.outbox[from] ?? []) {
-          if (e.seq >= lo && e.seq <= hi) await this.transport.sendEnvelope(e, relaysOf(c.card));
+          if (e.seq >= lo && e.seq <= hi) await this.transport.sendEnvelope(e, relaysOf(card));
         }
         return;
       }
