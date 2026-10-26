@@ -1,0 +1,80 @@
+# Response headers for the static host (Cloudflare Pages reads this file; it is not served).
+# Keep in step with impl/deploy/site/nginx.conf and security-headers.conf (site.test.ts checks the CSP).
+# Pages merges every matching rule, so a narrower rule removes ("! Name") what it replaces.
+
+/*
+  Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; media-src 'self'; font-src 'self'; manifest-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: no-referrer
+  X-Frame-Options: DENY
+  Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()
+  Cross-Origin-Opener-Policy: same-origin
+  Strict-Transport-Security: max-age=31536000
+  Cache-Control: no-cache
+  ! Access-Control-Allow-Origin
+
+# The installers are read by curl/irm and by people: plain text, never cached for long.
+/install.sh
+  ! Content-Type
+  Content-Type: text/plain; charset=utf-8
+
+/install.ps1
+  ! Content-Type
+  Content-Type: text/plain; charset=utf-8
+
+# llms.txt, robots.txt and the markdown twins of the docs: text, never rendered as a page.
+/*.txt
+  ! Content-Type
+  ! Cache-Control
+  Content-Type: text/plain; charset=utf-8
+  Cache-Control: public, max-age=3600
+
+/*.md
+  ! Content-Type
+  ! Cache-Control
+  Content-Type: text/markdown; charset=utf-8
+  Cache-Control: public, max-age=3600
+
+# Assets are not fingerprinted, so keep caching short.
+/*.css
+  ! Cache-Control
+  Cache-Control: public, max-age=3600
+
+/*.js
+  ! Content-Type
+  ! Cache-Control
+  Content-Type: application/javascript; charset=utf-8
+  Cache-Control: public, max-age=3600
+
+/*.woff2
+  ! Cache-Control
+  Cache-Control: public, max-age=3600
+
+/*.png
+  ! Cache-Control
+  Cache-Control: public, max-age=3600
+
+/*.jpg
+  ! Cache-Control
+  Cache-Control: public, max-age=3600
+
+/*.webm
+  ! Cache-Control
+  Cache-Control: public, max-age=3600
+
+/*.mp4
+  ! Cache-Control
+  Cache-Control: public, max-age=3600
+
+# The logo SVGs switch colours for dark mode with an internal <style>, which the page CSP would block.
+/*.svg
+  ! Content-Security-Policy
+  ! X-Frame-Options
+  ! Permissions-Policy
+  ! Cross-Origin-Opener-Policy
+  ! Strict-Transport-Security
+  ! Cache-Control
+  ! Content-Type
+  Content-Type: image/svg+xml; charset=utf-8
+  Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'
+  Cache-Control: public, max-age=3600

@@ -25,4 +25,9 @@ curl -s  http://127.0.0.1:7778/install.sh | head -3      # served as text/plain
   lines in any location that sets its own.
 
 The site is a bind mount, so `git pull` updates it live; nginx needs no restart.
+
+The public site is served from Cloudflare Pages, uploaded from `site/` at `main` (dotfiles left out).
+Pages reads [`site/_headers`](../../../site/_headers) for the same headers, and `site/404.html`
+keeps unknown paths a 404 instead of the home page. Change a header here and there together;
+`site.test.ts` checks that the two CSPs match and that the installers stay `text/plain`.
 The installers clone `https://github.com/omernesh/rendezvous`.

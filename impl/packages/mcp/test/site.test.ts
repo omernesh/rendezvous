@@ -139,6 +139,15 @@ describe('site CSP', () => {
     expect(csp).not.toMatch(/unsafe-inline|unsafe-eval/);
   });
 
+  it('site/_headers (the static host) sends the same CSP and serves the installers as text', () => {
+    const csp = headers.match(/Content-Security-Policy "([^"]+)"/)?.[1];
+    const pages = text(join(SITE, '_headers'));
+    expect(pages.match(/^\/\*\n(?: {2}.*\n)*? {2}Content-Security-Policy: (.+)$/m)?.[1]).toBe(csp);
+    for (const f of ['install\\.sh', 'install\\.ps1']) {
+      expect(pages, f).toMatch(new RegExp(`^/${f}\\n(?: {2}.*\\n)*? {2}Content-Type: text/plain; charset=utf-8$`, 'm'));
+    }
+  });
+
   it.each(PAGES)('%s has no inline script, style or event handler', (page) => {
     const html = text(join(SITE, page));
     for (const m of html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi)) {
