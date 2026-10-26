@@ -58,6 +58,12 @@
       s.appendChild(lane);
       this.lane = lane;
     }
+    if (d.layout === 'trio') {
+      // Three agents in one group: the relay is a strip under the panes; a sealed copy goes to each other member.
+      var strip = el('div', 'lane lane-trio', '<div class="plabel"></div><div class="line"></div><div class="relay"><div class="disc">' + RELAY + '</div>relay sees ciphertext</div>');
+      s.appendChild(strip);
+      this.lane = strip;
+    }
     this.cursor = el('div', null, CURSOR).firstChild;
     this.cursor.style.display = 'none';
     s.appendChild(this.cursor);
@@ -120,7 +126,7 @@
 
     // header lock badge
     var badge = pane.bar.querySelector('.lock');
-    if (lockOn && !badge) pane.bar.appendChild(el('span', 'lock', LOCK + 'end-to-end encrypted'));
+    if (lockOn && !badge) pane.bar.appendChild(el('span', 'lock', LOCK + '<span class="lt">end-to-end encrypted</span><span class="ls">E2E</span>'));
 
     // composer
     pane.field.innerHTML = composer == null
@@ -229,6 +235,7 @@
   // ---- relay lane -------------------------------------------------------------
   Scene.prototype.renderLane = function (t) {
     var lane = this.lane;
+    if (this.def.layout === 'trio') { this.renderTrioLane(t); return; }
     Array.prototype.forEach.call(lane.querySelectorAll('.packet,.plabel'), function (n) { n.remove(); });
     this.events.forEach(function (e) {
       if (e.p !== 'lane' || e.t > t) return;
@@ -245,6 +252,38 @@
       lb.style.opacity = op.toFixed(3);
       lane.appendChild(lb);
     });
+  };
+
+  // The group lane: one signed message leaves the sender sealed once per recipient (SPEC 7.8.3), so two chips
+  // go to the relay and on to the two other members. Column centres are the panes' centres in lane pixels.
+  var COLX = { a: 100, b: 360, c: 620 }; // relative to the strip, which starts 20 px in from the stage edge
+  Scene.prototype.renderTrioLane = function (t) {
+    var lane = this.lane;
+    Array.prototype.forEach.call(lane.querySelectorAll('.packet'), function (n) { n.remove(); });
+    var label = lane.querySelector('.plabel');
+    var text = '', lop = 0;
+    this.events.forEach(function (e) {
+      if (e.p !== 'lane' || e.t > t) return;
+      var age = t - e.t, D = 1.8;
+      if (age > D) return;
+      var f = e.from, others = e.to ? [e.to] : ['a', 'b', 'c'].filter(function (k) { return k !== f; });
+      var spread = others.length > 1 ? 7 : 0; // two chips side by side when the message is sealed twice
+      var k1 = easeInOut(clamp(age / 0.8)), k2 = easeInOut(clamp((age - 0.8) / 0.8));
+      var op = Math.min(clamp(age / 0.2), clamp((D - age) / 0.25));
+      var mid = 360;
+      others.forEach(function (o, i) {
+        var off = i ? spread : -spread;
+        var x = age < 0.8 ? COLX[f] + (mid - COLX[f]) * k1 + off * k1 : mid + off + (COLX[o] - mid - off) * k2;
+        var pk = el('div', 'packet blue');
+        pk.style.left = (x - 11).toFixed(2) + 'px';
+        pk.style.opacity = op.toFixed(3);
+        lane.appendChild(pk);
+      });
+      text = e.label;
+      lop = op;
+    });
+    label.innerHTML = text;
+    label.style.opacity = lop.toFixed(3);
   };
 
   Scene.prototype.seek = function (t) {
