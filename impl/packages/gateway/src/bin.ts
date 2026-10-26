@@ -9,6 +9,7 @@
 //   rdv-gateway pin unlock                   clear the wait after wrong PINs
 //   rdv-gateway token create --name <n> --scope read,send[,contact:request,negotiate]
 //   rdv-gateway token list | token revoke <id>
+//   rdv-gateway oauth list | oauth revoke <client-id|grant-id>   OAuth clients the owner connected on the page
 //
 // Every command here is the owner's, in their own terminal: an assistant
 // never runs them. Home resolution is the same as rdv and rdv-mcp.
@@ -16,6 +17,7 @@ import { parseArgs } from 'node:util';
 import { Home } from '@rendezvous/cli/lib';
 import { DEFAULT_PORT, Gateway } from './gateway.js';
 import { SCOPE_TEXT, SCOPES } from './scopes.js';
+import { OAuthStore, OAuthStoreError } from './oauth-store.js';
 import { GatewayStore, StoreError } from './store.js';
 
 const USAGE = `usage:
@@ -26,6 +28,8 @@ const USAGE = `usage:
   rdv-gateway token create --name <name> --scope <scope,…> [--home <dir>]
   rdv-gateway token list [--home <dir>]
   rdv-gateway token revoke <id> [--home <dir>]
+  rdv-gateway oauth list [--home <dir>]      OAuth clients (ChatGPT, claude.ai, …) and the grants you approved
+  rdv-gateway oauth revoke <cli_…|grt_…> [--home <dir>]   a client and all its grants, or one grant
 Scopes (none of them can approve anything; approvals happen only on the PIN-locked page):
 ${SCOPES.map((s) => `  ${s.padEnd(16)} ${SCOPE_TEXT[s]}`).join('\n')}
 `;
@@ -136,6 +140,26 @@ async function main(): Promise<void> {
     process.stderr.write((await store.revokeToken(arg!)) ? `revoked ${arg}\n` : `no token ${arg}\n`);
     return;
   }
+  if (cmd === 'oauth' && sub === 'list') {
+    const o = new OAuthStore(home).list();
+    for (const c of o.clients) {
+      const grants = o.grants.filter((g) => g.clientId === c.id);
+      const hosts = c.redirectUris.map((u) => new URL(u).host).join(',');
+      process.stdout.write(`${c.id}  ${JSON.stringify(c.name)}  returns to ${hosts}  registered ${c.created}${grants.length ? '' : c.approved ? '  (no grant left)' : '  (never approved)'}\n`);
+      for (const g of grants) process.stdout.write(`  ${g.id}  ${g.scopes.join(',')}  since ${g.created}  last refresh ${new Date(g.lastUsed).toISOString()}\n`);
+    }
+    return;
+  }
+  if (cmd === 'oauth' && sub === 'revoke') {
+    if (!arg || !/^(cli|grt)_/.test(arg)) die('oauth revoke needs a client id (cli_…) or a grant id (grt_…) from rdv-gateway oauth list', 2);
+    const r = await new OAuthStore(home).revoke(arg!);
+    process.stderr.write(
+      r
+        ? `revoked ${r.client ? `client ${r.client.id} (${JSON.stringify(r.client.name)}) and ` : ''}${r.grants.length} grant(s); a serving gateway refuses their tokens at once\n`
+        : `no client or grant ${arg}\n`,
+    );
+    return;
+  }
   if (cmd === 'serve') {
     const port = values.port === undefined ? DEFAULT_PORT : Number(values.port);
     if (!Number.isInteger(port) || port < 0 || port > 65535) die('--port is a port number', 2);
@@ -152,7 +176,9 @@ async function main(): Promise<void> {
       tz: values.tz ?? process.env.RDV_TZ,
     });
     await gw.start();
-    if (store.listTokens().length === 0) process.stderr.write('[rdv-gateway] no API tokens yet: make one with "rdv-gateway token create --name … --scope read,send"\n');
+    if (store.listTokens().length === 0 && !values['public-url'] && !process.env.RDV_GATEWAY_PUBLIC_URL) {
+      process.stderr.write('[rdv-gateway] no API tokens yet: make one with "rdv-gateway token create --name … --scope read,send" (OAuth clients connect through --public-url)\n');
+    }
     const shutdown = async () => {
       await gw.close().catch(() => {});
       process.exit(0);
@@ -164,4 +190,4 @@ async function main(): Promise<void> {
   die(`unknown command\n${USAGE}`, 2);
 }
 
-main().catch((err) => die(err instanceof StoreError ? err.message : (err as Error).message));
+main().catch((err) => die(err instanceof StoreError || err instanceof OAuthStoreError ? err.message : (err as Error).message));

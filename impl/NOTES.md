@@ -3282,6 +3282,143 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       `rdv_grant` widen, narrow, grant back, same terms, nothing left (the
       event), with a task still auto-started after the widen.
 
+## rdv-gateway OAuth 2.1 (v0.7.0, issue #12, slice 2)
+
+93. **The gateway is its own OAuth 2.1 authorization server; its consent is
+    the PIN-locked page, and an OAuth grant is a principal like a static
+    token** (no spec change: the protocol never sees it). ChatGPT connectors
+    (developer mode) and claude.ai custom connectors need a public MCP URL
+    with OAuth, dynamic client registration and PKCE; slice 1 left
+    `Gateway.authenticate` as the seam. `oauth.ts` (endpoints) and
+    `oauth-store.ts` (state) use `node:crypto` only, no new dependency (the
+    SDK's server-side auth router needs Express).
+    - **Endpoints.** `/.well-known/oauth-protected-resource` and
+      `/.well-known/oauth-protected-resource/mcp` (RFC 9728: resource
+      `<base>/mcp`, the gateway itself as authorization server, the four
+      scopes); a 401 from `/mcp`, `/sse` or `/api/v1` carries
+      `WWW-Authenticate: Bearer resource_metadata="…", scope="…"`
+      (`error="invalid_token"` when a token was sent).
+      `/.well-known/oauth-authorization-server` (RFC 8414; issuer = the
+      base; `code` only, `S256` only, `authorization_code` and
+      `refresh_token` only, `iss` in the response). `/oauth/register` (RFC
+      7591), `/oauth/authorize`, `/oauth/token`, `/oauth/revoke` (RFC 7009).
+      No OpenID configuration: we are not an OpenID provider, and the MCP
+      SDK client tries RFC 8414 first.
+    - **Registration.** https redirect URIs only (no fragment, userinfo,
+      spaces; 1 to 5, at most 512 characters), `grant_types` within
+      code + refresh, `response_types` `code`, auth method `none`,
+      `client_secret_post` or `client_secret_basic` (RFC 7591's default,
+      basic, when omitted; a secret is returned once and stored hashed). The
+      name is cleaned of control and format characters (bidi overrides) and
+      cut to 64; logos and URIs a client sends are ignored, never rendered.
+      Rate: 30 per 10 minutes per client address, a refilling rate (cloud
+      assistants register from shared vendor servers). Unapproved clients
+      are capped at 200 by evicting the oldest (they hold nothing), never one
+      under 15 minutes old (it may be mid-consent): then registration waits
+      (429), so a stranger's flood neither fills the file nor removes the
+      owner's client. Approved ones are capped at 50 (refuse).
+    - **Authorize → consent.** Until the client exists and `redirect_uri`
+      equals a registered one exactly, errors render on our own page, never
+      redirect (no open redirect); after that they go back with `state` and
+      `iss`. A duplicated parameter is refused. Required:
+      `response_type=code`, `code_challenge_method=S256`, a 43-character
+      challenge; `scope` defaults to what the client registered, else all
+      four, and never more than the client registered; `resource` must
+      name this gateway (`<base>/mcp`, `<base>/sse`, or the origin with or
+      without `/`). The request is parked in memory (ten minutes; 8 per
+      client address, its own oldest going, 256 in all, then new ones
+      wait) and the browser goes to `/approve/oauth/oar_…`, behind the same
+      unlock as the approval page (the unlock's `next` allows that path),
+      with a cookie binding the request to that browser (HMAC of the id,
+      SameSite=Lax: the arrival is a cross-site navigation). **Security
+      review:** without it, a stranger could connect their own ChatGPT
+      account to the owner's gateway and forward the consent link, which
+      looked exactly like the owner's own connect; now that link shows a
+      refusal in any other browser. The authorize URL itself can still be
+      forwarded (it then binds in the owner's browser); the code goes to
+      the stranger's client with their `state`, which a well-built client
+      rejects for another user's session (THREAT-MODEL, known limits). The page shows the registered name in the untrusted box, the
+      return host in bold, the full return address, the client id and
+      registration time, and one ticked checkbox per scope asked; the owner
+      can untick, never add (a post naming a scope that was not asked, or
+      none, is refused and nothing is issued). **Binding:** the form posts
+      the session CSRF token and `digest` = sha256 over client id, name,
+      return address, scopes asked, resource, PKCE challenge and state; the
+      gateway refuses a different digest (409, the page again), re-reads
+      the client and refuses if it was removed or its name or return
+      address changed, then deletes the parked request before answering, so
+      a replay finds nothing. Never auto-approved: a client approved before
+      gets the page again. The consent page's CSP adds only the return
+      origin to `form-action`, since browsers apply `form-action` to the
+      303 the decision answers with. Because the browser arrives from the
+      assistant's site, the SameSite=Strict owner cookie is not sent on that
+      first navigation, so the owner types the PIN for each connection; we
+      keep that rather than loosening the cookie.
+    - **Codes and tokens.** A code is 256-bit, single use, 60 seconds,
+      bound to client, return address, challenge, kept scopes and resource,
+      and held hashed in memory (a restart loses unexchanged codes; the
+      client starts again). Any presentation by its client spends it; a
+      second one ends the grant the first made (RFC 6749 §4.1.2). The
+      verifier must match the S256 challenge (constant time) and
+      `redirect_uri` must equal the authorization request's. Access tokens
+      (`rdvo_`) live an hour; refresh tokens (`rdvr_`) rotate on every use
+      and die after 30 days unused. A refresh token rotated out (the last 64
+      are remembered per grant) presented again ends the whole grant, its
+      access tokens, MCP sessions and pending approvals (reuse detection;
+      this is strict, so a client that retries a refresh with the old token
+      after a network failure must connect again). Refresh may narrow
+      scopes, never widen. Every token carries the resource; `verifyAccess`
+      refuses one whose resource is not this gateway's now, so moving the
+      public URL invalidates old tokens. Revocation: a refresh token ends
+      its grant, an access token only itself, only the client's own; 200
+      either way. A code presented twice while its grant is being written
+      still ends that grant (the id is chosen before the write).
+    - **Storage.** `gateway-oauth.json` (mode 600, own lock), separate from
+      `gateway.json` since refreshes write often: clients (secret as
+      SHA-256), grants (refresh hash, retired hashes, live access hashes).
+      Restart-safe; lookups compare every stored hash in constant time.
+    - **Principals.** A grant id (`grt_…`) is the principal: the same scope
+      table, the same per-principal session cap (4) and global cap,
+      approvals keyed by grant id and shown as `<name> (OAuth grt_…)`, and
+      an approval whose grant is gone is dropped. `rdv-gateway oauth list`
+      and `oauth revoke <cli_…|grt_…>` (a client and all its grants, or one
+      grant) are the owner's; the consent guard refuses `oauth revoke` like
+      `token revoke` (listing, like `token list`, is allowed), and now
+      refuses reads and writes of `gateway.json` and `gateway-oauth.json` in
+      a home (a hash written there would mint a principal). Names are
+      printed JSON-quoted in logs and `oauth list`, so a name cannot forge a
+      line. Sessions of a revoked principal are closed by a sweep every 30
+      s (a terminal revoke runs in another process). One client
+      holds at most 4 grants (a new one ends its oldest), 50 grants in all.
+    - **Legacy SSE.** The pinned SDK's `SSEServerTransport` runs on plain
+      `node:http`, so `/sse` (GET, the stream) and `/messages?sessionId=`
+      (POST) were trivial to add: the same bearer check on both, the session
+      bound to its principal and counted in the same caps. ChatGPT
+      documents SSE. `/.well-known/oauth-protected-resource/sse` names
+      `<base>/sse`, since the MCP SDK checks that the resource covers the
+      URL it connects to; its tokens carry the same canonical resource.
+    - **Tests.** `gateway/test/oauth.test.ts`: metadata and the 401
+      challenge; DCR → authorize → PIN → consent → token → MCP and REST;
+      the MCP SDK's own OAuth client end to end (discovery, DCR, PKCE,
+      resource); SSE; wrong verifier (and the code spent); missing or plain
+      PKCE, implicit; `redirect_uri` variants, unknown client, duplicated
+      parameters (no redirect); https-only registration and the cleaned
+      name; the registration rate; code reuse ending the grant; a code for
+      another client; password and client-credentials grants refused;
+      secret clients (basic, post); refresh rotation, narrowing, widening
+      refused, reuse ending the family; expiry; RFC 7009; a terminal revoke
+      ending tokens and pending approvals; restart-safe and resource-bound
+      (wrong resource at authorize, token and refresh; a moved public URL);
+      the consent page (PIN, escaping, no script, CSP, never auto-approved),
+      narrowing and widening, "no", CSRF, foreign Origin, cross-site fetch,
+      locked, stale digest, a client removed while its consent waits.
+      Review fixes: a forwarded consent link, a flood of parked requests,
+      young clients never evicted, concurrent consent posts, a code raced
+      twice, OAuth over SSE with a terminal revoke closing the stream, the
+      registered scope as a ceiling, and behind https (public host only,
+      `__Host-` cookie). `plugin.test.ts`: the guard refuses
+      `rdv-gateway oauth revoke` and the gateway's files in a home.
+
 ## Not implemented yet
 
 

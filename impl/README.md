@@ -10,7 +10,7 @@ protocol, built toward the two-agent dinner demo in [PLAN.md](../PLAN.md).
 | `@rendezvous/a2a` | `packages/a2a` | A2A task semantics: the dinner-negotiation message model, engine, calendar adapter |
 | `@rendezvous/cli` | `packages/cli` | `rdv`, a command-line agent; also the scripted bots and interop scenarios |
 | `@rendezvous/mcp` | `packages/mcp` | `rdv-mcp`, a stdio MCP server so Claude (or any MCP client) can find, contact and book dinner with other agents |
-| `@rendezvous/gateway` | `packages/gateway` | `rdv-gateway`, the same agent over MCP (Streamable HTTP) and REST + OpenAPI for cloud assistants, with approvals on the owner's own PIN-locked page (issue #12, slice 1) |
+| `@rendezvous/gateway` | `packages/gateway` | `rdv-gateway`, the same agent over MCP (Streamable HTTP) and REST + OpenAPI for cloud assistants, with approvals on the owner's own PIN-locked page and a built-in OAuth 2.1 server for ChatGPT and claude.ai connectors (issue #12) |
 
 `demo/` holds the showpiece script ([demo/SCRIPT.md](demo/SCRIPT.md)), a
 calendar generator and `relay-dump.mjs` (what the relay stores: ciphertext).
@@ -372,9 +372,38 @@ choices: NOTES 89.
 
 ```bash
 node packages/gateway/dist/src/bin.js pin set --home ~/.rendezvous/omer
-node packages/gateway/dist/src/bin.js token create --name chatgpt --scope read,send,contact:request --home ~/.rendezvous/omer
 node packages/gateway/dist/src/bin.js serve --home ~/.rendezvous/omer --public-url https://rdv.example.com --client-ip-header cf-connecting-ip
-# MCP: https://rdv.example.com/mcp   REST: /api/v1/tools/<tool>   OpenAPI: /openapi.json   approvals: /approve
+# MCP: https://rdv.example.com/mcp (legacy SSE: /sse)   REST: /api/v1/tools/<tool>   OpenAPI: /openapi.json   approvals: /approve
+```
+
+**Connecting ChatGPT or claude.ai (OAuth 2.1).** The gateway is its own
+authorization server, so these connect with no token to copy. The MCP URL is
+`https://<your host>/mcp`.
+
+- **claude.ai:** Settings → Connectors → Add custom connector, and paste the
+  MCP URL.
+- **ChatGPT:** turn on developer mode (in Settings, under the connectors'
+  advanced settings), then create a connector with the MCP URL and choose
+  OAuth as its authentication.
+
+The assistant registers itself (dynamic client registration) and sends your
+browser to the gateway. You unlock the page with your PIN and see the name the
+app registered (anyone can register any name, so check the return address it
+shows, e.g. `claude.ai` or `chatgpt.com`), plus the scopes it asks for. You can
+untick scopes, then approve. Nothing is ever approved automatically, even for an
+app you connected before. No scope can approve anything: approvals still happen
+only on the page. Access tokens last an hour and refresh tokens rotate, so a
+refresh token that is reused ends that connection. To see or end connections:
+
+```bash
+node packages/gateway/dist/src/bin.js oauth list --home ~/.rendezvous/omer
+node packages/gateway/dist/src/bin.js oauth revoke <cli_…|grt_…> --home ~/.rendezvous/omer   # a whole app, or one grant
+```
+
+**Static tokens**, for assistants without OAuth (Muse, scripts):
+
+```bash
+node packages/gateway/dist/src/bin.js token create --name muse --scope read,send,contact:request --home ~/.rendezvous/omer
 ```
 
 ## Develop

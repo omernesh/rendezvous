@@ -7,18 +7,22 @@
 //
 //   /mcp            MCP over Streamable HTTP (bearer token, a session per client)
 //   /api/v1/tools/* the same tools over REST (bearer token); /openapi.json describes them
+//   /sse            the same MCP over the legacy HTTP+SSE transport (POSTs to /messages)
 //   /approve        the owner's PIN-locked approval page: the only place anything is approved
+//   /oauth/*, /.well-known/oauth-*   the built-in OAuth 2.1 authorization server (oauth.ts, slice 2)
 //
 // Consent never passes through the cloud assistant: the tools run in the MCP
 // server's remote mode, where every step that needs the human returns
 // `awaiting_human` with a link to /approve/<id>. That page shows the exact
 // form the step would have shown, and the owner's answer is bound to its
 // digest (RdvMcpServer.answer re-checks it from the state, and the step's
-// own check under the home lock binds the commit). Auth is a seam
-// (`authenticate`): static tokens now, OAuth 2.1 next (slice 2).
+// own check under the home lock binds the commit). Auth is one seam
+// (`authenticate`): a static token or an OAuth access token, each a principal
+// with scopes; neither can approve anything.
 import { randomBytes, randomUUID } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
@@ -40,9 +44,10 @@ import {
   sendHtml,
   sendJson,
 } from './http.js';
+import { OAuthServer } from './oauth.js';
 import { openApi } from './openapi.js';
-import { approvalPage, CSS, donePage, errorPage, type Flash, listPage, PAGE_CSP, unlockPage } from './pages.js';
-import { authorizeCall, type Scope, toolScopes } from './scopes.js';
+import { approvalPage, consentCsp, consentPage, CSS, donePage, errorPage, type Flash, listPage, PAGE_CSP, unlockPage } from './pages.js';
+import { authorizeCall, SCOPES, type Scope, toolScopes } from './scopes.js';
 import { GatewayStore } from './store.js';
 
 export const DEFAULT_PORT = 8787;
@@ -52,6 +57,8 @@ export const MAX_MCP_SESSIONS = 32;
 /** MCP sessions one token may hold: a new one closes that token's least recently used. */
 export const MAX_MCP_SESSIONS_PER_TOKEN = 4;
 const MCP_IDLE_MS = 30 * 60_000;
+/** How often sessions of revoked principals (and idle ones) are closed. */
+const SESSION_SWEEP_MS = 30_000;
 /** The owner's unlocked page: idle and absolute lifetimes, and how many at once. */
 const OWNER_IDLE_MS = 15 * 60_000;
 const OWNER_MAX_MS = 60 * 60_000;
@@ -92,7 +99,7 @@ export interface Principal {
 }
 
 interface McpSession {
-  transport: StreamableHTTPServerTransport;
+  transport: StreamableHTTPServerTransport | SSEServerTransport;
   mcp: McpServer;
   principal: string;
   lastSeen: number;
@@ -115,7 +122,9 @@ export class Gateway {
   readonly store: GatewayStore;
   readonly approvals: Approvals;
   readonly server: RdvMcpServer;
+  readonly oauth: OAuthServer;
   private http?: Server;
+  private sweeper?: NodeJS.Timeout;
   private base = '';
   private readonly allowedHosts = new Set<string>();
   /** Origins our own page posts from: the public origin and this machine's. */
@@ -157,15 +166,26 @@ export class Gateway {
     this.pageLimiter = new RateLimiter(120, 60_000, this.now);
     // A rate, not a lock: it refills, so flooding it costs the owner at most a minute.
     this.unlockLimiter = new RateLimiter(30, 60_000, this.now);
-    // An ask from a token that was revoked since is dropped: its owner said no more to that client.
-    this.approvals = new Approvals((id) => `${this.base}/approve/${id}`, this.now, (p) => p === undefined || this.store.listTokens().some((t) => t.id === p));
+    this.oauth = new OAuthServer({
+      home: opts.home,
+      base: () => this.base,
+      now: this.now,
+      clientKey: (req) => this.client(req),
+      log: this.log,
+      onGrantEnded: (id) => this.endPrincipal(id),
+    });
+    // An ask from a token or OAuth grant that was revoked since is dropped: its owner said no more to that client.
+    this.approvals = new Approvals(
+      (id) => `${this.base}/approve/${id}`,
+      this.now,
+      (p) => p === undefined || this.store.listTokens().some((t) => t.id === p) || this.oauth.store.hasGrant(p),
+    );
     this.server = new RdvMcpServer({
       home: opts.home,
       role: 'rdv-gateway',
       remote: {
         ask: (a) => {
-          const t = a.principal ? this.store.listTokens().find((x) => x.id === a.principal) : undefined;
-          const url = this.approvals.ask(a, t ? `${t.name} (${t.id})` : undefined);
+          const url = this.approvals.ask(a, a.principal ? this.principalName(a.principal) : undefined);
           this.log(`waiting for you: ${a.form.message.split('\n')[0]} (${url})`);
           return url;
         },
@@ -212,10 +232,14 @@ export class Gateway {
     } else this.base = local;
     this.origins.add(this.base);
     this.log(`serving on ${local} (MCP at /mcp, REST at /api/v1, approvals at ${this.base}/approve)`);
+    // A token or grant revoked from a terminal is refused at the next request; this also ends its open streams.
+    this.sweeper = setInterval(() => this.sweepSessions(), SESSION_SWEEP_MS);
+    this.sweeper.unref();
     return this.base;
   }
 
   async close(): Promise<void> {
+    if (this.sweeper) clearInterval(this.sweeper);
     for (const s of this.sessions.values()) await s.transport.close().catch(() => {});
     this.sessions.clear();
     if (this.http) {
@@ -227,13 +251,45 @@ export class Gateway {
 
   // --- auth: the seam --------------------------------------------------------------
 
-  /** The caller of an API or MCP request: a static token now (OAuth 2.1 access tokens join here in slice 2). */
-  authenticate(req: IncomingMessage): Principal {
+  /** The caller of an API or MCP request: a static token, or an OAuth access token the owner's consent minted. */
+  authenticate(req: IncomingMessage, endpoint: 'mcp' | 'sse' = 'mcp'): Principal {
     const h = String(req.headers.authorization ?? '');
     const m = /^Bearer ([A-Za-z0-9_-]{16,200})$/.exec(h);
-    const t = m ? this.store.findToken(m[1]) : undefined;
-    if (!t) throw new HttpError(401, 'a valid bearer token is required (your user makes one with "rdv-gateway token create")', 'unauthorized', { 'WWW-Authenticate': 'Bearer realm="rendezvous"' });
-    return { id: t.id, name: t.name, scopes: t.scopes };
+    if (m?.[1].startsWith('rdvo_')) {
+      const who = this.oauth.verifyAccess(m[1]);
+      if (who) return who;
+    } else if (m) {
+      const t = this.store.findToken(m[1]);
+      if (t) return { id: t.id, name: t.name, scopes: t.scopes };
+    }
+    // RFC 9728 §5.1: where an OAuth client finds out how to get a token.
+    const challenge = `Bearer realm="rendezvous", resource_metadata="${this.oauth.resourceMetadataUrl(endpoint)}", scope="${SCOPES.join(' ')}"${h ? ', error="invalid_token"' : ''}`;
+    throw new HttpError(401, 'a valid bearer token is required (connect with OAuth, or your user makes a token with "rdv-gateway token create")', 'unauthorized', {
+      'WWW-Authenticate': challenge,
+    });
+  }
+
+  /** How the page names a principal: a token's name and id, or an OAuth client's registered name and grant id. */
+  private principalName(id: string): string | undefined {
+    const t = this.store.listTokens().find((x) => x.id === id);
+    if (t) return `${t.name} (${t.id})`;
+    const g = this.oauth.store.grant(id);
+    const c = g ? this.oauth.store.client(g.clientId) : undefined;
+    return c && g ? `${c.name} (OAuth ${g.id})` : undefined;
+  }
+
+  /** Whether a principal still exists: a static token, or a live OAuth grant. */
+  private principalAlive(id: string): boolean {
+    return this.store.listTokens().some((t) => t.id === id) || this.oauth.store.hasGrant(id);
+  }
+
+  /** A principal ended (an OAuth grant revoked or reused): close its MCP sessions now. */
+  private endPrincipal(id: string): void {
+    for (const [sid, s] of this.sessions) {
+      if (s.principal !== id) continue;
+      this.sessions.delete(sid);
+      void s.transport.close().catch(() => {});
+    }
   }
 
   // --- routing ---------------------------------------------------------------------
@@ -256,9 +312,22 @@ export class Gateway {
         res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Content-Length': Buffer.byteLength(this.openapi) });
         return void res.end(this.openapi);
       }
+      if (path === '/.well-known/oauth-protected-resource' || path === '/.well-known/oauth-protected-resource/mcp' || path === '/.well-known/oauth-protected-resource/sse') {
+        if (req.method !== 'GET') throw new HttpError(405, 'GET only', 'method_not_allowed');
+        return sendJson(res, 200, this.oauth.protectedResourceMetadata(path.endsWith('/sse') ? 'sse' : 'mcp'));
+      }
+      if (path === '/.well-known/oauth-authorization-server') {
+        if (req.method !== 'GET') throw new HttpError(405, 'GET only', 'method_not_allowed');
+        return sendJson(res, 200, this.oauth.authorizationServerMetadata());
+      }
+      if (path === '/oauth/register') return await this.oauth.register(req, res);
+      if (path === '/oauth/token') return await this.oauth.token(req, res);
+      if (path === '/oauth/revoke') return await this.oauth.revoke(req, res);
+      if (path === '/oauth/authorize') return await this.page(req, res, path, url);
       if (path === '/mcp') return await this.mcp(req, res);
+      if (path === '/sse' || path === '/messages') return await this.sse(req, res, path, url);
       if (path === '/api/v1/tools' || path.startsWith('/api/v1/tools/')) return await this.api(req, res, path);
-      if (path === '/approve' || path.startsWith('/approve/')) return await this.page(req, res, path);
+      if (path === '/approve' || path.startsWith('/approve/')) return await this.page(req, res, path, url);
       throw new HttpError(404, 'not found', 'not_found');
     } catch (err) {
       if (res.headersSent) {
@@ -312,23 +381,12 @@ export class Gateway {
     if (typeof sid === 'string') {
       const s = this.sessions.get(sid);
       // A session belongs to the token that opened it; another token sees no such session.
-      if (!s || s.principal !== who.id) throw new HttpError(404, 'no such session', 'not_found');
+      if (!s || s.principal !== who.id || !(s.transport instanceof StreamableHTTPServerTransport)) throw new HttpError(404, 'no such session', 'not_found');
       s.lastSeen = this.now();
       return s.transport.handleRequest(req, res, body);
     }
     if (req.method !== 'POST' || !isInitializeRequest(body)) throw new HttpError(400, 'start a session with an initialize request', 'bad_request');
-    this.sweepSessions();
-    // One token may hold a few sessions: a new one closes its own least recently used, never another token's.
-    const mine = [...this.sessions].filter(([, s]) => s.principal === who.id).sort((x, y) => x[1].lastSeen - y[1].lastSeen);
-    for (const [id, s] of mine.slice(0, Math.max(0, mine.length - MAX_MCP_SESSIONS_PER_TOKEN + 1))) {
-      this.sessions.delete(id);
-      await s.transport.close().catch(() => {});
-    }
-    if (this.sessions.size >= MAX_MCP_SESSIONS) throw new HttpError(503, 'too many open sessions; close one or retry later', 'busy', { 'Retry-After': '60' });
-    const mcp = this.server.newSession({
-      allow: (tool) => toolScopes(tool).some((s) => who.scopes.includes(s)),
-      caller: { principal: who.id, authorize: (tool, args) => authorizeCall(who.scopes, tool, args) },
-    });
+    const mcp = await this.openSession(who);
     const transport: StreamableHTTPServerTransport = new StreamableHTTPServerTransport({
       sessionIdGenerator: () => randomUUID(),
       onsessioninitialized: (id) => {
@@ -343,10 +401,51 @@ export class Gateway {
     await transport.handleRequest(req, res, body);
   }
 
+  /** Room for a new session of this principal (its own oldest closes past the cap), and its MCP server. */
+  private async openSession(who: Principal): Promise<McpServer> {
+    this.sweepSessions();
+    // One principal may hold a few sessions: a new one closes its own least recently used, never another's.
+    const mine = [...this.sessions].filter(([, s]) => s.principal === who.id).sort((x, y) => x[1].lastSeen - y[1].lastSeen);
+    for (const [id, s] of mine.slice(0, Math.max(0, mine.length - MAX_MCP_SESSIONS_PER_TOKEN + 1))) {
+      this.sessions.delete(id);
+      await s.transport.close().catch(() => {});
+    }
+    if (this.sessions.size >= MAX_MCP_SESSIONS) throw new HttpError(503, 'too many open sessions; close one or retry later', 'busy', { 'Retry-After': '60' });
+    return this.server.newSession({
+      allow: (tool) => toolScopes(tool).some((s) => who.scopes.includes(s)),
+      caller: { principal: who.id, authorize: (tool, args) => authorizeCall(who.scopes, tool, args) },
+    });
+  }
+
+  // --- MCP over the legacy HTTP+SSE transport ------------------------------------------
+
+  /** GET /sse opens the event stream; its client POSTs to /messages?sessionId=… with the same bearer. */
+  private async sse(req: IncomingMessage, res: ServerResponse, path: string, url: URL): Promise<void> {
+    const who = this.authenticate(req, 'sse');
+    this.tokenLimiter.check(who.id, 'requests');
+    if (path === '/messages') {
+      if (req.method !== 'POST') throw new HttpError(405, 'POST only', 'method_not_allowed');
+      const s = this.sessions.get(url.searchParams.get('sessionId') ?? '');
+      if (!s || s.principal !== who.id || !(s.transport instanceof SSEServerTransport)) throw new HttpError(404, 'no such session', 'not_found');
+      const body = await readJson(req, API_BODY_MAX);
+      s.lastSeen = this.now();
+      return s.transport.handlePostMessage(req, res, body);
+    }
+    if (req.method !== 'GET') throw new HttpError(405, 'GET only', 'method_not_allowed');
+    const mcp = await this.openSession(who);
+    const transport = new SSEServerTransport('/messages', res);
+    this.sessions.set(transport.sessionId, { transport, mcp, principal: who.id, lastSeen: this.now() });
+    transport.onclose = () => {
+      this.sessions.delete(transport.sessionId);
+      this.server.endSession(mcp);
+    };
+    await mcp.connect(transport);
+  }
+
   private sweepSessions(): void {
     const t = this.now();
     for (const [id, s] of this.sessions) {
-      if (t - s.lastSeen > MCP_IDLE_MS) {
+      if (t - s.lastSeen > MCP_IDLE_MS || !this.principalAlive(s.principal)) {
         this.sessions.delete(id);
         void s.transport.close().catch(() => {});
       }
@@ -432,13 +531,21 @@ export class Gateway {
     while (this.clientFailures.size > 10_000) this.clientFailures.delete(this.clientFailures.keys().next().value!);
   }
 
-  private async page(req: IncomingMessage, res: ServerResponse, path: string): Promise<void> {
+  private async page(req: IncomingMessage, res: ServerResponse, path: string, url: URL): Promise<void> {
     const who = this.client(req);
     // Per client when the tunnel says who it is (required behind https); on this machine alone, per socket address.
     this.pageLimiter.check(who, 'requests');
     // Behind https the owner cookie is Secure: it never comes back over http://127.0.0.1, so say where to go.
     if (this.secure && new URL(this.base).host !== String(req.headers.host ?? '').toLowerCase()) {
       return this.html(res, 421, errorPage('Open the public address', `Behind https, approvals open at ${this.base}/approve only.`));
+    }
+    if (path === '/oauth/authorize') {
+      if (req.method !== 'GET') throw new HttpError(405, 'GET only', 'method_not_allowed');
+      // Checked and parked; the owner decides on the consent page (after the PIN), never automatically.
+      const id = this.oauth.authorize(req, res, url);
+      if (id === undefined) return;
+      // Bound to this browser: a consent link forwarded to the owner (a stranger's own connect) opens nothing.
+      return redirect(res, `/approve/oauth/${id}`, { 'Set-Cookie': this.consentCookie(id) });
     }
     const sid = this.ownerSession(req);
     if (path === '/approve/unlock') {
@@ -448,7 +555,7 @@ export class Gateway {
       this.checkPost(req, form, `pre:${pre}`);
       // Only a post from our own unlock form spends the unlock budget, per client when clients are told apart.
       this.unlockLimiter.check(this.opts.clientIpHeader ? who : 'unlock', 'PIN attempts');
-      const next = /^\/approve(\/apr_[A-Za-z0-9_-]{8,64})?$/.test(form.get('next') ?? '') ? form.get('next')! : '/approve';
+      const next = /^\/approve(\/apr_[A-Za-z0-9_-]{8,64}|\/oauth\/oar_[A-Za-z0-9_-]{8,64})?$/.test(form.get('next') ?? '') ? form.get('next')! : '/approve';
       const perClient = this.opts.clientIpHeader !== undefined;
       const wait = perClient ? this.clientWait(who) : 0;
       if (wait) return this.unlock(res, next, { text: `Too many wrong PINs from here: try again in ${Math.ceil(wait / 1000)} s.`, bad: true }, 429);
@@ -485,6 +592,7 @@ export class Gateway {
       if (req.method !== 'GET') throw new HttpError(405, 'GET only', 'method_not_allowed');
       return this.html(res, 200, listPage({ items: this.approvals.list(), csrf }));
     }
+    if (path.startsWith('/approve/oauth/')) return this.consent(req, res, path.slice('/approve/oauth/'.length), sid, csrf);
     const id = path.slice('/approve/'.length);
     const item = /^apr_[A-Za-z0-9_-]{8,64}$/.test(id) ? this.approvals.get(id) : undefined;
     if (!item) return this.html(res, 404, errorPage('Nothing waits here', 'Nothing waits for you under this link: it was decided already, or it expired. Your assistant can ask again.'));
@@ -493,6 +601,53 @@ export class Gateway {
     const form = await readForm(req, FORM_BODY_MAX);
     this.checkPost(req, form, `owner:${sid}`);
     return this.decide(res, item, form, csrf);
+  }
+
+  /** Connecting an OAuth client: the consent page, and the owner's answer bound to the digest of what it showed. */
+  /**
+   * The cookie that binds a parked connection request to the browser that started it. SameSite=Lax, since that
+   * browser arrives from the assistant's site (a cross-site top-level navigation, where a Strict cookie is not sent).
+   */
+  private consentCookie(id: string): string {
+    const name = this.secure ? '__Host-rdvg_oar' : 'rdvg_oar';
+    return `${name}=${hmac(this.key, `rdv1/gateway-oar\u0000${id}`)}; ${this.secure ? 'Path=/; Secure' : 'Path=/approve'}; HttpOnly; SameSite=Lax; Max-Age=600`;
+  }
+
+  private startedHere(req: IncomingMessage, id: string): boolean {
+    const got = parseCookies(req.headers.cookie).get(this.secure ? '__Host-rdvg_oar' : 'rdvg_oar') ?? '';
+    return safeEqual(got, hmac(this.key, `rdv1/gateway-oar\u0000${id}`));
+  }
+
+  private async consent(req: IncomingMessage, res: ServerResponse, id: string, sid: string, csrf: string): Promise<void> {
+    const item = /^oar_[A-Za-z0-9_-]{8,64}$/.test(id) ? this.oauth.consent(id) : undefined;
+    if (!item) return this.html(res, 404, errorPage('Nothing waits here', 'This connection request was decided already, or it expired (after ten minutes). Connect again from your assistant.'));
+    if (!this.startedHere(req, id)) {
+      this.log(`a connection request (${item.clientId}) was opened in a browser that did not start it; nothing was shown`);
+      return this.html(
+        res,
+        403,
+        errorPage(
+          'Not started here',
+          'This connection request was started in another browser. Connect only an assistant you are setting up yourself, from this device: if someone sent you this link, do not approve it.',
+        ),
+      );
+    }
+    const client = this.oauth.store.client(item.clientId);
+    const show = (status: number, message?: Flash) =>
+      sendHtml(res, status, consentPage({ item, csrf, registered: client?.created, message }), consentCsp(item.redirectUri));
+    if (req.method === 'GET') return show(200);
+    if (req.method !== 'POST') throw new HttpError(405, 'GET or POST', 'method_not_allowed');
+    const form = await readForm(req, FORM_BODY_MAX);
+    this.checkPost(req, form, `owner:${sid}`);
+    const decision = form.get('decision');
+    if (decision !== 'approve' && decision !== 'decline') return show(400, { text: 'Choose connect or no.', bad: true });
+    const kept = SCOPES.filter((s) => form.get(`s_${s}`) === '1');
+    const out = this.oauth.decide(item, form.get('digest') ?? '', decision, kept);
+    if ('error' in out) {
+      if (this.oauth.consent(item.id)) return show(409, { text: out.error, bad: true });
+      return this.html(res, 409, donePage({ title: 'Not connected', text: out.error, csrf, bad: true }));
+    }
+    return redirect(res, out.redirect);
   }
 
   /** The owner's answer to one approval: bound to the digest of the form the page showed. */
