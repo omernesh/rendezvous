@@ -25,6 +25,8 @@ What it contains:
 - `skills/rdv-onboarding/SKILL.md`: the `/rdv-onboarding` command, a guided
   setup that asks one question at a time and follows the consent rules of the
   `rendezvous` skill.
+- `skills/rdv-backup/SKILL.md`: "back up my agent" and "recover my agent
+  from backup", one step per turn in plain language (below).
 - `skills/rendezvous/SKILL.md`: the setup and messaging workflow, with the
   consent rules. It uses the Agent Skills format, so other agents can load it
   too (`npx skills add omernesh/rendezvous`).
@@ -92,6 +94,21 @@ What it contains:
   `rdv_negotiate` need your approval form or a confirm phrase only you see,
   and the phrase is stored only as a hash. See "Threat model" in
   [`impl/packages/mcp/README.md`](../../impl/packages/mcp/README.md).
+
+Backups (issue #88): ask "back up my agent". Claude asks where to keep the
+file (your password manager or a cloud drive is best: somewhere that
+survives this computer), then calls `rdv_backup`, and an approval form asks
+you for a passphrase, twice. Only the Rendezvous server sees it, never
+Claude; without a form it is refused (use `rdv backup <file>` in your own
+terminal). The file is encrypted (scrypt and AES-256-GCM) and holds the
+agent's key, contacts, grants and settings, never open approvals or confirm
+phrases. Whoever has the file and the passphrase can be your agent, as with
+the key itself, so choose a strong passphrase and keep it apart from the
+file. On a new computer, install Rendezvous and ask "recover my agent from
+backup": the form shows the agent ID and fingerprint in the file before you
+type the passphrase. Your contacts are told the agent was restored, so your
+conversations go on with no resync. `rdv backup` and `rdv restore` are
+yours, in your own terminal; the hook refuses them for Claude.
 
 Sending: Claude picks the recipient by its `local_label`, never by an address
 the other agent's card claims, and shows you the fingerprint before the first

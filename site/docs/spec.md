@@ -1192,6 +1192,64 @@ where hole-punching fails (TURN relays carry the ciphertext).
 - **No forward secrecy yet.** The recipient key is static, so a later key
   compromise exposes recorded envelopes (§11).
 
+#### 6.4.1 Restoring from a backup (`rdv/restored`)
+
+An agent restored from a backup (the same key, older state) would fork every
+chain it had. To avoid that, a restored agent starts a new outbound epoch per
+channel and announces it, so peers re-base its chain instead of refusing it.
+
+- **The restored side.** For every channel it holds, the next outbound `seq`
+  jumps to at least the restore time in milliseconds since the epoch (above
+  anything the lost copy can have sent), and the first envelope it sends on
+  that channel, before anything else, carries the notice:
+
+  ```json
+  { "type": "rdv/restored", "v": 1, "in_seq": 17, "backup_created": "2026-10-20T08:00:00.000Z" }
+  ```
+
+  `in_seq` is the last `seq` it holds as accepted from that peer;
+  `backup_created` is when its backup was made (or `null`). Its own inbound
+  state is kept: the peer's newer envelopes arrive as a gap.
+- **The peer.** It acts on a notice only from a contact or group co-member
+  (the envelope's signature proves the key; only that key's own chain is
+  re-based), only when the envelope is newer (`created`) than everything it
+  accepted from that sender (a replayed notice is not), and at most a few per
+  sender per day (3 in the reference implementation). It then takes the
+  notice as the sender's new chain head whatever its `seq` and `prev`, and treats every envelope from that sender
+  not newer than the notice as a replay of the old chain (§6.4, re-sync
+  floor). A chain already refused after a fork (§6.4) is NOT re-based: a
+  notice from the key, perhaps from the very copy that forked, never lifts a
+  refusal; the receiver tells its human, and only the human's re-sync does.
+  It MUST tell its human (a "contact restored its agent" event) and answers:
+
+  ```json
+  { "type": "rdv/restored-ack", "v": 1, "notice": "<hash of the notice envelope>", "from_seq": 9, "prev": "<hash>", "floor": "<RFC 3339>" }
+  ```
+
+  meaning "my chain to you goes on at `from_seq`, after the envelope whose
+  hash is `prev`". The peer resends what its outbox still holds of that chain
+  after `in_seq`; `from_seq` is the first of those (or its next `seq` if it
+  holds none), and `floor` is just before that envelope's `created`.
+- **The ack.** The restored side takes it only for the notice it sent that
+  peer last (by hash), once. If `from_seq` is past its inbound head, it moves
+  the head there (only forward) and treats envelopes not newer than `floor`
+  as replays: those messages were received by the copy that was lost and no
+  one holds them any more.
+- **What it does not change.** A copy that still runs after the restore
+  forks the chain again and is refused as any fork (§6.4): the notice is no
+  way to run two copies. The notice re-bases pairwise channels only. A
+  member's group message chain (§7.8.3) is not re-based: a member restored
+  from a backup older than its last group message can be reported as
+  equivocating, and its co-members' humans re-sync it (§7.8.6).
+- **A backup is the key.** Whoever holds a backup and its passphrase holds
+  the agent, exactly as with a stolen key: they can restore it, and peers will
+  follow (each told). Backups MUST be encrypted under a passphrase with a
+  memory-hard KDF; the reference bundle (NOTES 91) uses scrypt (N 2^17, r 8,
+  p 1) and AES-256-GCM with the format, version, agent ID and KDF parameters
+  as associated data, and holds no open approvals or confirm phrases. A
+  restored-from-old-backup agent that is restored twice is two restores; each
+  is rate-limited and shown to the peer's human.
+
 ---
 
 ## 7. Session & task layer (A2A semantics)
@@ -2177,7 +2235,8 @@ replays of the old one stay duplicates.
 | Spam agents (Sybil) | Consent-first inbound; key-based block; tier-based rate caps; §10 reputation |
 | Replay | Envelope `seq`/`prev` + request/grant/probe IDs; TTL bounds window |
 | Key compromise | Rotation doc signed by old key; revocation; grants are revocable |
-| Key loss (no recovery path) | §11 — open problem, mitigated by passkey custody |
+| Key loss | An encrypted, passphrase-protected backup restores the agent, and peers follow its new chain (§6.4.1); without one, §11 (passkey custody, social recovery later) |
+| Stolen backup (file and passphrase) | The same as a stolen key: the thief can restore the agent, and each peer's human is told it was restored (§6.4.1); a memory-hard KDF and a strong passphrase keep the file alone useless; rotation as for key compromise |
 | Government/relay takedown | No single relay matters; card lists several; hint servers are swappable; human channels are last-resort always-on; nothing is required |
 
 ---
@@ -2241,8 +2300,9 @@ replays of the old one stay duplicates.
 ## 11. Open problems (honest)
 
 1. **Key recovery.** The key is the identity; losing it loses the agent's
-   relationships. Passkey custody helps; a social-recovery design
-   (m-of-n guardians) is deferred to v2.
+   relationships. An encrypted backup under the owner's passphrase restores
+   it (§6.4.1), but someone has to have made one. Passkey custody helps; a
+   social-recovery design (m-of-n guardians) is deferred to v2.
 2. **The fingerprint cliff.** Humans won't compare hex strings. Consent UX
    must lean on channel context ("request came from the email you've
    exchanged 47 messages with") rather than manual verification.

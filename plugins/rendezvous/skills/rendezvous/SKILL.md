@@ -1,6 +1,6 @@
 ---
 name: rendezvous
-description: Set up and use Rendezvous, an open protocol for agent-to-agent contact. Installs the rdv CLI and rdv-mcp server, creates the user's agent for their email or phone, finds another person's agent by address, requests contact, waits for that person's approval, sends end-to-end encrypted messages, and handles incoming contact requests. Use when the user says things like "set up rendezvous", "connect my agent with John's", "ask john@doe.com's agent to connect", "send a message to john@doe.com over rendezvous", "tell John I'm running late" (for a Rendezvous contact), "check rendezvous", "add my work email to rendezvous", "someone wants to contact me", "ask John's agent to review this" or "John asked my agent for something" (tasks and files between agents), "start a group with John and Dana" or "I was invited to a group" (groups).
+description: Set up and use Rendezvous, an open protocol for agent-to-agent contact. Installs the rdv CLI and rdv-mcp server, creates the user's agent for their email or phone, finds another person's agent by address, requests contact, waits for that person's approval, sends end-to-end encrypted messages, and handles incoming contact requests. Use when the user says things like "set up rendezvous", "connect my agent with John's", "ask john@doe.com's agent to connect", "send a message to john@doe.com over rendezvous", "tell John I'm running late" (for a Rendezvous contact), "check rendezvous", "add my work email to rendezvous", "someone wants to contact me", "ask John's agent to review this" or "John asked my agent for something" (tasks and files between agents), "start a group with John and Dana" or "I was invited to a group" (groups), "back up my agent" or "recover my agent from backup" (backups).
 license: Apache-2.0
 ---
 
@@ -30,7 +30,9 @@ over relays. The `rdv_*` MCP tools come from the `rdv-mcp` server.
    (the user's setting), `rdv group invite`, `rdv group join`,
    `rdv group approve`, `rdv group resync`, `rdv group leave`,
    `rdv group remove`, `rdv group terms` (what members may ask of the user's
-   agent) and `rdv group promote` (hands on the admin role), and
+   agent) and `rdv group promote` (hands on the admin role), `rdv backup`
+   and `rdv restore` (the agent's key; use `rdv_backup`, whose passphrase
+   the user types into its approval form), and
    `rdv contact pending`, `rdv dinner list`,
    `rdv task list` and `rdv group pending` (they print confirm phrases,
    `--json` or not). You have `rdv_pending_requests`, `rdv_negotiate`,
@@ -114,6 +116,14 @@ then the next.
    `on_relays` says, per public address, whether the relays now serve the
    card (`served: true`). `rdv_discover` never lists the user's own card;
    for their own address it reports `own_card_on_relays` instead.
+
+## Back up or recover the agent
+
+When the user asks to back up their agent, or to recover it from a backup
+(a new computer, a dead disk), load the `rdv-backup` skill and follow it, one
+step per turn. The passphrase goes only into the approval form `rdv_backup`
+opens; never ask for it or accept it in chat. A `contact_restored` event
+means a contact restored their agent from a backup: tell the user.
 
 ## Manage the user's own addresses
 

@@ -224,9 +224,10 @@ export interface AuditEntry {
   /**
    * A gate (start, release, notify), a meeting confirm auto-approve passed
    * (`meeting`, issue #44), a change to the contact's auto-approve setting, or
-   * to the owner passphrase (peer `owner`).
+   * to the owner passphrase (peer `owner`), or an identity backup made or
+   * restored (`backup`, peer `owner`, issue #88).
    */
-  gate: 'start' | 'release' | 'notify' | 'meeting' | 'auto-approve' | 'owner-secret';
+  gate: 'start' | 'release' | 'notify' | 'meeting' | 'auto-approve' | 'owner-secret' | 'backup';
   /** Who let it pass: the grant (class `auto`/`notify`), the human (form, phrase, terminal), or the human's standing auto-approve. */
   by: 'grant' | 'human' | 'auto-approve';
   approval?: string;
@@ -235,8 +236,8 @@ export interface AuditEntry {
   group?: string;
   /** Release lines: SHA-256 and size of each payload that left (ours, never the peer's). */
   sent?: Array<{ sha256: string; bytes: number }>;
-  /** gate `auto-approve`: what changed (`set`, `extend`, `off`); gate `owner-secret`: `set`, `changed` or `reset`. */
-  action?: 'set' | 'extend' | 'off' | 'changed' | 'reset';
+  /** gate `auto-approve`: what changed (`set`, `extend`, `off`); gate `owner-secret`: `set`, `changed` or `reset`; gate `backup`: `create` or `restore`. */
+  action?: 'set' | 'extend' | 'off' | 'changed' | 'reset' | 'create' | 'restore';
   /** gate `auto-approve`, action `off`: why. */
   reason?: AutoApproveOff;
   /** gate `auto-approve`, set/extend: the expiry (null: until turned off) and the capabilities it covered then. */

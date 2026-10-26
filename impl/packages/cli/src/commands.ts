@@ -7,6 +7,7 @@ import {
   type CardUpdateReport,
   type AddressCard,
   Agent,
+  backupPassphraseProblem,
   isDocId,
   b64decode,
   canonAgentId,
@@ -100,6 +101,7 @@ import {
 
 import { type Attachment, attachFiles, declineTransfer, describeFile, fetchIncoming, fileSummaries, outgoingView, prepareFile, transferEventText, transferView } from './files.js';
 import { cardSyncText } from './cardupdate.js';
+import { auditBackup, createBackup, describeBackup, readBackupFile, restoreBackup, writeBackupFile } from './backup.js';
 import { groupTaskEventText, groupTaskEventView } from './grouptasks.js';
 import { listen } from './listen.js';
 import { checkRelayUrl, MAX_MIRROR_RELAYS, MAX_RELAYS, mirrorRelaysOf, relaySets, relayTransport } from './transport.js';
@@ -358,6 +360,7 @@ export async function whoami({ home, out }: Ctx): Promise<void> {
   const fp = fingerprint(agent.id);
   const health = relayHealth(home, config);
   const owner = ownerSecretInfo(home);
+  const restore = agent.restoreStatus();
   out.emit(
     {
       id: agent.id,
@@ -367,6 +370,7 @@ export async function whoami({ home, out }: Ctx): Promise<void> {
       addresses: addressViews(config),
       relay_health: health,
       owner_passphrase: owner,
+      ...(restore ? { restored: restore } : {}),
       card: agent.card,
     },
     [
@@ -383,10 +387,17 @@ export async function whoami({ home, out }: Ctx): Promise<void> {
       `mirrors:     ${mirrorRelaysOf(config).length} discovery mirror(s) (rdv relays list)`,
       `public pointer: ${config.public_pointer ? 'on' : 'off'}`,
       ...(owner.note === NO_OWNER_SECRET_NOTE ? ['owner passphrase: not set (optional; only needed to turn on auto-approve, with "rdv owner-secret set" in your own terminal)'] : []),
+      ...(restore ? [restoreLine(restore)] : []),
       'card:',
       JSON.stringify(agent.card, null, 2),
     ].join('\n'),
   );
+}
+
+/** After a restore (issue #88): which contacts were told and confirmed. */
+export function restoreLine(r: NonNullable<ReturnType<Agent['restoreStatus']>>): string {
+  const waiting = r.notice_due.length + r.awaiting_ack.length;
+  return `restored:    ${r.at} from a backup made ${r.backup_created}; ${waiting === 0 ? 'every contact confirmed' : `${r.notice_due.length} contact(s) not told yet (start rdv listen), ${r.awaiting_ack.length} not confirmed yet`}`;
 }
 
 // --- our own addresses (the owner's setup, not a consent decision) ----------
@@ -1306,6 +1317,107 @@ export async function contactRevoke({ home, out, positionals }: Ctx): Promise<vo
     await agent.revoke(peer);
   });
   out.emit({ event: 'revoked', peer }, `revoked ${peer}`);
+}
+
+/** One line from stdin (`--stdin`: the human piped a passphrase in on purpose), without its line end. */
+async function stdinLine(): Promise<string> {
+  let raw = '';
+  for await (const chunk of process.stdin) {
+    raw += String(chunk);
+    if (raw.includes('\n') || raw.length > 4096) break;
+  }
+  return raw.split(/\r?\n/)[0] ?? '';
+}
+
+/** The backup passphrase: from the terminal itself (not echoed), or with --stdin from stdin; never an argument. */
+async function backupSecret(ctx: Ctx, question: string): Promise<string> {
+  if (ctx.values.stdin === true) return stdinLine();
+  const term = ctx.tty ?? processTty();
+  if (!term.interactive) {
+    throw new CliError('the backup passphrase is read from your terminal (or, if you mean it, from stdin with --stdin); it is never an argument. Only you may do this, in your own terminal');
+  }
+  return term.secret(question);
+}
+
+/**
+ * `rdv backup <file>` (issue #88): an encrypted bundle of this agent (its key,
+ * contacts and grants, config, channels; never open approvals or confirm
+ * phrases) under a passphrase typed twice, written to a new file.
+ */
+export async function backupCmd(ctx: Ctx): Promise<void> {
+  const { home, out, positionals } = ctx;
+  home.requireInit();
+  const term = ctx.tty ?? processTty();
+  if (ctx.values.stdin !== true) {
+    if (!term.interactive) await backupSecret(ctx, ''); // refuses
+    term.say(BACKUP_INTRO);
+  }
+  const first = await backupSecret(ctx, 'Backup passphrase (not shown): ');
+  const weak = backupPassphraseProblem(first);
+  if (weak) throw new CliError(`the backup passphrase needs ${weak}: nothing was written`, 2);
+  if (ctx.values.stdin !== true) {
+    const again = await backupSecret(ctx, 'Type it again: ');
+    if (again !== first) throw new CliError('the two did not match: nothing was written', 2);
+  }
+  const bundle = await createBackup(home, first);
+  const path = writeBackupFile(home, positionals[0], bundle);
+  await auditBackup(home, 'cli');
+  out.emit(
+    { event: 'backup', file: path, agent: bundle.agent, fingerprint: fingerprint(bundle.agent), created: bundle.created },
+    [
+      `backup written to ${path}`,
+      describeBackup(bundle),
+      '',
+      'Keep it somewhere safe and away from this computer (a password manager, a cloud drive), and keep the passphrase',
+      'apart from it. Anyone with both can be your agent: that is the same as having its key.',
+    ].join('\n'),
+  );
+}
+
+const BACKUP_INTRO = [
+  '',
+  'Back up this agent: its key, contacts, grants and settings, encrypted under a passphrase you choose.',
+  'Anyone with the file and the passphrase can be your agent, so pick a strong one (four or more random',
+  "words), never give it to an assistant, and keep it apart from the file. A forgotten passphrase can't be recovered.",
+  '',
+].join('\n');
+
+/**
+ * `rdv restore <file> [--replace]` (issue #88): bring this agent back from a
+ * bundle on a new machine. Shows the identity in the bundle, asks for its
+ * passphrase once, and refuses to replace an existing agent without
+ * --replace. Contacts are told on the next start (rdv listen or rdv-mcp).
+ */
+export async function restoreCmd(ctx: Ctx): Promise<void> {
+  const { home, out, positionals, values } = ctx;
+  const replace = values.replace === true;
+  if (home.initialized() && !replace) {
+    throw new CliError(`an agent already exists at ${home.dir}: restoring would replace it, and its key, for good. Pass --replace if that is what you mean (or restore into another --home/--profile)`);
+  }
+  const { abs, bytes, header } = readBackupFile(home, positionals[0]);
+  if (values.stdin !== true) {
+    const term = ctx.tty ?? processTty();
+    if (!term.interactive) await backupSecret(ctx, ''); // refuses
+    term.say(['', 'Restore this agent from its backup:', describeBackup(header, abs), ...(replace ? ['', `  This REPLACES the agent at ${home.dir}, and its key, for good.`] : []), ''].join('\n'));
+  }
+  const pass = await backupSecret(ctx, 'Backup passphrase (not shown; Enter cancels): ');
+  if (pass === '') throw new CliError('canceled: nothing was restored');
+  const r = await restoreBackup(home, bytes, pass, { replace, via: 'cli', expectAgent: header.agent });
+  out.emit(
+    { event: 'restore', ...r, home: home.dir },
+    [
+      `restored ${r.id} (${r.fingerprint}) from the backup made ${r.backup_created}`,
+      `  ${r.contacts} contact(s), ${r.groups} group(s)${r.replaced ? `; replaced ${r.replaced}` : ''}`,
+      ...(r.owner_passphrase_set ? [`  owner passphrase: the one set ${r.owner_passphrase_set} (as at backup time)`] : []),
+      ...(r.auto_approve.length
+        ? [`  on auto-approve again, as at backup time: ${r.auto_approve.map((p) => fingerprint(p)).join(', ')} (turn one off: rdv contact auto-approve <agent-id> off)`]
+        : []),
+      '',
+      'Next: start your agent (rdv listen, or your assistant with rdv-mcp). It tells each contact it was restored,',
+      'so your conversations go on; rdv whoami shows who has confirmed. Open tasks, dinners and pending requests',
+      'were not in the backup.',
+    ].join('\n'),
+  );
 }
 
 /** The owner's re-sync after a fork or rollback (issue #13); the library never does this by itself. */

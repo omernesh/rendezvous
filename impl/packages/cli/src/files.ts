@@ -269,7 +269,7 @@ const realOr = (p: string) => {
  * installed source, `src`), or any folder that looks like a home
  * (config.json beside agent.json or consent.json)?
  */
-function inAnyHome(home: Home, p: string): boolean {
+export function inAnyHome(home: Home, p: string): boolean {
   if (SECRET_FILE_NAMES.includes(basename(p).toLowerCase())) return true;
   const comps = p.split(/[\\/]+/).filter(Boolean).map((c) => c.toLowerCase());
   const at = comps.lastIndexOf('.rendezvous');

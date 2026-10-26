@@ -180,6 +180,12 @@ export interface ChannelState {
    * (gap and fork included), so a relay can't re-refuse the channel.
    */
   inFloor?: number;
+  /**
+   * After a restore from a backup (NOTES 91): `due` until our `rdv/restored`
+   * notice to this peer is sealed, then that notice's hash until the peer's
+   * `rdv/restored-ack` for it arrives.
+   */
+  restoreNotice?: 'due' | string;
 }
 
 export interface RefusedChannel {
@@ -245,6 +251,46 @@ export class Channels {
     if (c.inNewest === undefined && floor !== undefined) c.inNewest = floor; // so only something newer is adopted
     delete c.refused;
     c.resync = true;
+  }
+
+  /**
+   * A peer's signed `rdv/restored` notice (NOTES 91): its new chain starts at
+   * `e`. Everything not newer than `e` is a replay of the chain it replaced
+   * (inFloor), and the next envelope must follow `e`. The caller checked
+   * that `e` is newer than everything we accepted from the peer, and that the
+   * channel is not refused (a refusal stays the human's to lift, by resync).
+   * Returns the state it replaced, for the event.
+   */
+  rebase(e: Envelope): { inSeq: number; refused?: RefusedChannel['kind'] } {
+    const c = this.get(e.from);
+    const before = { inSeq: c.inSeq, ...(c.refused ? { refused: c.refused.kind } : {}) };
+    const created = parseTimestamp(e.created);
+    if (created === null) throw new Error('rebase: envelope without a valid created');
+    const hash = envelopeHash(e);
+    c.inFloor = Math.max(c.inFloor ?? Number.NEGATIVE_INFINITY, c.inNewest ?? Number.NEGATIVE_INFINITY, created - 1);
+    delete c.refused;
+    delete c.resync;
+    c.inSeq = e.seq;
+    c.inPrev = hash;
+    c.inRecent = [hash];
+    c.inNewest = created;
+    return before;
+  }
+
+  /**
+   * Our own restore, closed by the peer's `rdv/restored-ack` (NOTES 91): the
+   * peer's chain towards us goes on at `fromSeq`, after an envelope whose hash
+   * is `prev`; what it sent before that is gone with the copy we lost. Moves
+   * only forward. `floor`: what is not newer is a replay of the skipped part.
+   */
+  skipTo(peer: string, fromSeq: number, prev: string | null, floor: number): boolean {
+    const c = this.state[peer];
+    if (!c || fromSeq <= c.inSeq + 1) return false;
+    c.inSeq = fromSeq - 1;
+    c.inPrev = prev;
+    c.inRecent = prev === null ? [] : [prev];
+    c.inFloor = Math.max(c.inFloor ?? Number.NEGATIVE_INFINITY, floor);
+    return true;
   }
 
   /** The hash we accepted at `seq`, if it is still in the window. */

@@ -4,6 +4,11 @@ What changed in Rendezvous, newest first. Versions are those of the Claude Code 
 
 The format follows Keep a Changelog. One line per change a user can see; PR numbers link to GitHub.
 
+## 0.6.0 - 2026-10-26 {#v0-6-0}
+
+### Added
+- Back up your agent and recover it on a new computer: ask your assistant to "back up my agent" or "recover my agent from backup" (you type the passphrase only into an approval form, never into the chat), or use `rdv backup` and `rdv restore` in your own terminal. The backup is one encrypted file; keep it in your password manager or a cloud drive. After a restore your contacts are told, so your conversations go on without anyone re-syncing, and contacts on auto-approve stay on it. ([#88](https://github.com/omernesh/rendezvous/issues/88))
+
 ## 0.5.2 - 2026-10-26 {#v0-5-2}
 
 ### Added

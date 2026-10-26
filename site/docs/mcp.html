@@ -200,6 +200,11 @@ false</code>) that changes nothing; neither a cancel nor a timeout ever approves
 <td><code>off</code>: the contacts it was on for (no gate, audited <code>via: mcp</code>); <code>on</code>: the contact, what it covers and until when, only after the human typed the owner passphrase into the approval form (below). Never a passphrase or phrase</td>
 </tr>
 <tr>
+<td><code>rdv_backup</code></td>
+<td>action <code>create</code> / <code>restore</code>; path (absolute: a new file for <code>create</code>, the backup for <code>restore</code>)</td>
+<td><code>create</code>: the file, the agent ID and fingerprint, and <code>verified_agent_id_matches</code> (read back and opened); <code>restore</code> (only into a home with no agent): the restored agent ID, fingerprint, backup time and contact count, then the agent starts and tells its contacts. The passphrase is typed only into the approval form (twice and at least 12 characters for <code>create</code>; once for <code>restore</code>, after the form shows the agent ID and fingerprint in the file); without a form it is refused, with no phrase. Not available through rdv-gateway (issue #88, NOTES 91)</td>
+</tr>
+<tr>
 <td><code>rdv_send</code></td>
 <td>agent_id or to (a <code>local_label</code>), payload <code>{type, …}</code> (not <code>a2a/*</code>, <code>rdv/*</code>)</td>
 <td>agent ID, fingerprint, envelope seq; <code>to</code> is refused when no contact, or more than one, has that label</td>
