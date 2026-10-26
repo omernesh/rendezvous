@@ -1,14 +1,17 @@
 // The demo scripts. Every tool, field, form title and checkbox label here is the real one from
 // rdv-mcp (impl/packages/mcp/src/server.ts) or the rdv CLI; see README.md for the mapping.
-// Personas are the project's anonymized ones: Omer (omer@example.com) and John (john@doe.com).
+// Personas are the project's anonymized ones: Omer (omer@example.com), John (john@doe.com) and, in the group
+// clip, Dana (dana@example.com).
 // Times are seconds after the title card. Keys: p = pane, k = kind.
 (function () {
   'use strict';
   var OMER_FP = '<span class="fp">rdv1:2bfl…q43q</span>';
   var JOHN_FP = '<span class="fp">rdv1:ucnk…utya</span>';
+  var DANA_FP = '<span class="fp">rdv1:c7fx…qdha</span>'; // seed 0x33, the next fixed test key after Omer's 0x11 and John's 0x22
   var JOHN_ID = 'rdv1:ucnkl5d2m5myal7zkx4nyljkcss4thjdx2l7qzasp74tqncvutya';
   var OMER = { kind: 'chat', initial: 'O', title: "Omer's agent", sub: 'your assistant' };
   var JOHN = { kind: 'chat', initial: 'J', title: "John's agent", sub: 'his assistant' };
+  var DANA = { kind: 'chat', initial: 'D', title: "Dana's agent", sub: 'her assistant' };
   function q(text) { return '<span class="quote"><small>untrusted_peer_text</small>' + text + '</span>'; }
 
   window.RDV_SCENES = [
@@ -234,6 +237,75 @@
         { t: 11.6, p: 'term', k: 'out', cls: 'g', html: 'auto-approve is ON for rdv1:ucnk…utya until 2026-11-02\n(set; audited)' },
         { t: 13.0, p: 'a', k: 'tool', name: 'rdv_status', res: 'auto_approve: all', d: 0.7 },
         { t: 13.8, p: 'a', k: 'agent', html: 'John is on auto-approve until <b>2 Nov</b>. I’ll tell you each time something passes without asking. Every pass is in <code>rdv audit</code>.' },
+      ],
+    },
+    {
+      id: 'group-chat',
+      title: 'A group of three agents',
+      tag: 'Groups · every join is a yes',
+      blurb: 'Omer, John and Dana start a Rendezvous group. Each invite and each join waits for a human; every message is sealed to each member.',
+      layout: 'trio',
+      length: 28.6,
+      panes: { a: OMER, b: JOHN, c: DANA },
+      events: [
+        { t: 0, p: 'a', k: 'lock' }, { t: 0, p: 'b', k: 'lock' }, { t: 0, p: 'c', k: 'lock' },
+        // 1. Omer creates the group and invites two contacts; each invite needs his yes (SPEC 7.8.2).
+        { t: 0.3, p: 'a', k: 'user', text: 'Start “Microsite launch” with John and Dana' },
+        { t: 1.7, p: 'a', k: 'tool', name: 'rdv_group', args: 'create', res: 'created', d: 0.5 },
+        { t: 2.3, p: 'a', k: 'tool', name: 'rdv_group', args: 'invite John', res: 'form', d: 0.35, wait: true },
+        { t: 2.6, p: 'a', k: 'form', d: 1.8, tChk: 0.75, tBtn: 1.4, title: 'Send this invite?', btn: 'Submit', chk: 'Yes, invite them',
+          rows: [['Contact', 'john@doe.com'], ['Fingerprint', 'rdv1:ucnk…utya'], ['Group', '“Microsite launch”'], ['Shown as', '“John”'], ['Greeting', '“Help with the microsite?”']],
+          extra: 'They see who is in the group and, if they join, every member’s card and group terms.' },
+        { t: 4.5, p: 'a', k: 'tool', name: 'rdv_group', res: 'invited', d: 0.3 },
+        { t: 4.5, p: 'lane', k: 'packet', from: 'a', to: 'b', label: 'rdv/group-invite · sealed' },
+        { t: 4.9, p: 'a', k: 'tool', name: 'rdv_group', args: 'invite Dana', res: 'form', d: 0.35, wait: true },
+        { t: 5.2, p: 'a', k: 'form', d: 1.8, tChk: 0.75, tBtn: 1.4, title: 'Send this invite?', btn: 'Submit', chk: 'Yes, invite them',
+          rows: [['Contact', 'dana@example.com'], ['Fingerprint', 'rdv1:c7fx…qdha'], ['Group', '“Microsite launch”'], ['Shown as', '“Dana”'], ['Greeting', '“Help with the microsite?”']],
+          extra: 'They see who is in the group and, if they join, every member’s card and group terms.' },
+        { t: 7.1, p: 'a', k: 'tool', name: 'rdv_group', res: 'invited', d: 0.3 },
+        { t: 7.1, p: 'lane', k: 'packet', from: 'a', to: 'c', label: 'rdv/group-invite · sealed' },
+        // 2. John's human joins: allows request/v1 and trusts the admin's additions.
+        { t: 6.0, p: 'b', k: 'agent', html: 'Omer invited you to a group.' + q('Microsite launch<br>“Help with the microsite?”') + 'Members: Omer (your contact). Join?' },
+        { t: 7.2, p: 'b', k: 'user', text: 'Join. Allow requests, trust Omer’s adds' },
+        { t: 8.2, p: 'b', k: 'tool', name: 'rdv_group', args: 'join', res: 'form', d: 0.35, wait: true },
+        { t: 8.5, p: 'b', k: 'form', d: 1.8, tChk: 0.75, tBtn: 1.4, title: 'Join this group?', btn: 'Submit', chk: 'Yes, join this group on these terms',
+          rows: [['Group', '“Microsite launch”'], ['Admin', 'Omer · rdv1:2bfl…q43q'], ['Members now', 'Omer (your contact)']],
+          extra: 'If you join: members may invoke on you: request/v1; newcomers the admin adds get your group messages at once (trust-admin). Joining creates no contact.' },
+        { t: 10.4, p: 'b', k: 'tool', name: 'rdv_group', res: 'joining', d: 0.3 },
+        { t: 10.4, p: 'lane', k: 'packet', from: 'b', to: 'a', label: 'rdv/group-join · sealed' },
+        { t: 12.0, p: 'a', k: 'note', info: true, html: 'John joined · 2 members' },
+        { t: 12.0, p: 'b', k: 'note', html: 'Joined · Microsite launch' },
+        // 3. Dana's human joins (asks about newcomers), then approves John, who is not her contact.
+        { t: 8.7, p: 'c', k: 'agent', html: 'Omer invited you to a group.' + q('Microsite launch<br>“Help with the microsite?”') + 'Members: Omer (your contact). Join?' },
+        { t: 10.0, p: 'c', k: 'user', text: 'Join. Members may send me requests' },
+        { t: 11.2, p: 'c', k: 'tool', name: 'rdv_group', args: 'join', res: 'form', d: 0.35, wait: true },
+        { t: 11.5, p: 'c', k: 'form', d: 1.8, tChk: 0.75, tBtn: 1.4, title: 'Join this group?', btn: 'Submit', chk: 'Yes, join this group on these terms',
+          rows: [['Group', '“Microsite launch”'], ['Admin', 'Omer · rdv1:2bfl…q43q'], ['Members now', 'Omer (your contact)']],
+          extra: 'If you join: members may invoke on you: request/v1; you are asked before each newcomer who is not your contact gets anything from you (ask). Joining creates no contact.' },
+        { t: 13.4, p: 'c', k: 'tool', name: 'rdv_group', res: 'joining', d: 0.3 },
+        { t: 13.4, p: 'lane', k: 'packet', from: 'c', to: 'a', label: 'rdv/group-join · sealed' },
+        { t: 15.0, p: 'a', k: 'note', info: true, html: 'Dana joined · 3 members' },
+        { t: 15.0, p: 'b', k: 'note', info: true, html: 'Dana joined · 3 members' },
+        { t: 15.0, p: 'c', k: 'note', html: 'Joined · Microsite launch' },
+        { t: 15.3, p: 'c', k: 'agent', html: 'John (named by Omer, ' + JOHN_FP + ') isn’t your contact. I send him nothing until you approve.' },
+        { t: 16.9, p: 'c', k: 'user', text: 'OK, include John' },
+        { t: 17.6, p: 'c', k: 'tool', name: 'rdv_group', args: 'approve John', res: 'form', d: 0.35, wait: true },
+        { t: 17.9, p: 'c', k: 'form', d: 1.8, tChk: 0.75, tBtn: 1.4, title: 'Let this member receive what your agent says in the group?', btn: 'Submit', chk: 'Yes, include them',
+          rows: [['Group', '“Microsite launch”'], ['Member', 'rdv1:ucnk…utya, named by the admin as “John”']],
+          extra: 'They are not your contact: approving them creates no contact, it only lets your agent include them in this group.' },
+        { t: 19.8, p: 'c', k: 'tool', name: 'rdv_group', res: 'included', d: 0.3 },
+        // 4. Chat: one signed message, sealed once per member.
+        { t: 20.4, p: 'c', k: 'user', text: 'Tell the group the logo files are ready' },
+        { t: 21.7, p: 'c', k: 'tool', name: 'rdv_group', args: 'post', res: 'sent to 2', d: 0.5 },
+        { t: 21.8, p: 'lane', k: 'packet', from: 'c', label: 'rdv/group-msg · gseq 1 · sealed ×2' },
+        { t: 23.4, p: 'a', k: 'agent', html: '<b>dana@example.com</b> says in the group:' + q('The logo files are ready.') },
+        { t: 23.4, p: 'b', k: 'agent', html: 'Dana ' + DANA_FP + ' (named by Omer) says:' + q('The logo files are ready.') },
+        // 5. A task on the board, for one member; she still decides whether her agent starts it.
+        { t: 24.4, p: 'a', k: 'user', text: 'Ask Dana to draft the landing page copy' },
+        { t: 25.7, p: 'a', k: 'tool', name: 'rdv_group', args: 'request', res: 'on the board', d: 0.5 },
+        { t: 25.8, p: 'lane', k: 'packet', from: 'a', label: 'task/request · sealed ×2' },
+        { t: 27.4, p: 'c', k: 'agent', html: 'Omer put a task on the board for you:' + q('Draft the landing-page copy.') + 'Starting it waits for your yes.' },
+        { t: 27.4, p: 'b', k: 'note', info: true, html: 'Board: new task for Dana' },
       ],
     },
   ];

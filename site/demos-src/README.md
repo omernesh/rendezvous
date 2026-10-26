@@ -18,8 +18,11 @@ Every tool name, argument, form title and checkbox label is the real one from
 `rdv-mcp` (`impl/packages/mcp/src/server.ts`) or the `rdv` CLI. Before changing a
 scene, check the flow still exists, and don't depict anything that is not built.
 Use only the anonymized personas: Omer (`omer@example.com`) and John
-(`john@doe.com`), with `+1555…` phone numbers. The fingerprints are the ones of
-the fixed test keys in `impl/packages/core/vectors/v1.json`.
+(`john@doe.com`), with `+1555…` phone numbers; the group clip adds Dana
+(`dana@example.com`). The fingerprints are the ones of the fixed test keys in
+`impl/packages/core/vectors/v1.json` (seeds `0x11…` Omer, `0x22…` John); Dana's is
+the key of seed `0x33…`, the next one in that series. The `trio` layout (three
+agents side by side, the relay as a strip underneath) is for the group clip.
 
 ## Re-render
 
