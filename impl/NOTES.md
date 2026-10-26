@@ -2995,8 +2995,17 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
     - **Outcomes.** The assistant learns what the owner decided from an
       `approval` event (`approval_id`, `tool`, `outcome` decided, declined
       or failed, and the tool's model-safe `result` or `error`).
-    - **Page.** PIN (scrypt, five free tries then 1 min doubling to 1 h,
-      persisted), in-memory sessions (15 min idle, 1 h max), HMAC CSRF
+    - **Review fixes.** Wrong PINs back off instead of locking (forgotten
+      after a day; `rdv-gateway pin unlock` clears it); with
+      `--client-ip-header` they are counted per client too (3 before that
+      client waits, 20 globally). A full page refuses new asks (64, 16 per
+      token) instead of dropping the oldest. A new PIN ends page sessions.
+      A limit field cleared on the page sends `null`, which `formLimits`
+      now reads as "no limit" (an elicitation client never sends it). Remote
+      results redact every absolute path, not only the home. An answer whose
+      re-run opened no form reports `not_needed`. `rdv_file "fetch"` needs
+      `send`.
+    - **Page.** PIN (scrypt, backoff as above, persisted), in-memory sessions (15 min idle, 1 h max), HMAC CSRF
       tokens, Origin and Sec-Fetch-Site checks, a Host allow-list against
       DNS rebinding, no JavaScript, strict CSP. Threat model:
       `packages/gateway/THREAT-MODEL.md`.

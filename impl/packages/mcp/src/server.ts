@@ -345,7 +345,8 @@ export interface ApprovalAnswer {
 }
 
 export type ApprovalOutcome =
-  | { kind: 'done'; value: unknown }
+  /** `unneeded`: the step no longer needed the human (the state moved); it ran as asked and the answer decided nothing. */
+  | { kind: 'done'; value: unknown; unneeded?: boolean }
   | { kind: 'error'; error: string }
   /** The item changed since the page showed it: nothing was done; this is the form for it now. */
   | { kind: 'changed'; form: ApprovalForm };
@@ -777,9 +778,10 @@ function formLimits(content: Record<string, unknown> | undefined, caps: readonly
     const f = content?.[`limit_frequency_${i}`];
     const o = content?.[`limit_open_${i}`];
     if (f !== undefined && typeof f !== 'string') throw new ToolError('the approval form returned a limit that is not text. Nothing was approved.');
-    if (o !== undefined && typeof o !== 'number') throw new ToolError('the approval form returned a limit that is not a number. Nothing was approved.');
+    // null: the human cleared it (rdv-gateway's page); a form client that omits it keeps what was shown.
+    if (o !== undefined && o !== null && typeof o !== 'number') throw new ToolError('the approval form returned a limit that is not a number. Nothing was approved.');
     const freq = f === undefined ? before.max_frequency : f.trim() === '' ? undefined : f.trim();
-    const open = o === undefined ? before.max_open : o;
+    const open = o === undefined ? before.max_open : o === null ? undefined : o;
     const checked = checkLimit(u, { max_frequency: freq, max_open: open }, 'form');
     if (Object.keys(checked).length) out[u] = checked;
   });
@@ -1045,8 +1047,14 @@ export class RdvMcpServer {
     try {
       return { ok: true, value: await this.calls.run({ tool: name, args: input }, () => this.runDef(d, input)) };
     } catch (err) {
-      if (err instanceof Declined) return { ok: true, value: err.body };
-      if (err instanceof AwaitingHuman && this.remote) return { ok: true, value: this.awaiting(name, input, err, caller.principal) };
+      if (err instanceof Declined) return { ok: true, value: this.remoteSafe(err.body) };
+      if (err instanceof AwaitingHuman && this.remote) {
+        try {
+          return { ok: true, value: this.awaiting(name, input, err, caller.principal) };
+        } catch (e) {
+          return { ok: false, error: clean(this.modelSafeError(name, e), true) };
+        }
+      }
       if (err instanceof RelayPublishError) return { ok: false, error: clean(err.message, true) };
       return { ok: false, error: clean(this.modelSafeError(name, err), true) };
     }
@@ -1065,33 +1073,65 @@ export class RdvMcpServer {
     const d = this.defs.find((x) => x.name === ask.tool);
     if (!d) return { kind: 'error', error: `no tool ${safe(ask.tool)}` };
     let out: ApprovalOutcome;
+    const approval: ApprovalAnswer & { used?: boolean } = { ...answer };
     try {
-      out = { kind: 'done', value: await this.calls.run({ tool: ask.tool, args: ask.args, approval: { ...answer } }, () => this.runDef(d, ask.args)) };
+      out = { kind: 'done', value: await this.calls.run({ tool: ask.tool, args: ask.args, approval }, () => this.runDef(d, ask.args)) };
     } catch (err) {
-      if (err instanceof Declined) out = { kind: 'done', value: err.body };
+      if (err instanceof Declined) out = { kind: 'done', value: this.remoteSafe(err.body) };
       else if (err instanceof AwaitingHuman) return { kind: 'changed', form: err.form };
       else out = { kind: 'error', error: clean(this.modelSafeError(ask.tool, err), true) };
     }
+    // The state moved to a path that needed no one (e.g. the dinner is no longer agreed): the call ran as asked,
+    // and the owner's answer decided nothing. Say so instead of reporting their decision.
+    if (out.kind === 'done' && !approval.used) out = { kind: 'done', value: out.value, unneeded: true };
     // The client that asked learns the outcome from its inbox: what the tool would have returned (model-safe), or the error.
+    const outcome = out.kind !== 'done' ? 'failed' : out.unneeded ? 'not_needed' : answer.decision === 'approve' ? 'decided' : 'declined';
     const event =
       out.kind === 'done'
-        ? { type: 'approval', approval_id: approvalId, tool: ask.tool, outcome: answer.decision === 'approve' ? 'decided' : 'declined', result: out.value }
-        : { type: 'approval', approval_id: approvalId, tool: ask.tool, outcome: 'failed', error: (out as { error: string }).error };
+        ? { type: 'approval', approval_id: approvalId, tool: ask.tool, outcome, result: out.value }
+        : { type: 'approval', approval_id: approvalId, tool: ask.tool, outcome, error: (out as { error: string }).error };
     await this.publish([event]).catch(() => {});
     return out;
   }
 
   /** One tool call: remote results never carry this machine's paths. */
   private async runDef(d: ToolDef, args: Record<string, unknown>): Promise<unknown> {
-    const v = await d.fn(args);
-    return this.remote ? this.redactPaths(v) : v;
+    return this.remoteSafe(await d.fn(args));
   }
 
-  /** Remote mode: local paths (the home, anything under it) stay on the machine. */
+  /** Remote mode: what leaves for the client has no local paths. */
+  private remoteSafe<T>(v: T): T {
+    return this.remote ? (this.redactPaths(v) as T) : v;
+  }
+
+  /**
+   * Remote mode: local paths stay on the machine. The home and the calendar
+   * locations become placeholders (any case, either separator), and any other
+   * absolute path (a file the owner attached, a calendar elsewhere) becomes
+   * "<local path>". URLs are kept.
+   */
   private redactPaths(v: unknown): unknown {
-    const dir = this.home.dir;
+    const known = [
+      [this.home.dir, '<rendezvous home>'],
+      ...(this.settings.calendar ? [[this.settings.calendar, '<calendar>']] : []),
+      ...this.calendarDirs.map((d) => [d, '<calendar folder>']),
+    ]
+      .filter(([p]) => p.length > 1)
+      .sort((a, b) => b[0].length - a[0].length);
+    const esc = (p: string) =>
+      p
+        .split(/[\\/]+/)
+        .map((seg) => seg.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+        .join('[\\\\/]+');
     const walk = (x: unknown): unknown => {
-      if (typeof x === 'string') return x.includes(dir) ? x.split(dir).join('<rendezvous home>') : x;
+      if (typeof x === 'string') {
+        let t = x;
+        for (const [p, r] of known) t = t.replace(new RegExp(esc(p), 'gi'), r);
+        // Windows drive or UNC paths, and POSIX absolute paths of two or more segments that are not part of a URL.
+        t = t.replace(/(?:\b[A-Za-z]:[\\/]|\\\\)[^\s"'<>|*?]+/g, '<local path>');
+        t = t.replace(/(?<![\w:/.~-])\/(?:[^\s"'<>/]+\/)+[^\s"'<>]*/g, '<local path>');
+        return t;
+      }
       if (Array.isArray(x)) return x.map(walk);
       if (x && typeof x === 'object') return Object.fromEntries(Object.entries(x).map(([k, y]) => [k, walk(y)]));
       return x;
@@ -1773,8 +1813,14 @@ export class RdvMcpServer {
       try {
         return result(await this.calls.run({ requestId: extra.requestId, signal: extra.signal, tool: d.name, args }, () => this.runDef(d, args)));
       } catch (err) {
-        if (err instanceof Declined) return result(err.body);
-        if (err instanceof AwaitingHuman && this.remote) return result(this.awaiting(d.name, args, err, caller.principal));
+        if (err instanceof Declined) return result(this.remoteSafe(err.body));
+        if (err instanceof AwaitingHuman && this.remote) {
+          try {
+            return result(this.awaiting(d.name, args, err, caller.principal));
+          } catch (e) {
+            return failure(this.modelSafeError(d.name, e));
+          }
+        }
         if (err instanceof RelayPublishError) return relayFailure(err);
         return failure(this.modelSafeError(d.name, err));
       }
@@ -2507,7 +2553,7 @@ export class RdvMcpServer {
           {
             uri: uri.href,
             mimeType: 'application/json',
-            text: JSON.stringify({ note: UNTRUSTED_NOTE, next_cursor: this.events.cursor, events: this.events.tail(50) }, null, 2),
+            text: JSON.stringify({ note: UNTRUSTED_NOTE, next_cursor: this.events.cursor, events: this.remoteSafe(this.events.tail(50)) }, null, 2),
           },
         ],
       }),

@@ -9,8 +9,8 @@ export const isScope = (s: string): s is Scope => (SCOPES as readonly string[]).
 
 export const SCOPE_TEXT: Record<Scope, string> = {
   read: 'status, contacts, pending requests, the inbox, task and group lists',
-  send: 'messages, tasks and group posts to your contacts, as you',
-  'contact:request': 'asking people for contact, and asking you to approve requests (only you approve, on the page)',
+  send: 'messages, tasks and group posts to your contacts, as you, and fetching files a contact sent for a task you started',
+  'contact:request': 'asking people for contact and asking you to approve (only you approve, on the page); also revoking, declining and blocking, which only ever reduce access',
   negotiate: 'proposing dinner times (only you confirm a meeting, on the page)',
 };
 
@@ -41,7 +41,7 @@ const TABLE: Record<string, Record<string, Scope>> = {
     submit: 'send',
     'approve-release': 'send',
   },
-  rdv_file: { list: 'read', fetch: 'read', 'decline-transfer': 'send' },
+  rdv_file: { list: 'read', fetch: 'send', 'decline-transfer': 'send' },
   rdv_group: {
     list: 'read',
     board: 'read',

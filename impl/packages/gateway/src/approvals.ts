@@ -2,10 +2,12 @@
 // them, with the form they would have seen (RdvMcpServer remote mode). Kept
 // in memory and bounded; a restart drops them (the client asks again). The
 // page shows exactly the stored form, and an answer is bound to its digest.
-import type { ApprovalAsk, ApprovalForm } from '@rendezvous/mcp';
+import { type ApprovalAsk, type ApprovalForm, ToolError } from '@rendezvous/mcp';
 import { randomToken, sha256 } from './http.js';
 
 export const MAX_APPROVALS = 64;
+/** Pending approvals one token may have open, so one client can't fill the page. */
+export const MAX_APPROVALS_PER_PRINCIPAL = 16;
 export const APPROVAL_TTL_MS = 24 * 60 * 60_000;
 
 export interface PendingApproval extends ApprovalAsk {
@@ -35,7 +37,12 @@ export class Approvals {
         return this.urlFor(p.id);
       }
     }
-    while (this.byId.size >= MAX_APPROVALS) this.byId.delete(this.byId.keys().next().value!);
+    // Full: refuse the new ask, never drop one the owner may be about to answer (only expired or decided ones go).
+    const mine = [...this.byId.values()].filter((p) => p.principal === a.principal).length;
+    if (mine >= MAX_APPROVALS_PER_PRINCIPAL) {
+      throw new ToolError(`${mine} approvals you asked for already wait for your user; nothing new was asked. Let them decide those first (or wait until they expire after a day).`);
+    }
+    if (this.byId.size >= MAX_APPROVALS) throw new ToolError('too many approvals already wait for your user; nothing new was asked. Let them decide those first.');
     const id = `apr_${randomToken(18)}`;
     this.byId.set(id, { ...a, id, created: this.now() });
     return this.urlFor(id);
@@ -97,7 +104,10 @@ export function typeContent(properties: Record<string, Record<string, unknown>>,
       out[name] = v;
     } else if (p.type === 'integer' || p.type === 'number') {
       const v = (raw ?? '').trim();
-      if (v === '') continue; // not sent: the form keeps what it showed
+      if (v === '') {
+        out[name] = null; // cleared: no value (a limit field left blank sets no limit)
+        continue;
+      }
       if (!/^-?\d{1,9}$/.test(v)) throw new FormInputError(`${title}: a whole number`);
       const n = Number(v);
       if ((typeof p.minimum === 'number' && n < p.minimum) || (typeof p.maximum === 'number' && n > p.maximum)) {
