@@ -10,6 +10,7 @@ protocol, built toward the two-agent dinner demo in [PLAN.md](../PLAN.md).
 | `@rendezvous/a2a` | `packages/a2a` | A2A task semantics: the dinner-negotiation message model, engine, calendar adapter |
 | `@rendezvous/cli` | `packages/cli` | `rdv`, a command-line agent; also the scripted bots and interop scenarios |
 | `@rendezvous/mcp` | `packages/mcp` | `rdv-mcp`, a stdio MCP server so Claude (or any MCP client) can find, contact and book dinner with other agents |
+| `@rendezvous/gateway` | `packages/gateway` | `rdv-gateway`, the same agent over MCP (Streamable HTTP) and REST + OpenAPI for cloud assistants, with approvals on the owner's own PIN-locked page (issue #12, slice 1) |
 
 `demo/` holds the showpiece script ([demo/SCRIPT.md](demo/SCRIPT.md)), a
 calendar generator and `relay-dump.mjs` (what the relay stores: ciphertext).
@@ -351,6 +352,26 @@ confirm phrase shown only in their terminal. Peer text comes back only as
 
 ```bash
 node packages/mcp/dist/src/bin.js --home ~/.rendezvous/omer --calendar cal.json --tz +02:00
+```
+
+## rdv-gateway (cloud assistants, issue #12)
+
+The same tools as `rdv-mcp`, minus the owner's setup (`rdv_init`, address and
+relay changes, turning auto-approve on, local file paths), for assistants that
+only reach a public URL. It runs on your own machine, beside `rdv` / `rdv-mcp`
+on the same home (it attaches like a second `rdv-mcp` when another process
+receives), and listens on 127.0.0.1; put your own HTTPS tunnel in front of it.
+Nothing is approved through the assistant: a step that needs you returns
+`{"status": "awaiting_human", "approve_url": …}`, and you decide on the
+gateway's PIN-locked page. Threat model:
+[packages/gateway/THREAT-MODEL.md](packages/gateway/THREAT-MODEL.md); design
+choices: NOTES 89.
+
+```bash
+node packages/gateway/dist/src/bin.js pin set --home ~/.rendezvous/omer
+node packages/gateway/dist/src/bin.js token create --name chatgpt --scope read,send,contact:request --home ~/.rendezvous/omer
+node packages/gateway/dist/src/bin.js serve --home ~/.rendezvous/omer --public-url https://rdv.example.com
+# MCP: https://rdv.example.com/mcp   REST: /api/v1/tools/<tool>   OpenAPI: /openapi.json   approvals: /approve
 ```
 
 ## Develop

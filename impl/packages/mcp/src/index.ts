@@ -1,4 +1,23 @@
-export { DEFAULT_ELICIT_TIMEOUT_MS, elicitOptionsFromEnv, INBOX_URI, PHRASE_TIERS, RdvMcpServer, type RdvMcpOptions, TICK_NOTE } from './server.js';
+export {
+  type ApprovalAnswer,
+  type ApprovalAsk,
+  type ApprovalForm,
+  type ApprovalOutcome,
+  type Caller,
+  DEFAULT_ELICIT_TIMEOUT_MS,
+  elicitOptionsFromEnv,
+  formDigest,
+  INBOX_URI,
+  type InvokeResult,
+  PHRASE_TIERS,
+  RdvMcpServer,
+  type RdvMcpOptions,
+  REMOTE_INSTRUCTIONS,
+  type RemoteApprovals,
+  TICK_NOTE,
+  type ToolDef,
+  ToolError,
+} from './server.js';
 export {
   candidateLabel,
   candidateTarget,

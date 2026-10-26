@@ -5,6 +5,12 @@
   "author": "Omer Nesher",
   "license": "Apache-2.0",
   "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "default": "./dist/src/index.js"
+    }
+  },
   "bin": {
     "rdv-mcp": "dist/src/bin.js"
   },

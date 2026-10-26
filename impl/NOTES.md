@@ -2933,6 +2933,74 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       `plugin.test.ts` (the guard refuses terms and promote, allows the board
       verbs; the skill names both).
 
+## rdv-gateway (issue #12, slice 1)
+
+89. **The gateway page is the human channel; the approval is the gate's own
+    form, bound to its digest.** `rdv-gateway` serves the MCP tools over
+    Streamable HTTP (`/mcp`) and REST (`/api/v1/tools/<tool>`,
+    `/openapi.json`) for cloud assistants, on the owner's machine (no spec
+    change: SPEC §5.5 already asks for a channel the model can't answer).
+    Choices:
+    - **One mechanism for every gate.** The WIP (`feat/gateway`) added an
+      owner method per approval kind (request, probe answer, meeting,
+      cancel) with its own page model and digests; main has since grown
+      inbound grants, limits, task start and release, held requests and
+      seven group decisions. Instead, `RdvMcpServer` gets a remote mode in
+      which `askForm` never elicits: without an answer it throws
+      `AwaitingHuman` with the form it would have sent (message, fields,
+      and `digest` = sha256 over tool, arguments, message and fields), and
+      the tool returns `{status: "awaiting_human", approve_url}`. The
+      gateway keeps the ask (memory, at most 64, 24 h) and its page renders
+      that form. The owner's answer runs the same tool again
+      (`RdvMcpServer.answer`) with the answer in the call context; the form
+      it opens is built again from the state now and must have the same
+      digest, else nothing is done and the page shows the new form
+      (`changed`). From there the gate's own path runs unchanged, including
+      its check under the home lock (NOTES 59) that the item is still the
+      one that was read. So the page is exactly as strong as the
+      elicitation form, for every gate, with no per-gate code. A form that
+      asks twice in one call, or a field the page can't show (a passphrase),
+      approves nothing.
+    - **No phrases remotely.** Remote tools have no `confirm_phrase`, and the
+      remote server issues none (`refreshPhrases` is a no-op; an `rdv-mcp`
+      or terminal on the same home still issues its own). The page uses no
+      phrase either, so a PIN-unlocked page approves every tier the form
+      offers, as elicitation does.
+    - **Suggestions are not defaults** (security review of the WIP): the
+      remote `rdv_grant` drops the assistant's tier and label before the
+      gate builds its form, so the form preselects `defaultTier(binding)`
+      and the label field starts empty (a probe answer's default, the probed
+      address, stays); the page shows the assistant's values beside the
+      fields as suggestions, warning when the tier is closer than the
+      default. They are part of the stored arguments, so they are bound into
+      the digest too.
+    - **Human-only stays in the terminal.** Remote mode removes `rdv_init`;
+      `rdv_addresses` and `rdv_relays` only list; `rdv_auto_approve` only
+      turns off; no calendar path, no `rdv_file "prepare"`, no
+      `inline_files`; `rdv_file` returns neither content nor paths; the home
+      path is replaced in every remote result and error.
+    - **Auth seam.** `Gateway.authenticate(req)` returns a principal
+      (id, name, scopes). Slice 1: static tokens (`rdvg_` + 256 random bits,
+      SHA-256 in `gateway.json`, made by `rdv-gateway token create`). Scopes
+      `read`, `send`, `contact:request`, `negotiate` map each (tool, action)
+      to one scope in a table (deny by default); none approves. An MCP
+      session lists the tools its token can use some of and is bound to
+      that token. OAuth 2.1 (slice 2) replaces only `authenticate`.
+    - **One inbound consumer per home** (NOTES 43): the gateway is an
+      `RdvMcpServer` with role `rdv-gateway`, so it consumes when it gets
+      `listener.lock` and attaches otherwise. The server now keeps its tool
+      definitions in a list and builds an MCP server per session from them
+      (`newSession`); stdio `rdv-mcp` has the one it always had, and the
+      inbox resource notifies every subscribed session.
+    - **Outcomes.** The assistant learns what the owner decided from an
+      `approval` event (`approval_id`, `tool`, `outcome` decided, declined
+      or failed, and the tool's model-safe `result` or `error`).
+    - **Page.** PIN (scrypt, five free tries then 1 min doubling to 1 h,
+      persisted), in-memory sessions (15 min idle, 1 h max), HMAC CSRF
+      tokens, Origin and Sec-Fetch-Site checks, a Host allow-list against
+      DNS rebinding, no JavaScript, strict CSP. Threat model:
+      `packages/gateway/THREAT-MODEL.md`.
+
 ## Not implemented yet
 
 
