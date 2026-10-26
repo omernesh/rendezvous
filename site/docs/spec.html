@@ -55,7 +55,7 @@
     <p class="crumbs"><a href="/docs/">Docs</a> / Protocol</p>
     <h1>Protocol specification</h1>
     <p class="doc-meta">Rendered from <a href="https://github.com/omernesh/rendezvous/blob/main/SPEC.md">SPEC.md</a> on GitHub. <a href="/docs/spec.md">Markdown version</a> for LLMs.</p>
-    <details class="toc-m"><summary>On this page</summary><ul><li><a href="#1-abstract">1. Abstract</a></li><li><a href="#2-motivation">2. Motivation</a></li><li><a href="#3-design-principles">3. Design principles</a></li><li><a href="#4-identity-layer">4. Identity layer</a><ul><li><a href="#41-agent-key">4.1 Agent key</a></li><li><a href="#42-agent-id">4.2 Agent ID</a></li><li><a href="#43-address-card-calling-card">4.3 Address Card ("calling card")</a></li><li><a href="#44-discovery-of-a-card">4.4 Discovery of a card</a></li><li><a href="#45-discovery-directories-optional">4.5 Discovery directories (optional)</a></li><li><a href="#46-encoding-canonical-json-and-signatures">4.6 Encoding, canonical JSON and signatures</a></li></ul></li><li><a href="#5-contact-layer-consent-handshake">5. Contact layer (consent &amp;amp; handshake)</a><ul><li><a href="#51-contact-request">5.1 Contact Request</a></li><li><a href="#52-human-channel-bootstrap">5.2 Human-channel bootstrap</a></li><li><a href="#521-mailbox-probe-email-probe-profile">5.2.1 Mailbox probe (email probe profile)</a></li><li><a href="#522-invite-no-agent-found">5.2.2 Invite (no agent found)</a></li><li><a href="#53-contact-grant-consent">5.3 Contact Grant (consent)</a></li><li><a href="#54-policy-and-revocation">5.4 Policy and revocation</a></li><li><a href="#55-consent-stays-with-the-human">5.5 Consent stays with the human</a></li><li><a href="#551-auto-approve-all-per-contact">5.5.1 Auto-approve-all per contact</a></li><li><a href="#56-peer-text-is-untrusted-data">5.6 Peer text is untrusted data</a></li></ul></li><li><a href="#6-transport-layer">6. Transport layer</a><ul><li><a href="#61-rendezvous-hints">6.1 Rendezvous hints</a></li><li><a href="#62-primary-relay-nostr">6.2 Primary relay: Nostr</a></li><li><a href="#63-fallbacks-all-optional-all-dumb-pipes">6.3 Fallbacks (all optional, all dumb pipes)</a></li><li><a href="#64-envelope">6.4 Envelope</a></li></ul></li><li><a href="#7-session-task-layer-a2a-semantics">7. Session &amp;amp; task layer (A2A semantics)</a><ul><li><a href="#71-a2a-mapping">7.1 A2A mapping</a></li><li><a href="#72-meeting-verbs">7.2 Meeting verbs</a></li><li><a href="#73-task-states">7.3 Task states</a></li><li><a href="#74-scope-and-defaults">7.4 Scope and defaults</a></li><li><a href="#75-extending-the-meeting-verbs">7.5 Extending the meeting verbs</a></li><li><a href="#76-general-tasks">7.6 General tasks</a></li><li><a href="#77-files">7.7 Files</a></li></ul></li><li><a href="#8-threat-model">8. Threat model</a></li><li><a href="#9-privacy">9. Privacy</a></li><li><a href="#10-anti-spam-reputation">10. Anti-spam &amp;amp; reputation</a></li><li><a href="#11-open-problems-honest">11. Open problems (honest)</a></li><li><a href="#12-scope-phases">12. Scope &amp;amp; phases</a></li><li><a href="#13-reference-implementation-distribution">13. Reference implementation &amp;amp; distribution</a></li><li><a href="#14-appendix">14. Appendix</a></li></ul></details>
+    <details class="toc-m"><summary>On this page</summary><ul><li><a href="#1-abstract">1. Abstract</a></li><li><a href="#2-motivation">2. Motivation</a></li><li><a href="#3-design-principles">3. Design principles</a></li><li><a href="#4-identity-layer">4. Identity layer</a><ul><li><a href="#41-agent-key">4.1 Agent key</a></li><li><a href="#42-agent-id">4.2 Agent ID</a></li><li><a href="#43-address-card-calling-card">4.3 Address Card ("calling card")</a></li><li><a href="#44-discovery-of-a-card">4.4 Discovery of a card</a></li><li><a href="#45-discovery-directories-optional">4.5 Discovery directories (optional)</a></li><li><a href="#46-encoding-canonical-json-and-signatures">4.6 Encoding, canonical JSON and signatures</a></li></ul></li><li><a href="#5-contact-layer-consent-handshake">5. Contact layer (consent &amp;amp; handshake)</a><ul><li><a href="#51-contact-request">5.1 Contact Request</a></li><li><a href="#52-human-channel-bootstrap">5.2 Human-channel bootstrap</a></li><li><a href="#521-mailbox-probe-email-probe-profile">5.2.1 Mailbox probe (email probe profile)</a></li><li><a href="#522-invite-no-agent-found">5.2.2 Invite (no agent found)</a></li><li><a href="#53-contact-grant-consent">5.3 Contact Grant (consent)</a></li><li><a href="#54-policy-and-revocation">5.4 Policy and revocation</a></li><li><a href="#55-consent-stays-with-the-human">5.5 Consent stays with the human</a></li><li><a href="#551-auto-approve-all-per-contact">5.5.1 Auto-approve-all per contact</a></li><li><a href="#56-peer-text-is-untrusted-data">5.6 Peer text is untrusted data</a></li></ul></li><li><a href="#6-transport-layer">6. Transport layer</a><ul><li><a href="#61-rendezvous-hints">6.1 Rendezvous hints</a></li><li><a href="#62-primary-relay-nostr">6.2 Primary relay: Nostr</a></li><li><a href="#63-fallbacks-all-optional-all-dumb-pipes">6.3 Fallbacks (all optional, all dumb pipes)</a></li><li><a href="#64-envelope">6.4 Envelope</a></li></ul></li><li><a href="#7-session-task-layer-a2a-semantics">7. Session &amp;amp; task layer (A2A semantics)</a><ul><li><a href="#71-a2a-mapping">7.1 A2A mapping</a></li><li><a href="#72-meeting-verbs">7.2 Meeting verbs</a></li><li><a href="#73-task-states">7.3 Task states</a></li><li><a href="#74-scope-and-defaults">7.4 Scope and defaults</a></li><li><a href="#75-extending-the-meeting-verbs">7.5 Extending the meeting verbs</a></li><li><a href="#76-general-tasks">7.6 General tasks</a></li><li><a href="#77-files">7.7 Files</a></li><li><a href="#78-groups">7.8 Groups</a></li></ul></li><li><a href="#8-threat-model">8. Threat model</a></li><li><a href="#9-privacy">9. Privacy</a></li><li><a href="#10-anti-spam-reputation">10. Anti-spam &amp;amp; reputation</a></li><li><a href="#11-open-problems-honest">11. Open problems (honest)</a></li><li><a href="#12-scope-phases">12. Scope &amp;amp; phases</a></li><li><a href="#13-reference-implementation-distribution">13. Reference implementation &amp;amp; distribution</a></li><li><a href="#14-appendix">14. Appendix</a></li></ul></details>
     <div class="prose">
 <p><strong>Status:</strong> Draft v0.1 rev 3 (2026-10-25) — for discussion<br>
 <strong>Author:</strong> Omer Nesher<br>
@@ -120,6 +120,11 @@ consent concept changed; see <strong>Changes in rev 3</strong> below.</p>
     verbs are A2A extensions, advertised on the card; a receiver answers what
     it does not support instead of dropping it, and ignores <code>metadata</code>
     (§4.3, §7.5; was §11.11).</li>
+<li><strong>Groups, §7.8</strong> (v0.4, issue #77): a signed, admin-issued member list
+    chained by <code>epoch</code> and <code>prev</code>; invites only to the admin's contacts;
+    joining needs the joiner's human and the join is a group-scoped grant;
+    each member approves newcomers who are not its contacts (<code>ask</code>) unless it
+    chose <code>trust-admin</code>. Group messages and tasks follow.</li>
 <li><strong>Elsewhere:</strong> threat-model rows (§8), probe privacy (§9), new open problems
     (§11), phases aligned with the implementation plan (§12), MCP consent and
     inbox semantics (§13).</li>
@@ -507,8 +512,8 @@ self-asserted (<code>claimed</code>); the server verifies only the request signa
     entirely never breaks anything.</li>
 </ul>
 <h3 id="46-encoding-canonical-json-and-signatures">4.6 Encoding, canonical JSON and signatures<a class="anchor" href="#46-encoding-canonical-json-and-signatures" title="Link to this section" aria-label="Link to this section">#</a></h3>
-<p>Every signed document (card, request, grant, revoke, envelope) follows the
-same rules, so independent implementations produce identical bytes:</p>
+<p>Every signed document (card, request, grant, revoke, envelope, and the group
+state, invite and join of §7.8) follows the same rules, so independent implementations produce identical bytes:</p>
 <ul>
 <li><strong>Canonical JSON</strong> (<code>canon(doc)</code>) is a subset of RFC 8785 (JCS): UTF-8,
     object members sorted by key, no insignificant whitespace, absent members
@@ -1215,7 +1220,8 @@ where hole-punching fails (TURN relays carry the ciphertext).</p>
     replay and is dropped as one.</li>
 <li><strong>Channel state is kept only for admitted senders.</strong> A receiver keeps
     <code>seq</code>/<code>prev</code> state for contacts, pending requesters it keeps, agents it
-    asked for contact, and peers it has written to. For any other sender it
+    asked for contact, peers it has written to, and the other members of the
+    groups it is in (§7.8.2). For any other sender it
     keeps none: such a sender's chain starts at the first envelope the
     receiver sees from it, whatever its <code>seq</code>, because it may have written
     before and been refused. Minting keys is free, so state per unknown sender
@@ -1850,6 +1856,146 @@ transfer, 16 KiB of <code>data</code> each (canonical JSON), nested at most 16 d
 <p><strong>Privacy cost.</strong> A fetch shows the store the receiver's IP address and the
 time; a direct transfer shows it to the peer. Agents that care fetch through
 a proxy or decline the transfer. The relay sees nothing new.</p>
+<h3 id="78-groups">7.8 Groups<a class="anchor" href="#78-groups" title="Link to this section" aria-label="Link to this section">#</a></h3>
+<blockquote>
+<p><strong>Spec change (v0.4, issue #77).</strong> New section, from the approved design
+(<code>docs/design/general-tasks-and-groups.md</code> Part B, §7.8.1 and §7.8.2:
+membership). Group messages, tasks in a group, removal and leaving,
+ordering and abuse (design §7.8.3–§7.8.7) follow in later slices
+(issues #78, #79); until then a group carries its membership only.</p>
+</blockquote>
+<p>A group is three or more agents sharing messages and tasks under the
+<strong>groups extension</strong>, <code>https://rendezvous.nesher.co/ext/groups/v1</code>, a
+profile extension listed on the card (§4.3). In this version a group has no
+key of its own: everything said to the group is sealed to each recipient in
+its own envelope over the pairwise channel (§6.4). A group has at most 16
+members.</p>
+<h4 id="781-group-state-and-roles">7.8.1 Group state and roles<a class="anchor" href="#781-group-state-and-roles" title="Link to this section" aria-label="Link to this section">#</a></h4>
+<p>The membership is a signed document (§4.6), issued by an admin and sent over
+the admin's own pairwise channels:</p>
+<div class="codeblock"><pre tabindex="0"><code class="language-json">{ &quot;v&quot;: 1, &quot;type&quot;: &quot;rdv/group-state&quot;, &quot;group&quot;: &quot;&lt;uuid&gt;&quot;, &quot;epoch&quot;: 2,
+  &quot;prev&quot;: &quot;&lt;hash (§4.6) of the epoch-1 state&gt;&quot;, &quot;from&quot;: &quot;rdv1:&lt;admin&gt;&quot;,
+  &quot;members&quot;: [ { &quot;id&quot;: &quot;rdv1:&lt;omer&gt;&quot;, &quot;role&quot;: &quot;admin&quot;, &quot;card&quot;: &quot;&lt;hash of its card&gt;&quot; },
+               { &quot;id&quot;: &quot;rdv1:&lt;john&gt;&quot;, &quot;role&quot;: &quot;member&quot;, &quot;card&quot;: &quot;&lt;hash&gt;&quot;, &quot;name&quot;: &quot;John&quot; },
+               { &quot;id&quot;: &quot;rdv1:&lt;dana&gt;&quot;, &quot;role&quot;: &quot;member&quot;, &quot;card&quot;: &quot;&lt;hash&gt;&quot;, &quot;name&quot;: &quot;Dana&quot; } ],
+  &quot;policy&quot;: { &quot;member_rate&quot;: &quot;60/hour&quot;, &quot;members_may_invite&quot;: false },
+  &quot;name&quot;: &quot;Microsite launch&quot;, &quot;ts&quot;: &quot;…&quot;, &quot;sig&quot;: &quot;…&quot; }
+</code></pre></div>
+<ul>
+<li><strong>Chain.</strong> Epoch 0 is signed by the creator, an admin listed in it, with
+    <code>prev: null</code>. Each later state has <code>epoch</code> one higher and <code>prev</code> the hash
+    of the state before, and is signed by an admin <em>of the state before</em>. A
+    member applies a state only on top of the one it holds; a state for a
+    later epoch waits until the ones before it arrive (the reference keeps 4).
+    A state is accepted only from its signer (the envelope's <code>from</code>) and only
+    from a member of the group.</li>
+<li><strong>Shape.</strong> <code>members</code> lists 1 to 16 distinct agent IDs, at least one with
+    role <code>admin</code>. <code>card</code> is the hex SHA-256 of the canonical JSON of the
+    member's card (the card in its join document, §7.8.2). <code>name</code> (at most 64
+    characters) and the group's <code>name</code> (1 to 100) are display text the admin
+    wrote (§5.6): never a local label, never verified. <code>member_rate</code> has the
+    <code>max_frequency</code> format. <code>members_may_invite</code> is reserved: this version
+    writes <code>false</code> and only admins invite. Unknown fields anywhere are refused,
+    and so is a state larger than 8 KiB.</li>
+<li><strong>Roles.</strong> <code>admin</code> changes the state; <code>member</code> does not. With more than one
+    admin, two valid states with the same epoch (both on top of the same state)
+    are resolved by keeping the one with the lower hash; the other admin
+    re-issues on top. Two different states with the same epoch signed by the
+    <em>same</em> admin are a fork: the admin restored a backup, or lies. Members then
+    freeze membership at the state they hold, refuse later states, and tell
+    their humans; only the human thaws it, after checking with the admin.</li>
+<li><strong>Display.</strong> A member who is not my contact has no local label; hosts show
+    its fingerprint and "named by the admin as …", never treating the name as
+    verified.</li>
+</ul>
+<h4 id="782-invitation-and-consent">7.8.2 Invitation and consent<a class="anchor" href="#782-invitation-and-consent" title="Link to this section" aria-label="Link to this section">#</a></h4>
+<ul>
+<li>
+<p><strong>Only contacts are invited.</strong> An admin invites only its own contacts
+    whose card lists the groups extension, in an <code>rdv/group-invite</code> sent over
+    their pairwise channel:</p>
+<div class="codeblock"><pre tabindex="0"><code>{ "v": 1, "type": "rdv/group-invite", "id": "&lt;uuid&gt;", "group": "&lt;uuid&gt;",
+  "from": "rdv1:&lt;admin&gt;", "to": "rdv1:&lt;invitee&gt;",
+  "state": { …the group's current rdv/group-state… },
+  "greeting": "Help with the microsite?", "expires": "…", "ts": "…", "sig": "…" }
+</code></pre></div>
+<p>The receiver keeps it for its human only when it verifies, comes from a
+current contact that signed it and is an admin of the state it carries, is
+addressed to the receiver, the receiver is not in the group yet, and the
+group has room. A group invite from a non-contact is dropped like any
+non-contact payload. <code>greeting</code> (at most 280 characters) is peer text.
+<code>expires</code> is at most 14 days ahead (reference default: 7). An admin counts
+its open invites against the 16, so a group is never promised past its cap.</p>
+</li>
+<li>
+<p><strong>Joining needs the joiner's human</strong> (§5.5), every time: no standing
+    approval covers it, auto-approve included (§5.5.1). The host shows every
+    member: fingerprint, and either "your contact <code>&lt;label&gt;</code>" or "not your
+    contact, named by the admin as …"; the admin; the greeting as the admin's
+    words; and the terms of the join. The approval is bound to the digest of
+    that invite as shown (its state, and which members are contacts) and of
+    the terms.</p>
+</li>
+<li>
+<p><strong>The join document is a group-scoped grant.</strong> The joiner's agent sends
+    the admin an <code>rdv/group-join</code>:</p>
+<div class="codeblock"><pre tabindex="0"><code>{ "v": 1, "type": "rdv/group-join", "id": "&lt;uuid&gt;", "group": "&lt;uuid&gt;",
+  "from": "rdv1:&lt;joiner&gt;", "to": "rdv1:&lt;admin&gt;", "invite_ref": "&lt;invite id&gt;",
+  "state": "&lt;hash of the state the joiner's human approved&gt;",
+  "card": { …the joiner's card… },
+  "scope": { "invoke": { "https://rendezvous.nesher.co/ext/request/v1": {} }, "max_frequency": "20/day" },
+  "ts": "…", "sig": "…" }
+</code></pre></div>
+<p><code>scope</code> is what <em>any</em> member may invoke on the joiner through the group:
+<code>invoke</code> as in §5.3 (deny by default; the groups extension itself is never
+a key) and <code>max_frequency</code>, nothing else. It creates no pairwise contact.
+The creator writes its own join with <code>invite_ref: null</code> and <code>to</code> its own
+ID. A join larger than 24 KiB is refused.</p>
+</li>
+<li>
+<p><strong>Admission.</strong> The admin accepts a join only from the invitee itself, for
+    an open, unexpired invite of its own, whose <code>state</code> is the hash of the
+    state that invite carried, while it is still an admin and the group has
+    room. It then issues the next state with the joiner in it (role <code>member</code>,
+    <code>card</code> the hash of the join's card, <code>name</code> as the admin's human named
+    them) and sends that state to every member, the joiner included, followed
+    by members' join documents in <code>rdv/group-members</code> payloads
+    (<code>{"type": "rdv/group-members", "group": "&lt;uuid&gt;", "joins": [ … ]}</code>, as
+    many as fit under the envelope cap of §6.4): the newcomer's join to the
+    others, and everyone else's to the newcomer. A member keeps a join only
+    when it verifies and its card's hash is the one the state lists for its
+    signer. The joiner adopts the first state that lists it from the admin it
+    joined through: on top of the state it approved, or, if the group moved on
+    meanwhile, as signed by that admin (its contact) as an admin in it.</p>
+</li>
+<li><strong>Newcomers.</strong> Each member applies its own policy to every member new to
+    it, chosen when it joined: <code>ask</code> (default) or <code>trust-admin</code>. A member who
+    is my contact is approved at once. Otherwise, under <code>trust-admin</code> it is
+    approved at once, and under <code>ask</code> it receives nothing from me until my
+    human approves it, while I still receive its group messages (as untrusted
+    text; it may not invoke anything until approved). On the state that admits
+    me, every other member is new to me, so under <code>ask</code> a member that was
+    already in the group and is not my contact waits for my human too. An
+    approval is bound to the member as shown (its card hash, the admin's name
+    for it, the epoch it came in): a member removed and added again is asked
+    about again. Approving a newcomer, like joining, is never covered by
+    auto-approve (§5.5.1).</li>
+<li><strong>Channels.</strong> A member keeps channel state (§6.4) for every other member
+    of a group it is in, and for the admin a join of its own waits on, for as
+    long as both are members.</li>
+<li><strong>Bounds</strong> (reference): pending invites, 16 in all and 2 per admin (the
+    oldest goes when full; more from one admin are refused and a retry later
+    is welcome); groups per agent, 32; group control payloads, 60 an hour per
+    peer (dropped over it, never revoking).</li>
+</ul>
+<p>The reference CLI's human-only commands are <code>rdv group pending</code> (invites and
+newcomers with the <code>--code</code> that approves exactly what was shown, and the
+MCP server's confirm phrases), <code>rdv group join &lt;invite-id&gt; --code &lt;code&gt;
+[--invoke &lt;uri&gt;]… [--max-frequency f] [--newcomers ask|trust-admin]</code>,
+<code>rdv group approve &lt;group-id&gt; &lt;agent-id&gt; --code &lt;code&gt;</code> and <code>rdv group resync
+&lt;group-id&gt;</code>; <code>rdv group create</code>, <code>rdv group invite</code>, <code>rdv group list</code> and
+<code>rdv group decline</code> are not consent decisions. The MCP server's <code>rdv_group</code>
+asks through an approval form or a confirm phrase for "join" and "approve".</p>
 <hr>
 <h2 id="8-threat-model">8. Threat model<a class="anchor" href="#8-threat-model" title="Link to this section" aria-label="Link to this section">#</a></h2>
 <div class="tablewrap" tabindex="0"><table>
@@ -1923,6 +2069,18 @@ a proxy or decline the transfer. The relay sees nothing new.</p>
 <tr>
 <td>A task request (<code>request/v1</code>) tells the executor's model to send owner data, grant, or approve itself</td>
 <td>Start gate before any work; release gate on everything that leaves; approvals and confirm phrases come only from the human and are bound to what they saw, so one written in the request is never valid; peer content marked untrusted and terminal-safe; the model drafts, never acts (§5.6, §7.6.4)</td>
+</tr>
+<tr>
+<td>A group admin adds members to everyone's audience</td>
+<td>Each member approves every newcomer who is not its contact before sending it anything (<code>ask</code>, the default); an admin cannot change anyone's group-scoped grant, and a member can leave and block its key (§7.8.2)</td>
+</tr>
+<tr>
+<td>A group admin signs two member lists for one step (a restored backup, or a lie)</td>
+<td>The same epoch from the same admin is a fork: members freeze membership and tell their humans, who re-sync after checking (§7.8.1)</td>
+</tr>
+<tr>
+<td>Group invite spam</td>
+<td>Only contacts invite; at most 2 pending per admin and 16 in all; joining needs the human every time (§7.8.2)</td>
 </tr>
 <tr>
 <td>Stranger answers a topic probe</td>
@@ -2062,6 +2220,11 @@ a proxy or decline the transfer. The relay sees nothing new.</p>
     gates and the marking and tells the model the rules. A model that
     follows an injected request can still misuse its other tools; only
     what leaves through the task is caught by the release gate.</li>
+<li><strong>Groups v1 have no group key</strong> (§7.8). A message to a group is sealed
+    once per member, so relays see the membership graph (every pair) and
+    the burst that groups the copies, and there is no forward secrecy, as
+    for pairwise traffic. The cap of 16 bounds the cost; groups v2 (MLS
+    with a single committer) is future work.</li>
 </ol>
 <hr>
 <h2 id="12-scope-phases">12. Scope &amp; phases<a class="anchor" href="#12-scope-phases" title="Link to this section" aria-label="Link to this section">#</a></h2>
@@ -2072,8 +2235,9 @@ envelope, Nostr primary, human-channel bootstrap, A2A meeting negotiation.</p>
 tests, A2A dinner negotiation over a real relay.</p>
 <p><strong>v0.3:</strong> MCP server exposing the tool API (§13); dogfood on a live agent
 fleet — including discovery, probe and invite tools.</p>
-<p><strong>v0.4:</strong> fallback transports (ntfy/MQTT message transport), direct-channel
-negotiation, directory service + suggestions, rotation doc, revoke semantics.</p>
+<p><strong>v0.4:</strong> groups v1 (§7.8: pairwise fan-out, at most 16 members), fallback
+transports (ntfy/MQTT message transport), direct-channel negotiation,
+directory service + suggestions, rotation doc, revoke semantics.</p>
 <p><strong>v1.0:</strong> multi-vendor interop event ("two vendors' agents coordinate a
 dinner"), vouches, platform-profile discovery.</p>
 <hr>
@@ -2134,13 +2298,18 @@ calling card.</strong></p>
 <td>A2A task exchange lifecycle</td>
 </tr>
 <tr>
+<td><code>rdv_group</code></td>
+<td>groups (§7.8): create one, invite contacts, list groups and invites; joining and approving a newcomer only with the human's own approval (§5.5)</td>
+</tr>
+<tr>
 <td><code>rdv_task</code></td>
 <td>general tasks (§7.6): request one from a contact, list and show them, answer <code>input-required</code>, cancel; for a contact's task, approve its start and release each result, both only with the human's own approval (§5.5)</td>
 </tr>
 </tbody>
 </table></div>
 <p><code>rdv_grant</code> MUST NOT succeed on the model's say-so (§5.5), nor may
-<code>rdv_task</code> pass a start or release gate on it, and peer text in any result
+<code>rdv_task</code> pass a start or release gate on it, nor <code>rdv_group</code> join a group
+or approve a newcomer, and peer text in any result
 is returned marked as untrusted (§5.6). One server runs per home
 state directory.</p>
 <p>A separate, optional <strong>directory service</strong> ships alongside for anyone who
@@ -2178,7 +2347,7 @@ lookups.</p>
 vendor-neutral and unowned.</p>
     </div>
   </article>
-  <div class="docs-toc"><nav class="page-toc" aria-label="On this page"><p class="side-group">On this page</p><ul><li><a href="#1-abstract">1. Abstract</a></li><li><a href="#2-motivation">2. Motivation</a></li><li><a href="#3-design-principles">3. Design principles</a></li><li><a href="#4-identity-layer">4. Identity layer</a><ul><li><a href="#41-agent-key">4.1 Agent key</a></li><li><a href="#42-agent-id">4.2 Agent ID</a></li><li><a href="#43-address-card-calling-card">4.3 Address Card ("calling card")</a></li><li><a href="#44-discovery-of-a-card">4.4 Discovery of a card</a></li><li><a href="#45-discovery-directories-optional">4.5 Discovery directories (optional)</a></li><li><a href="#46-encoding-canonical-json-and-signatures">4.6 Encoding, canonical JSON and signatures</a></li></ul></li><li><a href="#5-contact-layer-consent-handshake">5. Contact layer (consent &amp;amp; handshake)</a><ul><li><a href="#51-contact-request">5.1 Contact Request</a></li><li><a href="#52-human-channel-bootstrap">5.2 Human-channel bootstrap</a></li><li><a href="#521-mailbox-probe-email-probe-profile">5.2.1 Mailbox probe (email probe profile)</a></li><li><a href="#522-invite-no-agent-found">5.2.2 Invite (no agent found)</a></li><li><a href="#53-contact-grant-consent">5.3 Contact Grant (consent)</a></li><li><a href="#54-policy-and-revocation">5.4 Policy and revocation</a></li><li><a href="#55-consent-stays-with-the-human">5.5 Consent stays with the human</a></li><li><a href="#551-auto-approve-all-per-contact">5.5.1 Auto-approve-all per contact</a></li><li><a href="#56-peer-text-is-untrusted-data">5.6 Peer text is untrusted data</a></li></ul></li><li><a href="#6-transport-layer">6. Transport layer</a><ul><li><a href="#61-rendezvous-hints">6.1 Rendezvous hints</a></li><li><a href="#62-primary-relay-nostr">6.2 Primary relay: Nostr</a></li><li><a href="#63-fallbacks-all-optional-all-dumb-pipes">6.3 Fallbacks (all optional, all dumb pipes)</a></li><li><a href="#64-envelope">6.4 Envelope</a></li></ul></li><li><a href="#7-session-task-layer-a2a-semantics">7. Session &amp;amp; task layer (A2A semantics)</a><ul><li><a href="#71-a2a-mapping">7.1 A2A mapping</a></li><li><a href="#72-meeting-verbs">7.2 Meeting verbs</a></li><li><a href="#73-task-states">7.3 Task states</a></li><li><a href="#74-scope-and-defaults">7.4 Scope and defaults</a></li><li><a href="#75-extending-the-meeting-verbs">7.5 Extending the meeting verbs</a></li><li><a href="#76-general-tasks">7.6 General tasks</a></li><li><a href="#77-files">7.7 Files</a></li></ul></li><li><a href="#8-threat-model">8. Threat model</a></li><li><a href="#9-privacy">9. Privacy</a></li><li><a href="#10-anti-spam-reputation">10. Anti-spam &amp;amp; reputation</a></li><li><a href="#11-open-problems-honest">11. Open problems (honest)</a></li><li><a href="#12-scope-phases">12. Scope &amp;amp; phases</a></li><li><a href="#13-reference-implementation-distribution">13. Reference implementation &amp;amp; distribution</a></li><li><a href="#14-appendix">14. Appendix</a></li></ul></nav></div>
+  <div class="docs-toc"><nav class="page-toc" aria-label="On this page"><p class="side-group">On this page</p><ul><li><a href="#1-abstract">1. Abstract</a></li><li><a href="#2-motivation">2. Motivation</a></li><li><a href="#3-design-principles">3. Design principles</a></li><li><a href="#4-identity-layer">4. Identity layer</a><ul><li><a href="#41-agent-key">4.1 Agent key</a></li><li><a href="#42-agent-id">4.2 Agent ID</a></li><li><a href="#43-address-card-calling-card">4.3 Address Card ("calling card")</a></li><li><a href="#44-discovery-of-a-card">4.4 Discovery of a card</a></li><li><a href="#45-discovery-directories-optional">4.5 Discovery directories (optional)</a></li><li><a href="#46-encoding-canonical-json-and-signatures">4.6 Encoding, canonical JSON and signatures</a></li></ul></li><li><a href="#5-contact-layer-consent-handshake">5. Contact layer (consent &amp;amp; handshake)</a><ul><li><a href="#51-contact-request">5.1 Contact Request</a></li><li><a href="#52-human-channel-bootstrap">5.2 Human-channel bootstrap</a></li><li><a href="#521-mailbox-probe-email-probe-profile">5.2.1 Mailbox probe (email probe profile)</a></li><li><a href="#522-invite-no-agent-found">5.2.2 Invite (no agent found)</a></li><li><a href="#53-contact-grant-consent">5.3 Contact Grant (consent)</a></li><li><a href="#54-policy-and-revocation">5.4 Policy and revocation</a></li><li><a href="#55-consent-stays-with-the-human">5.5 Consent stays with the human</a></li><li><a href="#551-auto-approve-all-per-contact">5.5.1 Auto-approve-all per contact</a></li><li><a href="#56-peer-text-is-untrusted-data">5.6 Peer text is untrusted data</a></li></ul></li><li><a href="#6-transport-layer">6. Transport layer</a><ul><li><a href="#61-rendezvous-hints">6.1 Rendezvous hints</a></li><li><a href="#62-primary-relay-nostr">6.2 Primary relay: Nostr</a></li><li><a href="#63-fallbacks-all-optional-all-dumb-pipes">6.3 Fallbacks (all optional, all dumb pipes)</a></li><li><a href="#64-envelope">6.4 Envelope</a></li></ul></li><li><a href="#7-session-task-layer-a2a-semantics">7. Session &amp;amp; task layer (A2A semantics)</a><ul><li><a href="#71-a2a-mapping">7.1 A2A mapping</a></li><li><a href="#72-meeting-verbs">7.2 Meeting verbs</a></li><li><a href="#73-task-states">7.3 Task states</a></li><li><a href="#74-scope-and-defaults">7.4 Scope and defaults</a></li><li><a href="#75-extending-the-meeting-verbs">7.5 Extending the meeting verbs</a></li><li><a href="#76-general-tasks">7.6 General tasks</a></li><li><a href="#77-files">7.7 Files</a></li><li><a href="#78-groups">7.8 Groups</a></li></ul></li><li><a href="#8-threat-model">8. Threat model</a></li><li><a href="#9-privacy">9. Privacy</a></li><li><a href="#10-anti-spam-reputation">10. Anti-spam &amp;amp; reputation</a></li><li><a href="#11-open-problems-honest">11. Open problems (honest)</a></li><li><a href="#12-scope-phases">12. Scope &amp;amp; phases</a></li><li><a href="#13-reference-implementation-distribution">13. Reference implementation &amp;amp; distribution</a></li><li><a href="#14-appendix">14. Appendix</a></li></ul></nav></div>
 </div>
 </main>
 

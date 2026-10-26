@@ -213,6 +213,145 @@
       }
     }
   },
+  "group_state_0": {
+    "canonical": "{\"epoch\":0,\"from\":\"rdv1:2bflemtufo2kwoqtnc6umfpe43icesvxdiawxl4fecrtfslxq43q\",\"group\":\"00000000-0000-4000-8000-000000000010\",\"members\":[{\"card\":\"f094fd8dc581db70f7296e907493a6956854084e6882c91b8d231b01da5935a6\",\"id\":\"rdv1:2bflemtufo2kwoqtnc6umfpe43icesvxdiawxl4fecrtfslxq43q\",\"role\":\"admin\"}],\"name\":\"Microsite launch\",\"policy\":{\"member_rate\":\"60/hour\",\"members_may_invite\":false},\"prev\":null,\"sig\":\"sqMBgIHiCdaETrfV4IGEwm4f38jdW4rnwxgML4TVBD3iiz2zxQ8zT1OCKLC7CatUSa+Ug+cS6wKCNZzK19ZjCQ==\",\"ts\":\"2026-10-24T00:00:00.000Z\",\"type\":\"rdv/group-state\",\"v\":1}",
+    "hash": "7e1a45dbfd216e6e28c0bd2fc3e7e397cff7c19f74d69c34b3407b47d7c649d2",
+    "doc": {
+      "v": 1,
+      "type": "rdv/group-state",
+      "group": "00000000-0000-4000-8000-000000000010",
+      "epoch": 0,
+      "prev": null,
+      "from": "rdv1:2bflemtufo2kwoqtnc6umfpe43icesvxdiawxl4fecrtfslxq43q",
+      "members": [
+        {
+          "id": "rdv1:2bflemtufo2kwoqtnc6umfpe43icesvxdiawxl4fecrtfslxq43q",
+          "role": "admin",
+          "card": "f094fd8dc581db70f7296e907493a6956854084e6882c91b8d231b01da5935a6"
+        }
+      ],
+      "policy": {
+        "member_rate": "60/hour",
+        "members_may_invite": false
+      },
+      "name": "Microsite launch",
+      "ts": "2026-10-24T00:00:00.000Z",
+      "sig": "sqMBgIHiCdaETrfV4IGEwm4f38jdW4rnwxgML4TVBD3iiz2zxQ8zT1OCKLC7CatUSa+Ug+cS6wKCNZzK19ZjCQ=="
+    }
+  },
+  "group_invite": {
+    "canonical": "{\"expires\":\"2026-10-31T00:00:00.000Z\",\"from\":\"rdv1:2bflemtufo2kwoqtnc6umfpe43icesvxdiawxl4fecrtfslxq43q\",\"greeting\":\"Help with the microsite?\",\"group\":\"00000000-0000-4000-8000-000000000010\",\"id\":\"00000000-0000-4000-8000-000000000011\",\"sig\":\"KRnOsbl2CX6h+S59/Ogvw3cDLMpCDSmgQLNn/PmgBgR7SMyLngCCMpUma2G6IBJOzTyyiNgUC0R05gBAJVMuAw==\",\"state\":{\"epoch\":0,\"from\":\"rdv1:2bflemtufo2kwoqtnc6umfpe43icesvxdiawxl4fecrtfslxq43q\",\"group\":\"00000000-0000-4000-8000-000000000010\",\"members\":[{\"card\":\"f094fd8dc581db70f7296e907493a6956854084e6882c91b8d231b01da5935a6\",\"id\":\"rdv1:2bflemtufo2kwoqtnc6umfpe43icesvxdiawxl4fecrtfslxq43q\",\"role\":\"admin\"}],\"name\":\"Microsite launch\",\"policy\":{\"member_rate\":\"60/hour\",\"members_may_invite\":false},\"prev\":null,\"sig\":\"sqMBgIHiCdaETrfV4IGEwm4f38jdW4rnwxgML4TVBD3iiz2zxQ8zT1OCKLC7CatUSa+Ug+cS6wKCNZzK19ZjCQ==\",\"ts\":\"2026-10-24T00:00:00.000Z\",\"type\":\"rdv/group-state\",\"v\":1},\"to\":\"rdv1:ucnkl5d2m5myal7zkx4nyljkcss4thjdx2l7qzasp74tqncvutya\",\"ts\":\"2026-10-24T00:00:00.000Z\",\"type\":\"rdv/group-invite\",\"v\":1}",
+    "doc": {
+      "v": 1,
+      "type": "rdv/group-invite",
+      "id": "00000000-0000-4000-8000-000000000011",
+      "group": "00000000-0000-4000-8000-000000000010",
+      "from": "rdv1:2bflemtufo2kwoqtnc6umfpe43icesvxdiawxl4fecrtfslxq43q",
+      "to": "rdv1:ucnkl5d2m5myal7zkx4nyljkcss4thjdx2l7qzasp74tqncvutya",
+      "state": {
+        "v": 1,
+        "type": "rdv/group-state",
+        "group": "00000000-0000-4000-8000-000000000010",
+        "epoch": 0,
+        "prev": null,
+        "from": "rdv1:2bflemtufo2kwoqtnc6umfpe43icesvxdiawxl4fecrtfslxq43q",
+        "members": [
+          {
+            "id": "rdv1:2bflemtufo2kwoqtnc6umfpe43icesvxdiawxl4fecrtfslxq43q",
+            "role": "admin",
+            "card": "f094fd8dc581db70f7296e907493a6956854084e6882c91b8d231b01da5935a6"
+          }
+        ],
+        "policy": {
+          "member_rate": "60/hour",
+          "members_may_invite": false
+        },
+        "name": "Microsite launch",
+        "ts": "2026-10-24T00:00:00.000Z",
+        "sig": "sqMBgIHiCdaETrfV4IGEwm4f38jdW4rnwxgML4TVBD3iiz2zxQ8zT1OCKLC7CatUSa+Ug+cS6wKCNZzK19ZjCQ=="
+      },
+      "greeting": "Help with the microsite?",
+      "expires": "2026-10-31T00:00:00.000Z",
+      "ts": "2026-10-24T00:00:00.000Z",
+      "sig": "KRnOsbl2CX6h+S59/Ogvw3cDLMpCDSmgQLNn/PmgBgR7SMyLngCCMpUma2G6IBJOzTyyiNgUC0R05gBAJVMuAw=="
+    }
+  },
+  "group_join": {
+    "canonical": "{\"card\":{\"capabilities\":[\"rdv/v1\",\"a2a/0.3\",\"https://rendezvous.nesher.co/ext/groups/v1\"],\"created\":\"2026-10-24T00:00:00.000Z\",\"expires\":null,\"id\":\"rdv1:ucnkl5d2m5myal7zkx4nyljkcss4thjdx2l7qzasp74tqncvutya\",\"policy\":{\"inbound\":\"prompt\",\"public\":false},\"rendezvous\":[{\"pref\":1,\"relay\":\"wss://relay.example\",\"type\":\"nostr\"}],\"sig\":\"2iO3AiPXQixB92Hi6FL4qISP+emWgQMbHYC+SyBpmBCwzko/6jHmV6lFJSkAau5EgY6ukU06TYb/qYc4cWEnBw==\",\"v\":1},\"from\":\"rdv1:ucnkl5d2m5myal7zkx4nyljkcss4thjdx2l7qzasp74tqncvutya\",\"group\":\"00000000-0000-4000-8000-000000000010\",\"id\":\"00000000-0000-4000-8000-000000000012\",\"invite_ref\":\"00000000-0000-4000-8000-000000000011\",\"scope\":{\"invoke\":{\"https://rendezvous.nesher.co/ext/request/v1\":{}},\"max_frequency\":\"20/day\"},\"sig\":\"P8p0EmwMlZASauEGVlf7tqGWb8fVavnp6AXxGaD4v3m/C1SwyAmqSzLvaY13S4wjubxmYohDdaBrV8SqOn2DAw==\",\"state\":\"7e1a45dbfd216e6e28c0bd2fc3e7e397cff7c19f74d69c34b3407b47d7c649d2\",\"to\":\"rdv1:2bflemtufo2kwoqtnc6umfpe43icesvxdiawxl4fecrtfslxq43q\",\"ts\":\"2026-10-24T00:00:00.000Z\",\"type\":\"rdv/group-join\",\"v\":1}",
+    "doc": {
+      "v": 1,
+      "type": "rdv/group-join",
+      "id": "00000000-0000-4000-8000-000000000012",
+      "group": "00000000-0000-4000-8000-000000000010",
+      "from": "rdv1:ucnkl5d2m5myal7zkx4nyljkcss4thjdx2l7qzasp74tqncvutya",
+      "to": "rdv1:2bflemtufo2kwoqtnc6umfpe43icesvxdiawxl4fecrtfslxq43q",
+      "invite_ref": "00000000-0000-4000-8000-000000000011",
+      "state": "7e1a45dbfd216e6e28c0bd2fc3e7e397cff7c19f74d69c34b3407b47d7c649d2",
+      "card": {
+        "v": 1,
+        "id": "rdv1:ucnkl5d2m5myal7zkx4nyljkcss4thjdx2l7qzasp74tqncvutya",
+        "created": "2026-10-24T00:00:00.000Z",
+        "expires": null,
+        "capabilities": [
+          "rdv/v1",
+          "a2a/0.3",
+          "https://rendezvous.nesher.co/ext/groups/v1"
+        ],
+        "rendezvous": [
+          {
+            "type": "nostr",
+            "relay": "wss://relay.example",
+            "pref": 1
+          }
+        ],
+        "policy": {
+          "inbound": "prompt",
+          "public": false
+        },
+        "sig": "2iO3AiPXQixB92Hi6FL4qISP+emWgQMbHYC+SyBpmBCwzko/6jHmV6lFJSkAau5EgY6ukU06TYb/qYc4cWEnBw=="
+      },
+      "scope": {
+        "invoke": {
+          "https://rendezvous.nesher.co/ext/request/v1": {}
+        },
+        "max_frequency": "20/day"
+      },
+      "ts": "2026-10-24T00:00:00.000Z",
+      "sig": "P8p0EmwMlZASauEGVlf7tqGWb8fVavnp6AXxGaD4v3m/C1SwyAmqSzLvaY13S4wjubxmYohDdaBrV8SqOn2DAw=="
+    }
+  },
+  "group_state_1": {
+    "canonical": "{\"epoch\":1,\"from\":\"rdv1:2bflemtufo2kwoqtnc6umfpe43icesvxdiawxl4fecrtfslxq43q\",\"group\":\"00000000-0000-4000-8000-000000000010\",\"members\":[{\"card\":\"f094fd8dc581db70f7296e907493a6956854084e6882c91b8d231b01da5935a6\",\"id\":\"rdv1:2bflemtufo2kwoqtnc6umfpe43icesvxdiawxl4fecrtfslxq43q\",\"role\":\"admin\"},{\"card\":\"887d4c11b12425d9d42615d3a15796d7de97e36f2cfa5f3a4f08efcd9080efea\",\"id\":\"rdv1:ucnkl5d2m5myal7zkx4nyljkcss4thjdx2l7qzasp74tqncvutya\",\"name\":\"John\",\"role\":\"member\"}],\"name\":\"Microsite launch\",\"policy\":{\"member_rate\":\"60/hour\",\"members_may_invite\":false},\"prev\":\"7e1a45dbfd216e6e28c0bd2fc3e7e397cff7c19f74d69c34b3407b47d7c649d2\",\"sig\":\"lVjB/J+BFn0fmD2YUYc/YOu5pV7Cb9JmXBU4YtmlPFniUX0m2nufrCkJ7HfSql3YPs2/UC5YvYyEJA8SFFPcCg==\",\"ts\":\"2026-10-24T00:00:00.000Z\",\"type\":\"rdv/group-state\",\"v\":1}",
+    "hash": "0b7f9787ad11f91b6f8053108adcd72fde0374b2986ecf5228b6602d93e0d384",
+    "doc": {
+      "v": 1,
+      "type": "rdv/group-state",
+      "group": "00000000-0000-4000-8000-000000000010",
+      "epoch": 1,
+      "prev": "7e1a45dbfd216e6e28c0bd2fc3e7e397cff7c19f74d69c34b3407b47d7c649d2",
+      "from": "rdv1:2bflemtufo2kwoqtnc6umfpe43icesvxdiawxl4fecrtfslxq43q",
+      "members": [
+        {
+          "id": "rdv1:2bflemtufo2kwoqtnc6umfpe43icesvxdiawxl4fecrtfslxq43q",
+          "role": "admin",
+          "card": "f094fd8dc581db70f7296e907493a6956854084e6882c91b8d231b01da5935a6"
+        },
+        {
+          "id": "rdv1:ucnkl5d2m5myal7zkx4nyljkcss4thjdx2l7qzasp74tqncvutya",
+          "role": "member",
+          "card": "887d4c11b12425d9d42615d3a15796d7de97e36f2cfa5f3a4f08efcd9080efea",
+          "name": "John"
+        }
+      ],
+      "policy": {
+        "member_rate": "60/hour",
+        "members_may_invite": false
+      },
+      "name": "Microsite launch",
+      "ts": "2026-10-24T00:00:00.000Z",
+      "sig": "lVjB/J+BFn0fmD2YUYc/YOu5pV7Cb9JmXBU4YtmlPFniUX0m2nufrCkJ7HfSql3YPs2/UC5YvYyEJA8SFFPcCg=="
+    }
+  },
   "envelope": {
     "recipient_seed_hex": "2222222222222222222222222222222222222222222222222222222222222222",
     "doc": {

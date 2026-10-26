@@ -946,8 +946,32 @@ describe('the direct-transfer setting is the human’s (issue #26)', () => {
   });
 });
 
+describe('joining a group and approving a newcomer are the human’s (issue #77)', () => {
+  const denied = [
+    'rdv group join 0f1e --code 0123456789ab',
+    'rdv group join 0f1e --code 1 --newcomers trust-admin',
+    'rdv group approve g1 rdv1:abc --code 0123456789ab',
+    'rdv group resync g1',
+    'rdv group pending',
+    'rdv group pending --json',
+    'rdv "group" join 0f1e --code 1',
+    'npx rdv group approve g1 rdv1:abc --code 1',
+    'rdv group $(echo join) 0f1e',
+    'echo join | xargs rdv group',
+    'bash -c "rdv group join 0f1e --code 1"',
+  ];
+  const allowed = ['rdv group create "Microsite launch"', 'rdv group invite g1 rdv1:abc --name John', 'rdv group list', 'rdv group list --json', 'rdv group decline 0f1e'];
+  it.each(denied)('the guard refuses %s', (c) => expect(checkCommand(c)).toBeTruthy());
+  it.each(allowed)('the guard allows %s', (c) => expect(checkCommand(c)).toBeUndefined());
+  it('the skill lint catches a skill that tells the assistant to join or approve', () => {
+    expect(consentViolations('Join it: run `rdv group join <id> --code <code>`.')).toHaveLength(1);
+    expect(consentViolations('See what waits: `rdv group pending`.')).toHaveLength(1);
+    expect(consentViolations('The human runs `rdv group approve` in their own terminal.')).toEqual([]);
+  });
+});
+
 describe('xargs cannot feed any human-only command group (issue #58)', () => {
-  it.each(['contact', 'dinner', 'task', 'file', 'owner-secret', 'relays'])('echo x | xargs rdv %s is refused', (g) => {
+  it.each(['contact', 'dinner', 'task', 'file', 'owner-secret', 'relays', 'group'])('echo x | xargs rdv %s is refused', (g) => {
     expect(checkCommand(`echo x | xargs rdv ${g}`)).toBeTruthy();
     expect(checkCommand(`echo x | xargs npx rdv ${g.toUpperCase()}`)).toBeTruthy();
     // With a value-taking flag first the tail has two words, so only the group name itself gives it away.
@@ -975,6 +999,11 @@ describe('the skill covers general tasks, files and auto-approve (issue #29)', (
     'rdv relays add',
     'rdv relays remove',
     'rdv relays list',
+    // Groups (issue #77): joining and approving a newcomer are the human's; pending shows their phrases.
+    'rdv group join',
+    'rdv group approve',
+    'rdv group resync',
+    'rdv group pending',
   ];
   it.each(humanOnly)('the skill names %s as the human’s, and the guard refuses it', (c) => {
     expect(skill).toContain(c);

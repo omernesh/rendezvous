@@ -16,7 +16,7 @@ import {
   type TaskPayload,
   emptyTaskState,
 } from '@rendezvous/a2a';
-import { type Agent, type Contact, generateKey, type GrantScope, MEETINGS_CAPABILITY, scopeAllows } from '@rendezvous/core';
+import { type Agent, type Contact, generateKey, type GrantScope, GROUPS_EXTENSION, MEETINGS_CAPABILITY, scopeAllows } from '@rendezvous/core';
 import { startTestRelay, type TestRelay } from '@rendezvous/core/testing';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { rdv } from '../scenarios/harness.js';
@@ -131,7 +131,7 @@ describe('the engine context (issue #39)', () => {
   });
 
   it('the card advertises tasks/v1 and what the host routes, nothing it does not', () => {
-    expect(hostCardCapabilities()).toEqual(['rdv/v1', 'a2a/0.3', 'https://rendezvous.nesher.co/ext/meetings/v1', 'https://rendezvous.nesher.co/ext/meeting-cancel/v1', TASKS_URI, FILES_URI, REQUEST_URI]);
+    expect(hostCardCapabilities()).toEqual(['rdv/v1', 'a2a/0.3', 'https://rendezvous.nesher.co/ext/meetings/v1', 'https://rendezvous.nesher.co/ext/meeting-cancel/v1', TASKS_URI, FILES_URI, GROUPS_EXTENSION, REQUEST_URI]);
     expect(hostCardCapabilities(hostRegistry([CAP]))).toContain(CAP.uri);
   });
 });

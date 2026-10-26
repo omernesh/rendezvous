@@ -28,7 +28,7 @@
 // Contacts, groups, grants, invoke, limits, cancelling an agreed meeting and
 // auto-approve itself stay with the human every time.
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import { type Agent, type AgentState, b64decode, type Contact, ContactBook, effectiveInvoke, fingerprint, type GrantScope, MEETING_CANCEL_CAPABILITY, MEETINGS_CAPABILITY, parseTimestamp } from '@rendezvous/core';
+import { type Agent, type AgentState, b64decode, type Contact, ContactBook, effectiveInvoke, fingerprint, type GrantScope, GROUPS_EXTENSION, MEETING_CANCEL_CAPABILITY, MEETINGS_CAPABILITY, parseTimestamp } from '@rendezvous/core';
 import { type AuditEntry, type AutoApproveEntry, type AutoApproveOff, CliError, type Home } from './home.js';
 import { sha, stable } from './hash.js';
 import { ownerSecretBinding } from './ownersecret.js';
@@ -152,9 +152,13 @@ export function autoApprovedFor(home: Home, subject: AutoApproveSubject, peer: s
  * What auto-approve covers: the task capabilities a grant lets the contact
  * invoke, and the meetings URI when it may propose meetings (the confirm of a
  * negotiation it starts, issue #44). Never meeting-cancel: calling off an
- * agreed meeting stays the human's.
+ * agreed meeting stays the human's. Never the groups extension either:
+ * joining a group and approving a newcomer are the human's every time
+ * (§5.5.1), and the URI is no capability a grant could carry (a hand-edited
+ * scope that lists it gets nothing for it here).
  */
-const covered = (scope: GrantScope | null | undefined): string[] => Object.keys(effectiveInvoke(scope)).filter((u) => u !== MEETING_CANCEL_CAPABILITY);
+const covered = (scope: GrantScope | null | undefined): string[] =>
+  Object.keys(effectiveInvoke(scope)).filter((u) => u !== MEETING_CANCEL_CAPABILITY && u !== GROUPS_EXTENSION);
 
 /**
  * May auto-approve confirm a meeting in a negotiation `peer` started, now?

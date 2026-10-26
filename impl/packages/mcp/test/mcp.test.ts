@@ -925,6 +925,7 @@ describe('rdv-mcp over stdio', () => {
           'rdv_send',
           'rdv_status',
           'rdv_file',
+          'rdv_group',
           'rdv_task',
         ].sort(),
       );

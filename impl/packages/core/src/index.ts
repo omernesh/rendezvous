@@ -6,6 +6,7 @@ export * from './encoding.js';
 export * from './envelope.js';
 export * from './filefetch.js';
 export * from './files.js';
+export * from './group.js';
 export * from './identity.js';
 export * from './sign.js';
 export * from './transfer.js';

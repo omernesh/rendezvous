@@ -42,6 +42,11 @@ export const STRANGER_DROPS = [
   'blocked sender',
   'envelope chain fork from a non-contact',
   'card update from a non-contact',
+  // Groups (issue #77): only contacts invite and join, only members send states.
+  'group invite from a non-contact',
+  'group join from a non-contact',
+  'group state from a non-member',
+  'group members from a non-member',
 ];
 
 /** Events not worth a line in the log: relay replays, stranger-caused drops, all but every 50th eviction. */

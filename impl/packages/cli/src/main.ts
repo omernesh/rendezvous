@@ -1,5 +1,6 @@
 import { type ParseArgsConfig, parseArgs } from 'node:util';
 import * as cmd from './commands.js';
+import * as grp from './groups.js';
 import { CliError, Home, RelayPublishError } from './home.js';
 import { clean } from './output.js';
 import { Output } from './output.js';
@@ -175,6 +176,57 @@ const COMMANDS: Record<string, Command> = {
     summary: "Accept a contact's current chain after a fork or rollback was reported (check with them first)",
     args: 1,
     run: cmd.contactResync,
+  },
+  'group create': {
+    usage: 'rdv group create <name>',
+    summary: 'Create a group with you as its only member and admin (at most 16 members; members may invoke nothing on you through it)',
+    args: 1,
+    run: grp.groupCreate,
+  },
+  'group invite': {
+    usage: 'rdv group invite <group-id> <agent-id|label> [--name <how members see them>] [--greeting "…"]',
+    summary: 'Invite one of your contacts (its card must list groups) to a group you administer; their human decides',
+    args: 2,
+    options: { name: { type: 'string' }, greeting: { type: 'string' } },
+    run: grp.groupInvite,
+  },
+  'group list': {
+    usage: 'rdv group list',
+    summary: 'Your groups (members, who you approved, who waits for you) and the invites waiting for you',
+    args: 0,
+    run: grp.groupList,
+  },
+  'group pending': {
+    usage: 'rdv group pending',
+    summary: 'Invites and newcomers waiting for YOUR decision, with the codes (and confirm phrases) that approve exactly what you read',
+    args: 0,
+    run: grp.groupPending,
+  },
+  'group join': {
+    usage: 'rdv group join <invite-id> --code <code> [--invoke <capability-uri>]... [--max-frequency 20/day] [--newcomers ask|trust-admin]',
+    summary: 'Join a group you were invited to (--code from "rdv group pending"); --invoke: what members may ask of you; default: nothing, and ask about newcomers',
+    args: 1,
+    options: { code: { type: 'string' }, invoke: { type: 'string', multiple: true }, 'max-frequency': { type: 'string' }, newcomers: { type: 'string' } },
+    run: grp.groupJoin,
+  },
+  'group decline': {
+    usage: 'rdv group decline <invite-id>',
+    summary: 'Say no to a group invite (nothing is sent)',
+    args: 1,
+    run: grp.groupDecline,
+  },
+  'group approve': {
+    usage: 'rdv group approve <group-id> <agent-id> --code <code>',
+    summary: 'Let a newcomer who is not your contact receive your group traffic (--code from "rdv group pending")',
+    args: 2,
+    options: { code: { type: 'string' } },
+    run: grp.groupApprove,
+  },
+  'group resync': {
+    usage: 'rdv group resync <group-id>',
+    summary: "Thaw a group's membership after a fork was reported (check with the admin first)",
+    args: 1,
+    run: grp.groupResync,
   },
   send: {
     usage: 'rdv send <agent-id> --json \'{"type":"a2a/message","text":"hi"}\'   (or --payload \'…\')',

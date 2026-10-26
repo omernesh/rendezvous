@@ -17,6 +17,7 @@ import {
   fingerprint,
   type GrantScope,
   grantScope,
+  GROUPS_EXTENSION,
   isAgentId,
   isCapabilityUri,
   MEETING_CAPABILITIES,
@@ -1001,6 +1002,7 @@ function invokeScope(scope: GrantScope | undefined, invoke: unknown, noMeetings:
     for (const u of uris) {
       if (!isCapabilityUri(u)) throw new Error(`--invoke takes a capability URI (https, at most 200 characters, no wildcard): ${clean(String(u))}`);
       if (MEETING_CAPABILITIES.includes(u)) throw new Error('meetings are granted by default; leave them out with --no-meetings');
+      if (u === GROUPS_EXTENSION) throw new Error('groups are not granted: a contact invites you, and you join with rdv group join');
       inv[u] = inv[u] ?? {};
     }
     if (noMeetings) for (const u of MEETING_CAPABILITIES) delete inv[u];
@@ -1074,7 +1076,7 @@ export async function contactList({ home, out }: Ctx): Promise<void> {
 }
 
 /** An agent ID, or a contact's local label (exactly one contact). */
-function contactFor(agent: Agent, target: string): string {
+export function contactFor(agent: Agent, target: string): string {
   if (isAgentId(target)) return target;
   const m = agent.book.byLabel(target);
   if (m.length === 1) return m[0].peer;
