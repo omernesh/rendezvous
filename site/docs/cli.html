@@ -55,7 +55,7 @@
     <p class="crumbs"><a href="/docs/">Docs</a> / Reference</p>
     <h1>CLI and library</h1>
     <p class="doc-meta">Rendered from <a href="https://github.com/omernesh/rendezvous/blob/main/impl/README.md">impl/README.md</a> on GitHub. <a href="/docs/cli.md">Markdown version</a> for LLMs.</p>
-    <details class="toc-m"><summary>On this page</summary><ul><li><a href="#rendezvouscore">@rendezvous/core</a></li><li><a href="#rendezvousa2a">@rendezvous/a2a</a></li><li><a href="#rdv-the-cli">rdv (the CLI)</a><ul><li><a href="#tasks-and-files-an-example-user-guide-docstasksmd">Tasks and files: an example (user guide: docs/tasks.md)</a></li><li><a href="#the-dinner-scenarios-plan-53">The dinner scenarios (PLAN §5.3)</a></li><li><a href="#the-microsite-scenario-design-b5-issue-79">The microsite scenario (design B.5, issue #79)</a></li><li><a href="#the-contact-scenario-plan-45">The contact scenario (PLAN §4.5)</a></li></ul></li><li><a href="#rdv-mcp-the-mcp-server">rdv-mcp (the MCP server)</a></li><li><a href="#develop">Develop</a></li></ul></details>
+    <details class="toc-m"><summary>On this page</summary><ul><li><a href="#rendezvouscore">@rendezvous/core</a></li><li><a href="#rendezvousa2a">@rendezvous/a2a</a></li><li><a href="#rdv-the-cli">rdv (the CLI)</a><ul><li><a href="#tasks-and-files-an-example-user-guide-docstasksmd">Tasks and files: an example (user guide: docs/tasks.md)</a></li><li><a href="#the-dinner-scenarios-plan-53">The dinner scenarios (PLAN §5.3)</a></li><li><a href="#the-microsite-scenario-design-b5-issue-79">The microsite scenario (design B.5, issue #79)</a></li><li><a href="#the-contact-scenario-plan-45">The contact scenario (PLAN §4.5)</a></li></ul></li><li><a href="#rdv-mcp-the-mcp-server">rdv-mcp (the MCP server)</a></li><li><a href="#rdv-gateway-cloud-assistants-issue-12">rdv-gateway (cloud assistants, issue #12)</a></li><li><a href="#develop">Develop</a></li></ul></details>
     <div class="prose">
 <p>TypeScript packages for the <a href="/docs/spec.html">Rendezvous</a> agent-to-agent contact
 protocol, built toward the two-agent dinner demo in <a href="https://github.com/omernesh/rendezvous/blob/main/PLAN.md">PLAN.md</a>.
@@ -88,6 +88,11 @@ protocol, built toward the two-agent dinner demo in <a href="https://github.com/
 <td><code>@rendezvous/mcp</code></td>
 <td><code>packages/mcp</code></td>
 <td><code>rdv-mcp</code>, a stdio MCP server so Claude (or any MCP client) can find, contact and book dinner with other agents</td>
+</tr>
+<tr>
+<td><code>@rendezvous/gateway</code></td>
+<td><code>packages/gateway</code></td>
+<td><code>rdv-gateway</code>, the same agent over MCP (Streamable HTTP) and REST + OpenAPI for cloud assistants, with approvals on the owner's own PIN-locked page (issue #12, slice 1)</td>
 </tr>
 </tbody>
 </table></div>
@@ -745,6 +750,22 @@ confirm phrase shown only in their terminal. Peer text comes back only as
 <a href="/docs/mcp.html">packages/mcp/README.md</a>, <a href="https://github.com/omernesh/rendezvous/blob/main/impl/demo/SCRIPT.md">demo/SCRIPT.md</a>.</p>
 <div class="codeblock"><pre tabindex="0"><code class="language-bash">node packages/mcp/dist/src/bin.js --home ~/.rendezvous/omer --calendar cal.json --tz +02:00
 </code></pre></div>
+<h2 id="rdv-gateway-cloud-assistants-issue-12">rdv-gateway (cloud assistants, issue #12)<a class="anchor" href="#rdv-gateway-cloud-assistants-issue-12" title="Link to this section" aria-label="Link to this section">#</a></h2>
+<p>The same tools as <code>rdv-mcp</code>, minus the owner's setup (<code>rdv_init</code>, address and
+relay changes, turning auto-approve on, local file paths), for assistants that
+only reach a public URL. It runs on your own machine, beside <code>rdv</code> / <code>rdv-mcp</code>
+on the same home (it attaches like a second <code>rdv-mcp</code> when another process
+receives), and listens on 127.0.0.1; put your own HTTPS tunnel in front of it.
+Nothing is approved through the assistant: a step that needs you returns
+<code>{"status": "awaiting_human", "approve_url": …}</code>, and you decide on the
+gateway's PIN-locked page. Threat model:
+<a href="https://github.com/omernesh/rendezvous/blob/main/impl/packages/gateway/THREAT-MODEL.md">packages/gateway/THREAT-MODEL.md</a>; design
+choices: NOTES 89.</p>
+<div class="codeblock"><pre tabindex="0"><code class="language-bash">node packages/gateway/dist/src/bin.js pin set --home ~/.rendezvous/omer
+node packages/gateway/dist/src/bin.js token create --name chatgpt --scope read,send,contact:request --home ~/.rendezvous/omer
+node packages/gateway/dist/src/bin.js serve --home ~/.rendezvous/omer --public-url https://rdv.example.com
+# MCP: https://rdv.example.com/mcp   REST: /api/v1/tools/&lt;tool&gt;   OpenAPI: /openapi.json   approvals: /approve
+</code></pre></div>
 <h2 id="develop">Develop<a class="anchor" href="#develop" title="Link to this section" aria-label="Link to this section">#</a></h2>
 <p>Run from <code>impl/</code> (works the same in PowerShell and bash):</p>
 <div class="codeblock"><pre tabindex="0"><code class="language-bash">npm install
@@ -774,7 +795,7 @@ the push if either fails.</p>
 implementation departs from or fills gaps in SPEC.md.</p>
     </div>
   </article>
-  <div class="docs-toc"><nav class="page-toc" aria-label="On this page"><p class="side-group">On this page</p><ul><li><a href="#rendezvouscore">@rendezvous/core</a></li><li><a href="#rendezvousa2a">@rendezvous/a2a</a></li><li><a href="#rdv-the-cli">rdv (the CLI)</a><ul><li><a href="#tasks-and-files-an-example-user-guide-docstasksmd">Tasks and files: an example (user guide: docs/tasks.md)</a></li><li><a href="#the-dinner-scenarios-plan-53">The dinner scenarios (PLAN §5.3)</a></li><li><a href="#the-microsite-scenario-design-b5-issue-79">The microsite scenario (design B.5, issue #79)</a></li><li><a href="#the-contact-scenario-plan-45">The contact scenario (PLAN §4.5)</a></li></ul></li><li><a href="#rdv-mcp-the-mcp-server">rdv-mcp (the MCP server)</a></li><li><a href="#develop">Develop</a></li></ul></nav></div>
+  <div class="docs-toc"><nav class="page-toc" aria-label="On this page"><p class="side-group">On this page</p><ul><li><a href="#rendezvouscore">@rendezvous/core</a></li><li><a href="#rendezvousa2a">@rendezvous/a2a</a></li><li><a href="#rdv-the-cli">rdv (the CLI)</a><ul><li><a href="#tasks-and-files-an-example-user-guide-docstasksmd">Tasks and files: an example (user guide: docs/tasks.md)</a></li><li><a href="#the-dinner-scenarios-plan-53">The dinner scenarios (PLAN §5.3)</a></li><li><a href="#the-microsite-scenario-design-b5-issue-79">The microsite scenario (design B.5, issue #79)</a></li><li><a href="#the-contact-scenario-plan-45">The contact scenario (PLAN §4.5)</a></li></ul></li><li><a href="#rdv-mcp-the-mcp-server">rdv-mcp (the MCP server)</a></li><li><a href="#rdv-gateway-cloud-assistants-issue-12">rdv-gateway (cloud assistants, issue #12)</a></li><li><a href="#develop">Develop</a></li></ul></nav></div>
 </div>
 </main>
 
