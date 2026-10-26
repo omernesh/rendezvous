@@ -999,9 +999,12 @@ MAY set <code>auto_approve: "all"</code> on that contact, optionally with an exp
 <li><strong>Bound to the grant.</strong> The setting is bound to the grant it was set
   on. It is off at once when the owner turns it off (narrowing needs no
   confirmation), when it expires, and when the contact is revoked or
-  blocked, its grant is revoked for abuse, changed or widened, or its
-  channel shows a fork or rollback (§6.4). Re-enabling is a new human
-  decision. A setting whose times cannot be read, that was set in the
+  blocked, its grant is revoked for abuse or changed other than by the
+  owner, or its channel shows a fork or rollback (§6.4). When the owner
+  re-grants, widens or narrows that contact's grant, the setting stays on
+  for what it covered and the new grant still allows; a capability the new
+  grant adds is not covered until the owner turns the setting on for it.
+  Re-enabling is a new human decision. A setting whose times cannot be read, that was set in the
   future, or whose integrity cannot be checked approves nothing.</li>
 <li><strong>Audit log.</strong> Every action approved this way appends one line to an
   audit log the owner can read: time, contact, capability, <code>taskId</code>,
