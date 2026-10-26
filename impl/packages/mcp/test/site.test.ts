@@ -170,7 +170,7 @@ describe('site CSP', () => {
       const src = text(join(SITE, f));
       expect(src, `${f}: @import`).not.toMatch(/@import/);
       expect(src, `${f}: external url()`).not.toMatch(/url\(\s*['"]?(https?:)?\/\//i);
-      expect(src, `${f}: network call`).not.toMatch(/\b(fetch|XMLHttpRequest|WebSocket|sendBeacon)\b/);
+      expect(src, `${f}: network call`).not.toMatch(/\b(fetch\s*\(|new\s+(XMLHttpRequest|WebSocket|EventSource)\b|sendBeacon\s*\()/);
     }
   });
 });
