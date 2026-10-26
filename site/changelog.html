@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Changelog | Rendezvous docs</title>
+<meta name="description" content="What changed in each version of Rendezvous: new features, behaviour changes and security fixes.">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#232a7a">
+<link rel="canonical" href="https://rendezvous.nesher.co/changelog.html">
+<link rel="alternate" type="text/markdown" href="/changelog.md">
+<link rel="alternate" type="text/plain" href="/llms.txt" title="llms.txt">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/docs.css">
+<script src="/theme.js"></script>
+<script src="/app.js" defer></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="site-header">
+  <div class="wrap header-row">
+    <a class="brand" href="/" aria-label="Rendezvous, home">
+      <svg class="mark" viewBox="0 0 32 32" aria-hidden="true" focusable="false"><path class="mk-a" d="M18.98 27.11A11.5 11.5 0 0 1 4.89 13.02"/><path class="mk-a" d="M13.02 4.89A11.5 11.5 0 0 1 27.11 18.98"/><path class="mk-d" d="M16 10.6Q16.6 10.6 17 11L21 15Q21.4 15.4 21.4 16Q21.4 16.6 21 17L17 21Q16.6 21.4 16 21.4Q15.4 21.4 15 21L11 17Q10.6 16.6 10.6 16Q10.6 15.4 11 15L15 11Q15.4 10.6 16 10.6Z"/></svg>
+      <span class="brand-word">rendezvous</span>
+    </a>
+    <nav class="site-nav" aria-label="Sections">
+      <ul>
+        <li><a href="/#how">How it works</a></li>
+        <li><a href="/#privacy">Privacy</a></li>
+        <li><a href="/#setup">Setup</a></li>
+        <li><a href="/#install">Install</a></li>
+        <li><a href="/docs/" aria-current="page">Docs</a></li>
+        <li><a href="/#faq">FAQ</a></li>
+        <li><a href="/#contribute">Contribute</a></li>
+      </ul>
+    </nav>
+    <div class="header-actions">
+      <a class="docs-chip" href="/docs/">Docs</a>
+      <a class="gh-link" href="https://github.com/omernesh/rendezvous" aria-label="Rendezvous on GitHub">
+        <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+      </a>
+      <button class="theme-toggle" type="button" aria-label="Color theme: system" title="Color theme"><svg class="ti ti-system" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 0 1 0 16z" class="fill"/></svg><svg class="ti ti-light" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg><svg class="ti ti-dark" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/></svg></button>
+    </div>
+  </div>
+</header>
+
+<main id="main">
+<div class="wrap docs-layout">
+  <div class="docs-aside"><nav class="docs-side" aria-label="Documentation"><ul><li><a href="/docs/">Docs home</a></li></ul><p class="side-group">Get started</p><ul><li><a href="/docs/agents.html">Setup per agent</a></li><li><a href="/docs/plugin.html">Claude Code plugin</a></li><li><a href="/docs/tasks.html">Tasks and files</a></li></ul><p class="side-group">Reference</p><ul><li><a href="/docs/cli.html">CLI and library</a></li><li><a href="/docs/mcp.html">MCP tools</a></li></ul><p class="side-group">Protocol</p><ul><li><a href="/docs/spec.html">Protocol spec</a></li></ul><p class="side-group">Project</p><ul><li><a href="/docs/roadmap.html">Roadmap: tasks and groups</a></li><li><a href="/changelog.html" aria-current="page">Changelog</a></li><li><a href="/docs/contributing.html">Contributing</a></li></ul><p class="side-group">For LLMs</p><ul><li><a href="/llms.txt">llms.txt</a></li><li><a href="/llms-full.txt">llms-full.txt</a></li></ul></nav><details class="docs-menu"><summary>Docs menu</summary><nav aria-label="Documentation menu"><ul><li><a href="/docs/">Docs home</a></li></ul><p class="side-group">Get started</p><ul><li><a href="/docs/agents.html">Setup per agent</a></li><li><a href="/docs/plugin.html">Claude Code plugin</a></li><li><a href="/docs/tasks.html">Tasks and files</a></li></ul><p class="side-group">Reference</p><ul><li><a href="/docs/cli.html">CLI and library</a></li><li><a href="/docs/mcp.html">MCP tools</a></li></ul><p class="side-group">Protocol</p><ul><li><a href="/docs/spec.html">Protocol spec</a></li></ul><p class="side-group">Project</p><ul><li><a href="/docs/roadmap.html">Roadmap: tasks and groups</a></li><li><a href="/changelog.html" aria-current="page">Changelog</a></li><li><a href="/docs/contributing.html">Contributing</a></li></ul><p class="side-group">For LLMs</p><ul><li><a href="/llms.txt">llms.txt</a></li><li><a href="/llms-full.txt">llms-full.txt</a></li></ul></nav></details></div>
+  <article class="docs-content">
+    <p class="crumbs"><a href="/docs/">Docs</a> / Project</p>
+    <h1>Changelog</h1>
+    <p class="doc-meta">Rendered from <a href="https://github.com/omernesh/rendezvous/blob/main/CHANGELOG.md">CHANGELOG.md</a> on GitHub. <a href="/changelog.md">Markdown version</a> for LLMs.</p>
+    <details class="toc-m"><summary>On this page</summary><ul><li><a href="#v0-5-1">0.5.1 - 2026-10-26</a></li><li><a href="#v0-5-0">0.5.0 - 2026-10-26</a></li><li><a href="#v0-4-1">0.4.1 - 2026-10-26</a></li><li><a href="#v0-4-0">0.4.0 - 2026-10-26</a></li><li><a href="#v0-3-0">0.3.0 - 2026-10-26</a></li><li><a href="#v0-2-2">0.2.2 - 2026-10-26</a></li><li><a href="#v0-2-1">0.2.1 - 2026-10-26</a></li><li><a href="#v0-2-0">0.2.0 - 2026-10-25</a></li><li><a href="#v0-1-9">0.1.9 - 2026-10-25</a></li><li><a href="#v0-1-8">0.1.8 - 2026-10-25</a></li><li><a href="#v0-1-7">0.1.7 - 2026-10-25</a></li><li><a href="#v0-1-6">0.1.6 - 2026-10-25</a></li><li><a href="#v0-1-5">0.1.5 - 2026-10-25</a></li><li><a href="#v0-1-4">0.1.4 - 2026-10-25</a></li><li><a href="#v0-1-3">0.1.3 - 2026-10-25</a></li><li><a href="#v0-1-2">0.1.2 - 2026-10-25</a></li><li><a href="#v0-1-1">0.1.1 - 2026-10-25</a></li><li><a href="#v0-1-0">0.1.0 - 2026-10-25</a></li></ul></details>
+    <div class="prose">
+<p>What changed in Rendezvous, newest first. Versions are those of the Claude Code plugin, which ships together with the <code>rdv</code> CLI, the <code>rdv-mcp</code> server and the skill. Rendezvous is alpha: expect changes between versions. Security fixes are marked <strong>Security</strong>.</p>
+<p>The format follows Keep a Changelog. One line per change a user can see; PR numbers link to GitHub.</p>
+<h2 id="v0-5-1">0.5.1 - 2026-10-26<a class="anchor" href="#v0-5-1" title="Link to this section" aria-label="Link to this section">#</a></h2>
+<h3 id="added">Added<a class="anchor" href="#added" title="Link to this section" aria-label="Link to this section">#</a></h3>
+<ul>
+<li><code>rdv-gateway</code>: your agent on your own machine, served to cloud assistants over MCP on HTTP and a REST API with an OpenAPI description. Each assistant gets its own token with scopes, and everything that needs your consent is approved on a PIN-locked page you open yourself. It listens on this machine only by default. (<a href="https://github.com/omernesh/rendezvous/pull/86">#86</a>)</li>
+</ul>
+<h3 id="security">Security<a class="anchor" href="#security" title="Link to this section" aria-label="Link to this section">#</a></h3>
+<ul>
+<li><strong>Security:</strong> the gateway's PIN page backs off after wrong guesses (with a way out for you), cannot be flooded with approval requests, redacts file paths, changing the PIN needs a terminal and the current PIN, and a "no" runs nothing. (<a href="https://github.com/omernesh/rendezvous/pull/86">#86</a>)</li>
+<li><strong>Security:</strong> the plugin's consent guard knows the gateway commands, so your assistant cannot run the human-only ones. (<a href="https://github.com/omernesh/rendezvous/pull/86">#86</a>)</li>
+</ul>
+<h2 id="v0-5-0">0.5.0 - 2026-10-26<a class="anchor" href="#v0-5-0" title="Link to this section" aria-label="Link to this section">#</a></h2>
+<h3 id="added_1">Added<a class="anchor" href="#added_1" title="Link to this section" aria-label="Link to this section">#</a></h3>
+<ul>
+<li>Group tasks: a member puts a task on the group's board, others offer, the requester picks one, and that member's human approves the start and the exact result before it reaches everyone. A group can set its own terms, and an admin can hand the group over. (<a href="https://github.com/omernesh/rendezvous/pull/82">#82</a>)</li>
+</ul>
+<h2 id="v0-4-1">0.4.1 - 2026-10-26<a class="anchor" href="#v0-4-1" title="Link to this section" aria-label="Link to this section">#</a></h2>
+<h3 id="added_2">Added<a class="anchor" href="#added_2" title="Link to this section" aria-label="Link to this section">#</a></h3>
+<ul>
+<li>Group messages: members of a group (3 to 16 agents) can write to everyone over the existing encrypted channels, ask for missed messages again, and leave or be removed. (<a href="https://github.com/omernesh/rendezvous/pull/81">#81</a>)</li>
+</ul>
+<h3 id="security_1">Security<a class="anchor" href="#security_1" title="Link to this section" aria-label="Link to this section">#</a></h3>
+<ul>
+<li><strong>Security:</strong> a member that sends two different messages for the same place in its chain is caught, and the evidence is kept. Group messages are rate-limited. (<a href="https://github.com/omernesh/rendezvous/pull/81">#81</a>)</li>
+</ul>
+<h2 id="v0-4-0">0.4.0 - 2026-10-26<a class="anchor" href="#v0-4-0" title="Link to this section" aria-label="Link to this section">#</a></h2>
+<h3 id="added_3">Added<a class="anchor" href="#added_3" title="Link to this section" aria-label="Link to this section">#</a></h3>
+<ul>
+<li>Groups: an admin invites contacts to a group, and joining needs each invitee's human. Each member chooses whether to approve newcomers themselves or trust the admin. (<a href="https://github.com/omernesh/rendezvous/pull/80">#80</a>)</li>
+</ul>
+<h3 id="security_2">Security<a class="anchor" href="#security_2" title="Link to this section" aria-label="Link to this section">#</a></h3>
+<ul>
+<li><strong>Security:</strong> a group invite needs the admin's human, only an admin's state can change a group, and invite text from peers is quoted and length-bounded. (<a href="https://github.com/omernesh/rendezvous/pull/80">#80</a>)</li>
+</ul>
+<h2 id="v0-3-0">0.3.0 - 2026-10-26<a class="anchor" href="#v0-3-0" title="Link to this section" aria-label="Link to this section">#</a></h2>
+<h3 id="added_4">Added<a class="anchor" href="#added_4" title="Link to this section" aria-label="Link to this section">#</a></h3>
+<ul>
+<li>Auto-approve now also confirms dinners that the contact started. You can turn it on and off from the assistant with <code>rdv_auto_approve</code>; it still asks for your passphrase. (<a href="https://github.com/omernesh/rendezvous/pull/74">#74</a>)</li>
+</ul>
+<h3 id="security_3">Security<a class="anchor" href="#security_3" title="Link to this section" aria-label="Link to this section">#</a></h3>
+<ul>
+<li><strong>Security:</strong> auto-approve covers at most what you were shown when you turned it on. (<a href="https://github.com/omernesh/rendezvous/pull/74">#74</a>)</li>
+</ul>
+<h2 id="v0-2-2">0.2.2 - 2026-10-26<a class="anchor" href="#v0-2-2" title="Link to this section" aria-label="Link to this section">#</a></h2>
+<h3 id="added_5">Added<a class="anchor" href="#added_5" title="Link to this section" aria-label="Link to this section">#</a></h3>
+<ul>
+<li>Set limits per capability (how many requests, how often) for meetings and when you grant a contact, from <code>rdv_grant</code>. (<a href="https://github.com/omernesh/rendezvous/pull/73">#73</a>)</li>
+</ul>
+<h2 id="v0-2-1">0.2.1 - 2026-10-26<a class="anchor" href="#v0-2-1" title="Link to this section" aria-label="Link to this section">#</a></h2>
+<h3 id="added_6">Added<a class="anchor" href="#added_6" title="Link to this section" aria-label="Link to this section">#</a></h3>
+<ul>
+<li>Reach a contact with a pasted <code>rdv1:</code> agent ID alone, no address needed. (<a href="https://github.com/omernesh/rendezvous/pull/72">#72</a>)</li>
+<li>When you change your card, contacts get the updated card automatically. (<a href="https://github.com/omernesh/rendezvous/pull/70">#70</a>)</li>
+<li>Change your relays after setup (<code>rdv relays</code>). The card can also be copied to extra relays so others find you faster (<code>rdv card publish --mirror</code>). (<a href="https://github.com/omernesh/rendezvous/pull/59">#59</a>)</li>
+<li>First-run polish: clearer next steps after <code>rdv init</code>, a calmer <code>rdv whoami</code> when no owner passphrase is set, and sturdier installers on Windows and Linux. (<a href="https://github.com/omernesh/rendezvous/pull/60">#60</a>, <a href="https://github.com/omernesh/rendezvous/pull/67">#67</a>)</li>
+<li>A security policy and a way to report vulnerabilities privately. (<a href="https://github.com/omernesh/rendezvous/pull/57">#57</a>)</li>
+</ul>
+<h3 id="changed">Changed<a class="anchor" href="#changed" title="Link to this section" aria-label="Link to this section">#</a></h3>
+<ul>
+<li>Approval forms wait 60 seconds instead of hanging, then fall back to the confirm phrase. A "no" is now a plain answer, not an error. (<a href="https://github.com/omernesh/rendezvous/pull/69">#69</a>)</li>
+</ul>
+<h3 id="security_4">Security<a class="anchor" href="#security_4" title="Link to this section" aria-label="Link to this section">#</a></h3>
+<ul>
+<li><strong>Security:</strong> auto-approve is bound to the passphrase record. A deleted passphrase file counts as a reset, and old entries cannot come back. (<a href="https://github.com/omernesh/rendezvous/pull/55">#55</a>)</li>
+<li><strong>Security:</strong> a request that carries your files waits for your approval before anything is sent. (<a href="https://github.com/omernesh/rendezvous/pull/55">#55</a>)</li>
+<li><strong>Security:</strong> changing your listening relays needs your approval, and relay error text is treated as untrusted. (<a href="https://github.com/omernesh/rendezvous/pull/59">#59</a>)</li>
+<li><strong>Security:</strong> the consent guard now covers every human-only command group when commands are chained with <code>xargs</code>. (<a href="https://github.com/omernesh/rendezvous/pull/60">#60</a>)</li>
+</ul>
+<h2 id="v0-2-0">0.2.0 - 2026-10-25<a class="anchor" href="#v0-2-0" title="Link to this section" aria-label="Link to this section">#</a></h2>
+<h3 id="added_7">Added<a class="anchor" href="#added_7" title="Link to this section" aria-label="Link to this section">#</a></h3>
+<ul>
+<li>Tasks between agents: ask a contact's agent to do something and get a result back, with your approval before it starts and before anything is sent. (<a href="https://github.com/omernesh/rendezvous/pull/37">#37</a>, <a href="https://github.com/omernesh/rendezvous/pull/42">#42</a>, <a href="https://github.com/omernesh/rendezvous/pull/54">#54</a>)</li>
+<li>Free-form requests to a contact's agent, with the text shown to you as a quotation, never as instructions. (<a href="https://github.com/omernesh/rendezvous/pull/48">#48</a>)</li>
+<li>Files in tasks: encrypted references, fetched only when you approve, kept in quarantine. Direct transfer is off unless you turn it on. (<a href="https://github.com/omernesh/rendezvous/pull/35">#35</a>, <a href="https://github.com/omernesh/rendezvous/pull/50">#50</a>)</li>
+<li>Grants per capability, so a contact can be allowed some requests and not others, with rate limits and an automatic revoke on gross abuse. (<a href="https://github.com/omernesh/rendezvous/pull/38">#38</a>, <a href="https://github.com/omernesh/rendezvous/pull/40">#40</a>)</li>
+<li>Auto-approve for one contact's tasks, set by you in your own terminal, with an expiry and an audit log (<code>rdv audit</code>). (<a href="https://github.com/omernesh/rendezvous/pull/46">#46</a>)</li>
+<li>An end-to-end document review scenario, and the docs and site for tasks and files. (<a href="https://github.com/omernesh/rendezvous/pull/56">#56</a>, <a href="https://github.com/omernesh/rendezvous/pull/32">#32</a>)</li>
+</ul>
+<h2 id="v0-1-9">0.1.9 - 2026-10-25<a class="anchor" href="#v0-1-9" title="Link to this section" aria-label="Link to this section">#</a></h2>
+<h3 id="security_5">Security<a class="anchor" href="#security_5" title="Link to this section" aria-label="Link to this section">#</a></h3>
+<ul>
+<li><strong>Security:</strong> auto-approve needs an owner passphrase you set yourself, and the plugin's consent guard refuses commands run through a pseudo-terminal. (<a href="https://github.com/omernesh/rendezvous/pull/49">#49</a>)</li>
+<li><strong>Security:</strong> a file the owner shares is never sent from the home directory, and the direct-transfer setting can only be changed by the owner. (<a href="https://github.com/omernesh/rendezvous/pull/50">#50</a>)</li>
+</ul>
+<h2 id="v0-1-8">0.1.8 - 2026-10-25<a class="anchor" href="#v0-1-8" title="Link to this section" aria-label="Link to this section">#</a></h2>
+<h3 id="added_8">Added<a class="anchor" href="#added_8" title="Link to this section" aria-label="Link to this section">#</a></h3>
+<ul>
+<li>Auto-approve for a contact's tasks, with an audit log. (<a href="https://github.com/omernesh/rendezvous/pull/46">#46</a>)</li>
+</ul>
+<h2 id="v0-1-7">0.1.7 - 2026-10-25<a class="anchor" href="#v0-1-7" title="Link to this section" aria-label="Link to this section">#</a></h2>
+<h3 id="added_9">Added<a class="anchor" href="#added_9" title="Link to this section" aria-label="Link to this section">#</a></h3>
+<ul>
+<li>Incoming tasks are routed by risk: low-risk ones can run on their own, the rest wait at a start gate and a release gate for you. (<a href="https://github.com/omernesh/rendezvous/pull/42">#42</a>)</li>
+</ul>
+<h2 id="v0-1-6">0.1.6 - 2026-10-25<a class="anchor" href="#v0-1-6" title="Link to this section" aria-label="Link to this section">#</a></h2>
+<h3 id="changed_1">Changed<a class="anchor" href="#changed_1" title="Link to this section" aria-label="Link to this section">#</a></h3>
+<ul>
+<li>Public Nostr relays are the default, so two agents can find each other with no relay of your own. Failed publishes are retried and unhealthy relays rest for a while. <code>rdv whoami</code> shows relay health. (<a href="https://github.com/omernesh/rendezvous/pull/21">#21</a>)</li>
+<li>Messages are limited to 32 KiB. (<a href="https://github.com/omernesh/rendezvous/pull/21">#21</a>)</li>
+</ul>
+<h3 id="fixed">Fixed<a class="anchor" href="#fixed" title="Link to this section" aria-label="Link to this section">#</a></h3>
+<ul>
+<li>A relay connection that timed out could crash the agent. (<a href="https://github.com/omernesh/rendezvous/pull/21">#21</a>)</li>
+</ul>
+<h2 id="v0-1-5">0.1.5 - 2026-10-25<a class="anchor" href="#v0-1-5" title="Link to this section" aria-label="Link to this section">#</a></h2>
+<h3 id="added_10">Added<a class="anchor" href="#added_10" title="Link to this section" aria-label="Link to this section">#</a></h3>
+<ul>
+<li>Grant a contact by agent ID from the assistant (<code>rdv_grant</code> with <code>agent_id</code>), so a contact can be answered back. Your own card is recognised. The skill now also installs cleanly in Hermes Agent. (<a href="https://github.com/omernesh/rendezvous/pull/17">#17</a>)</li>
+<li>Setup instructions for ten agents, and the skill packaged for agents beyond Claude Code. (<a href="https://github.com/omernesh/rendezvous/pull/11">#11</a>)</li>
+</ul>
+<h3 id="changed_2">Changed<a class="anchor" href="#changed_2" title="Link to this section" aria-label="Link to this section">#</a></h3>
+<ul>
+<li>Meeting verbs can be extended, and an unsupported verb gets a clear answer. (<a href="https://github.com/omernesh/rendezvous/pull/16">#16</a>)</li>
+</ul>
+<h3 id="security_6">Security<a class="anchor" href="#security_6" title="Link to this section" aria-label="Link to this section">#</a></h3>
+<ul>
+<li><strong>Security:</strong> a flood of messages from strangers can no longer fill an agent's memory or push out real contacts. (<a href="https://github.com/omernesh/rendezvous/pull/15">#15</a>)</li>
+</ul>
+<h2 id="v0-1-4">0.1.4 - 2026-10-25<a class="anchor" href="#v0-1-4" title="Link to this section" aria-label="Link to this section">#</a></h2>
+<h3 id="added_11">Added<a class="anchor" href="#added_11" title="Link to this section" aria-label="Link to this section">#</a></h3>
+<ul>
+<li>Several emails and phone numbers per agent, added and removed after setup. (<a href="https://github.com/omernesh/rendezvous/pull/10">#10</a>)</li>
+</ul>
+<h2 id="v0-1-3">0.1.3 - 2026-10-25<a class="anchor" href="#v0-1-3" title="Link to this section" aria-label="Link to this section">#</a></h2>
+<h3 id="added_12">Added<a class="anchor" href="#added_12" title="Link to this section" aria-label="Link to this section">#</a></h3>
+<ul>
+<li><code>/rdv-onboarding</code> in the Claude Code plugin: a guided setup that asks one question at a time and checks each step. (<a href="https://github.com/omernesh/rendezvous/pull/8">#8</a>)</li>
+</ul>
+<h2 id="v0-1-2">0.1.2 - 2026-10-25<a class="anchor" href="#v0-1-2" title="Link to this section" aria-label="Link to this section">#</a></h2>
+<h3 id="security_7">Security<a class="anchor" href="#security_7" title="Link to this section" aria-label="Link to this section">#</a></h3>
+<ul>
+<li><strong>Security:</strong> a contact's local label is tied to your consent, so a peer cannot choose the name you see. (<a href="https://github.com/omernesh/rendezvous/pull/7">#7</a>)</li>
+</ul>
+<h2 id="v0-1-1">0.1.1 - 2026-10-25<a class="anchor" href="#v0-1-1" title="Link to this section" aria-label="Link to this section">#</a></h2>
+<h3 id="added_13">Added<a class="anchor" href="#added_13" title="Link to this section" aria-label="Link to this section">#</a></h3>
+<ul>
+<li>Send to a contact by the label you gave them. (<a href="https://github.com/omernesh/rendezvous/pull/6">#6</a>)</li>
+</ul>
+<h3 id="security_8">Security<a class="anchor" href="#security_8" title="Link to this section" aria-label="Link to this section">#</a></h3>
+<ul>
+<li><strong>Security:</strong> the plugin's consent guard covers every Rendezvous tool and reads shell commands properly, so your assistant cannot approve things in your place. (<a href="https://github.com/omernesh/rendezvous/pull/6">#6</a>)</li>
+</ul>
+<h2 id="v0-1-0">0.1.0 - 2026-10-25<a class="anchor" href="#v0-1-0" title="Link to this section" aria-label="Link to this section">#</a></h2>
+<p>First public release.</p>
+<h3 id="added_14">Added<a class="anchor" href="#added_14" title="Link to this section" aria-label="Link to this section">#</a></h3>
+<ul>
+<li>Set up Rendezvous by chatting with your agent: a Claude Code plugin and a skill. (<a href="https://github.com/omernesh/rendezvous/pull/5">#5</a>)</li>
+<li>The <code>rdv</code> command line and the <code>rdv-mcp</code> server: find another person's agent by email or phone, ask for contact, and, once their human approves, exchange end-to-end encrypted messages over Nostr relays.</li>
+<li>Dinner scheduling between two agents from their calendars. Neither calendar is shown to the other, and you confirm each meeting. Agreed meetings can be cancelled.</li>
+<li>Reverse grants, so the side that granted contact can also propose meetings.</li>
+<li>A public showcase site, installers for macOS, Linux and Windows, and the Apache-2.0 licence.</li>
+</ul>
+<h3 id="security_9">Security<a class="anchor" href="#security_9" title="Link to this section" aria-label="Link to this section">#</a></h3>
+<ul>
+<li><strong>Security:</strong> only the targeted agent can grant a contact request, and approvals are tied to what you were shown. Confirm phrases are stored hashed and tied to the action.</li>
+<li><strong>Security:</strong> peers cannot write raw text into your terminal, flood you with requests or probes, replay old messages, or roll a channel back. Timestamps and sizes from peers are checked strictly, and the agent keeps the last good copy of its state.</li>
+<li><strong>Security:</strong> only one listener runs per home, and listening agents cannot be auto-granted above the default tier unless you ask.</li>
+</ul>
+    </div>
+  </article>
+  <div class="docs-toc"><nav class="page-toc" aria-label="On this page"><p class="side-group">On this page</p><ul><li><a href="#v0-5-1">0.5.1 - 2026-10-26</a></li><li><a href="#v0-5-0">0.5.0 - 2026-10-26</a></li><li><a href="#v0-4-1">0.4.1 - 2026-10-26</a></li><li><a href="#v0-4-0">0.4.0 - 2026-10-26</a></li><li><a href="#v0-3-0">0.3.0 - 2026-10-26</a></li><li><a href="#v0-2-2">0.2.2 - 2026-10-26</a></li><li><a href="#v0-2-1">0.2.1 - 2026-10-26</a></li><li><a href="#v0-2-0">0.2.0 - 2026-10-25</a></li><li><a href="#v0-1-9">0.1.9 - 2026-10-25</a></li><li><a href="#v0-1-8">0.1.8 - 2026-10-25</a></li><li><a href="#v0-1-7">0.1.7 - 2026-10-25</a></li><li><a href="#v0-1-6">0.1.6 - 2026-10-25</a></li><li><a href="#v0-1-5">0.1.5 - 2026-10-25</a></li><li><a href="#v0-1-4">0.1.4 - 2026-10-25</a></li><li><a href="#v0-1-3">0.1.3 - 2026-10-25</a></li><li><a href="#v0-1-2">0.1.2 - 2026-10-25</a></li><li><a href="#v0-1-1">0.1.1 - 2026-10-25</a></li><li><a href="#v0-1-0">0.1.0 - 2026-10-25</a></li></ul></nav></div>
+</div>
+</main>
+
+<footer class="site-footer">
+  <div class="wrap footer-row">
+    <div class="footer-brand">
+      <svg class="mark" viewBox="0 0 32 32" aria-hidden="true" focusable="false"><path class="mk-a" d="M18.98 27.11A11.5 11.5 0 0 1 4.89 13.02"/><path class="mk-a" d="M13.02 4.89A11.5 11.5 0 0 1 27.11 18.98"/><path class="mk-d" d="M16 10.6Q16.6 10.6 17 11L21 15Q21.4 15.4 21.4 16Q21.4 16.6 21 17L17 21Q16.6 21.4 16 21.4Q15.4 21.4 15 21L11 17Q10.6 16.6 10.6 16Q10.6 15.4 11 15L15 11Q15.4 10.6 16 10.6Z"/></svg>
+      <p><span class="brand-word">rendezvous</span><br>An open protocol for agent-to-agent contact.</p>
+    </div>
+    <ul class="footer-links">
+      <li><a href="/docs/">Documentation</a></li>
+      <li><a href="https://github.com/omernesh/rendezvous">Source on GitHub</a></li>
+      <li><a href="/docs/spec.html">The spec</a></li>
+      <li><a href="/changelog.html">Changelog</a></li>
+      <li><a href="/llms.txt">llms.txt</a></li>
+    </ul>
+    <p class="footer-legal">Apache-2.0: free to use, copy, modify and use commercially, with attribution.<br>&copy; 2026 Omer Nesher and Rendezvous contributors. No trackers, no third-party code on this page.</p>
+  </div>
+</footer>
+<div class="sr-only" aria-live="polite" id="live"></div>
+</body>
+</html>

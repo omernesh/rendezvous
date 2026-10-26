@@ -38,6 +38,20 @@ class Doc:
     title: str | None = None  # page heading; default: the source's H1
     strip_subtitle: bool = False  # drop an H2 right after the H1 (SPEC.md)
     optional: bool = False  # skipped when the source file does not exist yet
+    top: bool = False  # served at /<slug>.html and /<slug>.md instead of under /docs/
+    toc_depth: str = "2-3"  # headings in the "On this page" list
+
+    @property
+    def href(self) -> str:
+        return f"/{self.slug}.html" if self.top else f"/docs/{self.slug}.html"
+
+    @property
+    def md_href(self) -> str:
+        return f"/{self.slug}.md" if self.top else f"/docs/{self.slug}.md"
+
+    @property
+    def out_dir(self) -> Path:
+        return SITE if self.top else DOCS_OUT
 
 
 DOCS: list[Doc] = [
@@ -62,6 +76,9 @@ DOCS: list[Doc] = [
     Doc("roadmap", "docs/design/general-tasks-and-groups.md", "Roadmap: tasks and groups",
         "Design for general agent tasks (v0.3) and groups (v0.4).",
         "Project", optional=True),
+    Doc("changelog", "CHANGELOG.md", "Changelog",
+        "What changed in each version of Rendezvous: new features, behaviour changes and security fixes.",
+        "Project", top=True, toc_depth="2"),
     Doc("contributing", "CONTRIBUTING.md", "Contributing",
         "Where help moves the project furthest, the dev setup and the rules for changes.",
         "Project"),
@@ -101,8 +118,8 @@ def make_resolver(docs: list[Doc]):
         if target == "spec.html":
             target = "SPEC.md"
         if target in by_src:
-            slug = by_src[target].slug
-            return f"/docs/{slug}.html{suffix}" if mode == "html" else f"{BASE}/docs/{slug}.md{suffix}"
+            d = by_src[target]
+            return f"{d.href}{suffix}" if mode == "html" else f"{BASE}{d.md_href}{suffix}"
         full = ROOT / target
         if full.is_dir():
             return f"{GH}/tree/main/{target.rstrip('/')}{suffix}"
@@ -195,6 +212,7 @@ FOOTER = f"""<footer class="site-footer">
       <li><a href="/docs/">Documentation</a></li>
       <li><a href="{GH}">Source on GitHub</a></li>
       <li><a href="/docs/spec.html">The spec</a></li>
+      <li><a href="/changelog.html">Changelog</a></li>
       <li><a href="/llms.txt">llms.txt</a></li>
     </ul>
     <p class="footer-legal">Apache-2.0: free to use, copy, modify and use commercially, with attribution.<br>&copy; 2026 Omer Nesher and Rendezvous contributors. No trackers, no third-party code on this page.</p>
@@ -243,7 +261,7 @@ def sidebar_links(docs: list[Doc], current: str | None, missing_roadmap: bool) -
         parts.append(f'<p class="side-group">{html.escape(g)}</p><ul>')
         for d in items:
             cur = ' aria-current="page"' if d.slug == current else ""
-            parts.append(f'<li><a href="/docs/{d.slug}.html"{cur}>{html.escape(d.nav)}</a></li>')
+            parts.append(f'<li><a href="{d.href}"{cur}>{html.escape(d.nav)}</a></li>')
         if extra:
             parts.append(f'<li><a href="{GH}/pull/19">Roadmap: tasks and groups (proposal)</a></li>')
         parts.append("</ul>")
@@ -402,7 +420,7 @@ def render_doc(doc: Doc, docs: list[Doc], rewrite, missing_roadmap: bool) -> tup
     text = commonmark_lists(rewrite_markdown_links(text, doc.src, rewrite, "html"))
     md = markdown.Markdown(
         extensions=["extra", "toc", "sane_lists"],
-        extension_configs={"toc": {"toc_depth": "2-3", "permalink": "#", "permalink_class": "anchor",
+        extension_configs={"toc": {"toc_depth": doc.toc_depth, "permalink": "#", "permalink_class": "anchor",
                                    "permalink_title": "Link to this section"}},
     )
     body = tidy(md.convert(text))
@@ -418,7 +436,7 @@ def render_doc(doc: Doc, docs: list[Doc], rewrite, missing_roadmap: bool) -> tup
   <article class="docs-content">
     <p class="crumbs"><a href="/docs/">Docs</a> / {html.escape(doc.group)}</p>
     <h1>{html.escape(heading)}</h1>
-    <p class="doc-meta">Rendered from <a href="{gh_src}">{html.escape(doc.src)}</a> on GitHub. <a href="/docs/{doc.slug}.md">Markdown version</a> for LLMs.</p>
+    <p class="doc-meta">Rendered from <a href="{gh_src}">{html.escape(doc.src)}</a> on GitHub. <a href="{doc.md_href}">Markdown version</a> for LLMs.</p>
 {toc_mobile}    <div class="prose">
 {body}
     </div>
@@ -426,8 +444,8 @@ def render_doc(doc: Doc, docs: list[Doc], rewrite, missing_roadmap: bool) -> tup
   <div class="docs-toc">{toc_block}</div>
 </div>
 </main>"""
-    out = page(title=f"{heading} | Rendezvous docs", desc=doc.desc, path=f"/docs/{doc.slug}.html",
-               md_href=f"/docs/{doc.slug}.md", body=inner)
+    out = page(title=f"{heading} | Rendezvous docs", desc=doc.desc, path=doc.href,
+               md_href=doc.md_href, body=inner)
     md_copy = rewrite_markdown_links(raw, doc.src, rewrite, "md")
     return out, md_copy.rstrip("\n") + "\n"
 
@@ -436,7 +454,7 @@ def render_index(docs: list[Doc], missing_roadmap: bool) -> str:
     rows = []
     for g in GROUPS:
         for d in [x for x in docs if x.group == g]:
-            rows.append(f'<li><a href="/docs/{d.slug}.html"><h3>{html.escape(d.nav)}</h3><p>{html.escape(d.desc)}</p></a></li>')
+            rows.append(f'<li><a href="{d.href}"><h3>{html.escape(d.nav)}</h3><p>{html.escape(d.desc)}</p></a></li>')
     if missing_roadmap:
         rows.append(f'<li><a href="{GH}/pull/19"><h3>Roadmap: tasks and groups</h3><p>A design proposal for general agent tasks (v0.3) and groups (v0.4). Still an open pull request, not part of the spec.</p></a></li>')
     inner = f"""<main id="main">
@@ -453,7 +471,7 @@ def render_index(docs: list[Doc], missing_roadmap: bool) -> str:
     <p>The site follows the llms.txt convention (llmstxt.org).</p>
     <ul>
       <li><a href="/llms.txt">/llms.txt</a>: an index of the docs, with one line on each.</li>
-      <li><a href="/llms-full.txt">/llms-full.txt</a>: the full text of the setup, tasks, CLI, MCP, plugin, spec and contributing docs in one file.</li>
+      <li><a href="/llms-full.txt">/llms-full.txt</a>: the full text of the setup, tasks, CLI, MCP, plugin, spec, changelog and contributing docs in one file.</li>
       <li>Every page here has a plain markdown twin at <code>/docs/&lt;page&gt;.md</code> (served as <code>text/markdown</code>).</li>
     </ul>
   </article>
@@ -466,7 +484,7 @@ def render_index(docs: list[Doc], missing_roadmap: bool) -> str:
 
 def llms_txt(docs: list[Doc], missing_roadmap: bool) -> str:
     def link(d: Doc, note: str | None = None) -> str:
-        return f"- [{d.nav}]({BASE}/docs/{d.slug}.md): {note or d.desc}"
+        return f"- [{d.nav}]({BASE}{d.md_href}): {note or d.desc}"
 
     by = {d.slug: d for d in docs}
     lines = [
@@ -496,9 +514,10 @@ def llms_txt(docs: list[Doc], missing_roadmap: bool) -> str:
         "",
         "## Optional",
         "",
+        link(by["changelog"]),
         link(by["contributing"]),
         f"- [FAQ]({BASE}/#faq): what it is, relays, files, groups, what is planned and what is not.",
-        f"- [llms-full.txt]({BASE}/llms-full.txt): the full text of the setup, tasks, CLI, MCP, plugin, spec and contributing docs in one file.",
+        f"- [llms-full.txt]({BASE}/llms-full.txt): the full text of the setup, tasks, CLI, MCP, plugin, spec, changelog and contributing docs in one file.",
     ]
     if "roadmap" in by:
         lines.append(link(by["roadmap"]))
@@ -508,7 +527,7 @@ def llms_txt(docs: list[Doc], missing_roadmap: bool) -> str:
     return "\n".join(lines)
 
 
-FULL_SLUGS = ["agents", "plugin", "tasks", "cli", "mcp", "spec", "contributing"]
+FULL_SLUGS = ["agents", "plugin", "tasks", "cli", "mcp", "spec", "changelog", "contributing"]
 
 
 def llms_full(docs: list[Doc], mds: dict[str, str]) -> str:
@@ -523,11 +542,11 @@ def llms_full(docs: list[Doc], mds: dict[str, str]) -> str:
         "",
     ]
     for d in included:
-        head.append(f"- {d.nav} ({d.src}): {BASE}/docs/{d.slug}.md")
+        head.append(f"- {d.nav} ({d.src}): {BASE}{d.md_href}")
     head += ["", "Not included: the FAQ on the home page, the roadmap design proposal and the repository's PLAN.md and NOTES.md.", ""]
     parts = ["\n".join(head)]
     for d in included:
-        parts.append(f"\n---\n\nSource: {BASE}/docs/{d.slug}.md\n\n{mds[d.slug].rstrip(chr(10))}\n")
+        parts.append(f"\n---\n\nSource: {BASE}{d.md_href}\n\n{mds[d.slug].rstrip(chr(10))}\n")
     return "".join(parts)
 
 
@@ -539,8 +558,8 @@ def build() -> dict[Path, str]:
     mds: dict[str, str] = {}
     for d in docs:
         html_text, md_text = render_doc(d, docs, rewrite, missing_roadmap)
-        out[DOCS_OUT / f"{d.slug}.html"] = html_text
-        out[DOCS_OUT / f"{d.slug}.md"] = md_text
+        out[d.out_dir / f"{d.slug}.html"] = html_text
+        out[d.out_dir / f"{d.slug}.md"] = md_text
         mds[d.slug] = md_text
     out[DOCS_OUT / "index.html"] = render_index(docs, missing_roadmap)
     out[SITE / "llms.txt"] = llms_txt(docs, missing_roadmap)

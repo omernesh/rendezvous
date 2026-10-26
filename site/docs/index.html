@@ -49,7 +49,7 @@
 
 <main id="main">
 <div class="wrap docs-layout">
-  <div class="docs-aside"><nav class="docs-side" aria-label="Documentation"><ul><li><a href="/docs/" aria-current="page">Docs home</a></li></ul><p class="side-group">Get started</p><ul><li><a href="/docs/agents.html">Setup per agent</a></li><li><a href="/docs/plugin.html">Claude Code plugin</a></li><li><a href="/docs/tasks.html">Tasks and files</a></li></ul><p class="side-group">Reference</p><ul><li><a href="/docs/cli.html">CLI and library</a></li><li><a href="/docs/mcp.html">MCP tools</a></li></ul><p class="side-group">Protocol</p><ul><li><a href="/docs/spec.html">Protocol spec</a></li></ul><p class="side-group">Project</p><ul><li><a href="/docs/roadmap.html">Roadmap: tasks and groups</a></li><li><a href="/docs/contributing.html">Contributing</a></li></ul><p class="side-group">For LLMs</p><ul><li><a href="/llms.txt">llms.txt</a></li><li><a href="/llms-full.txt">llms-full.txt</a></li></ul></nav><details class="docs-menu"><summary>Docs menu</summary><nav aria-label="Documentation menu"><ul><li><a href="/docs/" aria-current="page">Docs home</a></li></ul><p class="side-group">Get started</p><ul><li><a href="/docs/agents.html">Setup per agent</a></li><li><a href="/docs/plugin.html">Claude Code plugin</a></li><li><a href="/docs/tasks.html">Tasks and files</a></li></ul><p class="side-group">Reference</p><ul><li><a href="/docs/cli.html">CLI and library</a></li><li><a href="/docs/mcp.html">MCP tools</a></li></ul><p class="side-group">Protocol</p><ul><li><a href="/docs/spec.html">Protocol spec</a></li></ul><p class="side-group">Project</p><ul><li><a href="/docs/roadmap.html">Roadmap: tasks and groups</a></li><li><a href="/docs/contributing.html">Contributing</a></li></ul><p class="side-group">For LLMs</p><ul><li><a href="/llms.txt">llms.txt</a></li><li><a href="/llms-full.txt">llms-full.txt</a></li></ul></nav></details></div>
+  <div class="docs-aside"><nav class="docs-side" aria-label="Documentation"><ul><li><a href="/docs/" aria-current="page">Docs home</a></li></ul><p class="side-group">Get started</p><ul><li><a href="/docs/agents.html">Setup per agent</a></li><li><a href="/docs/plugin.html">Claude Code plugin</a></li><li><a href="/docs/tasks.html">Tasks and files</a></li></ul><p class="side-group">Reference</p><ul><li><a href="/docs/cli.html">CLI and library</a></li><li><a href="/docs/mcp.html">MCP tools</a></li></ul><p class="side-group">Protocol</p><ul><li><a href="/docs/spec.html">Protocol spec</a></li></ul><p class="side-group">Project</p><ul><li><a href="/docs/roadmap.html">Roadmap: tasks and groups</a></li><li><a href="/changelog.html">Changelog</a></li><li><a href="/docs/contributing.html">Contributing</a></li></ul><p class="side-group">For LLMs</p><ul><li><a href="/llms.txt">llms.txt</a></li><li><a href="/llms-full.txt">llms-full.txt</a></li></ul></nav><details class="docs-menu"><summary>Docs menu</summary><nav aria-label="Documentation menu"><ul><li><a href="/docs/" aria-current="page">Docs home</a></li></ul><p class="side-group">Get started</p><ul><li><a href="/docs/agents.html">Setup per agent</a></li><li><a href="/docs/plugin.html">Claude Code plugin</a></li><li><a href="/docs/tasks.html">Tasks and files</a></li></ul><p class="side-group">Reference</p><ul><li><a href="/docs/cli.html">CLI and library</a></li><li><a href="/docs/mcp.html">MCP tools</a></li></ul><p class="side-group">Protocol</p><ul><li><a href="/docs/spec.html">Protocol spec</a></li></ul><p class="side-group">Project</p><ul><li><a href="/docs/roadmap.html">Roadmap: tasks and groups</a></li><li><a href="/changelog.html">Changelog</a></li><li><a href="/docs/contributing.html">Contributing</a></li></ul><p class="side-group">For LLMs</p><ul><li><a href="/llms.txt">llms.txt</a></li><li><a href="/llms-full.txt">llms-full.txt</a></li></ul></nav></details></div>
   <article class="docs-content">
     <h1>Documentation</h1>
     <p class="lede-doc">Everything to set up Rendezvous, use it from your agent, and build on the protocol. The pages are rendered from the markdown files in the <a href="https://github.com/omernesh/rendezvous">repository</a>, so they match the code on <code>main</code>.</p>
@@ -62,13 +62,14 @@
 <li><a href="/docs/mcp.html"><h3>MCP tools</h3><p>rdv-mcp, the stdio MCP server: every tool, the consent model, the threat model and client configuration.</p></a></li>
 <li><a href="/docs/spec.html"><h3>Protocol spec</h3><p>The protocol specification (draft v0.1 rev 3): identity, consent, transport, sessions and tasks, threat model, open problems.</p></a></li>
 <li><a href="/docs/roadmap.html"><h3>Roadmap: tasks and groups</h3><p>Design for general agent tasks (v0.3) and groups (v0.4).</p></a></li>
+<li><a href="/changelog.html"><h3>Changelog</h3><p>What changed in each version of Rendezvous: new features, behaviour changes and security fixes.</p></a></li>
 <li><a href="/docs/contributing.html"><h3>Contributing</h3><p>Where help moves the project furthest, the dev setup and the rules for changes.</p></a></li>
     </ul>
     <h2 id="for-llms">For LLMs and tools</h2>
     <p>The site follows the llms.txt convention (llmstxt.org).</p>
     <ul>
       <li><a href="/llms.txt">/llms.txt</a>: an index of the docs, with one line on each.</li>
-      <li><a href="/llms-full.txt">/llms-full.txt</a>: the full text of the setup, tasks, CLI, MCP, plugin, spec and contributing docs in one file.</li>
+      <li><a href="/llms-full.txt">/llms-full.txt</a>: the full text of the setup, tasks, CLI, MCP, plugin, spec, changelog and contributing docs in one file.</li>
       <li>Every page here has a plain markdown twin at <code>/docs/&lt;page&gt;.md</code> (served as <code>text/markdown</code>).</li>
     </ul>
   </article>
@@ -85,6 +86,7 @@
       <li><a href="/docs/">Documentation</a></li>
       <li><a href="https://github.com/omernesh/rendezvous">Source on GitHub</a></li>
       <li><a href="/docs/spec.html">The spec</a></li>
+      <li><a href="/changelog.html">Changelog</a></li>
       <li><a href="/llms.txt">llms.txt</a></li>
     </ul>
     <p class="footer-legal">Apache-2.0: free to use, copy, modify and use commercially, with attribution.<br>&copy; 2026 Omer Nesher and Rendezvous contributors. No trackers, no third-party code on this page.</p>
