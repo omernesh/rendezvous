@@ -41,7 +41,9 @@
   Cache-Control: public, max-age=3600
 
 /*.js
+  ! Content-Type
   ! Cache-Control
+  Content-Type: application/javascript; charset=utf-8
   Cache-Control: public, max-age=3600
 
 /*.woff2
@@ -72,5 +74,7 @@
   ! Cross-Origin-Opener-Policy
   ! Strict-Transport-Security
   ! Cache-Control
+  ! Content-Type
+  Content-Type: image/svg+xml; charset=utf-8
   Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'
   Cache-Control: public, max-age=3600
