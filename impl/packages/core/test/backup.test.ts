@@ -1,5 +1,5 @@
 // Encrypted identity backup and the clean restore (issue #88, NOTES 91).
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   Agent,
   type AgentKey,
@@ -260,6 +260,71 @@ describe('restore without a fork (rdv/restored)', () => {
     expect(o2.texts).toEqual(['j3', 'j4']);
     expect(o2.drops).toEqual([]);
     expect(jo.drops).toEqual([]);
+  });
+
+  /** Run `fn` with our clock `ms` in the past (only Date is faked: timers and sockets run as usual). */
+  async function inThePast<T>(ms: number, fn: () => Promise<T>): Promise<T> {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(Date.now() - ms);
+    try {
+      return await fn();
+    } finally {
+      vi.useRealTimers();
+    }
+  }
+  const DAYS3 = 3 * 86_400_000;
+
+  it('never resends an expired envelope in the ack: the restored side skips to the oldest live one (review of #92)', { timeout: 30_000 }, async () => {
+    const { omer, john, jo } = await pair();
+    const saved = JSON.parse(JSON.stringify(omer.toJSON())) as AgentState;
+    omer.close();
+    agents = agents.filter((a) => a !== omer);
+    // While Omer is down: j2 was sealed three days ago (its 48h ttl is gone), j3 now.
+    const { seq, prev } = john.channels.nextOutbound(omer.id);
+    const j2 = sealEnvelope(john.key, omer.id, { type: 'a2a/message', text: 'j2' }, { seq, prev, now: new Date(Date.now() - DAYS3) });
+    john.channels.commitOutbound(omer.id, j2);
+    (john as unknown as { outbox: Record<string, unknown[]> }).outbox[omer.id].push(j2);
+    await john.transport.sendEnvelope(j2, [relay.url]);
+    await john.send(omer.id, { type: 'a2a/message', text: 'j3' });
+    const omer2 = start(await restoreFrom(saved, new Date().toISOString()));
+    const o2 = watch(omer2);
+    await omer2.sendRestoredNotices();
+    await until(() => o2.confirmed.length === 1 && o2.texts.includes('j3'));
+    await john.send(omer2.id, { type: 'a2a/message', text: 'j4' });
+    await until(() => o2.texts.includes('j4'));
+    expect(o2.texts).toEqual(['j3', 'j4']);
+    expect(jo.drops).toEqual([]);
+  });
+
+  it('a notice that expired unanswered is sent afresh: before the next envelope, and when the peer asks for it again (review of #92)', { timeout: 30_000 }, async () => {
+    const { omer, john, jo } = await pair();
+    const saved = JSON.parse(JSON.stringify(omer.toJSON())) as AgentState;
+    omer.close();
+    agents = agents.filter((a) => a !== omer);
+    // The notice goes out while John is away long enough for it to expire (here: sealed three days ago).
+    const omer2 = start(await restoreFrom(saved, new Date().toISOString()));
+    watch(omer2);
+    await inThePast(DAYS3, () => omer2.sendRestoredNotices());
+    await new Promise((r) => setTimeout(r, 300));
+    expect(jo.restored).toEqual([]);
+    expect(omer2.restoreStatus()?.notice_due).toEqual([john.id]);
+    await omer2.send(john.id, { type: 'a2a/message', text: 'o2' });
+    await until(() => jo.texts.includes('o2'));
+    expect(jo.restored).toHaveLength(1);
+    expect(jo.drops).toEqual([]);
+
+    // The resend path: another restore whose notice expired; John asks for the range again (a gap), and gets a fresh one.
+    const again = start(Agent.fromJSON(restoredAgentState(backupAgentState(saved), { backupCreated: new Date().toISOString() }), transport));
+    watch(again);
+    omer2.close();
+    agents = agents.filter((a) => a !== omer2);
+    await inThePast(DAYS3, () => again.sendRestoredNotices());
+    const notice = again.channels.state[john.id];
+    const { seq, prev } = john.channels.nextOutbound(again.id);
+    const resend = sealEnvelope(john.key, again.id, { type: 'rdv/resend', from_seq: 1, to_seq: notice.outSeq }, { seq, prev });
+    john.channels.commitOutbound(again.id, resend);
+    await john.transport.sendEnvelope(resend, [relay.url]);
+    await until(() => jo.restored.length === 2);
   });
 
   it('a copy that still runs after the restore forks the chain again: refused, as any fork', async () => {

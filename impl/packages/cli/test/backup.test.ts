@@ -6,6 +6,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { REQUEST_URI } from '@rendezvous/a2a';
+import { type AgentState, sealBackup } from '@rendezvous/core';
 import { startTestRelay, type TestRelay } from '@rendezvous/core/testing';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Listener, RDV_BIN, rdv } from '../scenarios/harness.js';
@@ -130,6 +131,24 @@ describe('rdv backup and rdv restore', () => {
     expect(JSON.parse(again.stdout.trim().split('\n').at(-1)!)).toMatchObject({ event: 'restore', id, replaced: id });
     const viaStdin = await rdvStdin(['backup', join(root, 'stdin.rdvbackup'), '--stdin'], dst.dir, `${PASS}\n`);
     expect(viaStdin.code).toBe(0);
+
+    // A bundle that decrypts but holds odd state (review of #92): with --replace, nothing of the agent here is touched.
+    const before = [readFileSync(dst.agentPath, 'utf8'), readFileSync(dst.agentBackupPath, 'utf8')];
+    const good = { v: 1, agent: dst.readAgentState(), config: dst.readConfig(), files: {} } as Record<string, unknown> & { agent: AgentState };
+    for (const [why, agent] of [
+      ['groups', { ...good.agent, groups: 'x' }],
+      ['channel', { ...good.agent, channels: { [id]: null } }],
+    ] as const) {
+      const odd = join(root, `odd-${why}.rdvbackup`);
+      writeFileSync(odd, JSON.stringify(await sealBackup(id, PASS, { ...good, agent: agent as unknown as AgentState })));
+      await expect(restoreCmd({ home: dst, out: capture().out, values: { replace: true }, positionals: [odd], tty: tty(PASS) }), why).rejects.toThrow(/nothing was restored/);
+      expect([readFileSync(dst.agentPath, 'utf8'), readFileSync(dst.agentBackupPath, 'utf8')], why).toEqual(before);
+    }
+    // A good --replace leaves no copy of the replaced state behind: agent.json.bak is the new state too.
+    const other = join(root, 'other');
+    await rdv(['init', '--profile', 'x', '--email', 'x@example.com', '--relay', relay.url], other);
+    await restoreCmd({ home: new Home(other), out: capture().out, values: { replace: true }, positionals: [file], tty: tty(PASS) });
+    expect(JSON.parse(readFileSync(new Home(other).agentBackupPath, 'utf8')).card.id).toBe(id);
   });
 
   it('after a restore, the contact goes on without a resync, and its auto-approve still holds: its task starts without asking', { timeout: 120_000 }, async () => {

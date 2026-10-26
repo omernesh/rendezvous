@@ -15,6 +15,8 @@
 import { closeSync, constants as fsConstants, existsSync, fstatSync, openSync, readFileSync, readSync, rmSync, writeSync } from 'node:fs';
 import { resolve } from 'node:path';
 import {
+  Agent,
+  type Transport,
   type AgentState,
   type BackupFile,
   type BackupHeader,
@@ -165,6 +167,10 @@ function checkContents(contents: Record<string, unknown>, agentId: string): Bund
   if (contents.v !== 1 || Object.keys(contents).sort().join(',') !== 'agent,config,files,v') throw bad('unknown layout');
   const agent = contents.agent as AgentState;
   if (!isObj(agent) || !isObj(agent.book) || !isObj(agent.channels) || !isObj(agent.card)) throw bad('agent state');
+  const int = (n: unknown) => typeof n === 'number' && Number.isSafeInteger(n) && n >= 0;
+  if (!Object.values(agent.channels).every((ch) => isObj(ch) && int(ch.outSeq) && int(ch.inSeq))) throw bad('channels');
+  if (agent.groups !== undefined && !(isObj(agent.groups) && isObj(agent.groups.groups))) throw bad('groups');
+  if (!isObj(agent.book.contacts)) throw bad('contacts');
   const card = verifyCard(agent.card);
   if (!card.ok || card.card.id !== agentId) throw bad('its card is not signed by its key');
   const config = contents.config as Config;
@@ -190,6 +196,22 @@ function checkContents(contents: Record<string, unknown>, agentId: string): Bund
     }
   }
   return { v: 1, agent, config, files: files as Record<string, string> };
+}
+
+/** The restored agent state, proven to load as an agent and save again; anything odd in it restores nothing. */
+function loadableState(agent: AgentState, backupCreated: string, now: Date): AgentState {
+  try {
+    const state = restoredAgentState(agent, { backupCreated, now });
+    const noop: Transport = { async sendEnvelope() {}, onEnvelopes: () => () => {}, async publishTopic() {}, onTopics: () => () => {}, fetchTopic: async () => [], close() {} };
+    const a = Agent.fromJSON(state, () => noop);
+    const again = JSON.parse(JSON.stringify(a.toJSON())) as AgentState;
+    a.restoreStatus();
+    a.close();
+    if (again.card.id !== agent.card.id) throw new Error('key');
+    return state;
+  } catch {
+    throw new CliError('the backup opened but its agent state is not usable; nothing was restored');
+  }
 }
 
 export interface RestoreResult {
@@ -225,6 +247,9 @@ export async function restoreBackup(home: Home, bytes: Uint8Array, passphrase: s
   const { header } = opened;
   if (opts.expectAgent !== undefined && header.agent !== opts.expectAgent) throw new CliError('the backup is not the one that was shown; nothing was restored');
   const c = checkContents(opened.contents, header.agent);
+  // The state to write, built and loaded once before anything on disk is touched: a bundle that decrypts but
+  // does not make a working agent replaces nothing (review of #92).
+  const state = loadableState(c.agent, header.created, now);
   home.ensureDir();
   const listener = tryLongLock(home.listenerLockPath, 'rdv restore');
   if (!listener.release) throw new CliError(`${listener.owner} is running for ${home.dir}: stop it first, then restore`);
@@ -241,12 +266,14 @@ export async function restoreBackup(home: Home, bytes: Uint8Array, passphrase: s
           replaced = 'unreadable';
         }
       }
-      home.reset();
+      // The new key first: the old agent.json becomes agent.json.bak, so until the new one is durable the old key
+      // is still there; once it is, the backup copy is the new state too (the replaced key is gone for good).
+      home.writeAgentState(state);
+      home.writeAgentState(state);
+      home.reset({ keepAgent: true });
       for (const name of Object.keys(BUNDLED)) rmSync(resolve(home.dir, name), { force: true });
       home.writeConfig(c.config);
       for (const [name, text] of Object.entries(c.files)) writeAtomic(resolve(home.dir, name), text.endsWith('\n') ? text : `${text}\n`, BUNDLED[name]);
-      const state = restoredAgentState(c.agent, { backupCreated: header.created, now });
-      home.writeAgentState(state);
       // The audit log does not travel: the marker keeps a later deleted passphrase file counting as a reset.
       markOwnerSecretRestored(home, now);
       let auto: string[] = [];
