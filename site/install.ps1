@@ -141,18 +141,31 @@
   $out = (& (Join-Path $BinDir 'rdv.cmd') --help 2>&1 | Out-String)
   if ($LASTEXITCODE -ne 0) { Fail "rdv --help failed after install:`n$out" }
 
+  # Check the PERSISTED User + Machine PATH, not this process's $env:Path: the installer may run from a shell
+  # that already has the folder (an IDE or agent session) while a fresh terminal does not (issue #66).
+  function NormDir([string]$d) {
+    $d = [Environment]::ExpandEnvironmentVariables($d.Trim().Trim('"'))
+    return $d.TrimEnd('\', '/')
+  }
+  $want = NormDir $BinDir
   $onPath = $false
-  foreach ($p in ($env:Path -split ';')) {
-    if ($p -and ($p.TrimEnd('\') -ieq $BinDir.TrimEnd('\'))) { $onPath = $true }
+  foreach ($scope in 'User', 'Machine') {
+    $persisted = [Environment]::GetEnvironmentVariable('Path', $scope)
+    if (-not $persisted) { continue }
+    foreach ($p in ($persisted -split ';')) {
+      if ($p.Trim() -and ((NormDir $p) -ieq $want)) { $onPath = $true }
+    }
   }
 
   Write-Host ''
   Write-Host 'Rendezvous is installed.' -ForegroundColor Green
   if (-not $onPath) {
     Write-Host ''
-    Write-Host "WARNING: $BinDir is not on your PATH, so 'rdv' won't be found yet." -ForegroundColor Yellow
+    Write-Host "WARNING: $BinDir is not on your saved PATH, so 'rdv' won't be found in new terminals." -ForegroundColor Yellow
     Write-Host "Add it for your user, then open a new terminal:" -ForegroundColor Yellow
-    Write-Host "  [Environment]::SetEnvironmentVariable('Path', `"$BinDir;`" + [Environment]::GetEnvironmentVariable('Path','User'), 'User')"
+    Write-Host "  [Environment]::SetEnvironmentVariable('Path', [Environment]::GetEnvironmentVariable('Path','User') + `";$BinDir`", 'User')"
+    Write-Host "Until then, call it by full path:" -ForegroundColor Yellow
+    Write-Host "  & `"$(Join-Path $BinDir 'rdv.cmd')`" --help"
   }
   Write-Host @"
 
