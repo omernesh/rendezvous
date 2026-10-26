@@ -255,9 +255,12 @@ describe('rdv-mcp: two Claude sessions book dinner (in-memory relay)', () => {
       timeoutMs: 15_000,
       approve: async (j, requestId) => {
         const declined = await j.call('rdv_grant', { request_id: requestId });
-        expect(declined.isError).toBe(true);
+        expect([declined.isError, declined.json.approved, declined.json.answer]).toEqual([false, false, 'declined']);
+        expect(declined.text).toContain(`Request ${requestId} was not granted`);
         answer = 'accept-unchecked';
-        expect((await j.call('rdv_grant', { request_id: requestId })).isError).toBe(true);
+        const unticked = await j.call('rdv_grant', { request_id: requestId });
+        expect([unticked.isError, unticked.json.approved, unticked.json.answer]).toEqual([false, false, 'left unticked']);
+        expect(unticked.text).toContain('tick the box before Accept');
         expect((await ok(j, 'rdv_status')).contacts).toEqual([]);
         answer = 'accept';
         const granted = await ok(j, 'rdv_grant', { request_id: requestId, tier: 'business' });
@@ -296,7 +299,7 @@ describe('rdv-mcp: two Claude sessions book dinner (in-memory relay)', () => {
 
     // Canceling the agreed dinner asks John in a form (issue #20): no keeps it, yes calls it off on both sides.
     const kept = await john.call('rdv_negotiate', { action: 'cancel', task_id: flow.taskId });
-    expect(kept.isError).toBe(true);
+    expect([kept.isError, kept.json.approved]).toEqual([false, false]);
     expect(kept.text).toContain('stays agreed');
     expect((await ok(john, 'rdv_negotiate', { action: 'status' })).negotiations[0].state).toBe('completed');
     cancelAnswer = 'accept';
@@ -427,7 +430,9 @@ describe('rdv-mcp: two Claude sessions book dinner (in-memory relay)', () => {
       });
       sides.push(omer);
       await ok(omer, 'rdv_init', { profile: 'omer', email: 'omer.form@example.com', relays: [relay.url] });
-      expect((await omer.call('rdv_relays', { action: 'add', url: two.url })).text).toContain('did not approve');
+      const no = await omer.call('rdv_relays', { action: 'add', url: two.url });
+      expect([no.isError, no.json.approved, no.json.answer]).toEqual([false, false, 'declined']);
+      expect(no.text).toContain('Nothing changed');
       expect(forms.at(-1)).toContain(`listen on ${two.url}`);
       expect((await ok(omer, 'rdv_relays', { action: 'list' })).relays).toEqual([relay.url]);
       answer = { action: 'accept', content: { approve: true } };

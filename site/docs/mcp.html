@@ -122,6 +122,18 @@ first argument. Claude Code without the plugin:
 <p>Approval forms need a client that supports MCP elicitation; Claude Code does in
 interactive sessions (not in <code>-p</code>). Elsewhere approvals use the confirm phrase
 the human reads in their own terminal (<code>rdv contact pending</code>), below.</p>
+<p>A form waits at most <code>RDV_ELICIT_TIMEOUT_MS</code> (default 60000 ms) for an answer
+(issue #65: some clients show a form only after the assistant's turn ends,
+which can't happen while the tool call waits). Unanswered by then, the server
+withdraws it (<code>notifications/cancelled</code>, so a form shown later approves
+nothing), issues the confirm phrase exactly as for a client without forms, and
+says so in the tool result, which names the terminal command that shows the
+phrase. It then uses phrases for the rest of its life. A form the client
+closes without an answer (cancel) also falls back to the phrase for that call.
+A decline, or Accept with the box unticked, is a plain result (<code>approved:
+false</code>) that changes nothing; neither a cancel nor a timeout ever approves.
+<code>RDV_ELICIT=off</code> turns forms off entirely. <code>rdv_status</code> shows the mode in
+<code>approval</code>.</p>
 <h2 id="tools">Tools<a class="anchor" href="#tools" title="Link to this section" aria-label="Link to this section">#</a></h2>
 <div class="tablewrap" tabindex="0"><table>
 <thead>
