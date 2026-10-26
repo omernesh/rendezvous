@@ -7,11 +7,22 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { type Capability, REQUEST_URI, TASKS_URI, type TaskPayload } from '@rendezvous/a2a';
-import { type Agent, type Contact, fingerprint, generateKey, type GrantScope } from '@rendezvous/core';
+import { type Agent, type Contact, fingerprint, generateKey, type GrantScope, MEETING_CANCEL_CAPABILITY, MEETINGS_CAPABILITY } from '@rendezvous/core';
 import { startTestRelay, type TestRelay } from '@rendezvous/core/testing';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { Listener, rdv } from '../scenarios/harness.js';
-import { checkAutoApprove, ownerBinding, scopeDigest, setAutoApprove, subjectOf, sweepAutoApprove, turnOffAutoApprove } from '../src/autoapprove.js';
+import {
+  autoApproveWarning,
+  checkAutoApprove,
+  meetingAutoApproved,
+  ownerBinding,
+  scopeDigest,
+  setAutoApprove,
+  subjectOf,
+  sweepAutoApprove,
+  turnOffAllAutoApprove,
+  turnOffAutoApprove,
+} from '../src/autoapprove.js';
 import { audit, contactAutoApprove, init, ownerSecretReset, ownerSecretSet, type Tty } from '../src/commands.js';
 import { AUDIT_KEPT, type AutoApproveEntry, Home } from '../src/home.js';
 import { stable } from '../src/hash.js';
@@ -323,6 +334,33 @@ describe('auto-approve in the gates', () => {
     expect(() => setAutoApprove(home, subjectOf(f.agent), PEER, null)).toThrow(/allows no task capability/);
     expect(() => setAutoApprove(home, subjectOf(f.agent), generateKey().id, null)).toThrow(/no active contact/);
     expect(home.readAutoApprove()).toEqual({});
+  });
+
+  it('covers the meeting confirm only while the grant allows meetings and the entry holds (issue #44)', () => {
+    // A grant without meetings: tasks are covered, meetings are not.
+    setAutoApprove(home, subjectOf(f.agent), PEER, null);
+    expect(meetingAutoApproved(home, subjectOf(f.agent), PEER)).toBe(false);
+    turnOffAutoApprove(home, PEER);
+    // Meetings allowed (and nothing else): that alone is something to cover, listed in the warning.
+    f.contacts.set(PEER, granted(PEER, { invoke: { [MEETINGS_CAPABILITY]: {}, [MEETING_CANCEL_CAPABILITY]: {} }, may_propose_meetings: true }));
+    const r = setAutoApprove(home, subjectOf(f.agent), PEER, new Date(Date.now() + 60_000).toISOString(), new Date(), 'mcp');
+    expect(r.capabilities).toEqual([MEETINGS_CAPABILITY]); // never meeting-cancel
+    expect(home.readAudit().at(-1)).toMatchObject({ action: 'set', via: 'mcp' });
+    expect(autoApproveWarning(f.contacts.get(PEER)!, r.capabilities, null)).toMatch(/a dinner this contact proposes is accepted and confirmed/);
+    expect(meetingAutoApproved(home, subjectOf(f.agent), PEER)).toBe(true);
+    // Expired: off, removed and audited, like at a task gate.
+    expect(meetingAutoApproved(home, subjectOf(f.agent), PEER, new Date(Date.now() + 120_000))).toBe(false);
+    expect(home.readAudit().at(-1)).toMatchObject({ action: 'off', reason: 'expired' });
+    // Off for everyone at once (MCP's all_contacts), audited per contact.
+    setAutoApprove(home, subjectOf(f.agent), PEER, null);
+    f.contacts.set(OTHER, granted(OTHER));
+    setAutoApprove(home, subjectOf(f.agent), OTHER, null);
+    expect(turnOffAllAutoApprove(home, new Date(), 'mcp').sort()).toEqual([PEER, OTHER].sort());
+    expect(home.readAutoApprove()).toEqual({});
+    expect(home.readAudit().slice(-2).map((a) => [a.action, a.reason, a.via])).toEqual([
+      ['off', 'owner', 'mcp'],
+      ['off', 'owner', 'mcp'],
+    ]);
   });
 
   it('the scope binding is the grant as shown: same scope, same digest', () => {

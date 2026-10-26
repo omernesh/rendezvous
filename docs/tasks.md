@@ -134,21 +134,30 @@ rdv contact auto-approve john@doe.com off
 
 That contact's tasks then pass the start gate, and the agent's results go back
 through the release gate, without asking you, for every class including
-free-form. Every pass is written to the audit log.
+free-form. A dinner that contact proposes is accepted and confirmed without
+asking you too (a dinner you propose still asks you). Every pass is written to
+the audit log.
 
-- **Only you can turn it on.** It needs an interactive terminal, shows a
-  warning (what it allows, the capabilities it covers, that prompt injection
-  gets the agent's tools, the expiry, how to turn it off) and asks for your
-  **owner passphrase**, which you set with `rdv owner-secret set` and which is
-  read from the terminal device, never echoed, never an argument. Three wrong
-  answers lock it for a minute, doubling after each further miss. No MCP tool,
-  argument or phrase sets it, the assistant is told never to run or suggest it,
-  and the plugin's consent guard refuses the commands, the files
-  (`autoapprove.json`, `owner-secret.json`) and any pseudo-terminal.
+- **Only you can turn it on.** It shows a warning (the contact and its
+  fingerprint, what it allows, the capabilities it covers, that prompt
+  injection gets the agent's tools, the expiry, how to turn it off) and asks
+  for your **owner passphrase**, which you set with `rdv owner-secret set`.
+  Type it in your own terminal (`rdv contact auto-approve`, read from the
+  terminal device, never echoed), or, when you ask your assistant to turn it
+  on, into the approval form its `rdv_auto_approve` tool opens: what you type
+  there goes to the Rendezvous server only, never to the assistant. Never type
+  the passphrase into the chat. With no form (a client without forms, a form
+  you closed or did not answer in time) it is refused: there is no confirm
+  phrase or argument for it. Three wrong answers lock it for a minute,
+  doubling after each further miss. The assistant is told never to suggest
+  it, and the plugin's consent guard refuses the shell command, the files
+  (`autoapprove.json`, `owner-secret.json`) and any pseudo-terminal. Turning
+  it off needs nothing: from any terminal, or `rdv_auto_approve` "off".
 - **It covers less than it sounds.** One contact's tasks, under capabilities
-  its grant already allows. Not new contacts, grants, confirming a meeting, or
-  auto-approve itself. A task that was already waiting is not approved after
-  the fact.
+  its grant already allows, and the dinners that contact proposes when its
+  grant allows meetings. Not new contacts, grants, a dinner you proposed,
+  calling off an agreed dinner, or auto-approve itself. A task that was
+  already waiting is not approved after the fact.
 - **It fails closed.** The entry is signed with your agent key and bound to
   the contact's grant. It is off when the signature is wrong, the time is
   odd, it expires, the contact is revoked, blocked or revoked for abuse, the
@@ -184,8 +193,10 @@ opened yourself.
 
 `audit.jsonl` in the home records each gate passed without you (`auto`,
 `notify` and auto-approve), your own approvals, and every change to
-auto-approve and the owner passphrase: time, contact, capability, task, gate,
-the approval digest, and the SHA-256 and size of what left. It holds IDs and
+auto-approve and the owner passphrase: time, contact, capability, task, gate
+(`meeting` for a dinner step auto-approve took), the approval digest, the
+SHA-256 and size of what left, and for a change to auto-approve whether you
+made it in the terminal or the assistant's form (`via`). It holds IDs and
 hashes, never peer text, and keeps its last 1000 lines. Read it with:
 
 ```bash
@@ -194,8 +205,8 @@ rdv audit --contact john@doe.com
 ```
 
 `rdv contact list`, `rdv_status` and `rdv_task` show who is on auto-approve and
-until when, and `rdv_inbox` reports auto-approved starts and the
-`auto_approve_off` event when it ends.
+until when, and `rdv_inbox` reports auto-approved starts and dinner steps
+(`auto_approved: true`) and the `auto_approve_off` event when it ends.
 
 ## Example: Omer asks John's agent to review a plan
 

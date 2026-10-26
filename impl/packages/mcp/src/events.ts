@@ -294,7 +294,9 @@ export function toModelEvent(e: Raw, negotiating: boolean): Omit<McpEvent, 'n' |
         peer: agentId(e.peer),
         fingerprint: fp(e.peer),
         reason: oneOf(['owner', 'expired', 'revoked', 'blocked', 'grant-changed', 'fork', 'invalid', 'owner-secret'])(e.reason),
-        next_step: `Auto-approve for ${who(e.peer)} is off: its tasks need your user's approval again. Tell your user. Only they can turn it back on, in their own terminal.`,
+        next_step:
+          `Auto-approve for ${who(e.peer)} is off: its tasks and the dinners it proposes need your user's approval again. Tell your user. ` +
+          "Only they can turn it back on: in their own terminal, or with their owner passphrase in rdv_auto_approve's approval form.",
       };
     case 'task-abuse': {
       // Our own agent revoked the contact (§5.3 (b), issue #28). The fields are ours; checked anyway.
@@ -336,6 +338,8 @@ export function toModelEvent(e: Raw, negotiating: boolean): Omit<McpEvent, 'n' |
     case 'dinner': {
       if (e.kind === 'duplicate') return null;
       const peerText = Array.isArray(e.peer_text) ? e.peer_text.map(untrusted) : undefined;
+      // Our own listener's flag (issue #44): our user's auto-approve for the contact took this step for them, audited.
+      const auto = e.auto_approved === true && (e.kind === 'accepted' || e.kind === 'completed');
       return {
         type: 'dinner',
         kind: oneOf(KINDS)(e.kind),
@@ -345,9 +349,14 @@ export function toModelEvent(e: Raw, negotiating: boolean): Omit<McpEvent, 'n' |
         round: e.round,
         slots: e.slots,
         slot: e.slot,
-        summary: dinnerSummary(e),
-        next_step:
-          e.kind === 'confirm-needed'
+        auto_approved: auto ? true : undefined,
+        summary: auto
+          ? `${dinnerSummary(e)} ${who(e.peer)} proposed this dinner, and your user's auto-approve for them ${e.kind === 'accepted' ? 'accepted it' : 'confirmed it'} without asking (audited).`
+          : dinnerSummary(e),
+        next_step: auto
+          ? `Tell your user about this dinner: it was ${e.kind === 'accepted' ? 'accepted (final once the other side confirms)' : 'agreed'} for them without asking because they put this contact on auto-approve. ` +
+            'Only they can call it off (rdv_negotiate "cancel" needs their confirmation).'
+          : e.kind === 'confirm-needed'
             ? 'Ask your user whether this dinner works for them. If yes, call rdv_negotiate with action "confirm" and this task_id: it succeeds only with their confirmation ' +
               '(an approval form, or the confirm phrase they read in their own terminal). If not, use action "cancel".'
             : e.kind === 'meeting-canceled'

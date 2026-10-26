@@ -31,8 +31,8 @@ import {
 import { cardSyncText, cardUpdateText, cardUpdateView, syncContactCards } from './cardupdate.js';
 import { appendEvents } from './events.js';
 import { LockTimeoutError, tryLongLock } from './fsutil.js';
-import { CliError, type Home, type InboxEntry } from './home.js';
-import { buildCtx, carryOut, dinnerText, dinnerView, inboundMeetingScope, type NegotiateOptions } from './negotiate.js';
+import { type AuditEntry, CliError, type Home, type InboxEntry } from './home.js';
+import { buildCtx, carryOut, dinnerText, dinnerView, inboundMeetingScope, meetingAuditLine, type NegotiateOptions, peerStarted } from './negotiate.js';
 import {
   candidateText,
   candidateView,
@@ -47,7 +47,7 @@ import {
   requestText,
   requestView,
 } from './output.js';
-import { subjectOf, sweepAutoApprove } from './autoapprove.js';
+import { meetingAutoApproved, subjectOf, sweepAutoApprove } from './autoapprove.js';
 import { isTransferPayload, transferEventText, transfersInbound } from './files.js';
 import { cardRefreshText, hostCardCapabilities, hostRegistry, refreshHostCard, taskEventText, taskEventView, tasksExpiring, tasksInbound, tasksRoute } from './tasks.js';
 import { relaySets, relayTransport } from './transport.js';
@@ -438,11 +438,18 @@ async function negotiateInbound(
   let state = home.readNegotiations();
   const before = JSON.stringify(state);
   const steps: Step[] = [];
+  const audits: AuditEntry[] = [];
   for (const e of a2a) {
     const now = new Date();
     const ctx = await buildCtx(n, inboundMeetingScope(agent.book.contact(e.from), state, e.payload), now);
+    // Our human's auto-approve for this contact (SPEC §5.5.1, issue #44) covers the confirm of a negotiation IT started,
+    // checked here under the lock like a task gate; one we started still waits for our human (the engine checks the role).
+    const autoConfirmPeerStarted = !ctx.autoConfirm && peerStarted(state, e.from, e.payload) && meetingAutoApproved(home, subjectOf(agent), e.from, now);
     // Core's per-capability limiter on the meetings URI (issue #41): max_open and max_frequency from our grant; gross abuse revokes.
-    const step = receive(state, e.from, e.payload, { ...ctx, limit: (cap, o) => agent.admitTask(e.from, cap, o, now) });
+    const step = receive(state, e.from, e.payload, { ...ctx, autoConfirmPeerStarted, limit: (cap, o) => agent.admitTask(e.from, cap, o, now) });
+    for (const ev of step.events) {
+      if (ev.autoConfirmed && ev.taskId) audits.push(meetingAuditLine(now, ev.peer, ev.taskId, ev.kind, ev.slot));
+    }
     // No reply to a peer that is no longer a contact (the limiter just revoked it for abuse).
     steps.push({ ...step, outgoing: step.outgoing.filter((o) => agent.book.contact(o.to)) });
     state = step.state;
@@ -453,6 +460,7 @@ async function negotiateInbound(
     state = step.state;
   }
   if (JSON.stringify(state) !== before) home.writeNegotiations(state);
+  home.appendAudit(audits);
   for (const step of steps) {
     const errors = await carryOut(agent, home, n.calendar, step);
     for (const ev of step.events) events.push({ obj: dinnerView(ev), human: dinnerText(ev) });

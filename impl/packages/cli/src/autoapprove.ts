@@ -3,9 +3,12 @@
 // Our human may mark one trusted contact so that the start and release gates
 // pass for its tasks without asking. It is the human's alone:
 //
-// - set only by `rdv contact auto-approve <contact> all` in an interactive
-//   terminal, after a warning and the owner passphrase (ownersecret.ts); no
-//   MCP tool, confirm phrase or peer can set, extend or change it;
+// - set only with the owner passphrase (ownersecret.ts), after a warning:
+//   `rdv contact auto-approve <contact> all` in an interactive terminal, or
+//   rdv-mcp's `rdv_auto_approve` "on", whose approval form takes the
+//   passphrase where only the server sees it (issue #44); no confirm phrase,
+//   tool argument or peer can set, extend or change it; turning it off needs
+//   nothing (both hosts);
 // - local state (autoapprove.json, mode 600), never on the wire; each entry is
 //   MACed with the agent's secret key, so a file written by anything that
 //   cannot read agent.json approves nothing;
@@ -16,12 +19,16 @@
 // - optional expiry; an unreadable, expired, future-dated or malformed entry
 //   approves nothing (fail closed) and is removed;
 // - every action it approves, and every set, extend and end, is a line in
-//   audit.jsonl (no peer text).
+//   audit.jsonl (no peer text), set and off with where the owner did it
+//   (`via`: cli or mcp).
 //
-// It covers only the task gates (tasks.ts). Contacts, groups, grants, invoke,
-// limits and auto-approve itself stay with the human every time.
+// It covers the task gates (tasks.ts) and, since issue #44, the meeting
+// confirm of a negotiation the contact started (listen.ts, the engine's
+// `autoConfirmPeerStarted`); one our human started still waits for them.
+// Contacts, groups, grants, invoke, limits, cancelling an agreed meeting and
+// auto-approve itself stay with the human every time.
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import { type Agent, type AgentState, b64decode, type Contact, ContactBook, effectiveInvoke, fingerprint, type GrantScope, MEETING_CAPABILITIES, parseTimestamp } from '@rendezvous/core';
+import { type Agent, type AgentState, b64decode, type Contact, ContactBook, effectiveInvoke, fingerprint, type GrantScope, MEETING_CANCEL_CAPABILITY, MEETINGS_CAPABILITY, parseTimestamp } from '@rendezvous/core';
 import { type AuditEntry, type AutoApproveEntry, type AutoApproveOff, CliError, type Home } from './home.js';
 import { sha, stable } from './hash.js';
 import { ownerSecretBinding } from './ownersecret.js';
@@ -122,8 +129,24 @@ export function checkAutoApprove(entry: AutoApproveEntry | undefined, subject: A
   return { ok: true, entry, capabilities: covered(c.inboundScope) };
 }
 
-/** The task capabilities a grant lets the contact invoke: what auto-approve covers (meetings have their own confirm, §5.5). */
-const covered = (scope: GrantScope | null | undefined): string[] => Object.keys(effectiveInvoke(scope)).filter((u) => !MEETING_CAPABILITIES.includes(u));
+/**
+ * What auto-approve covers: the task capabilities a grant lets the contact
+ * invoke, and the meetings URI when it may propose meetings (the confirm of a
+ * negotiation it starts, issue #44). Never meeting-cancel: calling off an
+ * agreed meeting stays the human's.
+ */
+const covered = (scope: GrantScope | null | undefined): string[] => Object.keys(effectiveInvoke(scope)).filter((u) => u !== MEETING_CANCEL_CAPABILITY);
+
+/**
+ * May auto-approve confirm a meeting in a negotiation `peer` started, now?
+ * The same check as a task gate (inside the home lock; an entry that no
+ * longer holds is removed and audited), and the grant must still allow the
+ * contact to propose meetings.
+ */
+export function meetingAutoApproved(home: Home, subject: AutoApproveSubject, peer: string, now = new Date()): boolean {
+  const r = autoApproved(home, subject, peer, now);
+  return r !== null && r.capabilities.includes(MEETINGS_CAPABILITY);
+}
 
 const offLine = (now: Date, peer: string, reason: AutoApproveOff): AuditEntry => ({
   ts: Number.isFinite(now.getTime()) ? now.toISOString() : new Date(0).toISOString(),
@@ -244,7 +267,7 @@ export function autoApproveTarget(subject: AutoApproveSubject, peer: string, now
   if (!c) throw new CliError(`no active contact ${peer}`);
   if (c.inboundGranted !== true) throw new CliError(`you have not granted ${peer} anything yet (rdv contact grant <agent-id> --invoke <capability>): auto-approve would cover nothing`);
   const capabilities = covered(c.inboundScope);
-  if (capabilities.length === 0) throw new CliError(`your grant to ${peer} allows no task capability (meetings keep their own confirm): auto-approve would cover nothing`);
+  if (capabilities.length === 0) throw new CliError(`your grant to ${peer} allows no task capability and no meetings: auto-approve would cover nothing`);
   if (subject.refused(peer)) throw new CliError(`the channel with ${peer} is refused after a fork or rollback; settle that first`);
   return { contact: c, capabilities };
 }
@@ -258,6 +281,7 @@ export function autoApproveWarning(c: Contact, capabilities: string[], until: st
     '',
     `  Contact:      ${name}`,
     `  Fingerprint:  ${fingerprint(c.peer)}`,
+    '  Mode:         all (every capability below)',
     `  Covers today: ${capabilities.join(', ')}`,
     `  Until:        ${until ?? 'you turn it off'}`,
     '',
@@ -267,9 +291,13 @@ export function autoApproveWarning(c: Contact, capabilities: string[], until: st
     "  from this contact (its own model tricked by a document, a stolen key) gets the",
     "  power of your agent's tools for every capability above. The grant and its",
     '  limits are then the only boundary.',
+    ...(capabilities.includes(MEETINGS_CAPABILITY)
+      ? ['', '  Meetings: a dinner this contact proposes is accepted and confirmed for you', '  without asking (one you propose still asks you).']
+      : []),
     '',
-    '  It never covers new contacts, groups, grants (this one included) or this',
-    '  setting itself. Every action it approves is written to audit.jsonl ("rdv audit").',
+    '  It never covers new contacts, groups, grants (this one included), calling off',
+    '  an agreed meeting, or this setting itself. Every action it approves is written',
+    '  to audit.jsonl ("rdv audit").',
     `  Turn it off any time: rdv contact auto-approve ${c.peer} off`,
     '',
   ].join('\n');
@@ -280,7 +308,14 @@ export function autoApproveWarning(c: Contact, capabilities: string[], until: st
  * confirmed). Inside the home lock. Bound to the contact's grant now; a
  * second call extends or changes the expiry (audited as `extend`).
  */
-export function setAutoApprove(home: Home, subject: AutoApproveSubject, peer: string, until: string | null, now = new Date()): { action: 'set' | 'extend'; entry: AutoApproveEntry; capabilities: string[] } {
+export function setAutoApprove(
+  home: Home,
+  subject: AutoApproveSubject,
+  peer: string,
+  until: string | null,
+  now = new Date(),
+  via: 'cli' | 'mcp' = 'cli',
+): { action: 'set' | 'extend'; entry: AutoApproveEntry; capabilities: string[] } {
   const { contact, capabilities } = autoApproveTarget(subject, peer, now);
   const owner = ownerBinding(home);
   if (!owner) throw new CliError('set your owner passphrase first, in your own terminal: rdv owner-secret set (turning auto-approve on asks for it, so an assistant cannot)');
@@ -305,24 +340,50 @@ export function setAutoApprove(home: Home, subject: AutoApproveSubject, peer: st
   const entry: AutoApproveEntry = { ...body, mac: macOf(subject.secretKey, body) };
   all[peer] = entry;
   home.writeAutoApprove(all);
-  home.appendAudit([{ ts: entry.set, peer, gate: 'auto-approve', by: 'human', action, until, capabilities }]);
+  home.appendAudit([{ ts: entry.set, peer, gate: 'auto-approve', by: 'human', action, until, capabilities, via }]);
   return { action, entry, capabilities };
 }
 
+/**
+ * What the owner is shown and approves when turning it on (the MCP form):
+ * the contact, its grant as bound, what it covers and the expiry, under the
+ * current passphrase record. Consent is bound to this digest: anything that
+ * changes between the form and the write refuses it.
+ */
+export function autoApproveDigest(c: Contact, capabilities: string[], until: string | null, owner: string): string {
+  return sha('rdv1/auto-approve-consent', { peer: c.peer, label: c.label ?? null, grantId: c.grantId, since: c.since, scope: scopeDigest(c.inboundScope), mode: 'all', capabilities, until, owner });
+}
+
 /** Turn it off (reduce-only: no confirmation). Inside the home lock. False when it was not on. */
-export function turnOffAutoApprove(home: Home, peer: string, now = new Date()): boolean {
+export function turnOffAutoApprove(home: Home, peer: string, now = new Date(), via: 'cli' | 'mcp' = 'cli'): boolean {
   let all: Record<string, AutoApproveEntry>;
   try {
     all = home.readAutoApprove();
   } catch {
     // Unreadable: drop the whole file; it approves nobody either way.
     home.writeAutoApprove({});
-    home.appendAudit([offLine(now, peer, 'owner')]);
+    home.appendAudit([{ ...offLine(now, peer, 'owner'), via }]);
     return true;
   }
   if (!Object.hasOwn(all, peer)) return false;
   delete all[peer];
   home.writeAutoApprove(all);
-  home.appendAudit([offLine(now, peer, 'owner')]);
+  home.appendAudit([{ ...offLine(now, peer, 'owner'), via }]);
   return true;
+}
+
+/** Turn it off for every contact (reduce-only). Inside the home lock. The contacts it was on for; an unreadable file is dropped. */
+export function turnOffAllAutoApprove(home: Home, now = new Date(), via: 'cli' | 'mcp' = 'cli'): string[] {
+  let peers: string[];
+  try {
+    peers = Object.keys(home.readAutoApprove());
+  } catch {
+    home.writeAutoApprove({});
+    home.appendAudit([{ ...offLine(now, '*', 'owner'), via }]);
+    return [];
+  }
+  if (peers.length === 0) return [];
+  home.writeAutoApprove({});
+  home.appendAudit(peers.map((p) => ({ ...offLine(now, p, 'owner'), via })));
+  return peers;
 }

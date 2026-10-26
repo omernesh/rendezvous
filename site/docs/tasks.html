@@ -173,21 +173,30 @@ rdv contact auto-approve john@doe.com off
 </code></pre></div>
 <p>That contact's tasks then pass the start gate, and the agent's results go back
 through the release gate, without asking you, for every class including
-free-form. Every pass is written to the audit log.</p>
+free-form. A dinner that contact proposes is accepted and confirmed without
+asking you too (a dinner you propose still asks you). Every pass is written to
+the audit log.</p>
 <ul>
-<li><strong>Only you can turn it on.</strong> It needs an interactive terminal, shows a
-    warning (what it allows, the capabilities it covers, that prompt injection
-    gets the agent's tools, the expiry, how to turn it off) and asks for your
-    <strong>owner passphrase</strong>, which you set with <code>rdv owner-secret set</code> and which is
-    read from the terminal device, never echoed, never an argument. Three wrong
-    answers lock it for a minute, doubling after each further miss. No MCP tool,
-    argument or phrase sets it, the assistant is told never to run or suggest it,
-    and the plugin's consent guard refuses the commands, the files
-    (<code>autoapprove.json</code>, <code>owner-secret.json</code>) and any pseudo-terminal.</li>
+<li><strong>Only you can turn it on.</strong> It shows a warning (the contact and its
+    fingerprint, what it allows, the capabilities it covers, that prompt
+    injection gets the agent's tools, the expiry, how to turn it off) and asks
+    for your <strong>owner passphrase</strong>, which you set with <code>rdv owner-secret set</code>.
+    Type it in your own terminal (<code>rdv contact auto-approve</code>, read from the
+    terminal device, never echoed), or, when you ask your assistant to turn it
+    on, into the approval form its <code>rdv_auto_approve</code> tool opens: what you type
+    there goes to the Rendezvous server only, never to the assistant. Never type
+    the passphrase into the chat. With no form (a client without forms, a form
+    you closed or did not answer in time) it is refused: there is no confirm
+    phrase or argument for it. Three wrong answers lock it for a minute,
+    doubling after each further miss. The assistant is told never to suggest
+    it, and the plugin's consent guard refuses the shell command, the files
+    (<code>autoapprove.json</code>, <code>owner-secret.json</code>) and any pseudo-terminal. Turning
+    it off needs nothing: from any terminal, or <code>rdv_auto_approve</code> "off".</li>
 <li><strong>It covers less than it sounds.</strong> One contact's tasks, under capabilities
-    its grant already allows. Not new contacts, grants, confirming a meeting, or
-    auto-approve itself. A task that was already waiting is not approved after
-    the fact.</li>
+    its grant already allows, and the dinners that contact proposes when its
+    grant allows meetings. Not new contacts, grants, a dinner you proposed,
+    calling off an agreed dinner, or auto-approve itself. A task that was
+    already waiting is not approved after the fact.</li>
 <li><strong>It fails closed.</strong> The entry is signed with your agent key and bound to
     the contact's grant. It is off when the signature is wrong, the time is
     odd, it expires, the contact is revoked, blocked or revoked for abuse, the
@@ -221,15 +230,17 @@ opened yourself.</p>
 <h2 id="the-audit-log">The audit log<a class="anchor" href="#the-audit-log" title="Link to this section" aria-label="Link to this section">#</a></h2>
 <p><code>audit.jsonl</code> in the home records each gate passed without you (<code>auto</code>,
 <code>notify</code> and auto-approve), your own approvals, and every change to
-auto-approve and the owner passphrase: time, contact, capability, task, gate,
-the approval digest, and the SHA-256 and size of what left. It holds IDs and
+auto-approve and the owner passphrase: time, contact, capability, task, gate
+(<code>meeting</code> for a dinner step auto-approve took), the approval digest, the
+SHA-256 and size of what left, and for a change to auto-approve whether you
+made it in the terminal or the assistant's form (<code>via</code>). It holds IDs and
 hashes, never peer text, and keeps its last 1000 lines. Read it with:</p>
 <div class="codeblock"><pre tabindex="0"><code class="language-bash">rdv audit --since 7d
 rdv audit --contact john@doe.com
 </code></pre></div>
 <p><code>rdv contact list</code>, <code>rdv_status</code> and <code>rdv_task</code> show who is on auto-approve and
-until when, and <code>rdv_inbox</code> reports auto-approved starts and the
-<code>auto_approve_off</code> event when it ends.</p>
+until when, and <code>rdv_inbox</code> reports auto-approved starts and dinner steps
+(<code>auto_approved: true</code>) and the <code>auto_approve_off</code> event when it ends.</p>
 <h2 id="example-omer-asks-johns-agent-to-review-a-plan">Example: Omer asks John's agent to review a plan<a class="anchor" href="#example-omer-asks-johns-agent-to-review-a-plan" title="Link to this section" aria-label="Link to this section">#</a></h2>
 <p>Omer and John are contacts. John's human has granted Omer's agent
 <code>request/v1</code>, and John's side is listening (<code>rdv listen</code>, or his MCP client).</p>

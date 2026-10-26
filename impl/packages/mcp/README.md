@@ -113,6 +113,7 @@ false`) that changes nothing; neither a cancel nor a timeout ever approves.
 | `rdv_pending_requests` | — | requests with fingerprint, binding, how they arrived, untrusted greeting |
 | `rdv_grant` | request_id, tier, may_propose_meetings, invoke, limits, confirm_phrase, label; or grant_id (+ confirm_phrase, label) to confirm a probe answer; or agent_id (+ tier, may_propose_meetings, invoke, limits, confirm_phrase) to grant an existing contact more, which also sends it a reverse grant | contact (needs the human, below) |
 | `rdv_revoke` | agent_id, or request_id / grant_id (+ block) to decline | revoked / declined / rejected |
+| `rdv_auto_approve` | action `on` / `off`; agent_id or to (a `local_label`); all_contacts (off); until (on: 30m, 12h, 7d, 2w or RFC 3339, at most a year) | `off`: the contacts it was on for (no gate, audited `via: mcp`); `on`: the contact, what it covers and until when, only after the human typed the owner passphrase into the approval form (below). Never a passphrase or phrase |
 | `rdv_send` | agent_id or to (a `local_label`), payload `{type, …}` (not `a2a/*`, `rdv/*`) | agent ID, fingerprint, envelope seq; `to` is refused when no contact, or more than one, has that label |
 | `rdv_inbox` | since cursor, limit, wait_seconds (≤ 60) | events + next_cursor |
 | `rdv_negotiate` | action propose / confirm / cancel / status; agent_id, intent `dinner`, window, calendar, tz, minutes, place, area, expires, task_id, reason, confirm_phrase | task ID and state; progress via `rdv_inbox`; `confirm` needs the human (below) |
@@ -236,14 +237,32 @@ and `rdv_file`:
   shown, `decline-transfer` says no, and no transfer protocol is
   implemented, so nothing connects.
 
-**Auto-approve (issue #25).** The human can put one trusted contact on
-`auto_approve: all` from their own terminal (`rdv contact auto-approve
-<contact> all [--until 7d]`); that contact's tasks then start and their
-results leave without a form or phrase, each pass written to `audit.jsonl`.
-No tool sets or extends it: `rdv_status` (per contact `auto_approve`, until
-when, how many actions it passed) and `rdv_task` only show it, and
-`rdv_inbox` reports `auto_approved` starts and an `auto_approve_off` event
-when it ends (NOTES 77).
+**Auto-approve (issues #25, #44).** The human can put one trusted contact on
+`auto_approve: all`; that contact's tasks then start and their results leave
+without a form or phrase, and a dinner that contact proposes is accepted and
+confirmed without one (a dinner our human proposes still asks them). Each
+pass is written to `audit.jsonl` (meetings as gate `meeting`). Two ways to
+turn it on, both behind the owner passphrase (`rdv owner-secret set`, in the
+human's own terminal):
+- the terminal: `rdv contact auto-approve <contact> all [--until 7d]`;
+- `rdv_auto_approve` "on": an approval form shows the same warning (contact
+  and fingerprint, mode `all`, the capabilities it covers, the expiry, the
+  injection risk) and a passphrase field. The answer goes to this server
+  only, is checked like the terminal's (scrypt, the lockout after three
+  misses), and never reaches a tool result, an event or the log. The change
+  is bound to what the form showed: another grant, label, expiry or
+  passphrase record in between, and nothing is set. With no form (a client
+  without elicitation, `RDV_ELICIT=off`, a form that went unanswered), a
+  cancelled form, or no passphrase set, "on" is refused and points to the
+  terminal: there is no confirm phrase for it, and no argument takes a
+  passphrase. MCP elicitation has no password field type, so the form's
+  field is plain text (NOTES 85).
+
+"off" (one contact or `all_contacts`) needs nothing. Every change is audited
+with `via: "cli"` or `"mcp"`. `rdv_status` (per contact `auto_approve`, until
+when, how many actions it passed) and `rdv_task` show it, and `rdv_inbox`
+reports `auto_approved` task starts and dinner steps and an
+`auto_approve_off` event when it ends (NOTES 77, 85).
 
 **Free-form requests (issue #27).** A `request/v1` task is a request in
 words, optionally with `input: {"data": {…}}`; results carry text and
@@ -304,7 +323,7 @@ need approval) and add deny rules for the home dir and `rdv contact pending`
 (`plugins/rendezvous/hooks/consent-guard.mjs`) on every tool that refuses the
 consent and phrase-showing `rdv` commands (`contact grant`/`confirm`/`resync`/
 `label`/`pending`, `contact request <agent-id> --label`, `dinner confirm`/
-`cancel`/`list`, `task approve`/`release`/`list`, `contact auto-approve`, `owner-secret set`/`reset`, `file direct-transfer`,
+`cancel`/`list`, `task approve`/`release`/`list`, `contact auto-approve` (the model's path is `rdv_auto_approve`), `owner-secret set`/`reset`, `file direct-transfer`,
 `listen --auto-grant`/`--auto-confirm`, `init --force`), any command naming `agent.json`,
 `agent.json.bak`, `consent.json`, `autoapprove.json`, `owner.json` or `owner-secret.json`, any pseudo-terminal, and any read, edit, search or glob of a
 Rendezvous home. It parses commands like a shell before matching. It is

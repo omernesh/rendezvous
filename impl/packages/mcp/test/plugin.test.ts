@@ -870,6 +870,18 @@ describe('auto-approve is the human’s (issue #25)', () => {
     expect(consentViolations('The human runs `rdv contact auto-approve` in their own terminal.')).toEqual([]);
   });
 
+  it('still refuses the shell command in every form, and points to rdv_auto_approve, the sanctioned path (issue #44)', () => {
+    for (const c of ['rdv contact auto-approve rdv1:abc all', 'rdv contact auto-approve rdv1:abc off', 'bash -c "rdv contact auto-approve rdv1:abc all"']) {
+      const why = checkCommand(c);
+      expect(why, c).toContain('rdv_auto_approve');
+      expect(why, c).toContain('owner passphrase in an approval form');
+      expect(why, c).toContain('never ask for the passphrase');
+    }
+    // The MCP tool's own call is not a shell command: the guard lets it through, whatever its arguments.
+    expect(checkToolInput('mcp__plugin_rendezvous_rendezvous__rdv_auto_approve', { action: 'on', agent_id: 'rdv1:abc', until: '7d' })).toBeUndefined();
+    expect(skill).toContain('rdv_auto_approve');
+  });
+
   it('the skill says it can never set it nor suggest bypassing a gate; the onboarding never offers it', () => {
     expect(skill).toMatch(/you can never set, extend or turn it on/);
     expect(skill).toMatch(/Never\s+suggest it, or any other way around a gate/);

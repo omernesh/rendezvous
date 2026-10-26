@@ -23,7 +23,7 @@ export {
   TIERS,
   withAgent,
 } from './commands.js';
-export { ownerSecretInfo } from './ownersecret.js';
+export { checkOwnerSecret, hasOwnerSecret, OWNER_SECRET_MAX, ownerSecretInfo, ownerSecretLock } from './ownersecret.js';
 export { cardSyncText, cardUpdateText, cardUpdateView, syncContactCards } from './cardupdate.js';
 export { appendEvents, EVENTS_FILE_KEPT, eventsStamp, isNoise, type LoggedEvent, readEvents, STRANGER_DROPS } from './events.js';
 export { acquireLock, LockTimeoutError, type LongLock, tryLongLock, writeAtomic } from './fsutil.js';
@@ -154,14 +154,21 @@ export { type FileNote, type FilesState, type OutgoingFile, type TransferRecord 
 export { checkRelayUrl, mirrorRelaysOf, relaySets, relayTransport } from './transport.js';
 export {
   type AutoApproveSubject,
+  autoApproveDigest,
   autoApproveStatus,
+  autoApproveTarget,
+  autoApproveWarning,
   autoApproved,
   autoApprovedCounts,
   checkAutoApprove,
+  meetingAutoApproved,
+  ownerBinding,
+  parseUntil,
   setAutoApprove,
   subjectOf,
   subjectOfState,
   sweepAutoApprove,
+  turnOffAllAutoApprove,
   turnOffAutoApprove,
 } from './autoapprove.js';
 export { type AutoApproveEntry, type AutoApproveOff } from './home.js';

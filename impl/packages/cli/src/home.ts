@@ -205,8 +205,12 @@ export interface AuditEntry {
   /** Gate lines: the task's capability and ID. */
   capability?: string;
   task?: string;
-  /** A gate (start, release, notify), a change to the contact's auto-approve setting, or to the owner passphrase (peer `owner`). */
-  gate: 'start' | 'release' | 'notify' | 'auto-approve' | 'owner-secret';
+  /**
+   * A gate (start, release, notify), a meeting confirm auto-approve passed
+   * (`meeting`, issue #44), a change to the contact's auto-approve setting, or
+   * to the owner passphrase (peer `owner`).
+   */
+  gate: 'start' | 'release' | 'notify' | 'meeting' | 'auto-approve' | 'owner-secret';
   /** Who let it pass: the grant (class `auto`/`notify`), the human (form, phrase, terminal), or the human's standing auto-approve. */
   by: 'grant' | 'human' | 'auto-approve';
   approval?: string;
@@ -220,6 +224,10 @@ export interface AuditEntry {
   /** gate `auto-approve`, set/extend: the expiry (null: until turned off) and the capabilities it covered then. */
   until?: string | null;
   capabilities?: string[];
+  /** gate `meeting`: which step auto-approve took for our human (accepting the peer's time, or confirming our offer it accepted). */
+  meeting?: 'accept' | 'confirm';
+  /** gate `auto-approve`, a change our human made: from their terminal (`cli`) or through the MCP approval form (`mcp`, issue #44). */
+  via?: 'cli' | 'mcp';
 }
 
 /** One contact on auto-approve (autoapprove.json). Bound to the grant it was set on; `mac` keys it to this agent. */

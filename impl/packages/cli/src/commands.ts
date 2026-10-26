@@ -1261,6 +1261,8 @@ function auditText(a: AuditEntry): string {
   if (a.reason) parts.push(`reason ${a.reason}`);
   if (a.until !== undefined) parts.push(`until ${a.until ?? 'turned off'}`);
   if (a.capabilities?.length) parts.push(`covers ${a.capabilities.join(', ')}`);
+  if (a.meeting) parts.push(`meeting ${a.meeting}`);
+  if (a.via) parts.push(`via ${a.via}`);
   return parts.map((x) => clean(x)).join('  ');
 }
 
