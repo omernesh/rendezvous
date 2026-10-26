@@ -550,7 +550,7 @@ npm run rdv -- --help                     # or: node packages/cli/dist/src/bin.j
 </tr>
 <tr>
 <td><code>rdv contact auto-approve &lt;agent-id\|label&gt; all [--until 7d]</code> / <code>… off</code></td>
-<td>Let one trusted contact's tasks start and their results leave without asking you (SPEC §5.5.1, "dangerous mode"): needs your own terminal, shows a warning, asks for your owner passphrase. Ends on expiry, <code>off</code>, a revoke, block or new grant, or a fork (NOTES 77). Yours to run</td>
+<td>Let one trusted contact's tasks start and their results leave, and the dinners it proposes be confirmed, without asking you (SPEC §5.5.1, "dangerous mode"): needs your own terminal, shows a warning, asks for your owner passphrase (the MCP tool <code>rdv_auto_approve</code> asks for it in an approval form instead). Ends on expiry, <code>off</code>, a revoke, block or new grant, or a fork (NOTES 77, 85). Yours to run</td>
 </tr>
 <tr>
 <td><code>rdv owner-secret set</code></td>

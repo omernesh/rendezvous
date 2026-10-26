@@ -911,6 +911,7 @@ describe('rdv-mcp over stdio', () => {
       expect(tools).toEqual(
         [
           'rdv_addresses',
+          'rdv_auto_approve',
           'rdv_relays',
           'rdv_discover',
           'rdv_grant',

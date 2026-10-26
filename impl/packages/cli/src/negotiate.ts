@@ -15,13 +15,13 @@ import {
   type NegotiationTask,
   parseOffset,
   parseWindow,
+  type Slot,
   type Step,
   WindowError,
 } from '@rendezvous/a2a';
 import { createHash } from 'node:crypto';
-import { type Agent, type Contact, type GrantScope, MEETINGS_CAPABILITY, type Payload, scopeAllows } from '@rendezvous/core';
-import { writeAtomic } from './fsutil.js';
-import { CliError, type Home } from './home.js';
+import { type Agent, type Contact, type GrantScope, MEETINGS_CAPABILITY, type Payload, scopeAllows } from '@rendezvous/core';import { writeAtomic } from './fsutil.js';
+import { type AuditEntry, CliError, type Home } from './home.js';
 import { clean } from './output.js';
 
 export const DEFAULT_LISTEN_WINDOW = 'next week evenings';
@@ -63,6 +63,34 @@ export function inboundMeetingScope(contact: Contact | null | undefined, state: 
   const task = typeof taskId === 'string' && Object.hasOwn(state.tasks, taskId) ? state.tasks[taskId] : undefined;
   const ours = task !== undefined && task.role === 'proposer' && task.peer === contact?.peer;
   return meetingScope(contact, ours ? 'outbound' : 'inbound');
+}
+
+/**
+ * Did the peer start the negotiation this payload belongs to (a new proposal,
+ * or a task where we are the responder with this peer)? Only then may our
+ * human's auto-approve for the contact confirm its meeting (issue #44).
+ */
+export function peerStarted(state: NegotiationState, from: string, payload: unknown): boolean {
+  const p = payload as { message?: { taskId?: unknown }; update?: { taskId?: unknown } } | null;
+  const taskId = p?.message?.taskId ?? p?.update?.taskId;
+  if (typeof taskId !== 'string') return false;
+  if (!Object.hasOwn(state.tasks, taskId)) return true;
+  const t = state.tasks[taskId];
+  return t.role === 'responder' && t.peer === from;
+}
+
+/** The audit line for a meeting step auto-approve took for our human (no peer text: IDs, the slot's digest). */
+export function meetingAuditLine(now: Date, peer: string, taskId: string, kind: string, slot: Slot | undefined): AuditEntry {
+  return {
+    ts: now.toISOString(),
+    peer,
+    capability: MEETINGS_CAPABILITY,
+    task: taskId,
+    gate: 'meeting',
+    by: 'auto-approve',
+    meeting: kind === 'accepted' ? 'accept' : 'confirm',
+    digest: createHash('sha256').update(`rdv1/meeting-auto\0${JSON.stringify([taskId, peer, slot?.start ?? null, slot?.end ?? null])}`).digest('hex'),
+  };
 }
 
 function offsetFor(cal: JsonFileCalendar, tz: string | undefined, now: Date): number {
@@ -171,13 +199,16 @@ export function dinnerView(e: NegotiationEvent) {
     slot: e.slot,
     reason: e.reason,
     peer_text: e.peerText,
+    // Our human's auto-approve for the contact took this step for them (issue #44; audited).
+    ...(e.autoConfirmed ? { auto_approved: true } : {}),
   };
 }
 
 /** Text form. Peer-supplied fields (text parts, decline reasons) are marked untrusted and cleaned. */
 export function dinnerText(e: NegotiationEvent): string | undefined {
   if (e.kind === 'duplicate') return undefined; // relays replay on every restart
-  const lines = [`dinner ${safe(e.kind)} ${safe(e.taskId ?? '-')} with ${safe(e.peer)}${e.state ? `  state ${safe(e.state)}` : ''}${e.round ? `  round ${e.round}` : ''}`];
+  const auto = e.autoConfirmed ? '  (AUTO-APPROVED: you put this contact on auto-approve; audited)' : '';
+  const lines = [`dinner ${safe(e.kind)} ${safe(e.taskId ?? '-')} with ${safe(e.peer)}${e.state ? `  state ${safe(e.state)}` : ''}${e.round ? `  round ${e.round}` : ''}${auto}`];
   if (e.slots?.length) lines.push(`  slots: ${e.slots.map((s) => safe(describeSlot(s))).join('; ')}`);
   if (e.slot) lines.push(`  slot: ${safe(describeSlot(e.slot))}`);
   if (e.reason) lines.push(`  reason (untrusted if from peer): ${safe(JSON.stringify(e.reason))}`);

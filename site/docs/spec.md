@@ -885,9 +885,12 @@ MAY set `auto_approve: "all"` on that contact, optionally with an expiry
   that contact's grant already allows (`scope.invoke`), the start gate and
   the release gate pass without asking, for every approval class,
   `free-form` included; so does the release of results back to that
-  contact. A host MAY also let it cover the meeting confirm of a
-  negotiation that contact started (the reference does not). It widens
-  nothing else: the grant, `invoke`, per-capability limits, bounds (§7.4),
+  contact. It also covers the meeting confirm of a negotiation *that
+  contact started*, when its grant allows meetings: the owner's agent
+  accepts or confirms the time without asking (issue #44). A negotiation
+  the owner started still waits for the owner's confirm, and the contact's
+  meeting proposals stay under the same per-capability limits as its tasks
+  (§5.3). It widens nothing else: the grant, `invoke`, per-capability limits, bounds (§7.4),
   sizes, the untrusted-content rules (§5.6) and the file-fetch rules
   (§7.7) all still apply, and gross abuse still revokes (§5.3).
 - **What it never covers.** Creating a contact (approving a request or a
@@ -896,13 +899,21 @@ MAY set `auto_approve: "all"` on that contact, optionally with an expiry
   attaching the owner's files to a task *we* send; cancelling an agreed
   meeting; and setting, extending or changing auto-approve itself. Each of
   these still needs the human every time.
-- **Only the human sets it.** It is set in the owner's own terminal or
-  through a consent form the host shows the owner, never by a model, a
-  tool call, a confirm phrase relayed by a model, or a peer: it is local
-  state that never goes on the wire, so a peer cannot see, request or set
-  it. A host MUST NOT offer a model any tool that sets or extends it; a
-  tool MAY show it. Hosts list the setting command as human-only wherever
-  they list the contact grant command.
+- **Only the human sets it.** Turning it on (setting or extending it)
+  needs a secret only the owner holds (the reference: an owner
+  passphrase), given in the owner's own terminal or in a consent form the
+  host shows the owner, whose answer reaches only the host. Never a model,
+  a tool argument, a confirm phrase relayed by a model, or a peer: it is
+  local state that never goes on the wire, so a peer cannot see, request or
+  set it. A host MAY offer a model a tool that asks to turn it on, but only
+  through such a form: the form shows in full what is turned on (the
+  contact and its fingerprint, the capabilities, all or a list, and the
+  expiry), the approval is bound to exactly that, the secret never reaches
+  the model, a tool result or a log, and a form that is not answered,
+  cancelled or cannot be shown refuses, with no other fallback. Turning it
+  off needs no confirmation (it only narrows), and a host MAY let a model
+  do it. Hosts list the terminal command as human-only wherever they list
+  the contact grant command.
 - **Warning at set time.** Before it is set the owner is shown, in plain
   words: that the contact's agent can now make this agent act and answer
   without asking; which capabilities that covers today; that text and
@@ -919,8 +930,9 @@ MAY set `auto_approve: "all"` on that contact, optionally with an expiry
 - **Audit log.** Every action approved this way appends one line to an
   audit log the owner can read: time, contact, capability, `taskId`,
   which gate, the approval digest, and what left (hashes and sizes).
-  Setting, extending, expiring and turning off are logged too. Peer text
-  is not stored. The log is bounded.
+  Setting, extending, expiring and turning off are logged too, with where
+  the owner made the change (terminal or form). Peer text is not stored.
+  The log is bounded.
 
 **Risk.** Auto-approve-all trusts the contact's *agent*, not only its
 human. Anything that can write into that agent's messages (its own model
@@ -944,9 +956,14 @@ secret key and bound to the contact's grant ID, `since` and a digest of its
 inbound scope; it is checked under the home lock at each gate. The audit log
 is `audit.jsonl` (`rdv audit [--contact] [--since]`, 1000 lines kept);
 `rdv contact list`, `rdv_status` and `rdv_task` show who is on auto-approve
-and until when, and `rdv_inbox` shows tasks it started and when it ends. The
-reference MCP server has no tool that sets it, and the plugin's consent
-guard refuses the command and the file to the model.
+and until when, and `rdv_inbox` shows tasks it started, dinner steps it took
+and when it ends. The reference MCP server's `rdv_auto_approve` turns it off
+with no gate and on only through an elicitation form that shows the same
+warning and takes the owner passphrase, checked like the terminal's
+(lockout included); with no form, a cancelled one or one left unanswered, it
+refuses and points to the terminal, and it issues no confirm phrase for it.
+The plugin's consent guard still refuses the terminal command and the files
+to the model.
 
 ### 5.6 Peer text is untrusted data
 

@@ -3,7 +3,8 @@
 // files that belong to the human. Consent (granting a contact, confirming a
 // probe answer or a meeting, canceling an agreed one, starting a peer's task
 // or releasing a result to it, auto-grant/auto-confirm listeners, the direct-transfer setting), naming a contact (`rdv contact label`: a label decides who
-// "tell John" reaches), putting a contact on auto-approve (`rdv contact auto-approve`, SPEC §5.5.1), the commands
+// "tell John" reaches), putting a contact on auto-approve (`rdv contact auto-approve`, SPEC §5.5.1; the model's
+// path is the rdv_auto_approve MCP tool, whose "on" takes the owner passphrase in a form, issue #44), the commands
 // that show confirm phrases (`rdv contact pending`, `rdv dinner list`, `rdv task list`, `rdv relays list`), changing the
 // listening relays (`rdv relays add/remove`), re-keying (`rdv init --force`),
 // the owner passphrase that turns auto-approve on (`rdv owner-secret`, issue #47),
@@ -65,7 +66,9 @@ const TASK_GATE =
 const TASK_REQUEST_FILES =
   'rdv task request with --file or --inline sends your user\'s files to another agent: it is for the human, in their own terminal, and even then the request waits until they release it. Ask with rdv_task "request" (no files), or ask your user to attach the files themselves.';
 const AUTO_APPROVE =
-  "rdv contact auto-approve is for the human, in their own terminal: it lets a contact's tasks run and their results leave without asking anyone. You may never set, extend or turn it on, and never suggest it to get past a gate; to have it turned off, ask your user (rdv_status shows it).";
+  "rdv contact auto-approve is for the human, in their own terminal: it lets a contact's tasks run, their results leave and the dinners it proposes be confirmed without asking anyone. " +
+  'Use the rdv_auto_approve MCP tool instead: "off" works whenever your user asks; "on" only when they ask for it themselves, and it asks them for their owner passphrase in an approval form only they see. ' +
+  'You can never turn it on by yourself: never suggest it to get past a gate, and never ask for the passphrase.';
 const DIRECT_TRANSFER =
   'rdv file direct-transfer is the human\'s setting, in their own terminal: turning it on shows their network address to contacts who ask for a direct transfer. Tell your user; rdv_file "decline-transfer" can only say no.';
 const RELAYS =

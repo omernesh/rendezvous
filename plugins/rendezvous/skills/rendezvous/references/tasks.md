@@ -82,34 +82,44 @@ steps above is up to you.
   can only be declined (`decline-transfer`). No direct-transfer protocol
   exists yet.
 
-## Auto-approve, and why you never touch it
+## Auto-approve, and why it stays your user's
 
 The owner can mark one trusted contact `auto_approve: all`. That contact's
 tasks then pass the start gate, and your agent's results go back, without
-asking, for every class including free-form. Every such pass is written to
-an audit log (`rdv audit`: IDs, digests and hashes, no peer text).
+asking, for every class including free-form; a dinner that contact proposes
+is accepted and confirmed without asking too (one your user proposes still
+asks them). Every such pass is written to an audit log (`rdv audit`: IDs,
+digests and hashes, no peer text).
 
-- It is set only by the human, in their own terminal, with a passphrase they
-  chose (`rdv owner-secret set`). There is no tool, argument or phrase for it,
-  and you never run, suggest, extend or turn it on, never ask for the
-  passphrase, and never offer it as a way past a gate or to save the user a
-  step. Turning it off is the user's too; if they ask you to, tell them the
-  command to run in their own terminal.
-- It never covers new contacts, grants, confirming a meeting, or itself. It ends
-  on expiry, when turned off, or when the contact is revoked, blocked,
-  re-granted, widened or its channel forks.
+- It is turned on only with the owner passphrase the human chose
+  (`rdv owner-secret set`): in their own terminal, or typed by them into the
+  approval form that `rdv_auto_approve` "on" opens. Only the server sees what
+  they type there; it never reaches you. Call "on" only when your user asks
+  for it themselves. Beyond that, you never run, suggest, extend or turn it
+  on, never ask for the passphrase (and never take it in chat), and never
+  offer it as a way past a gate or to save the user a step. There is no
+  argument or confirm phrase for it: with no form, "on" is refused and your
+  user can do it in their own terminal.
+- `rdv_auto_approve` "off" (one contact, or `all_contacts`) needs no
+  approval; use it whenever your user asks.
+- It never covers new contacts, grants, a dinner your user proposed,
+  cancelling an agreed dinner, or itself. It ends on expiry, when turned off,
+  or when the contact is revoked, blocked, re-granted, widened or its channel
+  forks.
 - The risk is real: it trusts the contact's agent, not only its human. A
   tricked or compromised agent on their side, or an injection in what it
   sends, acts with your user's agent's tools and authority with no one
   looking. The grant's capabilities and limits are the only boundary.
 - `rdv_status` and `rdv_task` show who is on it and until when. When a task
-  from such a contact started or a result left, tell the user plainly.
+  from such a contact started, a result left, or a dinner was agreed
+  (`auto_approved` in the event), tell the user plainly.
 
 ## Human-only commands
 
 These belong to the human, in their own terminal; you never run them and the
 consent guard blocks them: `rdv task approve`, `rdv task release`,
-`rdv task list` (prints phrases), `rdv contact auto-approve` (on or off),
+`rdv task list` (prints phrases), `rdv contact auto-approve` (on or off; you
+have `rdv_auto_approve`),
 `rdv owner-secret set`, `rdv owner-secret reset`, `rdv file direct-transfer`,
 `rdv contact grant`, `rdv contact confirm`, `rdv contact label`,
 `rdv contact pending`, `rdv dinner confirm`, `rdv dinner cancel`,

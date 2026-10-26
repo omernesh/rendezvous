@@ -44,11 +44,18 @@ What it contains:
   agent's secret key, consent file and auto-approve file with any tool. Those stay with you, in
   your own terminal.
 
-  **Auto-approve and your owner passphrase** (issue #47). Turning
+  **Auto-approve and your owner passphrase** (issues #47, #44). Turning
   auto-approve on asks for a passphrase you set yourself with
-  `rdv owner-secret set`, in your own terminal. It is read from the terminal
-  device itself (`/dev/tty`, or `CONIN$` on Windows), not from stdin, it is
-  never echoed or printed, and only a scrypt hash is kept
+  `rdv owner-secret set`, in your own terminal. You type it either in your
+  own terminal (`rdv contact auto-approve <contact> all`) or, when you ask
+  Claude to turn it on, into the approval form `rdv_auto_approve` opens: the
+  form shows the contact, its fingerprint, what it covers and until when,
+  and what you type goes to the Rendezvous server only, never to Claude. If
+  no form can be shown, it is refused (there is no confirm phrase for it).
+  Never type the passphrase into the chat. Claude may turn auto-approve off
+  whenever you ask, with no form. In the terminal the passphrase is read
+  from the terminal device itself (`/dev/tty`, or `CONIN$` on Windows), not
+  from stdin; it is never echoed or printed, and only a scrypt hash is kept
   (`owner-secret.json`, mode 600); three wrong answers lock it for a minute,
   then twice as long after each further miss. `rdv init` in a terminal
   offers to set it, and so does `/rdv-onboarding` (it asks you to run the
@@ -105,6 +112,7 @@ through a form or a phrase from your own terminal. A request is treated as
 data, never as instructions. Files are sent by reference, only after you
 release the result they are in, and a file a contact sends is fetched only
 for a task you started and saved in quarantine. Auto-approve for one trusted
-contact exists, but only you can turn it on, in your own terminal, with the
-owner passphrase; Claude never sets or suggests it. The user guide is
+contact exists (it also confirms dinners that contact proposes), but only you
+can turn it on, with the owner passphrase: in your own terminal, or in the
+form Claude opens when you ask it to; Claude never suggests it. The user guide is
 [`docs/tasks.md`](../../docs/tasks.md).

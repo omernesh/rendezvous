@@ -629,6 +629,55 @@ describe('negotiation', () => {
       expect(() => confirmMeeting(john.state, p.taskId, ctxOf(john))).toThrow(/already completed/);
     });
 
+    it('autoConfirmPeerStarted skips our human only on a negotiation the peer started, and marks what it skipped (issue #44)', () => {
+      const ctxAuto = (s: Side) => ({ ...ctxOf(s), autoConfirmPeerStarted: true });
+      // Omer proposes; John's host has auto-approve for Omer: John accepts at once, the event says so.
+      const omer = side(OMER, 1, { autoConfirm: false });
+      const john = side(JOHN, 2, { autoConfirm: false, busy: [evening(0)] });
+      const p = propose(omer.state, JOHN, ctxAuto(omer));
+      apply(omer, p);
+      const j = receive(john.state, OMER, p.outgoing[0].payload, ctxAuto(john));
+      apply(john, j);
+      expect(verbs(j.outgoing)).toEqual(['meeting/accept']);
+      expect(j.events.map((e) => [e.kind, e.autoConfirmed])).toEqual([
+        ['offer-received', undefined],
+        ['accepted', true],
+      ]);
+      // Omer started it: even with the same flag, Omer's own human confirms.
+      const o = receive(omer.state, JOHN, j.outgoing[0].payload, ctxAuto(omer));
+      apply(omer, o);
+      expect(o.outgoing).toEqual([]);
+      expect(o.events.map((e) => [e.kind, e.autoConfirmed])).toEqual([['confirm-needed', undefined]]);
+      expect(awaitingHuman(task(omer, p.taskId))).toBe(true);
+      const oc = confirmMeeting(omer.state, p.taskId, ctxOf(omer));
+      apply(omer, oc);
+      expect(oc.events.every((e) => e.autoConfirmed === undefined)).toBe(true);
+      apply(john, receive(john.state, OMER, oc.outgoing[0].payload, ctxAuto(john)));
+      expect(task(john, p.taskId).state).toBe('completed');
+
+      // John counters (none of Omer's times work); Omer's human accepts John's time; John, the offerer now, confirms at once.
+      const omer2 = side(OMER, 3, { autoConfirm: false });
+      const john2 = side(JOHN, 4, { autoConfirm: false, busy: [evening(0), evening(1), evening(2)] });
+      const p2 = propose(omer2.state, JOHN, ctxAuto(omer2));
+      apply(omer2, p2);
+      const c = receive(john2.state, OMER, p2.outgoing[0].payload, ctxAuto(john2));
+      apply(john2, c);
+      expect(verbs(c.outgoing)).toEqual(['meeting/counter']);
+      const held = receive(omer2.state, JOHN, c.outgoing[0].payload, ctxAuto(omer2));
+      apply(omer2, held);
+      expect(held.events.map((e) => e.kind)).toContain('confirm-needed');
+      const acc = confirmMeeting(omer2.state, p2.taskId, ctxOf(omer2));
+      apply(omer2, acc);
+      const done = receive(john2.state, OMER, acc.outgoing[0].payload, ctxAuto(john2));
+      apply(john2, done);
+      expect(verbs(done.outgoing)).toEqual(['meeting/confirm']);
+      expect(done.events).toEqual([expect.objectContaining({ kind: 'completed', autoConfirmed: true })]);
+      // Without the flag, the same step waits for John's human.
+      const john3 = side(JOHN, 5, { autoConfirm: false, busy: [evening(0)] });
+      const j3 = receive(john3.state, OMER, p.outgoing[0].payload, ctxOf(john3));
+      expect(j3.events.map((e) => e.kind)).toEqual(['offer-received', 'confirm-needed']);
+    });
+
     it('consent is bound to the reviewed meeting: a peer re-proposing under the same task ID gets a refusal', () => {
       const omer = side(OMER, 1, { autoConfirm: false });
       const john = side(JOHN, 2, { autoConfirm: false, busy: [evening(0)] });

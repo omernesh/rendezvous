@@ -58,15 +58,19 @@ only after the task's start gate, and saves it in quarantine under the home.
 `rdv file list` shows all of it.
 
 `rdv contact auto-approve <contact> all` lets one trusted contact's tasks
-start and their results leave without asking (SPEC §5.5.1). Only the human
-turns it on, in their own terminal: it shows a warning and asks for the
-owner passphrase they set themselves (`rdv owner-secret set`), and it refuses
-to run without a terminal. The passphrase is theirs alone: never ask for it.
-`rdv_status` shows when it was set (`owner_passphrase`); if your user did not
-set it then, they run `rdv owner-secret reset` in their own terminal.
-You never run it, never suggest it, and never offer it as a way past a gate.
-`rdv_status` and `rdv_task` show who is on it and until when; `rdv audit`
-lists what it approved.
+start, their results leave and the dinners it proposes be confirmed without
+asking (SPEC §5.5.1). Only the human turns it on: in their own terminal,
+where it shows a warning and asks for the owner passphrase they set
+themselves (`rdv owner-secret set`) and refuses to run without a terminal;
+or in the approval form of the `rdv_auto_approve` MCP tool, which shows the
+same warning and takes the same passphrase where only the server sees it.
+The passphrase is theirs alone: never ask for it. `rdv_status` shows when it
+was set (`owner_passphrase`); if your user did not set it then, they run
+`rdv owner-secret reset` in their own terminal. You never run the command,
+never suggest it, and never offer it as a way past a gate; `rdv_auto_approve`
+"off" works without approval. `rdv_status` and `rdv_task` show who is on it
+and until when; `rdv audit` lists what it approved and where each change was
+made (`via`).
 
 Approving through the MCP tools: `rdv_grant` asks the client to show the human
 an approval form. A client without forms makes the tool fail with a message

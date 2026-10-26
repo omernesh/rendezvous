@@ -174,6 +174,14 @@ export interface Ctx {
    * until `confirmMeeting` (issue #8).
    */
   autoConfirm?: boolean;
+  /**
+   * Skip our human only for a negotiation the PEER started (role responder):
+   * the host's standing approval for that contact (SPEC §5.5.1, issue #44).
+   * One we started still waits for our human. Each accept or confirm it
+   * skips our human on carries `autoConfirmed: true`, for the host to audit
+   * and show.
+   */
+  autoConfirmPeerStarted?: boolean;
   /** The extensions we support (default SUPPORTED_EXTENSIONS); a verb of any other is answered as unsupported. */
   extensions?: readonly string[];
   /**
@@ -223,6 +231,8 @@ export interface NegotiationEvent {
   reason?: string;
   /** Text parts from the peer: untrusted, display only, never drives anything. */
   peerText?: string[];
+  /** This accept or confirm skipped our human on the host's standing approval for the contact (`autoConfirmPeerStarted`). */
+  autoConfirmed?: boolean;
 }
 
 /** Block `slot` in the calendar: tentatively (pending) or for good (completed). */
@@ -469,7 +479,8 @@ class Run {
     const offer = task.peerOffer ?? [];
     const pick = offer.find((s) => this.isFree(s, task.id) && this.inWindow(s));
     if (pick) {
-      if (this.ctx.autoConfirm) return this.sendAccept(task, pick);
+      const skip = this.skipsHuman(task);
+      if (skip) return this.sendAccept(task, pick, skip === 'contact');
       this.placeHold(task, pick, 'human-accept');
       this.event({ kind: 'confirm-needed', taskId: task.id, peer: task.peer, state: task.state, slot: pick, round: task.round });
       return;
@@ -521,17 +532,28 @@ class Run {
   }
 
   /** Accepter: send meeting/accept and wait for the offerer's confirm. */
-  sendAccept(task: NegotiationTask, slot: Slot): void {
+  sendAccept(task: NegotiationTask, slot: Slot, auto = false): void {
     this.placeHold(task, slot, 'peer-confirm');
     this.message(task, { rdv: 'meeting/accept', slot, ...(task.place ? { place: task.place } : {}) }, `${describeSlot(slot)} works for me. Please confirm.`);
-    this.event({ kind: 'accepted', taskId: task.id, peer: task.peer, state: task.state, slot, round: task.round });
+    this.event({ kind: 'accepted', taskId: task.id, peer: task.peer, state: task.state, slot, round: task.round, ...(auto ? { autoConfirmed: true } : {}) });
   }
 
   /** Offerer: the peer accepted `slot`; make it final and tell them. */
-  sendConfirm(task: NegotiationTask, slot: Slot, peerText?: string[]): void {
+  sendConfirm(task: NegotiationTask, slot: Slot, peerText?: string[], auto = false): void {
     this.complete(task, slot);
     this.message(task, { rdv: 'meeting/confirm', slot }, `Confirmed: ${describeSlot(slot)}. See you then.`);
-    this.event({ kind: 'completed', taskId: task.id, peer: task.peer, state: task.state, slot, round: task.round, peerText });
+    this.event({ kind: 'completed', taskId: task.id, peer: task.peer, state: task.state, slot, round: task.round, peerText, ...(auto ? { autoConfirmed: true } : {}) });
+  }
+
+  /**
+   * Does this step skip our human? `all`: ctx.autoConfirm (bots, demos);
+   * `contact`: the peer started this negotiation and the host's standing
+   * approval for that contact covers its confirm (ctx.autoConfirmPeerStarted).
+   */
+  skipsHuman(task: NegotiationTask): false | 'all' | 'contact' {
+    if (this.ctx.autoConfirm) return 'all';
+    if (this.ctx.autoConfirmPeerStarted && task.role === 'responder') return 'contact';
+    return false;
   }
 
   decline(task: NegotiationTask, reason: string): void {
@@ -887,7 +909,8 @@ function handle(run: Run, from: string, payload: unknown, ctx: Ctx): void {
   if (run.expireIfDue(existing)) return;
   // Offers are not held: another task may have taken the slot since (holds are exclusive).
   if (!run.isFree(ours, existing.id)) return run.decline(existing, 'that time is no longer free');
-  if (ctx.autoConfirm) return run.sendConfirm(existing, ours, text);
+  const skip = run.skipsHuman(existing);
+  if (skip) return run.sendConfirm(existing, ours, text, skip === 'contact');
   run.placeHold(existing, ours, 'human-confirm');
   run.event({ kind: 'confirm-needed', taskId: existing.id, peer: from, state: existing.state, slot: ours, round: existing.round, peerText: text });
 }

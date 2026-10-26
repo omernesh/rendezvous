@@ -1541,8 +1541,8 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       once through the same path as a human release (`releaseHeld`), and
       the audit line carries the SHA-256 and size of each payload that
       left. Nothing else consults it: contacts, probe answers, grants,
-      `invoke`, limits, meetings (their confirm stays the human's; the
-      design's MAY for a negotiation the contact started is not taken),
+      `invoke`, limits, meetings (their confirm stayed the human's; since
+      item 85 the confirm of a negotiation the contact started is covered),
       and there are no groups yet. A task that waited at the gate before it
       was set is not approved after the fact; a draft submitted after it
       ends is held.
@@ -1655,9 +1655,10 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       every MCP way to set auto-approve (no tool, argument or phrase).
       Reading the controlling terminal alone (without the passphrase) stops
       stdin piping but not a pty, which becomes the controlling terminal.
-    - **Human-only, everywhere.** The MCP server has no tool or argument
-      that sets it (a test lists every tool's schema and throws extra
-      arguments at them), and no confirm phrase is issued for it. The
+    - **Human-only, everywhere.** The MCP server had no tool or argument
+      that sets it (superseded by item 85: `rdv_auto_approve` turns it on
+      only through the passphrase form), and no confirm phrase is issued
+      for it. The
       plugin's consent guard refuses `rdv contact auto-approve` (on and
       off alike, so no spelling of `all` slips through) and names
       `autoapprove.json` with the secret files. Since issue #47 it also
@@ -2423,6 +2424,97 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       theirs; `request_id` by phrase; and through the real host, a second
       proposal on `1/day` is `refused` on Omer's side and `rejected` with a
       quarantined `rate` reason on John's).
+
+## Auto-approve: meeting confirms, and on/off from MCP (v0.3)
+
+85. **Auto-approve covers the confirm of a dinner the contact started;
+    `rdv_auto_approve` turns it on and off from MCP** (**spec change**,
+    §5.5.1; issue #44, the owner's decision of 2026-10-26, superseding
+    "no MCP path ever sets auto-approve" in item 77). No wire change; the
+    test vectors are unchanged.
+    - **Meetings.** The engine's `Ctx` gains `autoConfirmPeerStarted`: the
+      human is skipped (accept at once, or confirm at once after the peer
+      accepted our counter) only on a task whose role is `responder`, and
+      each step it skips carries `autoConfirmed: true` on its event.
+      `autoConfirm` (bots, `listen --auto-confirm`) is unchanged. The
+      listener's `negotiateInbound` (so `rdv listen --negotiate` and
+      `rdv-mcp` alike) sets it per inbound payload when the payload's task
+      is new or ours as responder with that peer (`peerStarted`) and
+      `meetingAutoApproved` holds under the home lock: the same check as a
+      task gate (MAC, expiry, grant binding, passphrase binding, fork; an
+      entry that fails is removed and audited) plus the grant still
+      allowing meetings. A negotiation we started never qualifies, even
+      with the peer on auto-approve. Each skipped step appends an audit
+      line (`gate: "meeting"`, `by: "auto-approve"`, the meetings URI, the
+      task, `meeting: "accept" | "confirm"`, a digest over task, peer and
+      slot), the `dinner` event carries `auto_approved: true` (CLI text
+      "AUTO-APPROVED"), and `rdv_inbox` adds a summary and a next step
+      telling the model to tell its user. Limits: the per-capability
+      limiter (item 84) runs on every new proposal first, so a proposal
+      over the grant's meeting limits is declined before auto-approve is
+      reached, and gross abuse revokes the contact, which ends the entry.
+      `covered()` now lists the meetings URI when the grant allows meetings
+      (never meeting-cancel): the warning says so, `rdv_status` shows it
+      in `covers`, and a grant with only meetings can be put on
+      auto-approve. Cancelling an agreed dinner stays the human's.
+    - **`rdv_auto_approve` "off"** (one contact by agent ID or label, or
+      `all_contacts`) needs nothing: reduce-only, audited `via: "mcp"`,
+      and an `auto_approve_off` event (reason `owner`).
+      `turnOffAllAutoApprove` is new.
+    - **`rdv_auto_approve` "on"** (one contact, optional `until` parsed by
+      the CLI's `parseUntil`: the same forms and the one-year maximum,
+      default until turned off). Refused before any form when no owner
+      passphrase is set (pointing to `rdv owner-secret set` in the owner's
+      terminal) or while it is locked. Otherwise an elicitation form shows
+      `autoApproveWarning` (contact, fingerprint, `Mode: all`, the
+      capabilities it covers today, the expiry, the injection risk, how to
+      turn it off) with an `approve` box and a required `passphrase` field.
+      The answer is checked with `checkOwnerSecret`, exactly as the
+      terminal does (scrypt, `timingSafeEqual`, a miss counts toward the
+      lockout of three, the lock refuses even the right answer, a right
+      one resets the count). It is held only in that call's memory: never
+      in a tool result, an event, the human log, the audit log or an
+      error (tests assert on every tool result, `events.jsonl`,
+      `audit.jsonl` and the human log). Consent is bound to the object
+      shown: `autoApproveDigest` over contact, label, grant ID, `since`,
+      scope digest, mode, capabilities, expiry and the passphrase record's
+      binding is taken before the form and recomputed under the lock
+      before `setAutoApprove`; any change refuses. Unanswered (the
+      elicitation timeout), cancelled, or no form possible (a client
+      without elicitation, `RDV_ELICIT=off`, an earlier form that went
+      unanswered): refused, with the terminal command for the owner, and
+      no confirm phrase, ever; no tool argument takes a passphrase or a
+      phrase (extra arguments are dropped by the schema). Audited
+      `via: "mcp"`; the CLI's set and off lines now carry `via: "cli"`.
+    - **No password field.** MCP's elicitation schema (SDK 1.32: string
+      `format` is only `email`, `uri`, `date`, `date-time`; no `writeOnly`)
+      has no password type, so the passphrase field is plain text and the
+      client may echo it on screen. The form says only the server sees it.
+      Honestly, too: the MCP spec says servers MUST NOT ask for sensitive
+      data through form elicitation and points to URL mode; this follows
+      the owner's decision instead. The answer travels client → server
+      only, never into the model's context, but a client could log or
+      render it; URL-mode elicitation (a local page the server serves) is
+      the clean follow-up.
+    - **Consent guard.** Unchanged in what it refuses (the shell command in
+      every form, the files, any pty); its message now points to
+      `rdv_auto_approve`. The skill, the plugin README, the MCP README,
+      `docs/tasks.md`, the server instructions and `rdv_status`'s
+      `auto_approve.note` describe the new rule: off whenever the user
+      asks; on only when the user asks, with the passphrase typed into the
+      form by them; never suggested, never asked for.
+    - **Tests.** a2a `engine.test.ts` (peer-started only, both the accept
+      and the confirm path, events marked, none without the flag); cli
+      `autoapprove.test.ts` (meetings covered only with meetings in the
+      grant, never meeting-cancel, expiry ends it, off for all, `via`);
+      MCP `autoapprove.test.ts` (no passphrase, wrong, unticked, right,
+      the lockout, off with no form, the form's content and schema, cancel,
+      a passphrase change while the form is open, a timeout, a client
+      without forms with the passphrase passed as an argument; the
+      passphrase in no result, event or log; and two hosts: John auto-
+      accepts Omer's dinner, audited, while Omer, who started it, is still
+      asked; off brings John's confirm back); `plugin.test.ts` (the guard
+      still refuses the shell command and names the tool).
 
 ## Not implemented yet
 
