@@ -1,4 +1,4 @@
-// Rendezvous site: copy buttons, install tabs, card flip, theme toggle. No dependencies.
+// Rendezvous site: copy buttons, install tabs, card flip, theme toggle, demo clips. No dependencies.
 (function () {
   'use strict';
   var live = document.getElementById('live');
@@ -157,6 +157,55 @@
       var next = order[(order.indexOf(current()) + 1) % order.length];
       apply(next);
       announce('Color theme: ' + next);
+    });
+  }
+  // ---- demo clips: play while on screen, never under reduced motion ---------
+  var videos = Array.prototype.slice.call(document.querySelectorAll('.demo-video'));
+  var reduce = window.matchMedia ? window.matchMedia('(prefers-reduced-motion: reduce)') : null;
+  function pauseIcon() { return icon('i-pause', [['rect', { x: '6', y: '5', width: '4', height: '14', rx: '1' }], ['rect', { x: '14', y: '5', width: '4', height: '14', rx: '1' }]]); }
+  function playIcon() { return icon('i-play', [['path', { d: 'M7 4.5v15l13-7.5z' }]]); }
+  function setToggle(btn, playing) {
+    btn.textContent = '';
+    btn.appendChild(playing ? pauseIcon() : playIcon());
+    var label = document.createElement('span');
+    label.className = 'demo-toggle-label';
+    label.textContent = playing ? 'Pause' : 'Play';
+    btn.appendChild(label);
+    btn.setAttribute('aria-label', (playing ? 'Pause' : 'Play') + ' this demo');
+  }
+  function tryPlay(v) {
+    var p = v.play();
+    if (p && p.catch) p.catch(function () { v.controls = true; if (v._toggle) v._toggle.hidden = true; });
+  }
+  if (videos.length && !(reduce && reduce.matches)) {
+    var seen = 'IntersectionObserver' in window ? new IntersectionObserver(function (entries) {
+      entries.forEach(function (en) {
+        var v = en.target;
+        v._visible = en.isIntersecting;
+        if (en.isIntersecting && !v._userPaused) { v.preload = 'auto'; tryPlay(v); }
+        else if (!en.isIntersecting && !v.paused) v.pause();
+      });
+    }, { threshold: 0.35 }) : null;
+    videos.forEach(function (v) {
+      v.controls = false;
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'demo-toggle';
+      setToggle(btn, true);
+      btn.addEventListener('click', function () {
+        if (v.paused) { v._userPaused = false; tryPlay(v); } else { v._userPaused = true; v.pause(); }
+      });
+      v.addEventListener('play', function () { setToggle(btn, true); });
+      v.addEventListener('pause', function () { setToggle(btn, false); });
+      v._toggle = btn;
+      v.parentNode.appendChild(btn);
+      if (seen) seen.observe(v); else tryPlay(v);
+    });
+  }
+  if (reduce && reduce.addEventListener) {
+    reduce.addEventListener('change', function () {
+      if (!reduce.matches) return;
+      videos.forEach(function (v) { v._userPaused = true; v.pause(); v.controls = true; if (v._toggle) v._toggle.hidden = true; });
     });
   }
 })();

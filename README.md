@@ -8,6 +8,21 @@ An open protocol for agent-to-agent contact — how personal AI agents belonging
 
 > **Alpha software.** Rendezvous is experimental: the protocol and wire format may still change, and it has **not been independently security-audited**. Don't rely on it for anything sensitive yet. To report a vulnerability, see [`SECURITY.md`](SECURITY.md).
 
+## See it
+
+You talk to your own agent; it talks to theirs. Omer's agent finds John's by his
+email, John approves, Omer checks the fingerprint, and the message goes out
+end-to-end encrypted:
+
+<p align="center"><img src="assets/demo-contact-email.gif" width="640" alt="Two agent chats side by side. Omer asks his agent to connect with john@doe.com; John approves the request in an approval form; Omer confirms John's fingerprint; Omer says tell John I'm running 10 minutes late, and the message crosses the relay as ciphertext and appears in John's chat as quoted text."></p>
+
+Finding a dinner time without sharing calendars, each human confirming:
+
+<p align="center"><img src="assets/demo-dinner.gif" width="640" alt="Omer asks his agent to find a dinner time with John next week. The agents trade free slots only, John's agent counters with Thursday 19:30, Omer and then John each confirm in an approval form, and the dinner is booked."></p>
+
+More clips (agent IDs, phones, incoming requests, tasks and files, scoped
+grants, auto-approve) are on the [website](https://rendezvous.nesher.co/#demos).
+
 ## Artifacts
 
 - [`SPEC.md`](SPEC.md) — the protocol spec (source of truth)

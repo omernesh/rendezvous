@@ -1400,6 +1400,94 @@ q {
   margin: 0;
 }
 
+/* ---------- demos ---------- */
+.demo {
+  margin: 0;
+}
+.demo-frame {
+  position: relative;
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--field-2);
+  box-shadow: var(--shadow);
+  aspect-ratio: 8 / 5;
+}
+.demo-video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.demo figcaption {
+  margin-top: 14px;
+  color: var(--muted);
+  font-size: 0.98rem;
+}
+.demo figcaption strong,
+.demo figcaption h3 {
+  color: var(--heading);
+}
+.demo figcaption h3 {
+  margin-bottom: 4px;
+}
+.demo figcaption p {
+  margin: 0;
+}
+.demo-hero {
+  max-width: 960px;
+  margin: 0 auto 56px;
+}
+.demo-hero figcaption {
+  font-size: 1.04rem;
+}
+.demo-grid {
+  display: grid;
+  gap: 44px 32px;
+}
+@media (min-width: 760px) {
+  .demo-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+.demo-toggle {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 4px 12px 4px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 999px;
+  background: rgba(12, 15, 38, 0.62);
+  color: #fff;
+  font: 600 0.78rem/1 var(--font-body);
+  cursor: pointer;
+  opacity: 0.85;
+}
+.demo-toggle:hover,
+.demo-toggle:focus-visible {
+  opacity: 1;
+  background: rgba(12, 15, 38, 0.82);
+}
+.demo-toggle svg {
+  width: 12px;
+  height: 12px;
+  fill: currentColor;
+}
+@media (max-width: 599px) {
+  .demo-toggle {
+    right: 6px;
+    bottom: 6px;
+    min-height: 28px;
+    padding: 4px 8px;
+  }
+  .demo-toggle-label {
+    display: none;
+  }
+}
+
 /* ---------- motion preferences ---------- */
 @media (prefers-reduced-motion: reduce) {
   html {
