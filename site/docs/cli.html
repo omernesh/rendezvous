@@ -92,7 +92,7 @@ protocol, built toward the two-agent dinner demo in <a href="https://github.com/
 <tr>
 <td><code>@rendezvous/gateway</code></td>
 <td><code>packages/gateway</code></td>
-<td><code>rdv-gateway</code>, the same agent over MCP (Streamable HTTP) and REST + OpenAPI for cloud assistants, with approvals on the owner's own PIN-locked page (issue #12, slice 1)</td>
+<td><code>rdv-gateway</code>, the same agent over MCP (Streamable HTTP) and REST + OpenAPI for cloud assistants, with approvals on the owner's own PIN-locked page and a built-in OAuth 2.1 server for ChatGPT and claude.ai connectors (issue #12)</td>
 </tr>
 </tbody>
 </table></div>
@@ -775,9 +775,32 @@ gateway's PIN-locked page. Threat model:
 <a href="https://github.com/omernesh/rendezvous/blob/main/impl/packages/gateway/THREAT-MODEL.md">packages/gateway/THREAT-MODEL.md</a>; design
 choices: NOTES 89.</p>
 <div class="codeblock"><pre tabindex="0"><code class="language-bash">node packages/gateway/dist/src/bin.js pin set --home ~/.rendezvous/omer
-node packages/gateway/dist/src/bin.js token create --name chatgpt --scope read,send,contact:request --home ~/.rendezvous/omer
 node packages/gateway/dist/src/bin.js serve --home ~/.rendezvous/omer --public-url https://rdv.example.com --client-ip-header cf-connecting-ip
-# MCP: https://rdv.example.com/mcp   REST: /api/v1/tools/&lt;tool&gt;   OpenAPI: /openapi.json   approvals: /approve
+# MCP: https://rdv.example.com/mcp (legacy SSE: /sse)   REST: /api/v1/tools/&lt;tool&gt;   OpenAPI: /openapi.json   approvals: /approve
+</code></pre></div>
+<p><strong>Connecting ChatGPT or claude.ai (OAuth 2.1).</strong> The gateway is its own
+authorization server, so these connect with no token to copy. The MCP URL is
+<code>https://&lt;your host&gt;/mcp</code>.</p>
+<ul>
+<li><strong>claude.ai:</strong> Settings → Connectors → Add custom connector, and paste the
+    MCP URL.</li>
+<li><strong>ChatGPT:</strong> turn on developer mode (in Settings, under the connectors'
+    advanced settings), then create a connector with the MCP URL and choose
+    OAuth as its authentication.</li>
+</ul>
+<p>The assistant registers itself (dynamic client registration) and sends your
+browser to the gateway. You unlock the page with your PIN and see the name the
+app registered (anyone can register any name, so check the return address it
+shows, e.g. <code>claude.ai</code> or <code>chatgpt.com</code>), plus the scopes it asks for. You can
+untick scopes, then approve. Nothing is ever approved automatically, even for an
+app you connected before. No scope can approve anything: approvals still happen
+only on the page. Access tokens last an hour and refresh tokens rotate, so a
+refresh token that is reused ends that connection. To see or end connections:</p>
+<div class="codeblock"><pre tabindex="0"><code class="language-bash">node packages/gateway/dist/src/bin.js oauth list --home ~/.rendezvous/omer
+node packages/gateway/dist/src/bin.js oauth revoke &lt;cli_…|grt_…&gt; --home ~/.rendezvous/omer   # a whole app, or one grant
+</code></pre></div>
+<p><strong>Static tokens</strong>, for assistants without OAuth (Muse, scripts):</p>
+<div class="codeblock"><pre tabindex="0"><code class="language-bash">node packages/gateway/dist/src/bin.js token create --name muse --scope read,send,contact:request --home ~/.rendezvous/omer
 </code></pre></div>
 <h2 id="develop">Develop<a class="anchor" href="#develop" title="Link to this section" aria-label="Link to this section">#</a></h2>
 <p>Run from <code>impl/</code> (works the same in PowerShell and bash):</p>

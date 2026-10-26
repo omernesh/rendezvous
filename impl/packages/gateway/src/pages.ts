@@ -4,6 +4,8 @@
 // is only ever shown inside the escaped form message, labeled untrusted.
 import { TIERS } from '@rendezvous/cli/lib';
 import type { PendingApproval } from './approvals.js';
+import type { PendingConsent } from './oauth.js';
+import { SCOPE_TEXT } from './scopes.js';
 import { escapeHtml as e } from './http.js';
 
 /** The page CSP: nothing but our stylesheet and same-origin forms, and never framed. */
@@ -128,4 +130,41 @@ export function donePage(opts: { title: string; text: string; csrf: string; bad?
 
 export function errorPage(title: string, text: string): string {
   return layout(title, `<h1>${e(title)}</h1><p>${e(text)}</p><p><a href="/approve">Approvals</a></p>`);
+}
+
+/**
+ * The consent page's CSP: the page's own, plus the client's return origin as a
+ * form target, since the decision answers with a redirect there (browsers
+ * apply form-action to a form's redirects). The origin is from a validated
+ * https URL.
+ */
+export function consentCsp(redirectUri: string): string {
+  const origin = new URL(redirectUri).origin;
+  if (!/^https:\/\/[A-Za-z0-9.-]+(:\d{1,5})?$/.test(origin)) return PAGE_CSP;
+  return PAGE_CSP.replace("form-action 'self'", `form-action 'self' ${origin}`);
+}
+
+/** Connect an OAuth client: what it called itself (untrusted), where it returns, and the scopes the owner may narrow. */
+export function consentPage(opts: { item: PendingConsent; csrf: string; registered?: string; message?: Flash }): string {
+  const p = opts.item;
+  const host = new URL(p.redirectUri).host;
+  const scopes = p.scopes
+    .map(
+      (s) =>
+        `<label class="check"><input type="checkbox" name="s_${e(s)}" value="1" checked> <span><b>${e(s)}</b>: ${e(SCOPE_TEXT[s])}</span></label>`,
+    )
+    .join('');
+  return layout(
+    'Connect a client?',
+    `<h1>Connect a client to your agent?</h1><p class="muted">An app asks to use your Rendezvous agent through this gateway. Nothing is connected until you decide here.</p>
+${flash(opts.message)}
+<section class="card"><div class="qlabel">The name is what the app called itself when it registered: anyone can register any name. Check where it returns.</div>
+<pre class="msg">${e(p.clientName)}</pre>
+<p>Returns to <b>${e(host)}</b><br><span class="muted">${e(p.redirectUri)}</span></p>
+<p class="muted">Client ${e(p.clientId)}${opts.registered ? `, registered ${e(opts.registered)}` : ''}. Only connect it if you just started connecting ${e(host)} yourself.</p>
+<form method="post" action="/approve/oauth/${e(p.id)}"><input type="hidden" name="csrf" value="${e(opts.csrf)}"><input type="hidden" name="digest" value="${e(p.digest)}">
+<h2>What it may do</h2><p class="muted">Untick what it should not have. None of these can approve anything: approvals stay on this page.</p>${scopes}
+<div class="row"><button class="primary" type="submit" name="decision" value="approve">Connect</button><button type="submit" name="decision" value="decline">No</button></div></form></section>`,
+    opts.csrf,
+  );
 }

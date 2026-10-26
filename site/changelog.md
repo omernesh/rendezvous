@@ -4,6 +4,15 @@ What changed in Rendezvous, newest first. Versions are those of the Claude Code 
 
 The format follows Keep a Changelog. One line per change a user can see; PR numbers link to GitHub.
 
+## 0.7.0 - 2026-10-26 {#v0-7-0}
+
+### Added
+- `rdv-gateway` connects to ChatGPT (developer mode connectors) and claude.ai custom connectors with OAuth: paste `https://<your host>/mcp` and approve the connection on your PIN-locked gateway page. You see the app's name, where it returns and what it asks for, and you can untick scopes. Nothing connects without you, and no connection can approve anything. `rdv-gateway oauth list` and `oauth revoke` show and end connections. ([#12](https://github.com/omernesh/rendezvous/issues/12))
+- The gateway also serves MCP over the legacy SSE transport at `/sse`. ([#12](https://github.com/omernesh/rendezvous/issues/12))
+
+### Security
+- **Security:** OAuth uses PKCE S256 only, exact https return addresses, single-use codes, short-lived access tokens, and rotating refresh tokens. Reusing a refresh token ends that connection. Tokens are bound to your gateway's address and stored only as hashes. The plugin's consent guard keeps your assistant from running `rdv-gateway oauth revoke`. ([#12](https://github.com/omernesh/rendezvous/issues/12))
+
 ## 0.6.1 - 2026-10-26 {#v0-6-1}
 
 ### Changed

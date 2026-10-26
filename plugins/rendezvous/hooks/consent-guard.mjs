@@ -32,8 +32,12 @@ import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 export const SECRET_FILES = ['agent.json', 'agent.json.bak', 'consent.json', 'autoapprove.json', 'owner.json', 'owner-secret.json', 'owner-secret.marker'];
-/** Files in a home that hold file keys and drafts (files.json, tasks.json): refused by path when they are in a home. */
-export const OWNER_FILES = ['files.json', 'tasks.json'];
+/**
+ * Files in a home that hold file keys and drafts (files.json, tasks.json), or the gateway's PIN, token and OAuth
+ * grant hashes (gateway.json, gateway-oauth.json: writing one by hand mints a principal without the owner's consent):
+ * refused by path when they are in a home.
+ */
+export const OWNER_FILES = ['files.json', 'tasks.json', 'gateway.json', 'gateway-oauth.json'];
 /** Names distinctive enough to refuse in any folder, not only in a home: writing either one by hand is setting auto-approve. */
 const ANYWHERE_FILES = ['autoapprove.json', 'owner-secret.json', 'owner-secret.marker'];
 const SECRET_MENTION = /agent\.json|consent\.json|autoapprove\.json|owner\.json|owner-secret\.(json|marker)/i;
@@ -52,7 +56,7 @@ const MAX_DEPTH = 6;
 const SECRET_REFUSAL =
   'That names the Rendezvous secret key, consent, auto-approve, owner-settings or owner passphrase file (agent.json, agent.json.bak, consent.json, autoapprove.json, owner.json, owner-secret.json). Never read, write, copy or print it; use rdv_status for the agent ID, fingerprint and auto-approve status, and ask your user to change a setting in their own terminal.';
 const OWNER_REFUSAL =
-  'That names a Rendezvous file that holds file keys and drafts (files.json, tasks.json). Never read or write it; use rdv_file and rdv_task.';
+  'That names a Rendezvous file that holds file keys and drafts (files.json, tasks.json) or the gateway\'s PIN and token hashes (gateway.json, gateway-oauth.json). Never read or write it; use rdv_file and rdv_task, and leave the gateway\'s tokens and connections to your user.';
 const HOME_REFUSAL =
   'That reaches into a Rendezvous home, which holds the secret key and consent state. Do not search, glob, copy or read it as a whole; use rdv_status, rdv_pending_requests and rdv_inbox.';
 const HUMAN_ONLY =
@@ -377,11 +381,13 @@ const GROUP_SUBS = {
 };
 // rdv-gateway (issue #12): its PIN unlocks the approval page and a token is a key to the agent. Setting or clearing the
 // PIN and making or revoking tokens are the owner's, in their own terminal; a model that ran them could approve itself.
+// Revoking an OAuth client or grant (slice 2) is the owner's too: which assistants stay connected is their call.
 const GATEWAY_SECRET =
-  'rdv-gateway pin and token commands are for the human, in their own terminal: the PIN unlocks their approval page, and a token is a key to their agent. Never run them, and never ask for the PIN or a token.';
+  'rdv-gateway pin, token and oauth commands are for the human, in their own terminal: the PIN unlocks their approval page, a token is a key to their agent, and which assistants stay connected is their decision. Never run them, and never ask for the PIN or a token.';
 const GATEWAY_GROUPS = [
   ['pin', { set: GATEWAY_SECRET, unlock: GATEWAY_SECRET }],
   ['token', { create: GATEWAY_SECRET, revoke: GATEWAY_SECRET }],
+  ['oauth', { revoke: GATEWAY_SECRET }],
 ];
 /** rdv-gateway under any of its names: the npm script or shim, the built bin.js, the npm package. */
 const isGateway = (w) =>

@@ -923,7 +923,7 @@ describe('the direct-transfer setting is the human’s (issue #26)', () => {
       const h = join(root, 'omer');
       mkdirSync(h);
       for (const f of ['agent.json', 'config.json']) writeFileSync(join(h, f), '{}');
-      for (const f of ['owner.json', 'files.json', 'tasks.json']) {
+      for (const f of ['owner.json', 'files.json', 'tasks.json', 'gateway.json', 'gateway-oauth.json']) {
         expect(checkToolInput('Write', { file_path: join(h, f), content: '{"direct_transfer":true}' }), f).toBeTruthy();
         expect(checkToolInput('Edit', { file_path: join(h, f) }), f).toBeTruthy();
         expect(checkToolInput('Read', { file_path: join(h, f) }), f).toBeTruthy();
@@ -1096,11 +1096,18 @@ describe('the skill covers general tasks, files and auto-approve (issue #29)', (
       'rdv-gateway pin --stdin set',
       'rdv-gateway token --name a --scope read create',
       'rdv-gateway --home x pin unlock',
+      // Slice 2: revoking an OAuth client or grant.
+      'rdv-gateway oauth revoke cli_abc',
+      'rdv-gateway --home x oauth revoke grt_abc',
+      'node packages/gateway/dist/src/bin.js oauth revoke cli_x',
+      'rdv-gateway oauth $SUB cli_x',
     ]) {
       expect(checkCommand(c), c).toBeTruthy();
     }
     // Reading, serving, and other programs' own pin/token commands are not refused.
-    for (const c of ['rdv-gateway token list', 'rdv-gateway serve --port 8787', 'npm token create', 'git pin set']) expect(checkCommand(c), c).toBeUndefined();
+    for (const c of ['rdv-gateway token list', 'rdv-gateway oauth list', 'rdv-gateway serve --port 8787', 'npm token create', 'git pin set', 'gh auth revoke']) {
+      expect(checkCommand(c), c).toBeUndefined();
+    }
   });
 
   it('allows the commands the model may run, and the audit log', () => {

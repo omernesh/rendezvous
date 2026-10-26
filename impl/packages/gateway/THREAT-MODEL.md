@@ -1,10 +1,10 @@
-# rdv-gateway threat model (slice 1)
+# rdv-gateway threat model (slices 1 and 2)
 
 `rdv-gateway` puts the owner's Rendezvous agent behind an HTTPS endpoint so a
 cloud assistant (ChatGPT, Grok, Muse, …) can use it. It runs on the owner's
 own machine, holds the key there, and is reached through the owner's own
-tunnel. Design notes: `impl/NOTES.md` item 89. Slice 1 has static API tokens
-only; OAuth 2.1 is slice 2.
+tunnel. Design notes: `impl/NOTES.md` items 89 (slice 1: the page, static
+tokens) and 93 (slice 2: the built-in OAuth 2.1 authorization server).
 
 ## What we protect
 
@@ -13,7 +13,8 @@ only; OAuth 2.1 is slice 2.
    releasing a result, and the group decisions (invite, join, approve a
    newcomer, leave, remove, terms) belong to the owner alone.
 2. **The agent key and local secrets**: `agent.json`, the confirm phrases,
-   the owner passphrase, the gateway PIN and tokens.
+   the owner passphrase, the gateway PIN, API tokens, and OAuth codes, access
+   and refresh tokens and client secrets.
 3. **The owner's files and paths**: nothing local leaves except what the owner
    releases at a gate.
 4. **Availability** of the agent for the owner's own tools (`rdv`, `rdv-mcp`).
@@ -27,6 +28,8 @@ only; OAuth 2.1 is slice 2.
 | Someone holding a leaked API token | the same as the assistant | more than the token's scopes; outlive a revoke |
 | The internet, through the owner's tunnel | reach `/approve`, `/openapi.json` | see what waits without the PIN; brute-force the PIN; forge the owner's form posts |
 | A web page in the owner's browser | cross-site requests, DNS rebinding to 127.0.0.1 | post the owner's approval forms; read the API |
+| Anyone on the internet, through OAuth | register a client with any name and an https return address, send the owner an authorize link | get a token without the owner's PIN and consent; be approved under a name or return address other than the one the page showed; get a code sent to an address it did not register; widen the scopes the owner kept |
+| Someone who stole an authorization code or a refresh token | present it at the token endpoint | use a code without the PKCE verifier; use a rotated refresh token without ending the whole grant; use a token at another resource |
 
 | A local assistant with a shell on the owner's machine (Claude Code, Codex, …) | run commands as the owner | set or clear the PIN, make tokens, then approve on 127.0.0.1 |
 
@@ -127,6 +130,66 @@ token (120 per minute), per client address on the page, and on unlocks. At
 most 32 MCP sessions (4 per token, 30 minutes idle) and 64 pending approvals
 (16 per token, 24 hours).
 
+**OAuth 2.1 (slice 2).** The gateway is its own authorization server (RFC
+8414 metadata, RFC 9728 protected-resource metadata and the
+`resource_metadata` challenge on 401, RFC 7591 registration, RFC 7009
+revocation). Only the authorization code with PKCE S256: no implicit grant,
+no password or client-credentials grant, no `plain` PKCE; a request without
+`code_challenge_method=S256` is refused. Registration takes https redirect
+URIs only (no fragment, no credentials, at most five), records the name with
+control and format characters removed (at most 64), and is rate limited per
+client (30 per 10 minutes, a rate that refills; generous because a cloud
+assistant registers from its vendor's shared servers). Clients the owner never
+approved are kept at most 200: the oldest goes (it holds nothing), but never
+one registered in the last 15 minutes (it may be the owner's, mid-connect);
+then new registrations wait (429), so a flood cannot fill the store or remove
+the owner's client. The authorization
+endpoint shows an error on its own page, never a redirect, until the client
+exists and the `redirect_uri` equals one it registered, character for
+character (no open redirect); duplicated parameters are refused. **Consent is
+the PIN-locked page**: a valid request is parked (memory, ten minutes; 8 per
+client address, whose own oldest goes, and 256 in all, after which new ones
+wait, so a stranger cannot push out the owner's) and the browser goes to
+`/approve/oauth/<id>` with a cookie that binds the request to that browser
+(an HMAC of its id, HttpOnly, SameSite=Lax because the browser arrives from
+the assistant's site). The page needs that cookie as well as the unlocked
+owner session: a stranger who connects *their own* ChatGPT account to the
+owner's gateway and forwards the consent link gets a refusal page in the
+owner's browser, not a page that looks like the owner's own connect. It
+then shows
+the registered name as untrusted text, the return host, the full
+return address, the client id and the scopes asked for, each one a checkbox.
+The owner can only untick. The post carries the session CSRF token and a
+digest of everything shown (client, name, return address, scopes, resource,
+PKCE challenge, state). The gateway refuses a stale digest, re-reads the
+client and refuses if it was removed or changed, and drops the request once
+decided, so an answer runs once. Never auto-approved, even for a client
+approved before. The page's CSP adds only the return origin to
+`form-action`, since the decision answers with a redirect there. Codes are
+256-bit, single use, live 60 seconds, bound to the client, the return address,
+the challenge, the scopes kept and the resource; a code presented twice ends
+the grant it made (RFC 6749 §4.1.2). Access tokens live an hour; refresh
+tokens rotate on every use, and a rotated one presented again ends the whole
+grant (its tokens, its MCP sessions and its pending approvals). Refresh may
+narrow scopes, never widen them. Every token is bound to the resource
+`<public URL>/mcp` (RFC 8707; `/sse` and the origin are accepted as the same
+resource, and `/sse` has its own protected-resource metadata):
+a request for another resource is refused, and a token minted before the
+public URL changed no longer works. Clients authenticate with `none` (PKCE
+only), `client_secret_post` or `client_secret_basic`; secrets are 256-bit and
+compared in constant time. Everything is stored in `gateway-oauth.json` (mode
+600) as SHA-256 only, restart-safe; codes and parked consents are in memory.
+An OAuth grant is a principal exactly like a static token: the same scope
+table, the same session cap (4 per principal), approvals keyed by grant id,
+and `rdv-gateway oauth revoke <client|grant>` (the consent guard refuses it
+to an assistant) ends it at the next request; open streams of a revoked
+token or grant are closed within 30 seconds. The consent guard also refuses
+an assistant's reads and writes of `gateway.json` and `gateway-oauth.json` in
+a home (writing a hash there would mint a principal). Token and revocation endpoints
+are rate limited per client (60 a minute). The legacy SSE transport (`/sse`,
+posts to `/messages`) uses the same bearer check, and a session belongs to
+the principal that opened it.
+
 ## Known limits and open risks
 
 - The PIN backoff trades guessing against lock-out. Without
@@ -135,7 +198,7 @@ most 32 MCP sessions (4 per token, 30 minutes idle) and 64 pending approvals
   wait (up to an hour, until `rdv-gateway pin unlock`). Counting per client
   fixes that only if the header is trustworthy: set it only when every request
   goes through the tunnel that writes it, since anyone reaching the gateway
-  directly can forge it (the global cap still bounds guessing). Slice 2
+  directly can forge it (the global cap still bounds guessing). A later slice
   (passkeys) removes the PIN as the only factor.
 - Pending approvals live in memory: a restart drops them, and the assistant
   asks again. A full page (64, or 16 per token) refuses new asks with an
@@ -152,7 +215,24 @@ most 32 MCP sessions (4 per token, 30 minutes idle) and 64 pending approvals
 - Capabilities an assistant lists in `rdv_grant invoke` start ticked on the
   page, as in the elicitation form; the message names each one.
 - The approval page trusts the machine's clock for session lifetimes and the
-  lockout.
+  lockout, and the OAuth server for token lifetimes.
+- A client's registered name is whatever it sent. The consent page labels it
+  untrusted and puts the return host first; an owner who approves a look-alike
+  name returning to an unknown host has connected that host. Revoke it with
+  `rdv-gateway oauth revoke`.
+- A stranger can still send the owner the *authorize* URL itself (not the
+  consent link). Opened in the owner's browser it binds there, and the owner
+  sees a genuine-looking "ChatGPT, returns to chatgpt.com". The code then goes
+  to the stranger's client with the stranger's `state`; well-built clients
+  (ChatGPT, claude.ai) refuse a callback whose `state` their own user did not
+  start, but the gateway cannot check that. The page tells the owner to
+  connect only what they are setting up themselves.
+- Strict refresh rotation: a client that retries a refresh after a network
+  failure, with the old token, ends its own grant and must connect again.
+  That is the price of reuse detection.
+- Behind a tunnel without `--client-ip-header` the registration and token
+  rates are shared by everyone (all requests come from 127.0.0.1); behind
+  https the header is required anyway.
 - A step whose form asks twice in one call, or a field the page cannot show,
   is refused and stays a terminal decision. Contents too long for a form
   (tasks over 2000 characters) are decided in the terminal, as with `rdv-mcp`.
