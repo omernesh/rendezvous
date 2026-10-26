@@ -67,3 +67,4 @@ When implementing turns up a gap, ambiguity or unsafe spot in the spec, record i
 
 - The owner writes Python day to day and works on Windows (PowerShell). Keep command examples cross-platform.
 - Example personas are anonymized: **Omer** (`omer@example.com`) and **John** (`john@doe.com`, `doe.com`). Don't put real people or addresses into the spec, tests or deck.
+- Every user-visible PR adds one plain line to `CHANGELOG.md` under Unreleased (or the new plugin version), marks security fixes, and runs `python site/build_docs.py` to regenerate `site/changelog.html`.
