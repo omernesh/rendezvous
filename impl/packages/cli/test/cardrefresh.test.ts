@@ -43,7 +43,7 @@ describe('card refresh on a listener start (issue #43)', () => {
       const refreshed = await first.waitFor((l) => l.event === 'card-refreshed', 'the card refresh', T);
       await first.waitFor((l) => l.event === 'ready', 'ready', T);
       expect(refreshed.capabilities).toEqual(expect.arrayContaining([TASKS_URI, REQUEST_URI]));
-      expect(refreshed.published).toHaveLength(1);
+      expect(refreshed.published).toHaveLength(2); // the address and the agent ID (NOTES 83)
     } finally {
       await first.stop();
     }
@@ -55,11 +55,11 @@ describe('card refresh on a listener start (issue #43)', () => {
     expect(after.card.capabilities).toEqual(hostCardCapabilities());
     expect(verifyCard(after.card).ok).toBe(true);
     expect(Date.parse(after.card.created) - Date.parse(before.card.created)).toBeGreaterThanOrEqual(1000);
-    // The replaceable event on the address topic carries the new capabilities.
+    // The replaceable event on the address topic, and the one on the agent ID's topic (NOTES 83), carry the new capabilities.
     const events = cardEvents();
-    expect(events).toHaveLength(1);
-    expect((JSON.parse(events[0].content) as AddressCard).capabilities).toEqual(after.card.capabilities);
-    const eventId = events[0].id;
+    expect(events).toHaveLength(2);
+    for (const e of events) expect((JSON.parse(e.content) as AddressCard).capabilities).toEqual(after.card.capabilities);
+    const eventIds = events.map((e) => e.id);
 
     // Same code again: no re-sign, no publish.
     const second = new Listener('omer', home.dir);
@@ -70,7 +70,7 @@ describe('card refresh on a listener start (issue #43)', () => {
       await second.stop();
     }
     expect((home.readAgentState() as typeof before).card.sig).toBe(after.card.sig);
-    expect(cardEvents().map((e) => e.id)).toEqual([eventId]);
+    expect(cardEvents().map((e) => e.id)).toEqual(eventIds);
   });
 
   it('a current card is left alone', async () => {

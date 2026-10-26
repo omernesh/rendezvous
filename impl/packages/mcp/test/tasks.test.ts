@@ -624,7 +624,8 @@ describe('card refresh when the server starts (issue #43)', () => {
     await until(async () => (omer.humanLog.some((l) => l.includes('re-signed')) ? true : undefined), 'the notice', T);
     const published = await until(async () => {
       const e = cardEvents();
-      return e.length === 1 && (JSON.parse(e[0].content) as AddressCard).sig === card.sig ? e : undefined;
+      // On the address topic and the agent ID's topic (NOTES 83).
+      return e.length === 2 && e.every((x) => (JSON.parse(x.content) as AddressCard).sig === card.sig) ? e : undefined;
     }, 'the republished card', T);
     expect((await ok(omer, 'rdv_status')).tasks.capabilities).toEqual([REQUEST_URI, ...CAPS.map((c) => c.uri)]);
 

@@ -167,17 +167,17 @@ false</code>) that changes nothing; neither a cancel nor a timeout ever approves
 <tr>
 <td><code>rdv_publish_card</code></td>
 <td>mirror (optional)</td>
-<td>topics published, and <code>on_relays</code>: per public address, whether the relays now serve this card (read back). With <code>mirror: true</code>: the card goes to our relays and each discovery mirror one at a time (paced, one try each), and <code>relays</code> lists per relay <code>accepted</code> / <code>rejected</code> / <code>timeout</code> / <code>skipped</code>, the relay's reason as <code>untrusted_peer_text</code>, and <code>served</code> (read back) (NOTES 81)</td>
+<td>topics published (each public address, then the agent ID's topic, NOTES 83), <code>on_relays</code>: per public address, whether the relays now serve this card (read back), and <code>by_agent_id_on_relays</code>, the same for the agent ID. With <code>mirror: true</code>: the card goes to our relays and each discovery mirror one at a time (paced, one try each), and <code>relays</code> lists per relay <code>accepted</code> / <code>rejected</code> / <code>timeout</code> / <code>skipped</code>, the relay's reason as <code>untrusted_peer_text</code>, and <code>served</code> (read back) (NOTES 81)</td>
 </tr>
 <tr>
 <td><code>rdv_discover</code></td>
-<td>address</td>
-<td>cards found (agent ID, fingerprint, claimed addresses, relays), from our relays and the discovery mirrors; never a label (anyone can publish a card for any address), never our own card (for our own address: <code>own_card_on_relays</code>)</td>
+<td>address (email, +phone, or agent ID)</td>
+<td>cards found (agent ID, fingerprint, claimed addresses, relays), from our relays and the discovery mirrors; never a label (anyone can publish a card for any address), never our own card (for our own address: <code>own_card_on_relays</code>). With an agent ID: the one card signed by that ID, fetched from its ID topic (NOTES 83); its claimed addresses still prove nothing</td>
 </tr>
 <tr>
 <td><code>rdv_request_contact</code></td>
 <td>target (email, +phone, or agent ID), greeting, label (probes only)</td>
-<td>request ID, local_label (a probe: the address probed, applied only when the human confirms the answer; by agent ID: none, and a <code>label</code> is refused)</td>
+<td>request ID, fingerprint (by agent ID), local_label (a probe: the address probed, applied only when the human confirms the answer; by agent ID: none, and a <code>label</code> is refused). An agent ID whose card is not known yet (no contact, pending request or earlier <code>rdv_discover</code>) is fetched by ID from the relays and mirrors, and <code>card_source</code> says so; a malformed ID, or one with no card on the relays, is a clear error (NOTES 83)</td>
 </tr>
 <tr>
 <td><code>rdv_pending_requests</code></td>

@@ -20,6 +20,10 @@
     "email John@Doe.COM": "sxpere2q7j6mah2rm5v6samywh",
     "phone +972-54-000-0000": "5r5xrmjewhgwdkp6xyy7aq6ok5"
   },
+  "idtopic": {
+    "rdv1:2bflemtufo2kwoqtnc6umfpe43icesvxdiawxl4fecrtfslxq43q": "rjqygujvndtxertv5ro3q6avvr",
+    "rdv1:ucnkl5d2m5myal7zkx4nyljkcss4thjdx2l7qzasp74tqncvutya": "eljfqonsphpok7bhavbypaqywn"
+  },
   "card": {
     "canonical": "{\"capabilities\":[\"rdv/v1\",\"a2a/0.3\"],\"created\":\"2026-10-24T00:00:00.000Z\",\"discovery\":{\"addresses\":[{\"type\":\"email\",\"value\":\"john@doe.com\"}],\"public_pointer\":false},\"expires\":null,\"id\":\"rdv1:ucnkl5d2m5myal7zkx4nyljkcss4thjdx2l7qzasp74tqncvutya\",\"policy\":{\"inbound\":\"prompt\",\"public\":false},\"rendezvous\":[{\"pref\":1,\"relay\":\"wss://relay.example\",\"type\":\"nostr\"}],\"sig\":\"wfQ2sZXLZpOkZxX/TTdkbfQK0KbKgQ3ye5BNzk26PsN76p3LyCXAZFfKMxVdYV7lF5mtQhR2ERIPOdPi7wLkAg==\",\"v\":1}",
     "doc": {

@@ -37,6 +37,7 @@ import {
   RESEND_LIMIT,
   defaultTier,
   dtopic,
+  idtopic,
   envelopeHash,
   fingerprint,
   generateKey,
@@ -1345,8 +1346,8 @@ describe('card refresh: capabilities the code now supports (issue #43)', () => {
     const a = new Agent(k, old, recording());
     expect(a.refreshCapabilities(NOW_CAPS)).toBe(true);
     expect(a.card.discovery).toEqual(discovery);
-    expect(await a.publishPointers()).toEqual(discovery.addresses.map((x) => dtopic(x)));
-    expect(published.map((p) => (p.doc as { capabilities: string[] }).capabilities)).toEqual([NOW_CAPS, NOW_CAPS]);
+    expect(await a.publishPointers()).toEqual([...discovery.addresses.map((x) => dtopic(x)), idtopic(k.id)]);
+    expect(published.map((p) => (p.doc as { capabilities: string[] }).capabilities)).toEqual([NOW_CAPS, NOW_CAPS, NOW_CAPS]);
     for (const p of published) expect(p.createdAt).toBeGreaterThan(Math.floor(Date.parse(old.created) / 1000));
   });
 });

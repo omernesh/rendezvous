@@ -156,9 +156,11 @@ alone would leave the agent unfindable), unless the user objects.
 Then ask one more question, about the public pointer. With it on, the card is
 also published on the relays under each public address, so anyone who knows
 the address can fetch it: its agent ID, fingerprint, relays and the addresses
-it lists. That makes a first contact easy. With it off, nothing is published,
-and people reach the agent only if it is listening when they probe, or by its
-card from another channel. Options: "Publish (Recommended)" or "Keep private".
+it lists. It is also published under the agent ID, so someone who has only
+the ID the user sent them can fetch it too. That makes a first contact easy.
+With it off, nothing is published, and people reach the agent only if it is
+listening when they probe, or by its card from another channel (not by the
+agent ID alone). Options: "Publish (Recommended)" or "Keep private".
 
 ## Step 8 of 11: create the identity
 
@@ -184,8 +186,8 @@ Skip this step if the pointer is off, and say so.
 Why: so the user's address leads to this agent.
 
 Call `rdv_publish_card`. Verify: its `on_relays` lists every public address
-with `served: true` (show them); it reads the card back from the relays
-after publishing. `rdv_discover` never lists the user's own card as a find;
+with `served: true` (show them), and `by_agent_id_on_relays` is true; it
+reads the card back from the relays after publishing. `rdv_discover` never lists the user's own card as a find;
 for their own address it reports `own_card_on_relays`. If an address shows
 `served: false`, wait a few seconds and check once with `rdv_discover` on
 that address before reporting the problem.

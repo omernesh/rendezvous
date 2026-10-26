@@ -8,6 +8,7 @@ import {
   type AddressCard,
   Agent,
   b64decode,
+  canonAgentId,
   cleanLabel,
   DEFAULT_GRANT_SCOPE,
   DEFAULT_RELAYS,
@@ -526,7 +527,7 @@ export async function cardPublish({ home, out, values }: Ctx): Promise<void> {
   const sentText = cardSyncText(sent);
   out.emit(
     { event: 'published', topics, ...(sent.sent.length || sent.failed.length ? { card_sent: sent } : {}) },
-    `published card on ${topics.length} topic(s): ${topics.join(', ')}${sentText ? `
+    `published card on ${topics.length} topic(s) (your public addresses and your agent ID): ${topics.join(', ')}${sentText ? `
 ${sentText}` : ''}`,
   );
 }
@@ -762,8 +763,16 @@ export async function relaysRemove({ home, out, values, positionals }: Ctx): Pro
 }
 
 export async function lookup({ home, out, positionals }: Ctx): Promise<void> {
-  const address = positionals[0];
-  if (!topicForHint(address)) throw new CliError(`not an email address or +phone number: ${address}`, 2);
+  const target = positionals[0];
+  if (looksLikeAgentId(target)) {
+    const id = agentIdArg(target);
+    const card = await withAgent(home, (agent) => fetchCardById(home, agent, id), { save: false });
+    if (!card) throw new CliError(notFoundById(id));
+    out.emit({ event: 'card', id: card.id, fingerprint: fingerprint(card.id), card }, cardText(card));
+    return;
+  }
+  const address = target;
+  if (!topicForHint(address)) throw new CliError(`not an email address, +phone number or agent ID (rdv1:…): ${address}`, 2);
   const cards = await withAgent(
     home,
     async (agent) => {
@@ -781,11 +790,50 @@ export async function lookup({ home, out, positionals }: Ctx): Promise<void> {
   for (const card of cards) out.emit({ event: 'card', id: card.id, fingerprint: fingerprint(card.id), card }, cardText(card));
 }
 
+/** Whether a target is meant as an agent ID (it may still be malformed: then `agentIdArg` says so). */
+export function looksLikeAgentId(target: string): boolean {
+  return String(target).trim().startsWith('rdv1:');
+}
+
+/** A pasted agent ID in canonical form, or a usage error (exit 2) that says what is wrong with it. */
+export function agentIdArg(target: string): string {
+  try {
+    return canonAgentId(target);
+  } catch (err) {
+    throw new CliError((err as Error).message, 2);
+  }
+}
+
+/** Why a fetch by agent ID found nothing, with what a human can do about it (NOTES 83). */
+export function notFoundById(id: string): string {
+  return (
+    `no card for ${fingerprint(id)} on your relays or the discovery mirrors. ` +
+    'Their agent publishes its card under its ID only with the public pointer on, and only from a version with contact by ID: ' +
+    'ask them to upgrade and republish their card ("rdv card publish"), or request contact by their email or phone instead'
+  );
+}
+
 /**
- * Send a contact request to an address (topic probe), an agent ID whose card
- * we know (contact, pending requester, or `rdv lookup` cache), or, with
- * `allowFile` (the CLI only), a card file. Call inside `withAgent`. The MCP
- * server leaves `allowFile` off so a model can't probe or read local files.
+ * Fetch a card by agent ID from the relays and the mirrors (Agent.lookupById)
+ * and cache it, as `rdv lookup` caches cards found by address, so a later
+ * request by that ID needs no fetch. Call inside `withAgent`.
+ */
+export async function fetchCardById(home: Home, agent: Agent, id: string): Promise<AddressCard | null> {
+  const card = await agent.lookupById(id);
+  if (card) {
+    const cache = home.readCards();
+    cache[card.id] = card;
+    home.writeCards(cache);
+  }
+  return card;
+}
+
+/**
+ * Send a contact request to an address (topic probe), an agent ID (its card
+ * from a contact, a pending requester or the `rdv lookup` cache, else fetched
+ * by ID from the relays, NOTES 83), or, with `allowFile` (the CLI only), a
+ * card file. Call inside `withAgent`. The MCP server leaves `allowFile` off
+ * so a model can't probe or read local files.
  */
 export async function requestContactTo(
   home: Home,
@@ -793,15 +841,22 @@ export async function requestContactTo(
   target: string,
   greeting: string,
   opts: { inPerson?: boolean; allowFile?: boolean; label?: string } = {},
-): Promise<{ id: string; to: string; via: 'topic' | 'card'; binding: 'in-person' | 'claimed'; label?: string }> {
+): Promise<{ id: string; to: string; via: 'topic' | 'card'; binding: 'in-person' | 'claimed'; label?: string; fetched?: boolean }> {
   let to: AddressCard | string;
   let via: 'topic' | 'card';
-  if (isAgentId(String(target))) {
-    const card =
-      agent.book.state.contacts[target]?.card ??
-      agent.pendingRequests().find((p) => p.request.from === target)?.request.card ??
-      home.readCards()[target];
-    if (!card) throw new CliError(`no card known for ${target}: run "rdv lookup <address>" or pass a card file`);
+  let fetched = false;
+  if (looksLikeAgentId(target)) {
+    const id = agentIdArg(target);
+    if (id === agent.id) throw new CliError('that agent ID is your own');
+    let card: AddressCard | undefined =
+      agent.book.state.contacts[id]?.card ??
+      agent.pendingRequests().find((p) => p.request.from === id)?.request.card ??
+      home.readCards()[id];
+    if (!card) {
+      card = (await fetchCardById(home, agent, id)) ?? undefined;
+      if (!card) throw new CliError(notFoundById(id));
+      fetched = true;
+    }
     to = card;
     via = 'card';
   } else if (target.includes('@') || target.startsWith('+')) {
@@ -823,7 +878,7 @@ export async function requestContactTo(
   const binding = opts.inPerson ? ('in-person' as const) : ('claimed' as const);
   const req = await agent.requestContact(to, greeting, { binding, label: labelOf(opts.label) });
   const label = agent.book.state.outstanding[req.id]?.label;
-  return { id: req.id, to: req.to_hint, via, binding, ...(label ? { label } : {}) };
+  return { id: req.id, to: req.to_hint, via, binding, ...(label ? { label } : {}), ...(fetched ? { fetched } : {}) };
 }
 
 export async function contactRequest({ home, out, values, positionals }: Ctx): Promise<void> {
@@ -837,7 +892,7 @@ export async function contactRequest({ home, out, values, positionals }: Ctx): P
   });
   out.emit(
     { event: 'request-sent', ...res },
-    `request ${res.id} sent to ${res.to} (${res.via === 'topic' ? 'topic probe' : 'direct to card'}, binding ${res.binding})`,
+    `request ${res.id} sent to ${res.to} (${res.via === 'topic' ? 'topic probe' : res.fetched ? 'direct to the card fetched by agent ID' : 'direct to card'}, binding ${res.binding})`,
   );
 }
 

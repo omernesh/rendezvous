@@ -90,7 +90,7 @@ export async function runAddressScenario(opts: AddressScenarioOptions): Promise<
 
     await step('3. an address added while listening: re-subscribed live', async () => {
       const add = await rdv(['address', 'add', omer.phone2], dirs.omer, { timeoutMs: timeout });
-      assert(add.lines[0]?.event === 'address-added' && add.lines[0].published.length === 4, 'added, card published on 4 topics');
+      assert(add.lines[0]?.event === 'address-added' && add.lines[0].published.length === 5, 'added, card published on 4 address topics + the agent ID');
       const t = await l.waitFor((x) => x.event === 'topics' && x.topics.length === 4, 'listener re-subscribes', timeout);
       assert(t.added.length === 1 && t.removed.length === 0, 'one topic added');
       await reaches(omer.phone2);
@@ -104,7 +104,7 @@ export async function runAddressScenario(opts: AddressScenarioOptions): Promise<
 
     await step('5. a removed address: no longer answered, its card replaced', async () => {
       const rm = await rdv(['address', 'remove', omer.work], dirs.omer, { timeoutMs: timeout });
-      assert(rm.lines[0]?.event === 'address-removed' && rm.lines[0].published.length === 4, 'removed; new card on 3 topics + the removed one');
+      assert(rm.lines[0]?.event === 'address-removed' && rm.lines[0].published.length === 5, 'removed; new card on 3 topics + the removed one + the agent ID');
       const t = await l.waitFor((x) => x.event === 'topics' && x.removed.length === 1, 'listener drops the topic', timeout);
       assert(t.topics.length === 3, 'three topics left');
       await missed(omer.work);

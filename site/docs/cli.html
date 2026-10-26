@@ -125,7 +125,7 @@ inbound loop), so <code>rdv</code> and <code>rdv-mcp</code> share profiles.</p>
 <tr>
 <td><code>discovery</code></td>
 <td>§4.4</td>
-<td><code>dtopic()</code>, address canonicalization, binding levels</td>
+<td><code>dtopic()</code>, <code>idtopic()</code> (the agent ID's topic, NOTES 83), address and agent-ID canonicalization, binding levels</td>
 </tr>
 <tr>
 <td><code>contact</code></td>
@@ -342,7 +342,7 @@ npm run rdv -- --help                     # or: node packages/cli/dist/src/bin.j
 </tr>
 <tr>
 <td><code>cards.json</code></td>
-<td>cards found by <code>rdv lookup</code>, so <code>contact request &lt;agent-id&gt;</code> can use them</td>
+<td>cards found by <code>rdv lookup</code> or fetched by agent ID, so <code>contact request &lt;agent-id&gt;</code> can use them</td>
 </tr>
 <tr>
 <td><code>negotiations.json</code></td>
@@ -442,11 +442,11 @@ npm run rdv -- --help                     # or: node packages/cli/dist/src/bin.j
 </tr>
 <tr>
 <td><code>rdv lookup john@doe.com</code></td>
-<td>Fetch public-pointer cards for an address, from our relays and the discovery mirrors</td>
+<td>Fetch public-pointer cards for an address, from our relays and the discovery mirrors; <code>rdv lookup rdv1:…</code> fetches the card of an agent ID (NOTES 83)</td>
 </tr>
 <tr>
 <td><code>rdv contact request &lt;email\|card-file\|agent-id&gt; [--greeting "…"] [--in-person] [--label john@doe.com]</code></td>
-<td>Topic probe by email, or direct by card. <code>--in-person</code> records the <code>in-person</code> binding for a card you got face to face. <code>--label</code> is your local name for them (a probe is labeled with the address)</td>
+<td>Topic probe by email, or direct by card. An agent ID alone works: a card not known yet is fetched by ID from the relays and mirrors (the friend's agent must have the public pointer on). <code>--in-person</code> records the <code>in-person</code> binding for a card you got face to face. <code>--label</code> is your local name for them (a probe is labeled with the address)</td>
 </tr>
 <tr>
 <td><code>rdv contact pending</code></td>

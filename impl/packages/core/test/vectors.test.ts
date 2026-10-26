@@ -10,6 +10,7 @@ import {
   canonicalize,
   createCard,
   dtopic,
+  idtopic,
   b64encode,
   FILE_AD,
   fileRefPart,
@@ -112,6 +113,8 @@ function deterministic() {
       'email John@Doe.COM': dtopic({ type: 'email', value: 'John@Doe.COM' }),
       'phone +972-54-000-0000': dtopic({ type: 'phone', value: '+972-54-000-0000' }),
     },
+    // NOTES 83: the topic a public card is also published on, found by agent ID alone.
+    idtopic: Object.fromEntries([omer, john].map((k) => [k.id, idtopic(k.id)])),
     card: { canonical: canonicalize(card), doc: card },
     contact_request: { canonical: canonicalize(request), doc: request },
     contact_grant: { canonical: canonicalize(grant), doc: grant },

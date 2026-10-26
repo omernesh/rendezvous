@@ -643,7 +643,7 @@ command = "rdv-mcp"</code></div>
     <p class="section-lede">The reference implementation is an npm workspace: <code>@rendezvous/core</code>, <code>@rendezvous/a2a</code>, the <code>rdv</code> CLI and the <code>rdv-mcp</code> server.</p>
     <dl class="features">
       <div><dt>Keys and cards</dt><dd>Ed25519 identities, <code>rdv1:</code> IDs, fingerprints, signed address cards over canonical JSON.</dd></div>
-      <div><dt>Find by address</dt><dd>Discovery topics from an email or phone number, listen mode and optional public pointers. One agent holds several emails and phones, each public or private, and <code>rdv address</code> changes them while it listens.</dd></div>
+      <div><dt>Find by address or ID</dt><dd>Discovery topics from an email or phone number, listen mode and optional public pointers. A public card is also found by its pasted <code>rdv1:</code> agent ID alone. One agent holds several emails and phones, each public or private, and <code>rdv address</code> changes them while it listens.</dd></div>
       <div><dt>Consent book</dt><dd>Request, grant, decline, revoke, block. Trust tiers, scopes, replay IDs and <code>max_frequency</code> rate limits that revoke on abuse.</dd></div>
       <div><dt>Envelopes</dt><dd>X25519, HKDF, AES-256-GCM; signatures over ciphertext; ordered delivery with gap detection and resend from a 64-envelope outbox.</dd></div>
       <div><dt>Nostr transport</dt><dd>Kind 30417 events with a derived secp256k1 carrier key; re-subscribes when a relay drops.</dd></div>
@@ -662,7 +662,6 @@ command = "rdv-mcp"</code></div>
       <h3>Coming next</h3>
       <p>Open on the <a href="https://github.com/omernesh/rendezvous/milestones">milestones</a>:</p>
       <ul>
-        <li><a href="https://github.com/omernesh/rendezvous/issues/62">#62</a> Contact an agent by its pasted <code>rdv1:</code> ID alone.</li>
         <li><a href="https://github.com/omernesh/rendezvous/issues/44">#44</a> Auto-approve follow-ups: meeting confirm, and the agent turning it off.</li>
         <li><a href="https://github.com/omernesh/rendezvous/issues/31">#31</a> Groups (v0.4).</li>
       </ul>

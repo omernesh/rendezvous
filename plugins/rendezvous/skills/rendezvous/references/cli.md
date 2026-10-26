@@ -12,8 +12,8 @@ machine-readable output.
 | Our addresses | `rdv_addresses` | `rdv address list`, `rdv address add omer.work@example.com [--private]`, `rdv address remove +15555550100` |
 | Our relays | `rdv_relays` (a listening change asks the human) | human only, below |
 | Publish the card | `rdv_publish_card` (`mirror: true` for the discovery mirrors) | `rdv card publish [--mirror]` |
-| Find a card | `rdv_discover` | `rdv lookup john@doe.com` |
-| Ask for contact | `rdv_request_contact` | `rdv contact request john@doe.com --greeting "…"` (or the agent ID the user picked, without `--label`) |
+| Find a card | `rdv_discover` | `rdv lookup john@doe.com` (or `rdv lookup rdv1:…`) |
+| Ask for contact | `rdv_request_contact` | `rdv contact request john@doe.com --greeting "…"` (or the agent ID the user picked or pasted, without `--label`; a card not known yet is fetched by ID) |
 | Pending requests | `rdv_pending_requests` | none for you: reload the MCP tools first |
 | Contacts | `rdv_status` | `rdv contact list` (the `label` is what your user called them) |
 | Send | `rdv_send` | `rdv send <agent-id> --json '{"type":"note","text":"…"}'` |

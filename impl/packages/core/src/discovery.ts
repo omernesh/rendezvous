@@ -3,6 +3,7 @@ import { sha256 } from '@noble/hashes/sha256';
 import { utf8ToBytes } from '@noble/hashes/utils';
 import type { DiscoveryAddress } from './card.js';
 import { b32encode } from './encoding.js';
+import { agentIdFromPublicKey, ID_PREFIX, publicKeyFromAgentId } from './identity.js';
 
 export type Binding = 'in-person' | 'dns' | 'mailbox' | 'claimed';
 
@@ -59,6 +60,32 @@ export function normalizeAddresses(addrs: DiscoveryAddress[], max = MAX_ADDRESSE
 /** dtopic(address) = base32(SHA-256("rdv1/disc:" ‖ canon(address)))[0:26] */
 export function dtopic(addr: DiscoveryAddress): string {
   return b32encode(sha256(utf8ToBytes('rdv1/disc:' + canonAddress(addr)))).slice(0, 26);
+}
+
+/**
+ * The canonical form of an agent ID (§4.2): `rdv1:` and the key in lowercase
+ * base32. Throws on anything that is not a valid ID, with a message a human
+ * can act on (it never echoes more than the start of the input).
+ */
+export function canonAgentId(text: string): string {
+  const t = typeof text === 'string' ? text.trim() : '';
+  if (!t.startsWith(ID_PREFIX)) throw new Error('not an agent ID: it must start with rdv1:');
+  let pk: Uint8Array;
+  try {
+    pk = publicKeyFromAgentId(t);
+  } catch {
+    throw new Error(`malformed agent ID ${JSON.stringify(t.slice(0, 16) + (t.length > 16 ? '…' : ''))}: an agent ID is rdv1: followed by 52 base32 characters; copy it whole`);
+  }
+  return agentIdFromPublicKey(pk);
+}
+
+/**
+ * itopic(id) = base32(SHA-256("rdv1/id:" ‖ id))[0:26], `id` canonical (NOTES 83).
+ * The topic an agent's public card is also published on, so a requester who
+ * holds only the agent ID can fetch it. Domain-separated from `dtopic`.
+ */
+export function idtopic(agentId: string): string {
+  return b32encode(sha256(utf8ToBytes('rdv1/id:' + canonAgentId(agentId)))).slice(0, 26);
 }
 
 /**

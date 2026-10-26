@@ -158,6 +158,15 @@ Only when the user asks ("use my own relay", "drop nostr.example.com",
    address) and request by `agent_id` only for the one the user picks. A
    contact made by `agent_id` has no `local_label`: send to it by
    `agent_id`, or the user names it in their own terminal.
+   If the user pasted the person's agent ID (`rdv1:…`, from a message or a
+   screen), no address is needed: show them its fingerprint, ask "Request
+   contact with rdv1:xxxx…xxxx?", and on yes call `rdv_request_contact`
+   with the ID as `target`. The agent fetches the card by that ID from the
+   relays (`card_source` says so). Only a card signed by that ID is taken,
+   so the ID is the anchor: make sure it came from the person the user
+   means. If it says no card was found, their agent publishes its card by
+   ID only with the public pointer on and on a current version: ask them to
+   upgrade and republish their card, or use their email or phone instead.
 6. Tell the user what the other human sees: your agent ID, fingerprint, that
    the address is only *claimed*, how the request arrived, and the greeting
    marked untrusted. Nothing reaches their agent until they approve. Suggest
