@@ -2256,6 +2256,100 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       (John's server restarts on code that routes one more capability; Omer
       sees `card_updated` and the task its old card refused is submitted).
 
+## Contact by agent ID (issue #62)
+
+83. **The card is also published under the agent ID** (**spec change**,
+    §4.4, §6.2). A pasted `rdv1:` ID alone could not start a contact: the
+    requester needed the card, and cards were found only by address. Now
+    the public card also goes on the ID's own topic:
+
+    ```
+    idtopic(id) = base32(SHA-256("rdv1/id:" ‖ id))[0:26]
+    ```
+
+    `id` is the canonical ID (§4.2: `rdv1:` and lowercase base32;
+    `canonAgentId` re-encodes the key, so case and surrounding space in a
+    pasted ID don't matter). Same kind, `t` = the topic, and it is the
+    replaceable card event (`d` = `rdv1/card:` + topic, `created_at` as
+    item 63), so the newest card replaces the old one there too. The
+    `rdv1/id:` prefix keeps the namespace apart from `dtopic`'s
+    `rdv1/disc:`, so no address can collide with an ID. A hash and not the
+    raw key in a tag: the `p` tag already carries the hex key for envelopes,
+    and a card tagged `p` would land in every envelope subscription for
+    that agent. Test vector: `idtopic` in `vectors/v1.json` (a new entry;
+    nothing else in the file changed).
+    - **Where it is published.** Wherever the card is published today, and
+      by the same code path: `Agent.publishPointers` and
+      `Agent.mirrorPointers` take their topics from `pointerTopics()` (the
+      address topics, then the ID's). So `rdv card publish` (with or
+      without `--mirror`) and `rdv_publish_card`, the republish after an
+      address change (`changeAddress`), a relay change (`changeRelays`,
+      including the removed relay) and a capability refresh
+      (`refreshHostCard`) all cover it, on the listening relays and the
+      discovery mirrors. The card-update path (item 82) sends envelopes,
+      not topic events; it is unchanged, and every re-sign that triggers it
+      also republishes. `publishPointers` returns the ID topic last, so the
+      published-topics counts in the CLI and MCP results grew by one.
+    - **Privacy: same opt-in as the public pointer, no new switch.** The
+      topic itself reveals nothing: an agent ID is not a human address, and
+      it is printed on the card it points to. But what sits on the topic is
+      the card, with the addresses it lists, the owner fields and the
+      relays. With the public pointer on, that card is already on public
+      relays (anyone can scan kind 30417), so publishing it by ID too adds
+      nothing. With it off, the card is on no relay at all, and publishing
+      it by ID would put it there: a kind scan would then link the agent to
+      the addresses it listed, the directory `public_pointer: false`
+      refuses. So the ID topic follows the pointer and agents without it
+      stay unfindable by ID. Option left open: a separate, address-free card
+      for the ID topic only. It would need a rule for two valid cards of
+      one agent with the same `created` (lookup, card updates and the grant
+      all compare `created`), so it is not done here.
+    - **Lookup** (`Agent.lookupById`). The ID's topic on our relays and the
+      discovery mirrors (`fetchTopic`, as address lookups). A document
+      counts only if `verifyCard` passes and the card's `id` is the
+      requested ID; of those, the newest (`newerCard`). A card someone else
+      posted there, a forgery claiming the ID, or an older copy replayed
+      from another carrier key never wins. Nothing on the card is trusted
+      beyond the key: its address claims prove nothing, as everywhere. Our
+      own ID returns null (lookup never returns our own card).
+      `Agent.ownCardById` is the read-back after publishing (our relays
+      only), shown as `by_agent_id_on_relays` by `rdv_publish_card`.
+    - **Hosts.** `rdv contact request <rdv1:…>` and `rdv_request_contact`
+      with an ID use a card already known (contact, pending requester, the
+      `cards.json` cache) and otherwise fetch it by ID and cache it, as
+      `rdv lookup` caches cards found by address. `rdv lookup <rdv1:…>` and
+      `rdv_discover` with an ID show the card. Errors: a target that starts
+      with `rdv1:` but is not a valid ID exits 2 with `malformed agent ID`
+      (and how to fix it); none found names both causes (the friend's agent
+      has the public pointer off, or runs a version that predates this and
+      must republish after upgrading) and suggests the address instead. The
+      consent flow is unchanged: the binding is `claimed`, the request goes
+      to the card in an envelope, the other human approves, and a contact
+      made by ID gets no `local_label` (item 62); a `label` is still
+      refused for it. MCP results carry the fingerprint and
+      `card_source: "fetched by agent ID from the relays"`; the card's
+      claimed addresses and relays go through `asAddress` / `relayUrl`
+      (strict shape, else `untrusted_peer_text`), as `rdv_discover` did.
+    - **No link form.** Nothing on the site or in the docs defines a link
+      that carries an ID (`https://…#rdv1:…`), so none is parsed; the ID is
+      taken as pasted, trimmed.
+    - **Compatibility.** An agent on older software does not publish by ID:
+      it is found only after it upgrades and republishes (the next
+      `rdv card publish`, address or relay change, or capability refresh).
+      Older requesters ignore the extra topic.
+    - Tests: core `test/contactbyid.test.ts` (the topic formula and its
+      canonical input; malformed IDs; B publishes, A with only the ID
+      requests, B grants, a message; a foreign card, a forgery and a replay
+      on the topic; the newest card after a re-sign; not found and our own
+      ID; nothing published without the pointer; the mirror run carries the
+      topic) and the new vector; CLI `test/contactbyid.test.ts` (real
+      processes: request by a pasted ID in upper case with spaces, nothing
+      cached, grant, message; `rdv lookup <id>`; malformed, not found, our
+      own ID); MCP `test/contactbyid.test.ts` (request by ID, human approval
+      by phrase, contact without a label, message; `label` refused; malformed
+      and not found; `rdv_discover` by ID with a hostile claimed address
+      quarantined and a forgery on the topic ignored).
+
 ## Not implemented yet
 
 

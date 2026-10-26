@@ -100,7 +100,9 @@ consent concept changed; see <strong>Changes in rev 3</strong> below.</p>
     too. Amended: an agent's addresses change after setup; a changed card is
     re-signed with a later <code>created</code>, a requester keeps only an agent's newest
     card, and a public-pointer card is a replaceable event, so a removed address
-    stops finding the agent (§4.3, §4.4, §6.2).</li>
+    stops finding the agent (§4.3, §4.4, §6.2). Amended: a public card is also
+    published on the topic of its agent ID (<code>idtopic</code>), so a pasted ID alone
+    finds it (§4.4, §6.2).</li>
 <li><strong>Consent, §5:</strong> the grant carries the grantor's card (§5.3); who may answer
     a request; document IDs are UUIDs; grant direction and <code>max_frequency</code>
     format; scope defaults. New §5.5 (consent stays with the human) and §5.6
@@ -399,7 +401,26 @@ dead drops otherwise:</p>
   and on the topic of each address it removed, so the newest card
   supersedes the old one there and a lookup for a removed address finds a
   card that no longer claims it (§4.3).</li>
+<li>
+<p><strong>By agent ID</strong> (<strong>spec change</strong>, issue #62). An agent that publishes
+  a public pointer also publishes the same card, as the same replaceable
+  event, on the topic of its own agent ID, so a requester who holds only
+  the ID (pasted from a message, read off a screen) can fetch the card:</p>
+<p>idtopic(id) = base32(SHA-256("rdv1/id:" ‖ id))[0:26]</p>
+</li>
 </ul>
+<p><code>id</code> is the agent ID in its canonical form (§4.2: <code>rdv1:</code> and lowercase
+  base32). The prefix keeps the ID topics apart from the address topics.
+  It is published wherever and whenever the card is published on its
+  address topics, and under the same opt-in (<code>public_pointer</code> and
+  <code>policy.public</code>): an ID reveals nothing new, but the card on the topic
+  lists the owner's addresses, so publishing it by ID without the pointer
+  would publish what the owner kept off the relays. A requester accepts
+  only a document that verifies as a card (§4.3) and whose <code>id</code> equals
+  the requested ID, and uses the newest of those by <code>created</code>. Nothing
+  else on the card is trusted: its addresses are claims (§4.4 bindings),
+  and the binding is <code>claimed</code>, as for any card found on a topic. The
+  request then goes to the card as usual (§5.1).</p>
 </li>
 <li>
 <p><strong>DNS TXT</strong> — <code>_agent.&lt;domain&gt; TXT "rdv=rdv1:…"</code> for owners with domains.</p>
@@ -1054,7 +1075,9 @@ where hole-punching fails (TURN relays carry the ciphertext).</p>
     hash (§4.6). Discovery topics ride the same kind: <code>t</code> holds the <code>dtopic</code>
     (§4.4) and <code>d</code> is the hex SHA-256 of the event content, except for a
     public-pointer card, whose <code>d</code> is <code>"rdv1/card:" ‖ dtopic</code>: one addressable
-    event per agent and topic, so relays keep only the newest card. Its
+    event per agent and topic, so relays keep only the newest card. The card
+    on the agent's ID topic (§4.4) is the same event with <code>idtopic</code> in place of
+    <code>dtopic</code>, in both the <code>t</code> tag and the <code>d</code> tag. Its
     <code>created_at</code> is no earlier than the card's <code>created</code> (in seconds), which a
     change moves past both the previous card and the current time by at least a
     second, so a newer card never ties with an older one (relays break ties by
@@ -1907,6 +1930,10 @@ a proxy or decline the transfer. The relay sees nothing new.</p>
     human channel.</li>
 <li>Discovery topics derive from contact points: a listener learns only that
     someone who holds the address is asking — never identity, never content.</li>
+<li>A card is published on its agent ID's topic (§4.4) only when it is
+    published on its address topics, so the ID topic exposes nothing the
+    public pointer does not already; without the pointer the card is on no
+    relay.</li>
 <li>Directories see neither queries nor matches (OPRF); <em>suggest friends</em>
     is on by default and switchable off; <em>list me</em> is opt-in per directory.</li>
 <li>A topic probe (§4.4) is cleartext on the carrier: its greeting and the

@@ -26,7 +26,7 @@ import {
   MEETING_CAPABILITIES,
   verifyContactRequest,
 } from './contact.js';
-import { type Binding, dtopic, normalizeAddresses, topicForHint } from './discovery.js';
+import { type Binding, canonAgentId, dtopic, idtopic, normalizeAddresses, topicForHint } from './discovery.js';
 import { b64decode, b64encode, parseTimestamp } from './encoding.js';
 import {
   Channels,
@@ -317,28 +317,41 @@ export class Agent extends EventEmitter<AgentEvents> {
    * current card goes there too, so a lookup for them finds a newer card that
    * no longer claims them (NOTES 63). `extraRelays` get it too besides ours
    * (a relay just dropped by `setRelays`, so it serves the newer card). Returns
-   * the topics published on.
+   * the topics published on: the address topics, then our agent ID's topic
+   * (`idtopic`, NOTES 83), where a requester holding only our ID finds it.
    */
   async publishPointers(alsoOn: DiscoveryAddress[] = [], extraRelays: string[] = []): Promise<string[]> {
-    if (!this.card.discovery?.public_pointer || !this.card.policy.public) return [];
-    const topics = [...new Set([...this.card.discovery.addresses, ...alsoOn].map(dtopic))];
+    const topics = this.pointerTopics(alsoOn);
+    if (topics.length === 0) return [];
     const createdAt = Math.floor((parseTimestamp(this.card.created) ?? 0) / 1000);
     for (const topic of topics) await this.transport.publishTopic(topic, this.card, extraRelays, { replaceable: true, createdAt });
     return topics;
   }
 
   /**
-   * Mirror our card for discovery (NOTES 81): on each of our address topics,
-   * to our relays and then to `opts.relays`, one relay at a time (see
-   * `NostrTransport.mirrorTopics`). Public pointer only, like
+   * Mirror our card for discovery (NOTES 81): on each of our address topics
+   * and our agent ID's topic (NOTES 83), to our relays and then to
+   * `opts.relays`, one relay at a time (see `NostrTransport.mirrorTopics`).
+   * Public pointer only, like
    * `publishPointers`. Throws if the transport cannot mirror.
    */
   async mirrorPointers(opts: MirrorOptions): Promise<MirrorReport> {
     if (!this.card.discovery?.public_pointer || !this.card.policy.public) throw new Error('public pointer is off for this agent');
     if (!this.transport.mirrorTopics) throw new Error('this transport cannot mirror cards');
     const createdAt = Math.floor((parseTimestamp(this.card.created) ?? 0) / 1000);
-    const topics = [...new Set(this.card.discovery.addresses.map(dtopic))];
-    return this.transport.mirrorTopics(topics.map((topic) => ({ topic, doc: this.card, createdAt })), opts);
+    return this.transport.mirrorTopics(this.pointerTopics().map((topic) => ({ topic, doc: this.card, createdAt })), opts);
+  }
+
+  /**
+   * Where the public card goes (public pointer on, else nothing): the topic of
+   * each listed address and of each of `alsoOn`, then the agent ID's topic.
+   * The ID topic follows the same opt-in as the address topics: without the
+   * public pointer the card (and the addresses it lists) is on no relay at
+   * all, and publishing it by ID would put it there (NOTES 83).
+   */
+  private pointerTopics(alsoOn: DiscoveryAddress[] = []): string[] {
+    if (!this.card.discovery?.public_pointer || !this.card.policy.public) return [];
+    return [...new Set([...[...this.card.discovery.addresses, ...alsoOn].map(dtopic), idtopic(this.id)])];
   }
 
   /**
@@ -358,6 +371,36 @@ export class Agent extends EventEmitter<AgentEvents> {
       newest.set(check.card.id, had ? newerCard(had, check.card) : check.card);
     }
     return [...newest.values()].filter((c) => c.discovery?.addresses.some((a) => topicForHint(a.value) === topic));
+  }
+
+  /**
+   * Fetch an agent's public card by its agent ID (NOTES 83): from the ID's
+   * topic on our relays and the discovery mirrors. Only a card that verifies
+   * and whose `id` is the requested ID counts (anyone can post on any topic),
+   * and of those the newest. Null when no relay serves one, and for our own
+   * ID. Throws on a malformed ID. The card's address claims prove nothing.
+   */
+  async lookupById(agentId: string): Promise<AddressCard | null> {
+    const id = canonAgentId(agentId);
+    if (id === this.id) return null;
+    let newest: AddressCard | null = null;
+    for (const d of await this.transport.fetchTopic(idtopic(id))) {
+      const check = verifyCard(d);
+      if (!check.ok || check.card.id !== id) continue;
+      newest = newest ? newerCard(newest, check.card) : check.card;
+    }
+    return newest;
+  }
+
+  /** Whether our relays serve our current card on our agent ID's topic (the read-back after publishing, like ownCardOn). */
+  async ownCardById(): Promise<boolean> {
+    let newest: AddressCard | undefined;
+    for (const d of await this.transport.fetchTopic(idtopic(this.id), undefined, { mirrors: false })) {
+      const check = verifyCard(d);
+      if (!check.ok || check.card.id !== this.id) continue;
+      newest = newest ? newerCard(newest, check.card) : check.card;
+    }
+    return !!newest && newest.created === this.card.created && newest.sig === this.card.sig;
   }
 
   /**

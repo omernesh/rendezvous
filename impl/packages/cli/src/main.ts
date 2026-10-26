@@ -85,14 +85,14 @@ const COMMANDS: Record<string, Command> = {
     run: cmd.relaysRemove,
   },
   lookup: {
-    usage: 'rdv lookup <address>',
-    summary: 'Fetch public-pointer cards for an address',
+    usage: 'rdv lookup <address|agent-id>',
+    summary: 'Fetch public-pointer cards for an address, or the card of an agent ID (rdv1:…)',
     args: 1,
     run: cmd.lookup,
   },
   'contact request': {
     usage: 'rdv contact request <email|card-file|agent-id> [--greeting "…"] [--in-person] [--label john@doe.com]',
-    summary: 'Topic probe by email, or direct by card (--in-person: the card came from a QR/in person)',
+    summary: 'Topic probe by email, or direct by card; an agent ID whose card is not known yet is fetched from the relays (--in-person: the card came from a QR/in person)',
     args: 1,
     options: { greeting: { type: 'string' }, 'in-person': { type: 'boolean' }, label: { type: 'string' } },
     run: cmd.contactRequest,

@@ -26,7 +26,7 @@ inbound loop), so `rdv` and `rdv-mcp` share profiles.
 | `identity` | §4.1–4.2 | Ed25519 agent keys, `rdv1:` IDs, fingerprints |
 | `sign` | — | Signed JSON documents (canonical JSON + Ed25519) |
 | `card` | §4.3 | Create and verify address cards |
-| `discovery` | §4.4 | `dtopic()`, address canonicalization, binding levels |
+| `discovery` | §4.4 | `dtopic()`, `idtopic()` (the agent ID's topic, NOTES 83), address and agent-ID canonicalization, binding levels |
 | `contact` | §5 | Contact request / grant / revoke, and the contact book (policy, replay, rate limits) |
 | `envelope` | §6.4, §7 | Encrypted, signed envelopes; `seq`/`prev` ordering with gap detection |
 | `files` | §7.7 | File references (`FilePart` + files extension): strict validation, `encryptFile`, `verifyAndDecrypt`, inline parts |
@@ -151,7 +151,7 @@ State lives in a directory: `--home <dir>`, else `$RDV_HOME`, else
 | `config.json` | profile, relays (listening), `mirror_relays` (discovery mirrors, once changed; absent: the default set for an all-`wss://` agent, none otherwise), addresses (public ones are on the card; `private: true` ones are kept here only), policy |
 | `relays.json` | per-relay diagnostics and cooldowns (last OK, last error), written after each publish and read by `rdv whoami` / `rdv_status` |
 | `inbox.jsonl` | received payloads, one JSON object per line |
-| `cards.json` | cards found by `rdv lookup`, so `contact request <agent-id>` can use them |
+| `cards.json` | cards found by `rdv lookup` or fetched by agent ID, so `contact request <agent-id>` can use them |
 | `negotiations.json` | dinner negotiations (the a2a engine state) |
 | `tasks.json` | general tasks (the tasks/v1 engine state) and, per task, the draft waiting for your release |
 | `audit.jsonl` | each task gate passed: by the grant (`auto`, `notify`) or by you (bounded to its last 1000 lines) |
@@ -179,8 +179,8 @@ State lives in a directory: `--home <dir>`, else `$RDV_HOME`, else
 | `rdv relays add <wss://…> [--mirror]` | Listen on another relay (at most 8): re-signs the card with it, republishes it if the public pointer is on, and a running `listen` / `rdv-mcp` subscribes there within a second. `wss://` only; `ws://` only for a relay on this machine. `--mirror`: add a discovery mirror instead (config only) |
 | `rdv relays remove <wss://…> [--mirror]` | Stop listening on a relay (never the last one): re-signs and republishes the card, there too, so it serves the newer card. The new card is sent to every contact (`rdv/card-update`, NOTES 82); one that is offline or on older software keeps the old card, so it may still send to the removed relay. `--mirror`: remove a discovery mirror |
 | `rdv card publish [--mirror]` | Publish public pointers (if enabled at init), and send the card to contacts that do not hold it yet. `--mirror`: to our relays and then each discovery mirror, one relay at a time and paced, one try each, then a read-back; one line per relay (`accepted` / `rejected` with the relay's reason / `timeout` / `skipped` when cooling down, and `served`) and a summary (NOTES 81) |
-| `rdv lookup john@doe.com` | Fetch public-pointer cards for an address, from our relays and the discovery mirrors |
-| `rdv contact request <email\|card-file\|agent-id> [--greeting "…"] [--in-person] [--label john@doe.com]` | Topic probe by email, or direct by card. `--in-person` records the `in-person` binding for a card you got face to face. `--label` is your local name for them (a probe is labeled with the address) |
+| `rdv lookup john@doe.com` | Fetch public-pointer cards for an address, from our relays and the discovery mirrors; `rdv lookup rdv1:…` fetches the card of an agent ID (NOTES 83) |
+| `rdv contact request <email\|card-file\|agent-id> [--greeting "…"] [--in-person] [--label john@doe.com]` | Topic probe by email, or direct by card. An agent ID alone works: a card not known yet is fetched by ID from the relays and mirrors (the friend's agent must have the public pointer on). `--in-person` records the `in-person` binding for a card you got face to face. `--label` is your local name for them (a probe is labeled with the address) |
 | `rdv contact pending` | Pending inbound requests with binding, fingerprint, greeting; answers to your topic probes awaiting confirmation |
 | `rdv contact grant <request-id> [--tier friend] [--scope-file s.json] [--label john@doe.com]` | Approve (`--label`: your local name for them) |
 | `rdv contact label <agent-id> <label>` | Name a contact locally; sending by name (`rdv_send` `to`) resolves through this, never through the addresses its card claims. Yours to run: an assistant may only suggest a label, which you approve with the contact (NOTES 62) |

@@ -73,21 +73,21 @@ describe('rdv relays', () => {
 
     const added = (await rdv(['relays', 'add', two.url], home)).lines[0];
     expect(added).toMatchObject({ event: 'relay-added', change: 'added', set: 'listen', url: two.url, relays: [one.url, two.url] });
-    expect(added.published).toHaveLength(1);
+    expect(added.published).toHaveLength(2); // the address and the agent ID (NOTES 83)
     const card = json(home, 'agent.json').card;
     expect(verifyCard(card).ok).toBe(true);
     expect(relaysOf(card)).toEqual([one.url, two.url]);
     expect(Date.parse(card.created)).toBeGreaterThan(Date.parse(before.created));
     expect(json(home, 'config.json').relays).toEqual([one.url, two.url]);
-    expect(cardsOn(two)).toHaveLength(1);
+    expect(cardsOn(two)).toHaveLength(2); // on the address topic and the agent ID's (NOTES 83)
 
     const removed = (await rdv(['relays', 'remove', one.url], home)).lines[0];
     expect(removed).toMatchObject({ event: 'relay-removed', relays: [two.url] });
     expect(removed.warning).toContain('contacts keep the card');
     // The dropped relay got the newer card too, so a lookup there no longer finds one that lists it.
     const onOne = cardsOn(one);
-    expect(onOne).toHaveLength(1);
-    expect(relaysOf(JSON.parse(onOne[0].content))).toEqual([two.url]);
+    expect(onOne).toHaveLength(2);
+    for (const e of onOne) expect(relaysOf(JSON.parse(e.content))).toEqual([two.url]);
     expect(relaysOf(json(home, 'agent.json').card)).toEqual([two.url]);
   });
 

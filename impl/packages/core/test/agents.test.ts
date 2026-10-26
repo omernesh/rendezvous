@@ -8,6 +8,7 @@ import {
   createContactRequest,
   createReverseGrant,
   dtopic,
+  idtopic,
   type Envelope,
   envelopeHash,
   generateKey,
@@ -206,12 +207,12 @@ describe('two agents over a Nostr relay', () => {
       { type: 'email', value: 'john@doe.com' },
       { type: 'email', value: 'john@work.doe.com' },
     ]);
-    expect(await john.publishPointers()).toHaveLength(2);
+    expect(await john.publishPointers()).toHaveLength(3); // two addresses and the agent ID (NOTES 83)
     expect((await omer.lookup('john@work.doe.com')).map((c) => c.id)).toEqual([john.id]);
     const old = (await omer.lookup('john@work.doe.com'))[0];
 
     const { removed } = john.setAddresses([{ type: 'email', value: 'john@doe.com' }]);
-    expect(await john.publishPointers(removed)).toEqual([dtopic({ type: 'email', value: 'john@doe.com' }), dtopic({ type: 'email', value: 'john@work.doe.com' })]);
+    expect(await john.publishPointers(removed)).toEqual([dtopic({ type: 'email', value: 'john@doe.com' }), dtopic({ type: 'email', value: 'john@work.doe.com' }), idtopic(john.id)]);
     expect(await omer.lookup('john@work.doe.com')).toEqual([]);
     expect((await omer.lookup('john@doe.com')).map((c) => c.created)).toEqual([john.card.created]);
     // One card event per topic on the relay (replaceable), not one per version.

@@ -53,6 +53,7 @@ import {
 import {
   Agent,
   b64decode,
+  type AddressCard,
   type AgentState,
   type Contact,
   DEFAULT_RELAYS,
@@ -167,6 +168,10 @@ import {
   relayHealth,
   relayTransport,
   requestContactTo,
+  agentIdArg,
+  fetchCardById,
+  looksLikeAgentId,
+  notFoundById,
   SWEEP_MS,
   TIERS,
   tryLongLock,
@@ -427,6 +432,16 @@ function relayFailure(err: RelayPublishError): CallToolResult {
 }
 
 const isAddress = (s: string) => s.includes('@') || s.startsWith('+');
+
+/** A discovered card as the model sees it: our own strict shapes, peer-chosen values quarantined (claimed addresses, relays). */
+function cardSummary(c: AddressCard) {
+  return {
+    agent_id: safe(c.id),
+    fingerprint: safe(fingerprint(c.id)),
+    claimed_addresses: (c.discovery?.addresses ?? []).map((x) => asAddress(x.value)),
+    relays: c.rendezvous.flatMap((h) => (h.type === 'nostr' ? [relayUrl(h.relay)] : [])),
+  };
+}
 
 /**
  * Calendar paths come from the model, so errors about them must not echo the
@@ -1160,6 +1175,15 @@ export class RdvMcpServer {
     return addresses.map((a, i) => ({ address: safe(a), served: served[i] === true }));
   }
 
+  /** Read our own card back from the relays by our agent ID's topic (Agent.ownCardById), retrying like ownCardOnRelays. */
+  private async ownCardByIdOnRelays(tries = 5): Promise<boolean> {
+    for (let i = 0; i < tries; i++) {
+      if (await this.withAgent((agent) => agent.ownCardById())) return true;
+      if (i < tries - 1) await new Promise((r) => setTimeout(r, 500));
+    }
+    return false;
+  }
+
   private supportsElicitation(): boolean {
     const e = this.mcp.server.getClientCapabilities()?.elicitation as Record<string, unknown> | undefined;
     return !!e && (e.form !== undefined || e.url === undefined);
@@ -1385,8 +1409,8 @@ export class RdvMcpServer {
 
     this.tool(
       'rdv_publish_card',
-      'Publish this agent\'s card on the discovery topics of its addresses (only if public_pointer was set at init). ' +
-        'Then reads it back from the relays: on_relays says, per public address, whether the relays now serve this card (rdv_discover never lists your own card). ' +
+      'Publish this agent\'s card on the discovery topics of its addresses and of its agent ID (only if public_pointer was set at init), so others find it by address or by the agent ID alone. ' +
+        'Then reads it back from the relays: on_relays says, per public address, whether the relays now serve this card (rdv_discover never lists your own card); by_agent_id_on_relays says the same for the agent ID. ' +
         'mirror: true also sends it to the discovery mirrors (rdv_relays), one relay at a time with a pause between them (this takes a while), ' +
         'and returns per relay accepted / rejected (with the relay\'s reason) / timeout / skipped, and whether it serves the card back.',
       {
@@ -1426,6 +1450,8 @@ export class RdvMcpServer {
           published: true,
           topics,
           on_relays: await this.ownCardOnRelays(addresses),
+          // Under the agent ID too (NOTES 83): what a friend who has only the ID fetches.
+          by_agent_id_on_relays: await this.ownCardByIdOnRelays(),
           ...(sent.sent.length || sent.failed.length ? { sent_to_contacts: sent.sent.length, send_failed: sent.failed.length } : {}),
         };
       },
@@ -1433,9 +1459,25 @@ export class RdvMcpServer {
 
     this.tool(
       'rdv_discover',
-      'Look up public cards for an email address or phone number. A card only *claims* its addresses; the owner must still approve contact.',
-      { address: z.string().max(320) },
+      'Look up public cards for an email address or phone number, or the public card of an agent ID (rdv1:…). A card only *claims* its addresses; the owner must still approve contact.',
+      { address: z.string().max(320).describe('Email, +phone, or agent ID (rdv1:…)') },
       async ({ address }) => {
+        if (looksLikeAgentId(address)) {
+          const id = agentIdArg(address);
+          const card = await this.withAgent((agent) => {
+            if (id === agent.id) throw new ToolError('that agent ID is your own: rdv_status shows your card');
+            return fetchCardById(home, agent, id);
+          });
+          if (!card) throw new ToolError(notFoundById(id));
+          return {
+            found: 1,
+            cards: [cardSummary(card)],
+            note:
+              'Found by agent ID: the card is signed by that ID, so this is the agent the ID names; its claimed addresses prove nothing. ' +
+              'Check with your user that the ID came from the person they mean, show them the fingerprint, then rdv_request_contact with the agent_id. ' +
+              'A contact made by agent_id gets no local_label: send to it by agent_id, or your user names it in their own terminal.',
+          };
+        }
         let ours = false;
         const cards = await this.withAgent(async (agent) => {
           const topic = topicForHint(address);
@@ -1454,12 +1496,7 @@ export class RdvMcpServer {
         return {
           ...own,
           found: cards.length,
-          cards: cards.map((c) => ({
-            agent_id: safe(c.id),
-            fingerprint: safe(fingerprint(c.id)),
-            claimed_addresses: (c.discovery?.addresses ?? []).map((x) => asAddress(x.value)),
-            relays: c.rendezvous.flatMap((h) => (h.type === 'nostr' ? [relayUrl(h.relay)] : [])),
-          })),
+          cards: cards.map(cardSummary),
           note: cards.length
             ? 'A card only claims its addresses: anyone can publish one for any address, so this is not proof of who it is. ' +
               (cards.length > 1 ? 'There is more than one card: ask your user which fingerprint is theirs. ' : 'Show your user the fingerprint. ') +
@@ -1473,10 +1510,11 @@ export class RdvMcpServer {
 
     this.tool(
       'rdv_request_contact',
-      'Ask another agent for contact: by email/phone (a discovery probe their agent hears if it listens) or by agent_id from rdv_discover. ' +
-        'Their human decides; a "contact" event appears in rdv_inbox when they approve.',
+      'Ask another agent for contact: by email/phone (a discovery probe their agent hears if it listens) or by agent ID (rdv1:…), ' +
+        'from rdv_discover or pasted by your user; a card not known yet is fetched by that ID from the relays. ' +
+        'Show your user the fingerprint first. Their human decides; a "contact" event appears in rdv_inbox when they approve.',
       {
-        target: z.string().max(320).describe('Email, +phone, or agent ID (rdv1:…) from rdv_discover'),
+        target: z.string().max(320).describe('Email, +phone, or agent ID (rdv1:…), from rdv_discover or pasted by your user'),
         greeting: z.string().max(280).optional().describe('Short note shown to the other human'),
         label: z
           .string()
@@ -1502,7 +1540,9 @@ export class RdvMcpServer {
         return {
           request_id: r.id,
           to: safe(r.to),
+          ...(r.via === 'card' ? { fingerprint: safe(fingerprint(r.to)) } : {}),
           via: r.via === 'topic' ? 'discovery probe' : 'direct to card',
+          ...(r.fetched ? { card_source: 'fetched by agent ID from the relays' } : {}),
           binding: r.binding,
           local_label: r.label === undefined ? null : safe(r.label),
         };

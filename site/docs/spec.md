@@ -46,7 +46,9 @@
   too. Amended: an agent's addresses change after setup; a changed card is
   re-signed with a later `created`, a requester keeps only an agent's newest
   card, and a public-pointer card is a replaceable event, so a removed address
-  stops finding the agent (§4.3, §4.4, §6.2).
+  stops finding the agent (§4.3, §4.4, §6.2). Amended: a public card is also
+  published on the topic of its agent ID (`idtopic`), so a pasted ID alone
+  finds it (§4.4, §6.2).
 - **Consent, §5:** the grant carries the grantor's card (§5.3); who may answer
   a request; document IDs are UUIDs; grant direction and `max_frequency`
   format; scope defaults. New §5.5 (consent stays with the human) and §5.6
@@ -327,6 +329,27 @@ fallback and remains the anti-spoofing trust anchor. In order of availability:
      and on the topic of each address it removed, so the newest card
      supersedes the old one there and a lookup for a removed address finds a
      card that no longer claims it (§4.3).
+   - **By agent ID** (**spec change**, issue #62). An agent that publishes
+     a public pointer also publishes the same card, as the same replaceable
+     event, on the topic of its own agent ID, so a requester who holds only
+     the ID (pasted from a message, read off a screen) can fetch the card:
+
+     ```
+     idtopic(id) = base32(SHA-256("rdv1/id:" ‖ id))[0:26]
+     ```
+
+     `id` is the agent ID in its canonical form (§4.2: `rdv1:` and lowercase
+     base32). The prefix keeps the ID topics apart from the address topics.
+     It is published wherever and whenever the card is published on its
+     address topics, and under the same opt-in (`public_pointer` and
+     `policy.public`): an ID reveals nothing new, but the card on the topic
+     lists the owner's addresses, so publishing it by ID without the pointer
+     would publish what the owner kept off the relays. A requester accepts
+     only a document that verifies as a card (§4.3) and whose `id` equals
+     the requested ID, and uses the newest of those by `created`. Nothing
+     else on the card is trusted: its addresses are claims (§4.4 bindings),
+     and the binding is `claimed`, as for any card found on a topic. The
+     request then goes to the card as usual (§5.1).
 2. **DNS TXT** — `_agent.<domain> TXT "rdv=rdv1:…"` for owners with domains.
 3. **Platform profile fields** — a `rdv1:…` line in an X bio / LinkedIn
    about / GitHub profile. The platform account vouchsafes the binding.
@@ -990,7 +1013,9 @@ where hole-punching fails (TURN relays carry the ciphertext).
   hash (§4.6). Discovery topics ride the same kind: `t` holds the `dtopic`
   (§4.4) and `d` is the hex SHA-256 of the event content, except for a
   public-pointer card, whose `d` is `"rdv1/card:" ‖ dtopic`: one addressable
-  event per agent and topic, so relays keep only the newest card. Its
+  event per agent and topic, so relays keep only the newest card. The card
+  on the agent's ID topic (§4.4) is the same event with `idtopic` in place of
+  `dtopic`, in both the `t` tag and the `d` tag. Its
   `created_at` is no earlier than the card's `created` (in seconds), which a
   change moves past both the previous card and the current time by at least a
   second, so a newer card never ties with an older one (relays break ties by
@@ -1708,6 +1733,10 @@ a proxy or decline the transfer. The relay sees nothing new.
   human channel.
 - Discovery topics derive from contact points: a listener learns only that
   someone who holds the address is asking — never identity, never content.
+- A card is published on its agent ID's topic (§4.4) only when it is
+  published on its address topics, so the ID topic exposes nothing the
+  public pointer does not already; without the pointer the card is on no
+  relay.
 - Directories see neither queries nor matches (OPRF); *suggest friends*
   is on by default and switchable off; *list me* is opt-in per directory.
 - A topic probe (§4.4) is cleartext on the carrier: its greeting and the
