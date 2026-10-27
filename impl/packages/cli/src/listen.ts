@@ -20,7 +20,6 @@ import {
   defaultTier,
   dtopic,
   type Envelope,
-  type EnvelopeMeta,
   openEnvelope,
   type Tier,
   TIERS,
@@ -31,7 +30,7 @@ import {
   verifyContactRequest,
 } from '@rendezvous/core';
 import { cardSyncText, cardUpdateText, cardUpdateView, contactRestoredText, contactRestoredView, restoredSyncText, sendRestoredNotices, syncContactCards } from './cardupdate.js';
-import { confirmedText, confirmedView, DeliveryClock, receiptTiming, resentText, resentView, unconfirmedText, unconfirmedView } from './delivery.js';
+import { confirmedText, confirmedView, DeliveryClock, receiptsOff, receiptTiming, resentText, resentView, unconfirmedText, unconfirmedView } from './delivery.js';
 import { appendEvents } from './events.js';
 import { LockTimeoutError, tryLongLock } from './fsutil.js';
 import { type AuditEntry, CliError, type Home, type InboxEntry } from './home.js';
@@ -171,7 +170,7 @@ export function watchRelays(home: Home, initial: RelaySets, onChange: (r: RelayS
 
 /** Passes sends through to the real transport; inbound items are fed in by hand. */
 export class FeedTransport implements Transport {
-  private envHandler?: (e: unknown, meta?: EnvelopeMeta) => void;
+  private envHandler?: (e: unknown) => void;
   private topicHandler?: (doc: unknown, topic: string) => void;
   private reconnectHandler?: (relay: string) => void;
 
@@ -193,7 +192,7 @@ export class FeedTransport implements Transport {
   setRelays(relays: readonly string[], mirrorRelays?: readonly string[]) {
     this.real.setRelays?.(relays, mirrorRelays);
   }
-  onEnvelopes(_me: string, handler: (e: unknown, meta?: EnvelopeMeta) => void) {
+  onEnvelopes(_me: string, handler: (e: unknown) => void) {
     this.envHandler = handler;
     return () => (this.envHandler = undefined);
   }
@@ -205,8 +204,8 @@ export class FeedTransport implements Transport {
     this.topicHandler = handler;
     return () => (this.topicHandler = undefined);
   }
-  feedEnvelope(raw: unknown, meta?: EnvelopeMeta) {
-    this.envHandler?.(raw, meta);
+  feedEnvelope(raw: unknown) {
+    this.envHandler?.(raw);
   }
   /** A listening relay came back (NOTES 98): the agent republishes what contacts have not confirmed. */
   feedReconnect(relay = '') {
@@ -308,6 +307,7 @@ async function handleLocked(
       };
       agent.beforeSend = save;
       agent.receiptTiming = receiptTiming();
+      agent.sendReceipts = !receiptsOff(home);
       agent.on('request', (p) => {
         events.push({ obj: { event: 'request', ...requestView(p) }, human: `request ${requestText(p)}` });
         // Demo only: a human should normally decide (`rdv contact grant`).
@@ -645,8 +645,8 @@ export async function listen(home: Home, out: Output, opts: ListenOptions): Prom
   // A listening relay is back: one reconnect item, however many relays return together.
   let reconnectQueued = false;
   const unsubs = [
-    real.onEnvelopes(boot.id, (raw, meta) => {
-      if (!isJunk(boot.key, { envelope: raw })) enqueue((t) => t.feedEnvelope(raw, meta));
+    real.onEnvelopes(boot.id, (raw) => {
+      if (!isJunk(boot.key, { envelope: raw })) enqueue((t) => t.feedEnvelope(raw));
     }),
     real.onReconnect?.(() => {
       if (reconnectQueued) return;

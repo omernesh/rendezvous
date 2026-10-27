@@ -360,7 +360,7 @@ npm run rdv -- --help                     # or: node packages/cli/dist/src/bin.j
 </tr>
 <tr>
 <td><code>config.json</code></td>
-<td>profile, relays (listening), <code>mirror_relays</code> (discovery mirrors, once changed; absent: the default set for an all-<code>wss://</code> agent, none otherwise), addresses (public ones are on the card; <code>private: true</code> ones are kept here only), policy</td>
+<td>profile, relays (listening), <code>mirror_relays</code> (discovery mirrors, once changed; absent: the default set for an all-<code>wss://</code> agent, none otherwise), addresses (public ones are on the card; <code>private: true</code> ones are kept here only), policy, <code>receipts</code> (<code>false</code>: send no delivery receipts and take the receipts capability off the card at the next <code>rdv listen</code>; absent: on, NOTES 98)</td>
 </tr>
 <tr>
 <td><code>relays.json</code></td>

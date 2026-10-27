@@ -1388,8 +1388,8 @@ export class RdvMcpServer {
     let reconnectQueued = false;
     this.unsubs = [
       // Junk (unopenable envelopes, invalid topic docs) never takes the lock or reaches the log (M1).
-      real.onEnvelopes(boot.id, (raw, meta) => {
-        if (!isJunk(boot.key, { envelope: raw })) this.enqueue((t) => t.feedEnvelope(raw, meta));
+      real.onEnvelopes(boot.id, (raw) => {
+        if (!isJunk(boot.key, { envelope: raw })) this.enqueue((t) => t.feedEnvelope(raw));
       }),
       real.onReconnect?.(() => {
         if (reconnectQueued) return;
@@ -3460,6 +3460,7 @@ export class RdvMcpServer {
       // Standing decisions that came back with the backup (security review): shown, so the user can check them.
       standing_approvals_restored: r.auto_approve.map((p) => ({ agent_id: safe(p), fingerprint: safe(fingerprint(p)) })),
       owner_passphrase_set: r.owner_passphrase_set === null ? null : safe(r.owner_passphrase_set),
+      unconfirmed_before_backup: r.unconfirmed_before_backup,
       next_step:
         'Tell your user their agent is back. Its contacts are being told it was restored (rdv_status "restore" shows who has confirmed; a "restore_confirmed" event arrives for each). ' +
         'Open tasks, dinners and pending requests were not in the backup. ' +

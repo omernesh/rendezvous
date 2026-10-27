@@ -24,9 +24,18 @@ export function receiptTiming(env: NodeJS.ProcessEnv = process.env): ReceiptTimi
   const retry = num(env.RDV_RECEIPT_RETRY_MS);
   return {
     ...RECEIPT_TIMING,
-    ...(delay ? { ackDelayMs: delay, ackMinIntervalMs: delay * 2 } : {}),
+    ...(delay ? { ackDelayMs: delay, ackMinIntervalMs: delay * 2, ackJitterMs: 0 } : {}),
     ...(retry ? { retryAfterMs: retry } : {}),
   };
+}
+
+/** The owner turned receipts off (config.json `"receipts": false`). An unreadable config leaves them on. */
+export function receiptsOff(home: Home): boolean {
+  try {
+    return home.readConfig().receipts === false;
+  } catch {
+    return false;
+  }
 }
 
 /**

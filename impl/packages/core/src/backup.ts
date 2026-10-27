@@ -249,5 +249,14 @@ export function restoredAgentState(state: AgentState, opts: { backupCreated: str
     delete c.resync;
   }
   s.restored = { at: now.toISOString(), backup_created: opts.backupCreated };
+  // Receipts (NOTES 98): what was waiting for one cannot be resent (the outbox is not backed up), and in the new
+  // epoch the peer's first receipt would cover it all as "delivered" (review of #112). Dropped; the owner is told
+  // how many (pendingInBackup) once, in the restore's result.
+  delete s.delivery;
   return s;
+}
+
+/** Messages in an agent state still waiting for a contact's receipt: what a restore from it cannot confirm. */
+export function pendingInBackup(state: AgentState): number {
+  return Object.values(state.delivery ?? {}).reduce((n, d) => n + (Array.isArray(d?.pending) ? d.pending.length : 0), 0);
 }

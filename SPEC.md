@@ -1167,7 +1167,7 @@ where hole-punching fails (TURN relays carry the ciphertext).
   cannot read the payload.
 - `seq`/`prev` give ordering and gap detection (§7). The first envelope in a
   direction has `seq: 1` and `prev: null`; later ones carry the hash (§4.6) of
-  the previous envelope in the same direction. `seq` is a positive integer.
+  the previous envelope in the same direction. `seq` is a positive integer; `0` (with `prev: null`) marks an envelope outside every chain, which only a receipt may be (§6.4.2).
 - **Forks and rollbacks.** An envelope identical to one already accepted is a
   relay replay and is dropped silently. A *different* envelope that reuses an
   accepted `seq`, or whose `prev` does not match the receiver's chain head,
@@ -1280,62 +1280,90 @@ change**, issue #104).
   `capabilities` (§4.3). An agent sends receipts only to a contact whose card
   lists it, and waits for receipts only from such a contact. A peer that does
   not list it gets no receipt (an older agent would treat an unknown payload
-  as a message) and is never waited for.
-- **The receipt.** Inside an ordinary envelope (encrypted and signed like
-  any other, in the receiver's own chain to the sender):
+  as a message) and is never waited for. An owner may turn receipts off; the
+  agent then sends none and takes the URI off its card (a changed card goes
+  to contacts, §4.3), so they stop waiting.
+- **The receipt.** An envelope outside every chain: `seq` is `0` and `prev`
+  is `null` (§6.4 otherwise needs `seq` >= 1), encrypted and signed like any
+  other envelope, and its payload is exactly
 
   ```json
   { "type": "rdv/ack", "v": 1, "seq": 42 }
   ```
 
   meaning "I hold every envelope of your chain to me up to `seq`, without a
-  gap". One receipt covers everything below it, so receipts batch: the
-  receiver sends one after a quiet period (2 s in the reference
-  implementation) and at most one per contact per interval (10 s), whatever
-  the traffic. An `rdv/ack` is never acknowledged itself (two agents would
-  answer each other forever). Envelopes cannot carry a receipt in their
-  header: the header is the associated data, so a new field would break
-  older receivers; receipts are therefore their own small envelopes.
+  gap". Nothing but a receipt may have `seq` 0: a receiver drops any other
+  payload there, and a receipt inside a chain counts for nothing. A receipt
+  takes no `seq`, no outbox slot and no chain state, so however many are
+  sent (or replayed), the chain and its resend buffer are untouched. It is
+  idempotent and only moves forward. One receipt covers everything below it,
+  so receipts batch: the receiver sends one after a quiet period plus a
+  random jitter (2 s plus up to 3 s in the reference implementation) and at
+  most one per contact per interval (10 s), whatever the traffic. A receipt
+  is never acknowledged itself (two agents would answer each other
+  forever). Envelopes cannot carry a receipt in their header: the header is
+  the associated data, so a new field would break older receivers.
 - **Accepting one.** The receiver of a receipt takes it only from a current
   contact (a stranger's is dropped), only with exactly these keys, `v` 1 and
   a positive integer `seq` no greater than the last `seq` it sent that
-  contact, and not on a chain refused after a fork. It moves only forward. A
-  receipt is judged before ordering: it is true whatever waits in a gap. A
+  contact, and not while that contact's chain is refused after a fork. A
   relay cannot forge one (the envelope signature, §6.4) and a replayed one
-  says less, never more.
-- **The sender.** It keeps each envelope of its own (receipts excepted) to a
-  receipt-sending contact until a receipt covers it, and republishes it from
-  the outbox (§7, the same envelope, so the receiver drops a duplicate) after
-  a timeout far inside the `ttl`, with a doubling backoff and capped retries
-  (60 s, then 2, 4 and 8 minutes in the reference implementation). After the
-  last retry's wait (about 31 minutes) without a receipt the sender MUST tell
-  its human the message is **not confirmed** delivered; that is not a
-  failure, since the receiver may simply be offline and the relays keep it
-  for the `ttl`, and a later receipt is shown as "delivered after all". When
-  one of its listening relays comes back after a drop, the sender first
-  reads what the relay stored meanwhile (its catch-up), then republishes
-  everything still unconfirmed and restarts the backoff.
+  says less, never more. A sender counts as delivered only envelopes it
+  tracked itself: one from before (another epoch after a restore, or before
+  receipts) is not known.
+- **The sender.** It keeps each envelope of its own to a receipt-sending
+  contact until a receipt covers it, and republishes it from the outbox (§7,
+  the same envelope, so the receiver drops a duplicate) after a timeout far
+  inside the `ttl`, with a doubling backoff and capped retries (60 s, then
+  2, 4 and 8 minutes in the reference implementation). After the last
+  retry's wait (about 31 minutes) without a receipt the sender MUST tell its
+  human the message is **not confirmed** delivered; that is not a failure,
+  since the receiver may simply be offline and the relays keep it for the
+  `ttl`, and a later receipt is shown as "delivered after all".
+- **Reconnects.** When one of its listening relays comes back after a real
+  outage (a few seconds or more; a blip is none) or after the agent tore
+  down a deaf subscription (below), the sender first reads what the relay
+  stored meanwhile (its catch-up), then republishes what is still
+  unconfirmed and restarts the backoff: at most once per contact per retry
+  interval however often relays come and go, and an envelope already
+  reported as not confirmed on at most as many reconnects as it had retries.
+  The re-join backoff starts over only once a link has stayed up a while, so
+  a relay that accepts a subscription and closes it at once is not re-joined
+  every second.
 - **Lost receipts.** A receiver that gets an envelope it already holds again
-  sends a new receipt when that copy was published after its last receipt
-  (the carrier event's `created_at`): the sender is retrying because the
-  receipt was lost. A relay's replay of the original copy is older and gets
-  none, so restarts do not produce a burst of receipts.
+  sends another receipt: the sender may be retrying because the receipt was
+  lost. Anyone can re-publish an old envelope, so this is capped locally: at
+  most the sender's retries plus one between two new envelopes from that
+  contact, spaced at least half a retry interval apart. Nothing about the
+  copy (such as the carrier event's `created_at`, which its publisher
+  chooses) is trusted for it.
+- **Restores.** A backup restored (§6.4.1) drops what it was waiting for:
+  the outbox is not in the backup, and in the new epoch the contact's first
+  receipt would otherwise cover it all. Its human is told how many messages
+  cannot be confirmed. When a *contact* restores and its notice says it
+  holds our chain only up to `in_seq`, the sender treats only that much as
+  confirmed and waits again for what it resends.
 - **Echo check.** A websocket ping (NOTES 95) proves a socket, not a
   subscription. An agent whose listening relay has delivered nothing on its
-  envelope subscription for a while (5 minutes) publishes an envelope from
-  itself to itself (payload `{"type": "rdv/echo"}`, encrypted and signed as
-  usual) on that relay, as an addressable event with `d` = `"rdv1/echo"`, so
-  the relay keeps only the latest one. If the relay accepts it and does not
+  envelope subscription for a while (5 minutes; only envelopes that open for
+  it count, so a stranger's junk cannot keep it quiet) publishes an envelope
+  from itself to itself (payload `{"type": "rdv/echo"}`, encrypted and
+  signed as usual) on that relay as an **ephemeral** event (kind `20417`,
+  NIP-01: passed to live subscriptions, never stored), and its envelope
+  subscription asks for that kind too. If the relay accepts it and does not
   deliver it back within a timeout (30 s), the subscription is deaf: the
   agent drops the connection, re-joins with its usual look-back, reports the
   relay down and up (as for any drop), and then republishes what contacts
-  have not confirmed. The check is skipped while traffic flows. A relay
-  learns nothing new from it: it already sees the agent's subscription and
-  carrier key, and the echo is addressed to the agent itself.
+  have not confirmed. The check is skipped while traffic flows; a refused
+  echo says nothing and leaves the relay's record alone; a relay that misses
+  two in a row (the second right after a fresh re-join) is taken not to pass
+  ephemeral events and is not checked again by that process. What a relay
+  learns: that the agent is online now, which its open subscription shows
+  anyway. Nothing is stored for others to list.
 - **Traffic analysis.** A receipt shows a relay that an envelope went back
-  shortly after one arrived, which a reply shows too. Batching and the
-  minimum interval keep the rate of receipts below the rate of messages;
-  receipts are not padded or delayed further (§9).
+  shortly after one arrived, which a reply shows too. Batching, the jitter
+  and the minimum interval keep the rate of receipts below the rate of
+  messages; receipts are not padded (§9).
 
 ---
 

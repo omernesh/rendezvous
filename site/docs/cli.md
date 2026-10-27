@@ -155,7 +155,7 @@ State lives in a directory: `--home <dir>`, else `$RDV_HOME`, else
 | File | Holds |
 |---|---|
 | `agent.json` | `Agent.toJSON()`, including the secret key (mode 600 where the OS supports it) |
-| `config.json` | profile, relays (listening), `mirror_relays` (discovery mirrors, once changed; absent: the default set for an all-`wss://` agent, none otherwise), addresses (public ones are on the card; `private: true` ones are kept here only), policy |
+| `config.json` | profile, relays (listening), `mirror_relays` (discovery mirrors, once changed; absent: the default set for an all-`wss://` agent, none otherwise), addresses (public ones are on the card; `private: true` ones are kept here only), policy, `receipts` (`false`: send no delivery receipts and take the receipts capability off the card at the next `rdv listen`; absent: on, NOTES 98) |
 | `relays.json` | per-relay diagnostics and cooldowns (last OK, last error), written after each publish and read by `rdv whoami` / `rdv_status` |
 | `inbox.jsonl` | received payloads, one JSON object per line |
 | `cards.json` | cards found by `rdv lookup` or fetched by agent ID, so `contact request <agent-id>` can use them |
