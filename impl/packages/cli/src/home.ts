@@ -281,6 +281,12 @@ export interface AutoApproveEntry {
   since: string;
   scope: string;
   /**
+   * Contact.grantStamp then (issue #94): which of our human's grant changes
+   * it is bound to, so an older file put back after the grant changed and
+   * changed back matches nothing. Absent (set before #94): 0.
+   */
+  stamp?: number;
+  /**
    * The owner passphrase record it was set under (ownerSecretBinding): another
    * passphrase, or none, ends it. `none` (UNBOUND_OWNER, issue #103): set
    * from an approval form while no passphrase was set; it holds only while

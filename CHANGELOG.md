@@ -9,6 +9,11 @@ The format follows Keep a Changelog. One line per change a user can see; PR numb
 ### Fixed
 - The standing-approval demo clip on the site no longer says no tool can turn it on: it now shows the agent opening the approval form where you type your owner passphrase. ([#106](https://github.com/omernesh/rendezvous/issues/106))
 
+## 0.10.1 - 2026-10-27 {#v0-10-1}
+
+### Fixed
+- **Security:** when you give more rights to a contact that is on auto-approve, the approval form (and the confirm phrase in your terminal) now tells you it stays on and that looser limits on what it covers are approved without asking too; and an older copy of the auto-approve file put back after you narrowed a grant and widened it again no longer brings back what the narrowing removed. ([#94](https://github.com/omernesh/rendezvous/issues/94))
+
 ## 0.10.0 - 2026-10-27 {#v0-10-0}
 
 ### Added

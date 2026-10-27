@@ -618,6 +618,27 @@ describe('received grants never widen inbound rights (security review H1/H2)', (
     expect(up.inboundScope?.may_propose_meetings).toBe(true);
   });
 
+  it("each change our human makes to a contact's grant is a new grant stamp; the same grant again, a tier change or a peer's grant is not (issue #94)", () => {
+    const book = new ContactBook();
+    const back = createContactRequest(bob, bobCard, { toHint: mallory.id, greeting: 'hi' });
+    book.trackOutstanding(back, 'claimed', mallory.id);
+    const got = book.receiveGrant(createGrant(mallory, cardFor(mallory), back, { tier: 'friend', scope: {} }), bob.id);
+    const c = got && 'contact' in got ? got.contact : undefined;
+    expect(c?.grantStamp).toBeUndefined();
+    const wide = { may_initiate: true, may_propose_meetings: true };
+    const narrow = { may_initiate: true, may_propose_meetings: false };
+    // Granted for the first time (even the default scope): a change.
+    expect(book.allowInbound(mallory.id, { tier: 'stranger', scope: c!.inboundScope! }).grantStamp).toBe(1);
+    expect(book.allowInbound(mallory.id, { tier: 'friend', scope: wide }).grantStamp).toBe(2);
+    expect(book.allowInbound(mallory.id, { tier: 'family', scope: { ...wide } }).grantStamp).toBe(2);
+    expect(book.allowInbound(mallory.id, { tier: 'friend', scope: narrow }).grantStamp).toBe(3);
+    // Back to the wide scope: same grant ID, since and scope as two changes ago, yet another stamp.
+    const again = book.allowInbound(mallory.id, { tier: 'friend', scope: wide });
+    expect(again).toMatchObject({ grantId: c!.grantId, since: c!.since, grantStamp: 4 });
+    // Local state: it survives a save.
+    expect(new ContactBook(JSON.parse(JSON.stringify(book.state))).contact(mallory.id)?.grantStamp).toBe(4);
+  });
+
   it('a flood of answers fills only its own probe, is counted, and never evicts another probe', () => {
     const book = new ContactBook();
     const flooded = createContactRequest(bob, bobCard, { toHint: 'alice@x.com', greeting: 'hi' });

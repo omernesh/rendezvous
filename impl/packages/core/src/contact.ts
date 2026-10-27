@@ -5,7 +5,7 @@ import { cardUpdateProblem, verifyCard } from './card.js';
 import { BINDING_STRENGTH, type Binding, topicForHint } from './discovery.js';
 import type { AgentKey } from './identity.js';
 import { isAgentId } from './identity.js';
-import { isPast, parseTimestamp } from './encoding.js';
+import { canonicalize, isPast, parseTimestamp } from './encoding.js';
 import { type Signed, signDoc, verifyDoc } from './sign.js';
 
 export type Tier = 'spouse' | 'family' | 'friend' | 'colleague' | 'business' | 'stranger';
@@ -362,6 +362,15 @@ export const DEFAULT_INBOUND_SCOPE: Readonly<GrantScope> = Object.freeze({
   invoke: Object.freeze({}) as Record<string, InvokeLimits>,
 });
 
+/** The same scope, compared canonically (an unencodable one is never the same). */
+function sameScope(a: GrantScope | null, b: GrantScope): boolean {
+  try {
+    return a !== null && canonicalize(a) === canonicalize(b);
+  } catch {
+    return false;
+  }
+}
+
 /** A fresh, mutable copy of DEFAULT_INBOUND_SCOPE. */
 const defaultInbound = (): GrantScope => ({ ...DEFAULT_INBOUND_SCOPE, invoke: {} });
 
@@ -393,6 +402,15 @@ export interface Contact {
   grantId: string;
   expires: string | null;
   since: string;
+  /**
+   * Local only, never sent: how many times our human's own grant
+   * (`allowInbound`) changed what the peer may do towards us under this
+   * founding grant (absent: never). `grantId` and `since` stay the same
+   * across such a change, so standing approvals bound to the grant also bind
+   * to this, and an older copy bound to an earlier change no longer matches
+   * (issue #94).
+   */
+  grantStamp?: number;
 }
 
 export interface PendingRequest {
@@ -807,6 +825,7 @@ export class ContactBook {
     if (!c) throw new Error(`no contact ${peer}`);
     if (!isTier(opts.tier)) throw new Error(`unknown tier ${String(opts.tier)}`);
     const scope = grantScope(opts.scope); // throws on a malformed or self-contradicting invoke
+    if (c.inboundGranted !== true || !sameScope(c.inboundScope, scope)) c.grantStamp = (c.grantStamp ?? 0) + 1;
     c.tier = opts.tier;
     c.inboundScope = scope;
     c.inboundGranted = true;

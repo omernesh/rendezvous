@@ -244,6 +244,7 @@ export {
   autoApprovedCounts,
   type AutoApproveKept,
   autoApproveKeptText,
+  autoApproveGrantNote,
   type AutoApproveShown,
   checkAutoApprove,
   grantKeepingAutoApprove,

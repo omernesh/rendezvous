@@ -2887,7 +2887,12 @@ MAY set `auto_approve: "all"` on that contact, optionally with an expiry
   for what it covered and the new grant still allows; a capability the new
   grant adds is not covered until the owner turns the setting on for it.
   Coverage only shrinks: a capability that a narrowing removed is not
-  covered again when a later grant adds it back.
+  covered again when a later grant adds it back. The setting is bound to
+  each such grant change, so a copy stored before one does not hold again
+  once the grant is changed back. Before the owner approves a grant to a
+  contact on this setting, they are told it stays on and that looser limits
+  on what it covers are then approved without asking too; this is shown to
+  the owner only, never in text the agent's model reads first.
   Re-enabling is a new human decision. A setting whose times cannot be read, that was set in the
   future, or whose integrity cannot be checked approves nothing.
 - **Audit log.** Every action approved this way appends one line to an
@@ -4524,6 +4529,11 @@ The format follows Keep a Changelog. One line per change a user can see; PR numb
 
 ### Fixed
 - The standing-approval demo clip on the site no longer says no tool can turn it on: it now shows the agent opening the approval form where you type your owner passphrase. ([#106](https://github.com/omernesh/rendezvous/issues/106))
+
+## 0.10.1 - 2026-10-27 {#v0-10-1}
+
+### Fixed
+- **Security:** when you give more rights to a contact that is on auto-approve, the approval form (and the confirm phrase in your terminal) now tells you it stays on and that looser limits on what it covers are approved without asking too; and an older copy of the auto-approve file put back after you narrowed a grant and widened it again no longer brings back what the narrowing removed. ([#94](https://github.com/omernesh/rendezvous/issues/94))
 
 ## 0.10.0 - 2026-10-27 {#v0-10-0}
 
