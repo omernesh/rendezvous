@@ -176,6 +176,7 @@
       '<div class="fb"><h4>' + esc(e.title) + '</h4><dl>' + rows + '</dl>' +
       (e.extra ? '<div class="note2">' + e.extra + '</div>' : '') +
       (e.label != null ? '<div class="lbl">Local label: how your assistant finds them</div><div class="inp">' + esc(e.label) + '</div>' : '') +
+      (e.pass ? '<div class="lbl">Your owner passphrase (only the Rendezvous server sees it)</div><div class="inp">' + '•'.repeat(Math.max(0, Math.min(e.pass.n, Math.floor((age - e.pass.t) / 0.09)))) + '&nbsp;</div>' : '') +
       '<div class="chk"><span class="box' + (checked ? ' on' : '') + '">' + (checked ? CHECK_PLAIN : '') + '</span>' + esc(e.chk) + '</div></div>' +
       '<div class="fa"><span class="btn">Decline</span><span class="btn go' + (pressed ? ' press' : '') + '">' + esc(e.btn || 'Submit') + '</span></div></div>');
     scrim.style.opacity = vis.toFixed(3);

@@ -4,6 +4,11 @@ What changed in Rendezvous, newest first. Versions are those of the Claude Code 
 
 The format follows Keep a Changelog. One line per change a user can see; PR numbers link to GitHub.
 
+## Unreleased
+
+### Fixed
+- The standing-approval demo clip on the site no longer says no tool can turn it on: it now shows the agent opening the approval form where you type your owner passphrase. ([#106](https://github.com/omernesh/rendezvous/issues/106))
+
 ## 0.10.0 - 2026-10-27 {#v0-10-0}
 
 ### Added
