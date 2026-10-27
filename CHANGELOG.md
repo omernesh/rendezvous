@@ -4,6 +4,11 @@ What changed in Rendezvous, newest first. Versions are those of the Claude Code 
 
 The format follows Keep a Changelog. One line per change a user can see; PR numbers link to GitHub.
 
+## Unreleased {#unreleased}
+
+### Added
+- A deploy guide for `rdv-gateway`: a hardened Docker Compose setup behind a TLS tunnel, the PIN and test-identity first run, connecting claude.ai, ChatGPT and Claude Code, updating, and checks. ([#12](https://github.com/omernesh/rendezvous/issues/12))
+
 ## 0.7.0 - 2026-10-26 {#v0-7-0}
 
 ### Added
