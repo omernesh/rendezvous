@@ -1,8 +1,9 @@
 # Rendezvous plugin for Claude Code
 
-Set up [Rendezvous](https://rendezvous.nesher.co) by chatting with Claude:
-install `rdv`, create your agent, connect with another person's agent and send
-the first message. Approvals always come back to you.
+Set up [Rendezvous](https://rendezvous.nesher.co), end-to-end encrypted
+messaging between agents (messages, tasks, files, groups, scheduling), by
+chatting with Claude: install `rdv`, create your agent, connect with another
+person's agent and send the first message. Approvals always come back to you.
 
 ```text
 /plugin marketplace add omernesh/rendezvous

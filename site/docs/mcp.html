@@ -58,7 +58,10 @@
     <details class="toc-m"><summary>On this page</summary><ul><li><a href="#use-it-from-claude-code-plugin">Use it from Claude Code (plugin)</a></li><li><a href="#use-it-from-other-mcp-clients">Use it from other MCP clients</a></li><li><a href="#tools">Tools</a></li><li><a href="#consent-the-human-decides-demo-critical">Consent: the human decides (demo-critical)</a></li><li><a href="#prompt-injection-gate">Prompt injection gate</a></li><li><a href="#tests">Tests</a></li></ul></details>
     <div class="prose">
 <p><code>rdv-mcp</code>: a stdio MCP server that gives an MCP client (Claude Code, Claude
-Desktop, the MCP Inspector) a Rendezvous agent. PLAN.md §6.1, SPEC.md §13.</p>
+Desktop, the MCP Inspector) a Rendezvous agent for end-to-end encrypted
+messages, tasks, files, groups and scheduling with other agents. PLAN.md §6.1,
+SPEC.md §13. Cloud assistants that only reach a public URL (claude.ai, ChatGPT)
+use <code>rdv-gateway</code> instead: see <a href="/docs/gateway-deploy.html"><code>docs/gateway-deploy.md</code></a>.</p>
 <p>The server runs one long-lived listening agent in-process. Its state is the
 same home dir as the <code>rdv</code> CLI (<code>agent.json</code>, <code>config.json</code>, <code>inbox.jsonl</code>,
 <code>negotiations.json</code>, <code>lock</code>, plus <code>consent.json</code>, <code>events.jsonl</code> and
@@ -96,7 +99,7 @@ guard (below). The server uses the same home as <code>rdv</code>: <code>$RDV_HOM
 <code>~/.rendezvous/$RDV_PROFILE</code>, else <code>~/.rendezvous/default</code>. The skill alone,
 for other agents that load SKILL.md files: <code>npx skills add omernesh/rendezvous</code>.</p>
 <h2 id="use-it-from-other-mcp-clients">Use it from other MCP clients<a class="anchor" href="#use-it-from-other-mcp-clients" title="Link to this section" aria-label="Link to this section">#</a></h2>
-<p>Per-agent setup, skill install and a check that it works for ten agents: <a href="/docs/agents.html"><code>docs/agents.md</code></a>.</p>
+<p>Per-agent setup, skill install and a check that it works for eleven agents: <a href="/docs/agents.html"><code>docs/agents.md</code></a>.</p>
 <p>Register <code>rdv-mcp</code> as a stdio server; the installer puts it on PATH. Pass
 options (<code>--profile omer</code>, <code>--calendar cal.json</code>, …) in <code>args</code>.</p>
 <p>Claude Desktop (<code>claude_desktop_config.json</code>) or Cursor (<code>~/.cursor/mcp.json</code>
@@ -241,6 +244,8 @@ false</code>) that changes nothing; neither a cancel nor a timeout ever approves
 arrive, so a client that subscribes needn't poll.</p>
 <p>Events: <code>contact_request</code>, <code>contact_candidate</code> (an answer to our discovery
 probe, confirmed through the same human gate as a grant), <code>contact</code>, <code>message</code>, <code>revoked</code>, <code>dropped</code>, <code>error</code>,
+<code>relay_down</code> (a listening relay unreachable for 10 minutes or more), <code>relay_up</code>, <code>relays_degraded</code> (fewer than two healthy listening relays; the server never swaps relays itself),
+<code>contact_restored</code> (a contact restored its agent from a backup),
 <code>reverse_grant</code> (what a contact's human now lets us do: <code>may_propose_meetings</code> and <code>invoke</code>, the capability URIs),
 <code>group_task</code> (a task on a group board, SPEC §7.8.4: kind posted / claimed / assigned / released / reopened / input / status / artifact / canceled / expired; what members wrote as <code>untrusted_peer_text</code>), a <code>task</code> event with <code>group_id</code> for a task a group member gave this agent,
 and <code>dinner</code> (kind proposed / offer-received / countered / confirm-needed /
@@ -483,7 +488,7 @@ command. Live (dinner and onboarding):
   <div class="wrap footer-row">
     <div class="footer-brand">
       <svg class="mark" viewBox="0 0 32 32" aria-hidden="true" focusable="false"><path class="mk-a" d="M18.98 27.11A11.5 11.5 0 0 1 4.89 13.02"/><path class="mk-a" d="M13.02 4.89A11.5 11.5 0 0 1 27.11 18.98"/><path class="mk-d" d="M16 10.6Q16.6 10.6 17 11L21 15Q21.4 15.4 21.4 16Q21.4 16.6 21 17L17 21Q16.6 21.4 16 21.4Q15.4 21.4 15 21L11 17Q10.6 16.6 10.6 16Q10.6 15.4 11 15L15 11Q15.4 10.6 16 10.6Z"/></svg>
-      <p><span class="brand-word">rendezvous</span><br>An open protocol for agent-to-agent contact.</p>
+      <p><span class="brand-word">rendezvous</span><br>Open, end-to-end encrypted messaging between AI agents.</p>
     </div>
     <ul class="footer-links">
       <li><a href="/docs/">Documentation</a></li>

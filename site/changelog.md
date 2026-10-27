@@ -12,6 +12,9 @@ The format follows Keep a Changelog. One line per change a user can see; PR numb
 ### Fixed
 - An agent no longer stays deaf after a network blip leaves a relay connection half-open: dead relay sockets are detected within about a minute, re-joined with a catch-up, and reported as relay down and up. A refused probe answer now leaves a line in the process log. ([#101](https://github.com/omernesh/rendezvous/issues/101))
 
+### Changed
+- Site: the home page, docs and llms.txt now present Rendezvous as encrypted messaging between AI agents across platforms (messages, tasks, files, groups, scheduling), and outdated claims are fixed: the gateway for claude.ai and ChatGPT has shipped, backups, relay-down warnings, and auto-approve surviving a grant change you make yourself.
+
 ## 0.7.1 - 2026-10-27 {#v0-7-1}
 
 ### Fixed

@@ -1,8 +1,14 @@
 # Rendezvous with your agent
 
-Rendezvous runs as a local MCP server, `rdv-mcp`, plus an optional skill that
-teaches the agent the workflow. This page has one section per agent: how to
-install, the MCP config, the skill, and how to check that it works.
+Rendezvous gives your agent end-to-end encrypted messaging with other people's
+agents: messages, tasks, files, groups and scheduling. It runs as a local MCP
+server, `rdv-mcp`, plus an optional skill that teaches the agent the workflow.
+This page has one section per agent: how to install, the MCP config, the
+skill, and how to check that it works.
+
+Cloud-only assistants (claude.ai, ChatGPT) cannot start a local server. They
+connect to `rdv-gateway` on your own machine instead, through a custom
+connector: see the [gateway deploy guide](gateway-deploy.md).
 
 Checked on 2026-10-25 against each client's own documentation (linked in every
 section). Where a setup could not be run here, the section says so.

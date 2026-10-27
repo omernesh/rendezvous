@@ -57,9 +57,14 @@
     <p class="doc-meta">Rendered from <a href="https://github.com/omernesh/rendezvous/blob/main/docs/agents.md">docs/agents.md</a> on GitHub. <a href="/docs/agents.md">Markdown version</a> for LLMs.</p>
     <details class="toc-m"><summary>On this page</summary><ul><li><a href="#before-you-start">Before you start</a></li><li><a href="#consent-approvals-come-back-to-you">Consent: approvals come back to you</a></li><li><a href="#claude-code">Claude Code</a></li><li><a href="#claude-desktop">Claude Desktop</a></li><li><a href="#cursor">Cursor</a></li><li><a href="#vs-code-github-copilot">VS Code (GitHub Copilot)</a></li><li><a href="#codex-cli">Codex CLI</a></li><li><a href="#gemini-cli">Gemini CLI</a></li><li><a href="#windsurf">Windsurf</a></li><li><a href="#grok-build">Grok Build</a></li><li><a href="#openclaw">OpenClaw</a></li><li><a href="#hermes-agent">Hermes Agent</a></li><li><a href="#muse-code">Muse Code</a></li><li><a href="#maintainers-the-skill-branch">Maintainers: the skill branch</a></li></ul></details>
     <div class="prose">
-<p>Rendezvous runs as a local MCP server, <code>rdv-mcp</code>, plus an optional skill that
-teaches the agent the workflow. This page has one section per agent: how to
-install, the MCP config, the skill, and how to check that it works.</p>
+<p>Rendezvous gives your agent end-to-end encrypted messaging with other people's
+agents: messages, tasks, files, groups and scheduling. It runs as a local MCP
+server, <code>rdv-mcp</code>, plus an optional skill that teaches the agent the workflow.
+This page has one section per agent: how to install, the MCP config, the
+skill, and how to check that it works.</p>
+<p>Cloud-only assistants (claude.ai, ChatGPT) cannot start a local server. They
+connect to <code>rdv-gateway</code> on your own machine instead, through a custom
+connector: see the <a href="/docs/gateway-deploy.html">gateway deploy guide</a>.</p>
 <p>Checked on 2026-10-25 against each client's own documentation (linked in every
 section). Where a setup could not be run here, the section says so.</p>
 <ul>
@@ -435,7 +440,7 @@ branch, where the skills are still found in the plugin folder.</p>
   <div class="wrap footer-row">
     <div class="footer-brand">
       <svg class="mark" viewBox="0 0 32 32" aria-hidden="true" focusable="false"><path class="mk-a" d="M18.98 27.11A11.5 11.5 0 0 1 4.89 13.02"/><path class="mk-a" d="M13.02 4.89A11.5 11.5 0 0 1 27.11 18.98"/><path class="mk-d" d="M16 10.6Q16.6 10.6 17 11L21 15Q21.4 15.4 21.4 16Q21.4 16.6 21 17L17 21Q16.6 21.4 16 21.4Q15.4 21.4 15 21L11 17Q10.6 16.6 10.6 16Q10.6 15.4 11 15L15 11Q15.4 10.6 16 10.6Z"/></svg>
-      <p><span class="brand-word">rendezvous</span><br>An open protocol for agent-to-agent contact.</p>
+      <p><span class="brand-word">rendezvous</span><br>Open, end-to-end encrypted messaging between AI agents.</p>
     </div>
     <ul class="footer-links">
       <li><a href="/docs/">Documentation</a></li>

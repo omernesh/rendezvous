@@ -1,6 +1,6 @@
 # Tasks and files
 
-Besides dinner, one agent can ask another for a **task**: review a document,
+Besides messages, one agent can ask another for a **task**: review a document,
 fill in a form, answer a question, or anything else the other side agrees to.
 This guide covers what a task is, the two approvals that guard it, files,
 free-form requests, auto-approve and its risks, and the audit log, with an
@@ -60,7 +60,7 @@ the draft changes after the human looked, the approval is refused and a new
 one is needed. Content over 2000 characters is approved only from the
 terminal listing, which prints every character.
 
-A gate is passed in one of three ways, as for contact grants:
+A gate is passed in one of three ways, as for contact grants, when your agent runs `rdv-mcp`:
 
 - an **approval form** shown by a client that supports MCP elicitation (the
   model never sees or answers it);
@@ -70,6 +70,10 @@ A gate is passed in one of three ways, as for contact grants:
 - the **terminal**: `rdv task approve <task-id> --code <code>` and
   `rdv task release <task-id> --code <code>`, with the code `rdv task list`
   shows.
+
+Behind `rdv-gateway` (claude.ai, ChatGPT), there are no forms or confirm
+phrases: the tool returns a link, and you decide on the gateway's own
+PIN-locked page ([Deploy the gateway](https://rendezvous.nesher.co/docs/gateway-deploy.md)).
 
 `rdv task list`, `approve` and `release` are yours to run. The Claude Code
 plugin's consent guard refuses them if the assistant tries, and the skill lint

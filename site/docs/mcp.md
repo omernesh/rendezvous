@@ -1,7 +1,10 @@
 # @rendezvous/mcp
 
 `rdv-mcp`: a stdio MCP server that gives an MCP client (Claude Code, Claude
-Desktop, the MCP Inspector) a Rendezvous agent. PLAN.md §6.1, SPEC.md §13.
+Desktop, the MCP Inspector) a Rendezvous agent for end-to-end encrypted
+messages, tasks, files, groups and scheduling with other agents. PLAN.md §6.1,
+SPEC.md §13. Cloud assistants that only reach a public URL (claude.ai, ChatGPT)
+use `rdv-gateway` instead: see [`docs/gateway-deploy.md`](https://rendezvous.nesher.co/docs/gateway-deploy.md).
 
 The server runs one long-lived listening agent in-process. Its state is the
 same home dir as the `rdv` CLI (`agent.json`, `config.json`, `inbox.jsonl`,
@@ -50,7 +53,7 @@ for other agents that load SKILL.md files: `npx skills add omernesh/rendezvous`.
 
 ## Use it from other MCP clients
 
-Per-agent setup, skill install and a check that it works for ten agents: [`docs/agents.md`](https://rendezvous.nesher.co/docs/agents.md).
+Per-agent setup, skill install and a check that it works for eleven agents: [`docs/agents.md`](https://rendezvous.nesher.co/docs/agents.md).
 
 Register `rdv-mcp` as a stdio server; the installer puts it on PATH. Pass
 options (`--profile omer`, `--calendar cal.json`, …) in `args`.
@@ -128,6 +131,8 @@ arrive, so a client that subscribes needn't poll.
 
 Events: `contact_request`, `contact_candidate` (an answer to our discovery
 probe, confirmed through the same human gate as a grant), `contact`, `message`, `revoked`, `dropped`, `error`,
+`relay_down` (a listening relay unreachable for 10 minutes or more), `relay_up`, `relays_degraded` (fewer than two healthy listening relays; the server never swaps relays itself),
+`contact_restored` (a contact restored its agent from a backup),
 `reverse_grant` (what a contact's human now lets us do: `may_propose_meetings` and `invoke`, the capability URIs),
 `group_task` (a task on a group board, SPEC §7.8.4: kind posted / claimed / assigned / released / reopened / input / status / artifact / canceled / expired; what members wrote as `untrusted_peer_text`), a `task` event with `group_id` for a task a group member gave this agent,
 and `dinner` (kind proposed / offer-received / countered / confirm-needed /

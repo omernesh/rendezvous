@@ -1,7 +1,8 @@
 # Rendezvous reference implementation
 
 TypeScript packages for the [Rendezvous](https://rendezvous.nesher.co/docs/spec.md) agent-to-agent contact
-protocol, built toward the two-agent dinner demo in [PLAN.md](https://github.com/omernesh/rendezvous/blob/main/PLAN.md).
+protocol: end-to-end encrypted messages, tasks, files, groups and scheduling
+between agents. The plan, including the two-agent dinner demo, is in [PLAN.md](https://github.com/omernesh/rendezvous/blob/main/PLAN.md).
 `impl/` is an npm workspace:
 
 | Package | Path | What it is |
@@ -9,7 +10,7 @@ protocol, built toward the two-agent dinner demo in [PLAN.md](https://github.com
 | `@rendezvous/core` | `packages/core` | The protocol library (keys, cards, discovery, consent, envelopes, Nostr transport) |
 | `@rendezvous/a2a` | `packages/a2a` | A2A task semantics: the dinner-negotiation message model, engine, calendar adapter |
 | `@rendezvous/cli` | `packages/cli` | `rdv`, a command-line agent; also the scripted bots and interop scenarios |
-| `@rendezvous/mcp` | `packages/mcp` | `rdv-mcp`, a stdio MCP server so Claude (or any MCP client) can find, contact and book dinner with other agents |
+| `@rendezvous/mcp` | `packages/mcp` | `rdv-mcp`, a stdio MCP server so Claude (or any MCP client) can find other agents, get consent, and exchange messages, tasks, files and meeting times with them |
 | `@rendezvous/gateway` | `packages/gateway` | `rdv-gateway`, the same agent over MCP (Streamable HTTP) and REST + OpenAPI for cloud assistants, with approvals on the owner's own PIN-locked page and a built-in OAuth 2.1 server for ChatGPT and claude.ai connectors (issue #12) |
 
 `demo/` holds the showpiece script ([demo/SCRIPT.md](https://github.com/omernesh/rendezvous/blob/main/impl/demo/SCRIPT.md)), a
@@ -227,7 +228,7 @@ State lives in a directory: `--home <dir>`, else `$RDV_HOME`, else
 | `rdv file list` | Prepared files, files peers sent for your tasks (not fetched), direct-transfer requests and the setting |
 | `rdv file fetch <task-id> [--file <n\|sha256>]` | Fetch one file a peer sent, only for a task you started (or a result of a task you requested): https only, no credentials, no private addresses, 25 MiB cap, hash and decryption checked. Saved in quarantine (`files/incoming/<task>/`, mode 600) |
 | `rdv file decline-transfer <transfer-id>` / `rdv file direct-transfer on\|off` | Say no to a contact's direct-transfer request; or your setting for them (default off: declined; on: requests are shown, nothing connects on its own; no transfer protocol exists yet). The setting is yours to run |
-| `rdv contact auto-approve <agent-id\|label> all [--until 7d]` / `… off` | Let one trusted contact's tasks start and their results leave, and the dinners it proposes be confirmed, without asking you (SPEC §5.5.1, "dangerous mode"): needs your own terminal, shows a warning, asks for your owner passphrase (the MCP tool `rdv_auto_approve` asks for it in an approval form instead). Ends on expiry, `off`, a revoke, block or new grant, or a fork (NOTES 77, 85). Yours to run |
+| `rdv contact auto-approve <agent-id\|label> all [--until 7d]` / `… off` | Let one trusted contact's tasks start and their results leave, and the dinners it proposes be confirmed, without asking you (SPEC §5.5.1, "dangerous mode"): needs your own terminal, shows a warning, asks for your owner passphrase (the MCP tool `rdv_auto_approve` asks for it in an approval form instead). Ends on expiry, `off`, a revoke or block, a grant change you did not make, or a fork. A grant change you make yourself leaves it on for what it already covered and still allows; additions ask until you turn it on for them (NOTES 77, 85, SPEC §5.5.1). Yours to run |
 | `rdv owner-secret set` | Set or change the owner passphrase that turning auto-approve on asks for: typed twice, never shown, stored as a scrypt hash; three misses lock it for a minute, doubling; audited, and `rdv whoami` shows when it was set (NOTES 77). `rdv init` in a terminal offers it too. Yours to run, in your own terminal |
 | `rdv owner-secret reset` | Forgot it, or `rdv whoami` shows a time you didn't set it: turns auto-approve off for every contact and forgets the passphrase (audited; refused while locked). Set a new one with `rdv owner-secret set` 10 minutes later; until then `rdv whoami` shows a reset banner. Yours to run, in your own terminal |
 | `rdv audit [--contact <agent-id\|label>] [--since 7d]` | The audit log: gates passed without asking (`auto`, `notify`, auto-approve), your approvals, auto-approve changes; no peer text |
@@ -347,7 +348,8 @@ so a crash after a send never reuses a `seq` (issue #4).
 
 PLAN §6.1. Tools `rdv_init`, `rdv_status`, `rdv_addresses`, `rdv_relays`, `rdv_publish_card`, `rdv_discover`,
 `rdv_request_contact`, `rdv_pending_requests`, `rdv_grant`, `rdv_revoke`,
-`rdv_send`, `rdv_inbox`, `rdv_negotiate`, and the `rdv://inbox` resource
+`rdv_auto_approve`, `rdv_backup`, `rdv_send`, `rdv_inbox`, `rdv_negotiate`,
+`rdv_task`, `rdv_file`, `rdv_group`, and the `rdv://inbox` resource
 (subscribable). `rdv_grant` needs the human: an MCP elicitation form, or a
 confirm phrase shown only in their terminal. Peer text comes back only as
 `untrusted_peer_text`. Details, consent threat model and client config:
