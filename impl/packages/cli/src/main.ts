@@ -1,6 +1,7 @@
 import { type ParseArgsConfig, parseArgs } from 'node:util';
 import * as cmd from './commands.js';
 import * as grp from './groups.js';
+import * as svc from './service.js';
 import { CliError, Home, RelayPublishError } from './home.js';
 import { clean } from './output.js';
 import { Output } from './output.js';
@@ -491,7 +492,7 @@ const COMMANDS: Record<string, Command> = {
   },
   listen: {
     usage:
-      'rdv listen [--auto-grant <tier> [--auto-grant-any-tier]] [--exec <script>] [--negotiate --calendar cal.json [--window "next week evenings"] [--tz +02:00] [--auto-confirm]]',
+      'rdv listen [--auto-grant <tier> [--auto-grant-any-tier]] [--exec <script>] [--negotiate --calendar cal.json [--window "next week evenings"] [--tz +02:00] [--auto-confirm]] [--service <name>]',
     summary: 'Long-running: print events; optionally auto-grant (demo only), pipe events to a script, or negotiate dinner',
     args: 0,
     options: {
@@ -504,8 +505,28 @@ const COMMANDS: Record<string, Command> = {
       calendar: { type: 'string' },
       window: { type: 'string' },
       tz: { type: 'string' },
+      service: { type: 'string' },
     },
     run: cmd.listenCmd,
+  },
+  'service install': {
+    usage: 'rdv service install [--dry-run]',
+    summary: 'Keep this agent reachable while no chat or terminal is open: a background "rdv listen" started at login (scheduled task, LaunchAgent or systemd user unit)',
+    args: 0,
+    options: { 'dry-run': { type: 'boolean' } },
+    run: svc.serviceInstallCmd,
+  },
+  'service remove': {
+    usage: 'rdv service remove',
+    summary: 'Stop and remove the background listener of this agent',
+    args: 0,
+    run: svc.serviceRemoveCmd,
+  },
+  'service status': {
+    usage: 'rdv service status',
+    summary: 'Whether the background listener is installed and running, and who holds listener.lock',
+    args: 0,
+    run: svc.serviceStatusCmd,
   },
   audit: {
     usage: 'rdv audit [--contact <agent-id|label>] [--since <time|duration>]',

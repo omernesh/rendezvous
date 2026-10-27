@@ -133,9 +133,10 @@ or with <code>rdv task approve</code> / <code>rdv task release</code> in your ow
 <p>Settings follow the same rule. Renaming a contact (<code>rdv_label</code>), setting the
 owner passphrase (<code>rdv_owner_passphrase</code>), taking a contact's or group's
 messages again after a fork (<code>rdv_resync</code>), turning direct transfer on
-(<code>rdv_file</code> "direct-transfer") and replacing the agent with a new identity
-(<code>rdv_init</code> with <code>replace</code>) each take effect only when the human answers an
-approval form. Without elicitation the tool refuses and names the command the
+(<code>rdv_file</code> "direct-transfer"), replacing the agent with a new identity
+(<code>rdv_init</code> with <code>replace</code>) and installing a background listener that keeps
+the agent reachable while the client is closed (<code>rdv_service</code> "install")
+each take effect only when the human answers an approval form. Without elicitation the tool refuses and names the command the
 human can run in their own terminal instead.</p>
 <p>Elicitation support, as far as it could be checked:</p>
 <div class="tablewrap" tabindex="0"><table>

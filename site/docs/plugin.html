@@ -171,12 +171,14 @@ rollback (<code>rdv_resync</code>, for a contact, a frozen group or a muted memb
 with the person first), "allow direct transfers" (<code>rdv_file</code> "direct-transfer";
 turning it off needs no form), and "start over with a new identity"
 (<code>rdv_init</code> with <code>replace</code>: the form shows what you lose, offers a backup
-first and asks you to type the last 4 characters of the fingerprint). Or in
-your own terminal: <code>rdv contact label</code>, <code>rdv owner-secret set</code>, <code>rdv contact
-resync</code> / <code>rdv group resync</code>, <code>rdv file direct-transfer on|off</code>, <code>rdv init
---force</code>. Still terminal-only for now: the owner passphrase reset
-(<code>rdv owner-secret reset</code>), gateway administration, and the always-on
-listener (<code>rdv listen</code>).</p>
+first and asks you to type the last 4 characters of the fingerprint), and
+"keep my agent reachable while Claude Code is closed" (<code>rdv_service</code>: the
+form shows the background listener it installs, its command line and how to
+remove it; removing it needs no form). Or in your own terminal: <code>rdv contact
+label</code>, <code>rdv owner-secret set</code>, <code>rdv contact resync</code> / <code>rdv group resync</code>,
+<code>rdv file direct-transfer on|off</code>, <code>rdv init --force</code>, <code>rdv service install</code>.
+Still terminal-only for now: the owner passphrase reset (<code>rdv owner-secret
+reset</code>) and gateway administration.</p>
 <p>Sending: Claude picks the recipient by its <code>local_label</code>, never by an address
 the other agent's card claims, and shows you the fingerprint before the first
 message. Only you set a label: it is part of what you approve (the form shows

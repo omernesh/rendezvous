@@ -39,7 +39,8 @@ over relays. The `rdv_*` MCP tools come from the `rdv-mcp` server.
    `rdv group remove`, `rdv group terms` (what members may ask of the user's
    agent) and `rdv group promote` (hands on the admin role), `rdv backup`
    and `rdv restore` (the agent's key; use `rdv_backup`, whose passphrase
-   the user types into its approval form), and
+   the user types into its approval form), `rdv service install` (tool:
+   `rdv_service` "install"), and
    `rdv contact pending`, `rdv dinner list`,
    `rdv task list` and `rdv group pending` (they print confirm phrases,
    `--json` or not). You have `rdv_pending_requests`, `rdv_negotiate`,
@@ -248,9 +249,17 @@ Only when the user asks ("use my own relay", "drop nostr.example.com",
    phrase approves only the limits it was shown with. Never set one the user
    did not ask for.
 10. **Listening.** This MCP server receives while the client runs; check
-   `rdv_inbox` when the user asks. Relays keep events about two days. For
-   always-on, the user can run `rdv listen` in a terminal of their own;
-   the server then attaches to it.
+   `rdv_inbox` when the user asks. Relays keep events about two days. To
+   stay reachable while the client is closed, call `rdv_service` "install"
+   when the user asks for it: an approval form shows them exactly what is
+   installed (a background `rdv listen` that starts at login: a scheduled
+   task on Windows, a LaunchAgent on macOS, a systemd user service on
+   Linux), its command line, profile and home, and how to remove it. This
+   server then attaches to it. "status" says whether it runs; "remove" takes
+   it away (no form: it only narrows). On Linux it runs only while they are
+   logged in, unless they run `loginctl enable-linger` once, in their
+   own terminal. Without forms, the user runs `rdv service install` in
+   their own terminal.
 
 ## Someone wants to contact the user
 

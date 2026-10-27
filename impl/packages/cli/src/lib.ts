@@ -260,3 +260,27 @@ export {
   turnOffAutoApprove,
 } from './autoapprove.js';
 export { type AutoApproveEntry, type AutoApproveOff } from './home.js';
+export {
+  defaultServiceEnv,
+  describeService,
+  GATE_FLAGS,
+  homeService,
+  installService,
+  LINGER_NOTE,
+  markedHome,
+  removeCommand,
+  removeService,
+  RESTART_SECONDS,
+  serviceDefinition,
+  type ServiceDefinition,
+  type ServiceEnv,
+  serviceName,
+  type ServicePlatform,
+  serviceRole,
+  type ServiceRunner,
+  serviceStatus,
+  type ServiceStatus,
+  spawnRunner,
+  waitForService,
+} from './service.js';
+export { longLockHolder } from './fsutil.js';

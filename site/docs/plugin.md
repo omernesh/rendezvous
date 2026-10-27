@@ -122,12 +122,14 @@ rollback (`rdv_resync`, for a contact, a frozen group or a muted member; check
 with the person first), "allow direct transfers" (`rdv_file` "direct-transfer";
 turning it off needs no form), and "start over with a new identity"
 (`rdv_init` with `replace`: the form shows what you lose, offers a backup
-first and asks you to type the last 4 characters of the fingerprint). Or in
-your own terminal: `rdv contact label`, `rdv owner-secret set`, `rdv contact
-resync` / `rdv group resync`, `rdv file direct-transfer on|off`, `rdv init
---force`. Still terminal-only for now: the owner passphrase reset
-(`rdv owner-secret reset`), gateway administration, and the always-on
-listener (`rdv listen`).
+first and asks you to type the last 4 characters of the fingerprint), and
+"keep my agent reachable while Claude Code is closed" (`rdv_service`: the
+form shows the background listener it installs, its command line and how to
+remove it; removing it needs no form). Or in your own terminal: `rdv contact
+label`, `rdv owner-secret set`, `rdv contact resync` / `rdv group resync`,
+`rdv file direct-transfer on|off`, `rdv init --force`, `rdv service install`.
+Still terminal-only for now: the owner passphrase reset (`rdv owner-secret
+reset`) and gateway administration.
 
 Sending: Claude picks the recipient by its `local_label`, never by an address
 the other agent's card claims, and shows you the fingerprint before the first

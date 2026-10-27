@@ -54,6 +54,8 @@ describe('owner settings through the gateway', () => {
     const names = tools.map((t) => t.name);
     for (const t of ['rdv_label', 'rdv_resync', 'rdv_file']) expect(names).toContain(t);
     for (const t of ['rdv_owner_passphrase', 'rdv_init', 'rdv_backup']) expect(names).not.toContain(t);
+    // A background listener would run on the gateway's host, not the user's machine (issue #102 item 6): never offered here.
+    expect(names).not.toContain('rdv_service');
     const labelSchema = tools.find((t) => t.name === 'rdv_label')!.inputSchema as { required?: string[] };
     expect(labelSchema.required ?? []).toEqual(['agent_id']);
     // A read-only token sees neither.

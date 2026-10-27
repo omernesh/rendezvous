@@ -425,7 +425,8 @@ npm run rdv -- --help                     # or: node packages/cli/dist/src/bin.j
 </tbody>
 </table></div>
 <p>| <code>lock</code> | held while a command reads and writes state |
-| <code>listener.lock</code> | held for its lifetime by the home's one inbound consumer (<code>rdv listen</code> or <code>rdv-mcp</code>) |</p>
+| <code>listener.lock</code> | held for its lifetime by the home's one inbound consumer (<code>rdv listen</code> or <code>rdv-mcp</code>) |
+| <code>service/</code> | the background listener's Windows script and task definition (<code>rdv-listen-&lt;profile&gt;.vbs</code>, <code>.xml</code>), or its macOS error log; written by <code>rdv service install</code> |</p>
 <div class="tablewrap" tabindex="0"><table>
 <thead>
 <tr>
@@ -525,6 +526,14 @@ npm run rdv -- --help                     # or: node packages/cli/dist/src/bin.j
 <tr>
 <td><code>rdv listen [--auto-grant &lt;tier&gt; [--auto-grant-any-tier]] [--exec &lt;script&gt;] [--negotiate --calendar cal.json [--window "…"] [--tz +02:00]]</code></td>
 <td>Long-running: print events; auto-grant is for demos only and stops at <code>stranger</code> unless <code>--auto-grant-any-tier</code>; <code>--exec</code> gets each event as a JSON line on stdin (<code>RDV_EVENT</code>, <code>RDV_HOME</code> set); <code>--negotiate</code> answers dinner proposals from the calendar (window default <code>next week evenings</code>) and holds a slot for you to confirm; <code>--auto-confirm</code> skips the human (bots, demos)</td>
+</tr>
+<tr>
+<td><code>rdv service install [--dry-run]</code></td>
+<td>Keep the agent reachable while no chat or terminal is open: installs <code>rdv listen</code> for this home as a background listener that starts at your login, as you, with no administrator rights. Windows: a scheduled task (logon trigger for you only) whose action is <code>wscript.exe //B //Nologo</code> and a small script in <code>&lt;home&gt;/service/</code> that runs node hidden; macOS: <code>~/Library/LaunchAgents/rdv-listen-&lt;profile&gt;.plist</code> (<code>RunAtLoad</code>, <code>KeepAlive</code>); Linux: <code>~/.config/systemd/user/rdv-listen-&lt;profile&gt;.service</code> (<code>Restart=on-failure</code>, <code>systemctl --user enable --now</code>; it runs only while you are logged in unless you run <code>loginctl enable-linger</code> once). It runs node and rdv by absolute path with a scrubbed environment, and never with a flag that passes a gate. <code>--dry-run</code> prints the definition. Yours to run (an assistant uses <code>rdv_service</code>, which asks you in a form)</td>
+</tr>
+<tr>
+<td><code>rdv service remove</code> / <code>rdv service status</code></td>
+<td>Stop and remove it; show whether it is installed and running and who holds <code>listener.lock</code></td>
 </tr>
 <tr>
 <td><code>rdv dinner propose &lt;agent-id&gt; --calendar cal.json --window "next week evenings" [--tz +02:00] [--minutes 120] [--place …] [--area …] [--expires &lt;rfc3339&gt;]</code></td>
