@@ -320,6 +320,10 @@ From `impl/NOTES.md`:
    explicit human choice (§4.4).
 7. Listen mode: the probe is a contact request posted on the `dtopic` (§4.4).
 8. §12: update phases to match this plan (library + CLI = v0.2, MCP = v0.3).
+9. §5.5.1, the reference-implementation paragraph: the owner passphrase may
+   also be set in an elicitation form (`rdv_owner_passphrase`), and the
+   owner's other settings (label, resync, direct transfer, replacing the
+   identity) have form-only chat tools with no confirm phrase (NOTES 97).
 
 Update the reading page with `python3 render_html.py` after editing SPEC.md.
 
