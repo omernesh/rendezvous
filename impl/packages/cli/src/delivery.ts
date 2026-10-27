@@ -29,6 +29,21 @@ export function receiptTiming(env: NodeJS.ProcessEnv = process.env): ReceiptTimi
   };
 }
 
+/**
+ * For the echo check (NOTES 98): whether `from` is one of the home's contacts,
+ * from the saved state (the transport asks at most about once a second per
+ * relay). Unreadable state counts as no, which only makes an echo go out.
+ */
+export function contactFilter(home: Home): (from: string) => boolean {
+  return (from) => {
+    try {
+      return Object.hasOwn(home.readAgentState().book.contacts ?? {}, from);
+    } catch {
+      return false;
+    }
+  };
+}
+
 /** The owner turned receipts off (config.json `"receipts": false`). An unreadable config leaves them on. */
 export function receiptsOff(home: Home): boolean {
   try {

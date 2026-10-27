@@ -3260,11 +3260,17 @@ change**, issue #104).
   every second.
 - **Lost receipts.** A receiver that gets an envelope it already holds again
   sends another receipt: the sender may be retrying because the receipt was
-  lost. Anyone can re-publish an old envelope, so this is capped locally: at
-  most the sender's retries plus one between two new envelopes from that
-  contact, spaced at least half a retry interval apart. Nothing about the
-  copy (such as the carrier event's `created_at`, which its publisher
-  chooses) is trusted for it.
+  lost. Anyone can re-publish an old envelope, so this is capped locally:
+  at most one such receipt per contact per half retry interval, a window
+  that never runs out (a receipt costs no chain state, so there is no
+  budget to exhaust). Nothing about the copy (such as the carrier event's
+  `created_at`, which its publisher chooses) is trusted for it.
+- **Replayed receipts.** A receipt is valid for its `ttl`, so a relay or
+  anyone else can replay an old one. A sender ignores a contact's receipts
+  whose `created` is not later than a floor: the `created` of the contact's
+  restore notice (§6.4.1), and the contact's own request or grant when a
+  contact period begins (after a revoke). Both stamps come from the
+  contact's clock, as receipts do. The floor is kept with the delivery state.
 - **Restores.** A backup restored (§6.4.1) drops what it was waiting for:
   the outbox is not in the backup, and in the new epoch the contact's first
   receipt would otherwise cover it all. Its human is told how many messages
@@ -3273,12 +3279,15 @@ change**, issue #104).
   confirmed and waits again for what it resends.
 - **Echo check.** A websocket ping (NOTES 95) proves a socket, not a
   subscription. An agent whose listening relay has delivered nothing on its
-  envelope subscription for a while (5 minutes; only envelopes that open for
-  it count, so a stranger's junk cannot keep it quiet) publishes an envelope
+  envelope subscription for a while (5 minutes; only envelopes from its
+  contacts count, so a stranger cannot keep it quiet) publishes an envelope
   from itself to itself (payload `{"type": "rdv/echo"}`, encrypted and
   signed as usual) on that relay as an **ephemeral** event (kind `20417`,
-  NIP-01: passed to live subscriptions, never stored), and its envelope
-  subscription asks for that kind too. If the relay accepts it and does not
+  NIP-01: passed to live subscriptions, not meant to be stored) with a
+  NIP-40 `expiration` one minute ahead, and its envelope subscription asks
+  for that kind too. Some relays keep ephemeral events a few minutes anyway
+  (strfry did, 2026-10); the expiration tells them to drop it, and a
+  receiver ignores any event past its expiration. If the relay accepts it and does not
   deliver it back within a timeout (30 s), the subscription is deaf: the
   agent drops the connection, re-joins with its usual look-back, reports the
   relay down and up (as for any drop), and then republishes what contacts
@@ -3287,7 +3296,8 @@ change**, issue #104).
   two in a row (the second right after a fresh re-join) is taken not to pass
   ephemeral events and is not checked again by that process. What a relay
   learns: that the agent is online now, which its open subscription shows
-  anyway. Nothing is stored for others to list.
+  anyway. A relay that keeps ephemeral events briefly lets others see that
+  for at most a minute.
 - **Traffic analysis.** A receipt shows a relay that an envelope went back
   shortly after one arrived, which a reply shows too. Batching, the jitter
   and the minimum interval keep the rate of receipts below the rate of

@@ -219,6 +219,7 @@ import {
   appendEvents,
   RelayLinkMonitor,
   DeliveryClock,
+  contactFilter,
   relayHealth,
   relayTransport,
   relayWatchText,
@@ -1386,6 +1387,8 @@ export class RdvMcpServer {
     const clock = (this.deliveryClock = new DeliveryClock(this.home, () => this.enqueue(() => {})));
     // A listening relay is back: one reconnect item (republish what contacts have not confirmed), however many return together.
     let reconnectQueued = false;
+    // The echo check counts only our contacts' envelopes as traffic (NOTES 98).
+    real.setTrafficFilter?.(contactFilter(this.home));
     this.unsubs = [
       // Junk (unopenable envelopes, invalid topic docs) never takes the lock or reaches the log (M1).
       real.onEnvelopes(boot.id, (raw) => {

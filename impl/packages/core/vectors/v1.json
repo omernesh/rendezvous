@@ -461,5 +461,24 @@
       },
       "sig": "5Xi51YE0XLrcFAUULZBnPx775QW+c70Xq7ZTgBbNP9pfgC1tnrGRZFGthNcx97NBWNs2ep4covBzYG1NBzcBAw=="
     }
+  },
+  "ack_envelope": {
+    "recipient_seed_hex": "1111111111111111111111111111111111111111111111111111111111111111",
+    "doc": {
+      "v": 1,
+      "from": "rdv1:ucnkl5d2m5myal7zkx4nyljkcss4thjdx2l7qzasp74tqncvutya",
+      "to": "rdv1:2bflemtufo2kwoqtnc6umfpe43icesvxdiawxl4fecrtfslxq43q",
+      "seq": 0,
+      "prev": null,
+      "created": "2026-10-24T00:00:00.000Z",
+      "ttl": "7d",
+      "content": {
+        "alg": "x25519+aes256gcm",
+        "epk": "2h2ZoUw9Q+kuNyfJUfxrItV3uQ8BlZeoSok6PlitZ0U=",
+        "nonce": "2nn9XZ8pANPVdkkZ",
+        "ciphertext": "cpycCSMg7/JELslSL2fLar0/udEwkXs3dOmYhkP94Ay+Ux+dY5KVk9VslfSHRFjP"
+      },
+      "sig": "GxhAtdZloV18bUtFylfBnNIYmxpxcj+VvywMf/TXCAf1o8vHR/eyErgZt/ual2tE7lgq2fDSf5BpDWttqpc2DQ=="
+    }
   }
 }

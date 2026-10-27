@@ -74,6 +74,8 @@ export interface Transport {
    * A blip of a second is not reported. Optional.
    */
   onReconnect?(handler: (relay: string) => void): () => void;
+  /** Which senders count as traffic for a liveness check (our contacts, NOTES 98). Optional. */
+  setTrafficFilter?(fn: (from: string) => boolean): void;
   /** Post a signed document on a discovery topic (§4.4). */
   publishTopic(topic: string, doc: object, extraRelays?: string[], opts?: TopicPublishOptions): Promise<PublishReport | void>;
   onTopics(topics: string[], handler: (doc: unknown, topic: string) => void): () => void;

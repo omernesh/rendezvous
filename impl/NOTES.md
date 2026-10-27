@@ -3739,10 +3739,11 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
     incident, where a grant stored on 3 relays went unread for 6.5 hours).
     Wire changes: the `rdv/ack` payload; an envelope may have `seq` 0 with
     `prev` null, for a receipt only (outside every chain); the receipts URI on
-    the card; the echo event (kind 20417, ephemeral). The test vectors are
-    unchanged: they hold one sample envelope and the signed documents, whose
-    formats did not change; a seq-0 receipt sample is not in them (follow-up
-    if another implementation wants one). Choices:
+    the card; the echo event (kind 20417, ephemeral, NIP-40 `expiration`).
+    The test vectors gained one sample (`ack_envelope`: John's receipt for
+    Omer's seq 1, `seq` 0, `prev` null), added deliberately with
+    `npm run test:vectors:update`; every other value is unchanged.
+    Choices:
     - **Negotiated by card.** `RECEIPTS_EXTENSION` on the card
       (`hostCardCapabilities` adds it, so `refreshHostCard` re-signs older
       cards and `rdv/card-update` tells contacts). An older agent would emit
@@ -3783,19 +3784,39 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       first seq tracked: an older one is never called delivered), `pending`
       (seq, hash, first sent, tries, last republish, `unconfirmed`,
       `flushes`), the receipt we owe (`ack_owed`, jitter included,
-      `ack_sent`), the re-ack counter (`reacks`, `reack_at`) and the last
+      `ack_sent`), the last re-ack (`reack_at`), the replay floor (`ack_floor`) and the last
       reconnect flush (`flushed_at`). No due times are stored: they come from
       `RECEIPT_TIMING` (60 s doubling, 4 retries, reported after about 31
       minutes), so a host may shorten them without migrating state. Pending
       is capped like the outbox (64); an entry that falls out of it can no
       longer be resent and is reported. Kept only for contacts.
-    - **Lost receipts** (review H1). A duplicate of what we confirmed earns
-      another receipt at most `maxRetries + 1` times between two new
-      envelopes from that contact, `retryAfterMs / 2` apart. The first cut
-      trusted the carrier event's `created_at` instead, which whoever
-      re-publishes the envelope chooses; it also compared seconds with
-      milliseconds, which made the lost-ack test flaky under load. A restart
-      that re-reads two days of events sends at most one receipt per contact.
+    - **Lost receipts** (review H1, re-review L-NEW-1). A duplicate of what
+      we confirmed earns another receipt at most once per contact per
+      `retryAfterMs / 2` (`reack_at`), a window that never runs out: a
+      per-envelope budget could be spent by a third party's replays right
+      after a new envelope, and a receipt costs no chain state anyway. The
+      first cut trusted the carrier event's `created_at` instead, which
+      whoever re-publishes the envelope chooses; it also compared seconds
+      with milliseconds. A restart that re-reads two days of events sends at
+      most one receipt per contact.
+    - **Replayed receipts** (re-review H-NEW-1). A receipt has a 48 h ttl,
+      so an old one can be replayed. `delivery.ack_floor` (persisted, the
+      contact's clock): receipts not dated after it are dropped ("ack replay
+      from before the floor", not logged). It is set from the `created` of a
+      contact's `rdv/restored` notice (the copy that sent earlier receipts is
+      gone, and what we resend must not be confirmed by them) and, when a
+      contact period begins, from the request's `ts` (we granted) or the
+      grant envelope's `created` (it granted); a revoke, ours or theirs,
+      drops the delivery state.
+    - **Republishing dates** (found fixing the flaky test). A republish
+      replaces the stored addressable event (same `d`), and NIP-01 keeps the
+      older of two in the same second and passes the newer to nobody, so a
+      quick resend vanished. `sendEnvelope` dates a republish at least a
+      second past the copy before (last `created_at` per `d`, 1024 kept).
+    - **Timing input** (re-review L-NEW-3). `Agent.receiptTiming` is set
+      through `receiptTimingOf`: a missing or out-of-range field takes the
+      default, so a partial timing cannot throw (it did, with no
+      `ackJitterMs`) or make a host spin.
     - **Restores** (review M1, L3). `restoredAgentState` drops `delivery`:
       the outbox is not backed up, so nothing pending can be resent, and the
       contact's first receipt in the new epoch would have covered it all as
@@ -3840,9 +3861,16 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       used a stored addressable event with a fixed `d`, a public "listening
       now" marker anyone could list). The envelope subscription asks for that
       kind too; strfry and NIP-01 relays pass ephemeral events to live
-      subscriptions (`TestRelay` now does, without storing them). Only events
-      that open as envelopes for us count as traffic (review L2), checked at
-      most once a second. Taken (`OK true`) and not back within
+      subscriptions (`TestRelay` now does, without storing them). Some keep
+      them a while: wss://relay.nesher.co (strfry) returned an echo to a new
+      REQ 330 s later (re-review M2), so the echo carries a NIP-40
+      `expiration` 60 s ahead (`ECHO_EXPIRES_S`), our subscription drops any
+      event past its expiration, and `TestRelay` no longer serves expired
+      stored events. Only envelopes from our contacts count as traffic
+      (review L2 and re-review): `Transport.setTrafficFilter`, set by
+      `Agent.start` and by the hosts (`contactFilter`, from the saved
+      state); at most one check per second per relay, however many events
+      arrive. Taken (`OK true`) and not back within
       `echoTimeoutMs` (30 s): the socket is terminated, the ordinary re-join
       runs, and the drop's `last_error` says "echo check failed". Two misses
       in a row, the second just after a fresh re-join, turn the check off
@@ -3852,7 +3880,8 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       (review L1). An event from our own carrier on our own `p` tag is always
       an echo and never reaches the agent; the agent drops one anyway ("own
       envelope", not logged). What a relay learns is that we are online,
-      which our subscription already shows; nothing is stored.
+      which our subscription already shows; a relay that keeps ephemeral
+      events lets others list that for up to the minute of the expiration.
     - **Traffic analysis.** Receipts reveal to a relay that something came
       back after something arrived, as a reply would; batching, the jitter
       and the interval bound their rate below the messages'. No padding.
@@ -3870,9 +3899,16 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       when refused; an agent behind a deaf relay recovering on its own; the
       sender's reconnect flush; a relay that answers EOSE then CLOSED; a
       restore not reporting old messages as delivered; a contact's restore
-      re-tracking what we resend. `core/test/unit.test.ts`: seq 0 opens only
-      as a receipt with `prev` null. `mcp/test/receipts.test.ts`: pending,
-      delivered, not confirmed and delivered after all through the tools.
+      re-tracking what we resend; an old receipt replayed after a restore and
+      after a revoke and a new contact; one re-ack per window in every
+      window; partial timing; the echo's expiration and an expired event
+      ignored; a stranger's valid envelopes not counted as traffic. The
+      lost-receipt test runs on explicit ticks (no agent timers).
+      `core/test/unit.test.ts`: seq 0 opens only as a receipt with `prev`
+      null. `core/test/vectors.test.ts`: the receipt sample.
+      `cli/test/receipts.test.ts`: the opt-out on the card, test timing.
+      `mcp/test/receipts.test.ts`: pending, delivered, not confirmed and
+      delivered after all through the tools.
 
 ## Not implemented yet
 

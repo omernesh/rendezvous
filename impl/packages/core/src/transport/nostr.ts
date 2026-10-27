@@ -280,6 +280,19 @@ export const ECHO_KIND = 20417;
 /** Echoes missed in a row (the second right after a fresh re-join) before a relay's check is turned off. */
 const ECHO_MISSES_OFF = 2;
 
+/** Envelope events whose last `created_at` is remembered for republishing (an outbox is 64 per peer). */
+const PUBLISHED_KEPT = 1024;
+
+/** NIP-40 `expiration` of an echo, in seconds after it is sent. */
+export const ECHO_EXPIRES_S = 60;
+
+/** NIP-40: the event carries an `expiration` that has passed. */
+function expired(ev: Event): boolean {
+  const tag = ev.tags.find((t) => t[0] === 'expiration')?.[1];
+  const at = tag === undefined ? Number.NaN : Number(tag);
+  return Number.isFinite(at) && at <= Math.floor(Date.now() / 1000);
+}
+
 export function nostrCarrierKey(key: AgentKey): Uint8Array {
   return hkdf(sha256, key.secretKey, undefined, utf8ToBytes('rdv1/nostr-carrier'), 32);
 }
@@ -384,6 +397,11 @@ export class NostrTransport implements Transport {
   private readonly heard = new Map<string, number>();
   private readonly echoes = new Map<string, { id: string; timer?: ReturnType<typeof setTimeout> }>();
   private readonly echoMisses = new Map<string, number>();
+  /** When `hear` last opened an event per relay, and who counts as traffic. */
+  private readonly checked = new Map<string, number>();
+  private trafficFrom?: (from: string) => boolean;
+  /** `created_at` of the envelopes we published lately, by `d`, so a republish is dated past the copy before. */
+  private readonly published = new Map<string, number>();
   /** Relays torn down because their echo never came back: their drop says so. */
   private readonly deaf = new Set<string>();
   private echoLoop?: ReturnType<typeof setInterval>;
@@ -478,6 +496,7 @@ export class NostrTransport implements Transport {
         const since = newest === undefined ? this.since() : Math.max(this.since(), newest - margin);
         const sub = this.pool.subscribeMany([relay], filter(since), {
           onevent: (ev) => {
+            if (expired(ev)) return; // NIP-40: a relay that kept it past its expiration should not have sent it
             newest = Math.max(newest ?? 0, Math.min(ev.created_at, Math.floor(Date.now() / 1000)));
             if (!dropped && !left && !confirmed) {
               confirmed = true;
@@ -764,13 +783,20 @@ export class NostrTransport implements Transport {
   }
 
   async sendEnvelope(e: Envelope, recipientRelays: string[] = []): Promise<PublishReport> {
+    const d = envelopeHash(e);
+    // A republish (a resend, NOTES 98) replaces the stored event with the same `d`, so it must be dated later:
+    // in the same second the relay keeps the first and passes the new one to nobody (NIP-01 tie rule).
+    const createdAt = Math.max(Math.floor(Date.now() / 1000), (this.published.get(d) ?? -1) + 1);
+    this.published.delete(d);
+    this.published.set(d, createdAt);
+    if (this.published.size > PUBLISHED_KEPT) this.published.delete(this.published.keys().next().value as string);
     const event = finalizeEvent(
       {
         kind: ENVELOPE_KIND,
-        created_at: Math.floor(Date.now() / 1000),
+        created_at: createdAt,
         tags: [
           ['p', agentTag(e.to)],
-          ['d', envelopeHash(e)],
+          ['d', d],
         ],
         content: JSON.stringify(e),
       },
@@ -836,8 +862,22 @@ export class NostrTransport implements Transport {
    */
   private hear(relay: string, ev: Event): void {
     const now = Date.now();
-    if (now - (this.heard.get(relay) ?? 0) < Math.min(1000, (this.opts.echoIntervalMs ?? 300_000) / 4)) return;
-    if (ev.kind === ENVELOPE_KIND && openEnvelope(this.opts.key, safeParse(ev.content)).ok) this.heard.set(relay, now);
+    // At most one check per quarter interval (and per second) per relay, however many events come: spam stays cheap.
+    if (now - (this.checked.get(relay) ?? 0) < Math.min(1000, (this.opts.echoIntervalMs ?? 300_000) / 4)) return;
+    this.checked.set(relay, now);
+    if (ev.kind !== ENVELOPE_KIND) return;
+    const opened = openEnvelope(this.opts.key, safeParse(ev.content));
+    // Anyone can seal a valid envelope to us: only a contact's says the relay delivers (review of #112).
+    if (opened.ok && (this.trafficFrom?.(opened.envelope.from) ?? true)) this.heard.set(relay, now);
+  }
+
+  /**
+   * Who counts as traffic for the echo check (NOTES 98): the agent's contacts.
+   * Without it, any envelope that opens for us does (a library user who does
+   * not set it).
+   */
+  setTrafficFilter(fn: (from: string) => boolean): void {
+    this.trafficFrom = fn;
   }
 
   /**
@@ -867,7 +907,16 @@ export class NostrTransport implements Transport {
     const me = this.opts.key.id;
     const env = sealEnvelope(this.opts.key, me, { type: ECHO_TYPE }, { seq: 1, prev: null, ttl: '1h' });
     const event = finalizeEvent(
-      { kind: ECHO_KIND, created_at: Math.floor(Date.now() / 1000), tags: [['p', agentTag(me)]], content: JSON.stringify(env) },
+      {
+        kind: ECHO_KIND,
+        created_at: Math.floor(Date.now() / 1000),
+        // NIP-40: some relays keep ephemeral events a few minutes (strfry did, 2026-10-27); a minute is plenty.
+        tags: [
+          ['p', agentTag(me)],
+          ['expiration', String(Math.floor(Date.now() / 1000) + ECHO_EXPIRES_S)],
+        ],
+        content: JSON.stringify(env),
+      },
       this.carrier,
     );
     const flight: { id: string; timer?: ReturnType<typeof setTimeout> } = { id: event.id };

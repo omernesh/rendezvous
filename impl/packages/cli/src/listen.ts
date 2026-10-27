@@ -30,7 +30,7 @@ import {
   verifyContactRequest,
 } from '@rendezvous/core';
 import { cardSyncText, cardUpdateText, cardUpdateView, contactRestoredText, contactRestoredView, restoredSyncText, sendRestoredNotices, syncContactCards } from './cardupdate.js';
-import { confirmedText, confirmedView, DeliveryClock, receiptsOff, receiptTiming, resentText, resentView, unconfirmedText, unconfirmedView } from './delivery.js';
+import { confirmedText, confirmedView, contactFilter, DeliveryClock, receiptsOff, receiptTiming, resentText, resentView, unconfirmedText, unconfirmedView } from './delivery.js';
 import { appendEvents } from './events.js';
 import { LockTimeoutError, tryLongLock } from './fsutil.js';
 import { type AuditEntry, CliError, type Home, type InboxEntry } from './home.js';
@@ -644,6 +644,8 @@ export async function listen(home: Home, out: Output, opts: ListenOptions): Prom
   let topicUnsub = onTopics(topics);
   // A listening relay is back: one reconnect item, however many relays return together.
   let reconnectQueued = false;
+  // The echo check counts only our contacts' envelopes as traffic (NOTES 98).
+  real.setTrafficFilter?.(contactFilter(home));
   const unsubs = [
     real.onEnvelopes(boot.id, (raw) => {
       if (!isJunk(boot.key, { envelope: raw })) enqueue((t) => t.feedEnvelope(raw));
