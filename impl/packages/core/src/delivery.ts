@@ -1,7 +1,8 @@
 // SPEC §6.4.2: delivery receipts (`rdv/ack`). The receiver tells a contact the
-// highest `seq` of its chain it holds without a gap; the sender keeps what is
-// not confirmed and republishes it from the outbox, with a capped backoff, and
-// after a relay comes back. Pure bookkeeping here; the agent sends and receives.
+// highest `seq` of its chain it holds without a gap, in an envelope outside
+// every chain (`seq` 0); the sender keeps what is not confirmed and
+// republishes it from the outbox, with a capped backoff, and after a relay
+// comes back. Pure bookkeeping here; the agent sends and receives.
 import type { AddressCard } from './card.js';
 
 /** The receipt payload: "I hold every envelope of your chain to me up to `seq`". */
@@ -16,6 +17,8 @@ export interface ReceiptTiming {
   ackDelayMs: number;
   /** At most one ack per contact per this, however busy the channel. */
   ackMinIntervalMs: number;
+  /** Up to this much more, at random, on each ack's quiet period: its timing says less about the message's. */
+  ackJitterMs: number;
   /** First republish of an unconfirmed envelope; each later one waits twice as long. */
   retryAfterMs: number;
   /** Republishes per envelope; after the last one has had its wait, it is reported as not confirmed. */
@@ -26,6 +29,7 @@ export interface ReceiptTiming {
 export const RECEIPT_TIMING: Readonly<ReceiptTiming> = Object.freeze({
   ackDelayMs: 2_000,
   ackMinIntervalMs: 10_000,
+  ackJitterMs: 3_000,
   retryAfterMs: 60_000,
   maxRetries: 4,
 });
@@ -43,10 +47,14 @@ export interface PendingEnvelope {
   last?: string;
   /** Retries spent and still no receipt: the owner was told. A late receipt still clears it. */
   unconfirmed?: true;
+  /** Reconnects that republished it after it was reported (at most `maxRetries`). */
+  flushes?: number;
 }
 
 /** Per contact: what we wait for, and what we owe it. */
 export interface PeerDelivery {
+  /** The first seq tracked here: an older one (sent before receipts, or by the copy a restore replaced) is not known. */
+  from?: number;
   /** Highest seq of ours the peer confirmed (every one below it too). */
   acked: number;
   /** Envelopes not confirmed yet, by seq. */
@@ -55,6 +63,11 @@ export interface PeerDelivery {
   ack_owed?: string;
   /** Our last ack to the peer: when, and the seq it carried. */
   ack_sent?: { at: string; seq: number };
+  /** Receipts a duplicate earned since the peer's last new envelope, and when the last one did (capped, review of #112). */
+  reacks?: number;
+  reack_at?: string;
+  /** When a reconnect last republished to this peer (one per `retryAfterMs`). */
+  flushed_at?: string;
 }
 
 /** Whether a card says its agent sends and expects receipts. */
@@ -79,7 +92,7 @@ export function retryDue(p: PendingEnvelope, timing: ReceiptTiming): number | nu
   return Number.isFinite(base) ? base + timing.retryAfterMs * 2 ** Math.min(p.tries, 30) : 0;
 }
 
-/** When the ack we owe a peer is due, or null if we owe none. */
+/** When the ack we owe a peer is due, or null if we owe none. `ack_owed` already carries the jitter. */
 export function ackDue(d: PeerDelivery, timing: ReceiptTiming): number | null {
   if (d.ack_owed === undefined) return null;
   const owed = ms(d.ack_owed);
@@ -137,5 +150,6 @@ export function deliveryOf(d: PeerDelivery | undefined, seq: number): DeliverySt
   if (!d) return 'untracked';
   const p = d.pending.find((x) => x.seq === seq);
   if (p) return p.unconfirmed ? 'not_confirmed' : 'pending';
-  return seq <= d.acked ? 'delivered' : 'untracked';
+  // Only what was tracked here: an envelope from before (another epoch, before receipts) is not known delivered.
+  return seq <= d.acked && seq >= (d.from ?? 1) ? 'delivered' : 'untracked';
 }

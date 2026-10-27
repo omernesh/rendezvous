@@ -271,6 +271,10 @@ describe('envelope', () => {
     for (const seq of [0, -5, 1.5]) {
       expect(openEnvelope(bob, sealEnvelope(alice, bob.id, { type: 'x' }, { seq, prev: null }))).toEqual({ ok: false, reason: 'malformed' });
     }
+    // seq 0 is outside every chain, for a receipt alone (SPEC §6.4.2).
+    const ack = openEnvelope(bob, sealEnvelope(alice, bob.id, { type: 'rdv/ack', v: 1, seq: 3 } as { type: string }, { seq: 0, prev: null }));
+    expect(ack.ok).toBe(true);
+    expect(openEnvelope(bob, sealEnvelope(alice, bob.id, { type: 'rdv/ack', v: 1, seq: 3 } as { type: string }, { seq: 0, prev: 'ab'.repeat(32) }))).toEqual({ ok: false, reason: 'malformed' });
   });
 });
 

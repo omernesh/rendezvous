@@ -52,6 +52,12 @@ export interface Config {
   addresses: ConfigAddress[];
   policy: { inbound: InboundPolicy; public: boolean };
   public_pointer: boolean;
+  /**
+   * Delivery receipts (NOTES 98): `false` stops this agent from confirming
+   * what contacts send it, and takes the receipts capability off its card at
+   * the next listener start, so contacts stop waiting. Absent: on.
+   */
+  receipts?: boolean;
 }
 
 /**

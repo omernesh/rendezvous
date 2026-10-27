@@ -29,6 +29,7 @@ import {
   openBackup,
   parseBackup,
   restoredAgentState,
+  pendingInBackup,
   sealBackup,
   verifyCard,
 } from '@rendezvous/core';
@@ -224,6 +225,8 @@ export interface RestoreResult {
   auto_approve: string[];
   /** When the owner passphrase record in the backup was set (null: none). */
   owner_passphrase_set: string | null;
+  /** Messages that were still waiting for a contact's receipt in the backup: they cannot be confirmed now (NOTES 98). */
+  unconfirmed_before_backup: number;
   replaced?: string;
 }
 
@@ -298,6 +301,7 @@ export async function restoreBackup(home: Home, bytes: Uint8Array, passphrase: s
         groups: Object.keys(state.groups?.groups ?? {}).length,
         auto_approve: auto.filter((p) => isAgentId(p)).slice(0, 64),
         owner_passphrase_set: ownerSet,
+        unconfirmed_before_backup: pendingInBackup(c.agent),
         ...(replaced ? { replaced } : {}),
       };
     });

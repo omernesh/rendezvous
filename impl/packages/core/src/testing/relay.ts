@@ -43,6 +43,8 @@ export interface RelayFaults {
 export interface TestRelay {
   url: string;
   events: Event[];
+  /** Ephemeral events (kinds 20000-29999) it passed on: never stored, so not in `events`. */
+  ephemeral: Event[];
   /** Every REQ filter received, in order (tests check `since`). */
   requests: Filter[];
   /** Arrival time (ms) of every EVENT message, accepted or not. */
@@ -76,10 +78,22 @@ export async function startTestRelay(port = 0, faults: RelayFaults = {}): Promis
   let connections = 0;
   const stalled = new Set<WebSocket>();
   const deaf = new Set<WebSocket>();
+  const ephemeral: Event[] = [];
 
   const store = (ws: WebSocket, ev: Event) => {
     if (!verifyEvent(ev)) {
       ws.send(JSON.stringify(['OK', ev?.id, false, 'invalid: bad signature']));
+      return;
+    }
+    // NIP-01 ephemeral kinds: passed to live subscriptions, never stored (so never replayed).
+    if (ev.kind >= 20000 && ev.kind < 30000) {
+      ephemeral.push(ev);
+      for (const [client, clientSubs] of subs) {
+        for (const [id, filters] of clientSubs) {
+          if (!stalled.has(client) && !deaf.has(client) && filters.some((f) => matches(ev, f))) client.send(JSON.stringify(['EVENT', id, ev]));
+        }
+      }
+      ws.send(JSON.stringify(['OK', ev.id, true, '']));
       return;
     }
     // NIP-01 addressable kinds: keep only the newest per (pubkey, kind, d); a tie keeps the lower id.
@@ -162,6 +176,7 @@ export async function startTestRelay(port = 0, faults: RelayFaults = {}): Promis
   return {
     url: `ws://127.0.0.1:${actualPort}`,
     events,
+    ephemeral,
     requests,
     received,
     get connections() {

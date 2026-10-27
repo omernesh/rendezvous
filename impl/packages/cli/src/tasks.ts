@@ -64,6 +64,7 @@ import {
   type TaskStep,
 } from '@rendezvous/a2a';
 import { Agent, type Contact, effectiveInvoke, fingerprint, type GroupBody, type GroupRecord, groupRecipients, GROUPS_EXTENSION, memberIds, memberOf, type Payload, RECEIPTS_EXTENSION, type Transport } from '@rendezvous/core';
+import { receiptsOff } from './delivery.js';
 import type { PhraseTarget } from './consent.js';
 import { changedAttachment, describeFile, describeNote, fileSummaries, fileSummary, normalizeTaskFiles, pruneReceived, redactFilePart, rememberReceived } from './files.js';
 import { type AuditEntry, CliError, type FileNote, type GroupTaskHost, type HeldRequest, type Home, type InboxEntry, type PendingRelease, type ReleaseContent, type TaskHostState } from './home.js';
@@ -107,7 +108,9 @@ export interface CardRefresh {
 export async function refreshHostCard(home: Home, capabilities: readonly string[], transport: Transport, now = new Date()): Promise<CardRefresh> {
   const agent = await home.locked(async () => {
     const a = Agent.fromJSON(home.readAgentState(), () => transport);
-    if (!a.refreshCapabilities(capabilities, { now })) return null;
+    // The owner turned receipts off (config.json "receipts": false, NOTES 98): the card stops saying we send them.
+    const off = receiptsOff(home);
+    if (!a.refreshCapabilities(off ? capabilities.filter((c) => c !== RECEIPTS_EXTENSION) : capabilities, { now, drop: off ? [RECEIPTS_EXTENSION] : [] })) return null;
     home.writeAgentState(a.toJSON());
     return a;
   });

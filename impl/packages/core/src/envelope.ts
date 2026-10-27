@@ -14,6 +14,7 @@ import { concatBytes, utf8ToBytes } from '@noble/hashes/utils';
 import { b64decode, b64encode, bytesToHex, canonicalBytes, parseTimestamp } from './encoding.js';
 import { type AgentKey, isAgentId, x25519PublicFromAgentId, x25519Secret } from './identity.js';
 import { type Signed, signDoc, verifyDoc } from './sign.js';
+import { ACK_TYPE } from './delivery.js';
 
 export const ENVELOPE_ALG = 'x25519+aes256gcm';
 
@@ -103,7 +104,9 @@ export type OpenResult = { ok: true; payload: Payload; envelope: Envelope } | { 
 
 export function openEnvelope(recipient: AgentKey, input: unknown, now: Date = new Date()): OpenResult {
   const e = input as Envelope;
-  if (!e || e.v !== 1 || !isAgentId(e.from) || !Number.isSafeInteger(e.seq) || e.seq < 1) return { ok: false, reason: 'malformed' };
+  if (!e || e.v !== 1 || !isAgentId(e.from) || !Number.isSafeInteger(e.seq) || e.seq < 0) return { ok: false, reason: 'malformed' };
+  // `seq` 0 is outside every chain (a receipt, SPEC §6.4.2): it has no predecessor.
+  if (e.seq === 0 && e.prev !== null) return { ok: false, reason: 'malformed' };
   if (e.to !== recipient.id) return { ok: false, reason: 'not addressed to us' };
   if (!e.content || e.content.alg !== ENVELOPE_ALG) return { ok: false, reason: 'unsupported alg' };
   // Before the signature check and decryption: a length is cheap (SPEC §6.4).
@@ -127,6 +130,8 @@ export function openEnvelope(recipient: AgentKey, input: unknown, now: Date = ne
     if (plain.length > MAX_PLAINTEXT_BYTES) return { ok: false, reason: 'too large' };
     const payload = JSON.parse(new TextDecoder().decode(plain)) as Payload;
     if (!payload || typeof payload.type !== 'string') return { ok: false, reason: 'payload without type' };
+    // Only a receipt lives outside the chains (SPEC §6.4.2): anything else at seq 0 is malformed.
+    if (e.seq === 0 && payload.type !== ACK_TYPE) return { ok: false, reason: 'malformed' };
     return { ok: true, payload, envelope: e };
   } catch {
     return { ok: false, reason: 'decryption failed' };
