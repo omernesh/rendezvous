@@ -23,7 +23,17 @@ export {
   TIERS,
   withAgent,
 } from './commands.js';
-export { checkOwnerSecret, hasOwnerSecret, OWNER_SECRET_MAX, ownerSecretInfo, ownerSecretLock } from './ownersecret.js';
+export {
+  checkOwnerSecret,
+  hasOwnerSecret,
+  OWNER_SECRET_MAX,
+  OWNER_SECRET_MIN,
+  ownerSecretBinding,
+  ownerSecretInfo,
+  ownerSecretLock,
+  storeOwnerSecret,
+  weakOwnerSecret,
+} from './ownersecret.js';
 export { cardSyncText, cardUpdateText, cardUpdateView, contactRestoredText, contactRestoredView, restoredSyncText, sendRestoredNotices, syncContactCards } from './cardupdate.js';
 export { auditBackup, type BundleContents, createBackup, describeBackup, readBackupFile, restoreBackup, type RestoreResult, writeBackupFile } from './backup.js';
 export { restoreLine } from './commands.js';

@@ -248,7 +248,14 @@ export function weakOwnerSecret(secret: string): string | undefined {
  * audit it: the first one is trust on first use, so its time is shown by
  * `rdv whoami` and `rdv_status` for the owner to recognize.
  */
-export async function storeOwnerSecret(home: Home, secret: string, action: 'set' | 'changed' | 'reset' = 'set', now = new Date()): Promise<{ autoApproveOff: string[] }> {
+export async function storeOwnerSecret(
+  home: Home,
+  secret: string,
+  action: 'set' | 'changed' | 'reset' = 'set',
+  now = new Date(),
+  /** `form`: typed by the owner into an approval form (rdv_owner_passphrase, issue #102). Left out: their terminal. */
+  via?: 'form',
+): Promise<{ autoApproveOff: string[] }> {
   const weak = weakOwnerSecret(secret);
   if (weak) throw new CliError(`the passphrase needs ${weak}`, 2);
   const salt = randomBytes(16);
@@ -259,7 +266,7 @@ export async function storeOwnerSecret(home: Home, secret: string, action: 'set'
     const off = endAllAutoApprove(home, now);
     write(home, { v: 1, salt: salt.toString('hex'), hash: derive(secret, salt).toString('hex'), set: now.toISOString(), failures: 0 });
     writeMarker(home, now);
-    home.appendAudit([...off.lines, { ts: now.toISOString(), peer: OWNER_PEER, gate: 'owner-secret', by: 'human', action }]);
+    home.appendAudit([...off.lines, { ts: now.toISOString(), peer: OWNER_PEER, gate: 'owner-secret', by: 'human', action, ...(via ? { via } : {}) }]);
     return { autoApproveOff: off.peers };
   });
 }
