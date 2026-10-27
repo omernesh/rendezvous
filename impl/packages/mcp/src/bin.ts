@@ -29,7 +29,7 @@ if (values.help) {
     'usage: rdv-mcp [--home <dir> | --profile <name>] [--calendar cal.json] [--calendar-dir <dir>]… [--window "next week evenings"] [--tz +02:00]\n' +
       '  --calendar-dir: a directory the assistant may pick calendar files from (besides the home and the --calendar directory)\n' +
       'Env: RDV_HOME, RDV_PROFILE, RDV_CALENDAR, RDV_CALENDAR_DIR, RDV_WINDOW, RDV_TZ.\n' +
-      '  RDV_ELICIT_TIMEOUT_MS: how long an approval form waits for an answer (default 60000); unanswered, it is withdrawn and confirm phrases are used from then on\n' +
+      '  RDV_ELICIT_TIMEOUT_MS: how long an approval form stays open for an answer (default 86400000, a day); the tool call that sends it never waits for it\n' +
       '  RDV_ELICIT=off: never send approval forms; always use confirm phrases\n',
   );
   process.exit(0);

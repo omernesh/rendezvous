@@ -4,13 +4,15 @@ What changed in Rendezvous, newest first. Versions are those of the Claude Code 
 
 The format follows Keep a Changelog. One line per change a user can see; PR numbers link to GitHub.
 
-## Unreleased {#unreleased}
+## 0.8.0 - 2026-10-27 {#v0-8-0}
 
 ### Added
+- "Don't ask again for this contact" on the approval forms for a contact's task (start and release) and for a dinner it proposed, in Claude Code and on the gateway's page: tick it with your approval and that contact's tasks of that kind, or its dinners, no longer ask you, until you turn it off (ask your assistant, or in your terminal). No passphrase needed, since only you can answer the form; your assistant can never tick it. ([#103](https://github.com/omernesh/rendezvous/issues/103))
 - The gateway pages now show the Rendezvous logo and wordmark at the top and a favicon, and send `Cache-Control: no-store, no-transform` so a proxy cannot mask addresses as "[email protected]".
 - A deploy guide for `rdv-gateway`: a hardened Docker Compose setup behind a TLS tunnel, the PIN and test-identity first run, connecting claude.ai, ChatGPT and Claude Code, updating, and checks. ([#12](https://github.com/omernesh/rendezvous/issues/12))
 
 ### Fixed
+- Approval forms work in Claude Code: the tool no longer waits for the form (Claude Code shows it only after the assistant's reply, so it used to time out and do nothing). The form appears once the reply ends, your answer completes the step, and your assistant hears what you decided. Several can be open at once, and an answer to something that changed meanwhile does nothing. ([#103](https://github.com/omernesh/rendezvous/issues/103))
 - An agent no longer stays deaf after a network blip leaves a relay connection half-open: dead relay sockets are detected within about a minute, re-joined with a catch-up, and reported as relay down and up. A refused probe answer now leaves a line in the process log. ([#101](https://github.com/omernesh/rendezvous/issues/101))
 
 ### Changed

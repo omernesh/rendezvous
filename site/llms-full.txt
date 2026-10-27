@@ -510,7 +510,12 @@ only the label it was shown with), or you name a contact yourself with
 address is only a claim, so it never labels a contact.
 
 Approving a contact: Claude calls `rdv_grant`, and Claude Code shows you an
-approval form (MCP elicitation). Claude can't fill it in for you.
+approval form (MCP elicitation) once Claude's reply ends. Claude can't fill
+it in for you; your answer completes the step. The forms for a contact's
+task and for a dinner it proposed also have "Don't ask again for this
+contact": tick it with your approval and that contact's tasks of that kind
+(or its dinners) stop asking you, until you ask Claude to turn auto-approve
+off.
 
 Tasks and files (v0.3): ask "Ask John's agent to review this", or answer
 when a contact asks your agent for something. Claude uses `rdv_task` and
@@ -688,6 +693,15 @@ the audit log.
   it, and the plugin's consent guard refuses the shell command, the files
   (`autoapprove.json`, `owner-secret.json`) and any pseudo-terminal. Turning
   it off needs nothing: from any terminal, or `rdv_auto_approve` "off".
+- **Or one click, for one kind of task.** The approval form for a contact's
+  task (to start it, or to send its result) and for a dinner that contact
+  proposed has a box, "Don't ask again for this contact" (Claude Code's
+  form, or your gateway's page). It starts unticked. Tick it and approve, and
+  auto-approve is on for that contact and that capability (or its dinners),
+  until you turn it off; no passphrase, because only you can answer that
+  form. It says what it covers and the risk under the box. Your assistant
+  can't tick it, and a confirm phrase never offers it. It is audited like
+  the rest (`via: "form"`).
 - **It covers less than it sounds.** One contact's tasks, under capabilities
   its grant already allows, and the dinners that contact proposes when its
   grant allows meetings. Not new contacts, grants, a dinner you proposed,
@@ -1561,18 +1575,22 @@ Approval forms need a client that supports MCP elicitation; Claude Code does in
 interactive sessions (not in `-p`). Elsewhere approvals use the confirm phrase
 the human reads in their own terminal (`rdv contact pending`), below.
 
-A form waits at most `RDV_ELICIT_TIMEOUT_MS` (default 60000 ms) for an answer
-(issue #65: some clients show a form only after the assistant's turn ends,
-which can't happen while the tool call waits). Unanswered by then, the server
-withdraws it (`notifications/cancelled`, so a form shown later approves
-nothing), issues the confirm phrase exactly as for a client without forms, and
-says so in the tool result, which names the terminal command that shows the
-phrase. It then uses phrases for the rest of its life. A form the client
-closes without an answer (cancel) also falls back to the phrase for that call.
-A decline, or Accept with the box unticked, is a plain result (`approved:
-false`) that changes nothing; neither a cancel nor a timeout ever approves.
-`RDV_ELICIT=off` turns forms off entirely. `rdv_status` shows the mode in
-`approval`.
+A form never blocks the tool call (issue #103: Claude Code shows a form only
+after the assistant's turn ends, which can't happen while the call waits). When
+a step needs the human, the server sends the form and the tool returns at once
+`{status: "awaiting_human", via: "approval form", approval_id}`: the model
+ends its turn and the form appears. The human's answer runs the step again,
+bound to the form's digest (built again from the state then: a changed item
+does nothing and says so), exactly as the gateway's approval page does, and an
+`approval` event in `rdv_inbox` says what they decided (`decided`, `declined`,
+`changed`, `dismissed`, `expired` or `failed`, with the step's result). Several
+forms can be open at once (at most 32); the same form is not sent twice, and an
+answer counts once. A form stays open `RDV_ELICIT_TIMEOUT_MS` (default a day),
+then it is withdrawn. A decline, or Accept with the box unticked, changes
+nothing (a declined task is refused and a declined dinner released, as
+before); neither a dismissal nor an expiry ever approves. The confirm phrase
+stays for clients without forms. `RDV_ELICIT=off` turns forms off entirely.
+`rdv_status` shows the mode in `approval`.
 
 ## Tools
 
@@ -1732,14 +1750,25 @@ human's own terminal):
   misses), and never reaches a tool result, an event or the log. The change
   is bound to what the form showed: another grant, label, expiry or
   passphrase record in between, and nothing is set. With no form (a client
-  without elicitation, `RDV_ELICIT=off`, a form that went unanswered), a
-  cancelled form, or no passphrase set, "on" is refused and points to the
+  without elicitation, `RDV_ELICIT=off`), a dismissed or expired form, or no passphrase set, "on" is refused and points to the
   terminal: there is no confirm phrase for it, and no argument takes a
   passphrase. MCP elicitation has no password field type, so the form's
   field is plain text (NOTES 85).
 
+And one way for one capability, with no passphrase (issue #103, NOTES 96):
+the approval forms for a contact's task start, its result's release, and the
+confirm of a dinner the contact started carry a "Don't ask again for this
+contact" box (unticked by default; the gateway's page shows it too). Ticked
+with the approval, and once the step went through, auto-approve covers that
+capability for that contact (added to an entry that already holds, keeping
+its expiry; otherwise until turned off). The answer comes from the human's
+client or PIN-locked page, never from the model: no tool argument sets it, a
+confirm phrase never offers it, and the form's digest binds it. Not offered
+for a task in a group or a dinner we started.
+
 "off" (one contact or `all_contacts`) needs nothing. Every change is audited
-with `via: "cli"` or `"mcp"`. `rdv_status` (per contact `auto_approve`, until
+with `via: "cli"`, `"mcp"` or `"form"`; an `auto_approve_on` event says how to
+turn it off. `rdv_status` (per contact `auto_approve`, until
 when, how many actions it passed) and `rdv_task` show it, and `rdv_inbox`
 reports `auto_approved` task starts and dinner steps and an
 `auto_approve_off` event when it ends (NOTES 77, 85).
@@ -2784,16 +2813,29 @@ MAY set `auto_approve: "all"` on that contact, optionally with an expiry
   contact and its fingerprint, the capabilities, all or a list, and the
   expiry), the approval is bound to exactly that, the secret never reaches
   the model, a tool result or a log, and a form that is not answered,
-  cancelled or cannot be shown refuses, with no other fallback. Turning it
-  off needs no confirmation (it only narrows), and a host MAY let a model
-  do it. Hosts list the terminal command as human-only wherever they list
-  the contact grant command.
+  cancelled or cannot be shown refuses, with no other fallback. The owner
+  MAY also turn it on, for the one capability being approved, from the
+  approval of a gate it would cover (issue #103): the form that asks the
+  owner to start a task from that contact, release its result, or confirm
+  a meeting that contact started MAY carry a "don't ask again for this
+  contact" choice. That choice starts unset, exists only in a form shown to
+  the owner (a host's consent form, or an approval page only the owner can
+  unlock), never in a confirm phrase or a tool argument, says what it
+  covers (this contact, this capability, until turned off), how to turn it
+  off and the risk in one sentence, and is bound with the rest of the
+  form. Chosen with an approval, it covers that capability once the
+  approved step went through; no secret is asked, since the answer comes
+  from the owner's own channel, which is what the secret stands for on the
+  other paths. Turning it off needs no confirmation (it only narrows), and
+  a host MAY let a model do it. Hosts list the terminal command as
+  human-only wherever they list the contact grant command.
 - **Warning at set time.** Before it is set the owner is shown, in plain
   words: that the contact's agent can now make this agent act and answer
   without asking; which capabilities that covers today; that text and
   files from that contact reach this agent's model with its tools, so
   prompt injection from that contact gets the power of those tools; the
-  expiry; and how to turn it off.
+  expiry; and how to turn it off. A "don't ask again" choice on a gate's
+  form says the same in short, for its one capability.
 - **Bound to the grant.** The setting is bound to the grant it was set
   on. It is off at once when the owner turns it off (narrowing needs no
   confirmation), when it expires, and when the contact is revoked or
@@ -4327,13 +4369,15 @@ What changed in Rendezvous, newest first. Versions are those of the Claude Code 
 
 The format follows Keep a Changelog. One line per change a user can see; PR numbers link to GitHub.
 
-## Unreleased {#unreleased}
+## 0.8.0 - 2026-10-27 {#v0-8-0}
 
 ### Added
+- "Don't ask again for this contact" on the approval forms for a contact's task (start and release) and for a dinner it proposed, in Claude Code and on the gateway's page: tick it with your approval and that contact's tasks of that kind, or its dinners, no longer ask you, until you turn it off (ask your assistant, or in your terminal). No passphrase needed, since only you can answer the form; your assistant can never tick it. ([#103](https://github.com/omernesh/rendezvous/issues/103))
 - The gateway pages now show the Rendezvous logo and wordmark at the top and a favicon, and send `Cache-Control: no-store, no-transform` so a proxy cannot mask addresses as "[email protected]".
 - A deploy guide for `rdv-gateway`: a hardened Docker Compose setup behind a TLS tunnel, the PIN and test-identity first run, connecting claude.ai, ChatGPT and Claude Code, updating, and checks. ([#12](https://github.com/omernesh/rendezvous/issues/12))
 
 ### Fixed
+- Approval forms work in Claude Code: the tool no longer waits for the form (Claude Code shows it only after the assistant's reply, so it used to time out and do nothing). The form appears once the reply ends, your answer completes the step, and your assistant hears what you decided. Several can be open at once, and an answer to something that changed meanwhile does nothing. ([#103](https://github.com/omernesh/rendezvous/issues/103))
 - An agent no longer stays deaf after a network blip leaves a relay connection half-open: dead relay sockets are detected within about a minute, re-joined with a catch-up, and reported as relay down and up. A refused probe answer now leaves a line in the process log. ([#101](https://github.com/omernesh/rendezvous/issues/101))
 
 ### Changed

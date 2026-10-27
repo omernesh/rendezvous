@@ -12,6 +12,9 @@ import { startTestRelay, type TestRelay } from '@rendezvous/core/testing';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { Listener, rdv } from '../scenarios/harness.js';
 import {
+  allowAlways,
+  alwaysAllowOffer,
+  UNBOUND_OWNER,
   autoApprovedFor,
   autoApproveWarning,
   autoApproveKeptText,
@@ -329,6 +332,97 @@ describe('auto-approve in the gates', () => {
     f.contacts.get(PEER)!.inboundScope = { invoke: { [REQUEST_URI]: {}, [CAP.uri]: {}, 'https://example.com/ext/more/v1': {} } };
     expect((await arrive()).task().gate).toMatchObject({ kind: 'start' });
     expect(home.readAudit().at(-1)).toMatchObject({ action: 'off', reason: 'grant-changed' });
+  });
+
+  describe('"Don\'t ask again" from an approval form (issue #103)', () => {
+    it('with no passphrase ever set: covers that capability only, audited via form; setting a passphrase ends it', async () => {
+      const d2 = mkdtempSync(join(tmpdir(), 'rdv-always-'));
+      try {
+        const h2 = new Home(d2);
+        h2.ensureDir();
+        const s = subjectOf(f.agent);
+        expect(alwaysAllowOffer(h2, s, PEER, REQUEST_URI)).toMatchObject({ until: null });
+        const r = allowAlways(h2, s, PEER, REQUEST_URI);
+        expect(r).toMatchObject({ action: 'set', capabilities: [REQUEST_URI] });
+        expect(r.entry.owner).toBe(UNBOUND_OWNER);
+        expect(autoApprovedFor(h2, s, PEER, REQUEST_URI)).toBe(true);
+        expect(autoApprovedFor(h2, s, PEER, CAP.uri)).toBe(false);
+        expect(alwaysAllowOffer(h2, s, PEER, REQUEST_URI)).toBeNull(); // covered now: not offered again
+        expect(alwaysAllowOffer(h2, s, PEER, CAP.uri)).not.toBeNull();
+        expect(h2.readAudit().at(-1)).toMatchObject({ gate: 'auto-approve', by: 'human', action: 'set', via: 'form', capabilities: [REQUEST_URI], until: null });
+        // A passphrase set later (by anyone) REMOVES it, audited: it never holds under a record it was not set under.
+        await storeOwnerSecret(h2, 'a passphrase set later');
+        expect(h2.readAutoApprove()).toEqual({});
+        expect(h2.readAudit().find((a) => a.gate === 'auto-approve' && a.action === 'off')).toMatchObject({ peer: PEER, reason: 'owner-secret' });
+        expect(autoApprovedFor(h2, s, PEER, REQUEST_URI)).toBe(false);
+        // Deleting the passphrase file afterwards is a reset, not "never set": an unbound entry put back (validly
+        // MACed, e.g. from a copy of the old file) fails closed and is removed, and the box sets nothing new.
+        const unbound = { ...r.entry };
+        rmSync(h2.ownerSecretPath);
+        expect(ownerBinding(h2)).toBeNull();
+        h2.writeAutoApprove({ [PEER]: unbound });
+        expect(autoApprovedFor(h2, s, PEER, REQUEST_URI)).toBe(false);
+        expect(h2.readAutoApprove()).toEqual({});
+        expect(alwaysAllowOffer(h2, s, PEER, REQUEST_URI)).toBeNull();
+        expect(() => allowAlways(h2, s, PEER, REQUEST_URI)).toThrow(/reset or its file deleted/);
+      } finally {
+        rmSync(d2, { recursive: true, force: true });
+      }
+    });
+
+    it('with a passphrase: bound to it; a second capability extends the entry; a passphrase change ends it', async () => {
+      const s = subjectOf(f.agent);
+      const first = allowAlways(home, s, PEER, REQUEST_URI);
+      expect(first.entry.owner).toBe(ownerBinding(home));
+      const second = allowAlways(home, s, PEER, CAP.uri);
+      expect(second).toMatchObject({ action: 'extend', capabilities: [REQUEST_URI, CAP.uri] });
+      expect(autoApprovedFor(home, s, PEER, CAP.uri)).toBe(true);
+      expect(autoApprovedFor(home, s, OTHER, REQUEST_URI)).toBe(false); // that contact only
+      expect((await arrive()).task().state).toBe('working'); // started without asking
+      await storeOwnerSecret(home, 'OWNER-PASS changed', 'changed');
+      expect(autoApprovedFor(home, s, PEER, REQUEST_URI)).toBe(false);
+      // A reset: no "none" binding, so the box can't turn anything on until a new passphrase is set.
+      await clearOwnerSecret(home);
+      expect(ownerBinding(home)).toBeNull();
+      expect(alwaysAllowOffer(home, s, PEER, REQUEST_URI)).toBeNull();
+      expect(() => allowAlways(home, s, PEER, REQUEST_URI)).toThrow(/reset or its file deleted/);
+    });
+
+    it('writes only onto the state the form saw: an entry that ended or was turned off meanwhile is not replaced by one until turned off', () => {
+      const s = subjectOf(f.agent);
+      const until = new Date(Date.now() + 86_400_000).toISOString();
+      setAutoApprove(home, s, PEER, until);
+      turnOffAutoApprove(home, PEER);
+      allowAlways(home, s, PEER, REQUEST_URI); // off now: a first entry
+      const offer = alwaysAllowOffer(home, s, PEER, CAP.uri)!;
+      expect(offer.was).toMatchObject({ until: null });
+      turnOffAutoApprove(home, PEER); // the owner turns it off while the form is open
+      expect(() => allowAlways(home, s, PEER, CAP.uri, new Date(), offer.was)).toThrow(/changed while the form was open/);
+      expect(home.readAutoApprove()).toEqual({});
+      // Off when shown, on now (set elsewhere meanwhile): refused too.
+      const off = alwaysAllowOffer(home, s, PEER, CAP.uri)!;
+      expect(off.was).toBeNull();
+      allowAlways(home, s, PEER, REQUEST_URI);
+      expect(() => allowAlways(home, s, PEER, CAP.uri, new Date(), off.was)).toThrow(/changed while the form was open/);
+    });
+
+    it('fails closed: not offered and not set for a capability the grant lacks, a blocked contact, or a hand-made entry', () => {
+      const s = subjectOf(f.agent);
+      const MORE = 'https://example.com/ext/more/v1';
+      expect(alwaysAllowOffer(home, s, PEER, MORE)).toBeNull();
+      expect(() => allowAlways(home, s, PEER, MORE)).toThrow(/no longer allows/);
+      f.blocked.add(PEER);
+      expect(alwaysAllowOffer(home, s, PEER, REQUEST_URI)).toBeNull();
+      expect(() => allowAlways(home, s, PEER, REQUEST_URI)).toThrow(/blocked/);
+      f.blocked.delete(PEER);
+      // An entry written by hand with owner "none" (no MAC under the agent key) approves nothing.
+      const c = f.contacts.get(PEER)!;
+      home.writeAutoApprove({
+        [PEER]: { v: 1, peer: PEER, mode: 'all', set: new Date().toISOString(), until: null, grantId: c.grantId, since: c.since, scope: scopeDigest(c.inboundScope), owner: UNBOUND_OWNER, covers: [REQUEST_URI], mac: 'ab'.repeat(32) },
+      });
+      expect(autoApprovedFor(home, s, PEER, REQUEST_URI)).toBe(false);
+      expect(home.readAudit().at(-1)).toMatchObject({ action: 'off', reason: 'invalid' });
+    });
   });
 
   describe('a grant our human changes keeps it for what it still covers (issue #93)', () => {

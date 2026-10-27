@@ -157,6 +157,15 @@ the audit log.
   it, and the plugin's consent guard refuses the shell command, the files
   (`autoapprove.json`, `owner-secret.json`) and any pseudo-terminal. Turning
   it off needs nothing: from any terminal, or `rdv_auto_approve` "off".
+- **Or one click, for one kind of task.** The approval form for a contact's
+  task (to start it, or to send its result) and for a dinner that contact
+  proposed has a box, "Don't ask again for this contact" (Claude Code's
+  form, or your gateway's page). It starts unticked. Tick it and approve, and
+  auto-approve is on for that contact and that capability (or its dinners),
+  until you turn it off; no passphrase, because only you can answer that
+  form. It says what it covers and the risk under the box. Your assistant
+  can't tick it, and a confirm phrase never offers it. It is audited like
+  the rest (`via: "form"`).
 - **It covers less than it sounds.** One contact's tasks, under capabilities
   its grant already allows, and the dinners that contact proposes when its
   grant allows meetings. Not new contacts, grants, a dinner you proposed,

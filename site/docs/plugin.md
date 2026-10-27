@@ -120,7 +120,12 @@ only the label it was shown with), or you name a contact yourself with
 address is only a claim, so it never labels a contact.
 
 Approving a contact: Claude calls `rdv_grant`, and Claude Code shows you an
-approval form (MCP elicitation). Claude can't fill it in for you.
+approval form (MCP elicitation) once Claude's reply ends. Claude can't fill
+it in for you; your answer completes the step. The forms for a contact's
+task and for a dinner it proposed also have "Don't ask again for this
+contact": tick it with your approval and that contact's tasks of that kind
+(or its dinners) stop asking you, until you ask Claude to turn auto-approve
+off.
 
 Tasks and files (v0.3): ask "Ask John's agent to review this", or answer
 when a contact asks your agent for something. Claude uses `rdv_task` and

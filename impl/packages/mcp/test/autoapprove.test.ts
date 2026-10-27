@@ -271,7 +271,9 @@ describe('rdv_auto_approve', () => {
     expect(form.message).toMatch(/Mode: +all/);
     expect(form.message).toContain(REQUEST_URI);
     expect(form.message).toContain(MEETINGS_CAPABILITY);
-    expect(form.message).toContain(on.until);
+    // A duration is shown as such (the form is built again when the answer comes, issue #103); the stored expiry counts from the approval.
+    expect(form.message).toContain('7d after you approve');
+    expect(Date.parse(on.until) - Date.now()).toBeGreaterThan(7 * 86_400_000 - 60_000);
     expect(form.message).toMatch(/prompt injection/);
     expect(form.requestedSchema.required).toEqual(['approve', 'passphrase']);
     expect(form.requestedSchema.properties.passphrase).toMatchObject({ type: 'string' });
@@ -319,7 +321,7 @@ describe('rdv_auto_approve', () => {
       return { action: 'accept', content: { approve: true, passphrase: OWNER_PASS } };
     };
     const moved = await john.call('rdv_auto_approve', { action: 'on', agent_id: omerId });
-    expect([moved.isError, moved.text]).toEqual([true, expect.stringContaining('changed while the form was open')]);
+    expect([moved.isError, moved.text]).toEqual([true, expect.stringContaining('changed since your user reviewed it')]);
     expect(existsSync(john.home.autoApprovePath)).toBe(false);
     expect(Object.values(john.home.readConsent()).map((c) => c.action)).not.toContain('auto-approve');
     expect(everythingVisible(john)).not.toContain(OWNER_PASS);
