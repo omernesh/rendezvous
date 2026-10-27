@@ -371,6 +371,9 @@ function sameScope(a: GrantScope | null, b: GrantScope): boolean {
   }
 }
 
+/** A Contact.grantStamp: 128 random bits, lowercase hex. */
+const newStamp = (): string => Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, '0')).join('');
+
 /** A fresh, mutable copy of DEFAULT_INBOUND_SCOPE. */
 const defaultInbound = (): GrantScope => ({ ...DEFAULT_INBOUND_SCOPE, invoke: {} });
 
@@ -403,14 +406,15 @@ export interface Contact {
   expires: string | null;
   since: string;
   /**
-   * Local only, never sent: how many times our human's own grant
-   * (`allowInbound`) changed what the peer may do towards us under this
-   * founding grant (absent: never). `grantId` and `since` stay the same
-   * across such a change, so standing approvals bound to the grant also bind
-   * to this, and an older copy bound to an earlier change no longer matches
-   * (issue #94).
+   * Local only, never sent: a fresh random value (32 hex) each time our
+   * human's own grant (`allowInbound`) changes what the peer may do towards
+   * us under this founding grant (absent: never). `grantId` and `since` stay
+   * the same across such a change, so standing approvals bound to the grant
+   * also bind to this, and an older copy bound to an earlier change no longer
+   * matches (issue #94). Random rather than a counter, so a timeline lost to
+   * a restore from backup never repeats a value.
    */
-  grantStamp?: number;
+  grantStamp?: string;
 }
 
 export interface PendingRequest {
@@ -825,7 +829,7 @@ export class ContactBook {
     if (!c) throw new Error(`no contact ${peer}`);
     if (!isTier(opts.tier)) throw new Error(`unknown tier ${String(opts.tier)}`);
     const scope = grantScope(opts.scope); // throws on a malformed or self-contradicting invoke
-    if (c.inboundGranted !== true || !sameScope(c.inboundScope, scope)) c.grantStamp = (c.grantStamp ?? 0) + 1;
+    if (c.inboundGranted !== true || !sameScope(c.inboundScope, scope)) c.grantStamp = newStamp();
     c.tier = opts.tier;
     c.inboundScope = scope;
     c.inboundGranted = true;

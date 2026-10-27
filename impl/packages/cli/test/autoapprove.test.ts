@@ -2,12 +2,12 @@
 // one trusted contact, only while the owner's setting holds; every doubt
 // fails closed; every action is audited without peer text; only the owner's
 // own terminal turns it on.
-import { createHmac } from 'node:crypto';
+import { createHmac, randomBytes } from 'node:crypto';
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { type Capability, REQUEST_URI, TASKS_URI, type TaskPayload } from '@rendezvous/a2a';
-import { type Agent, type Contact, fingerprint, generateKey, type GrantScope, GROUPS_EXTENSION, MEETING_CANCEL_CAPABILITY, MEETINGS_CAPABILITY } from '@rendezvous/core';
+import { type Agent, type Contact, ContactBook, fingerprint, generateKey, type GrantScope, GROUPS_EXTENSION, MEETING_CANCEL_CAPABILITY, MEETINGS_CAPABILITY } from '@rendezvous/core';
 import { startTestRelay, type TestRelay } from '@rendezvous/core/testing';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { Listener, rdv } from '../scenarios/harness.js';
@@ -439,7 +439,7 @@ describe('auto-approve in the gates', () => {
         async () => {
           const c = f.contacts.get(PEER)!;
           // As ContactBook.allowInbound: a changed scope is a new grant stamp (issue #94).
-          if (stable(c.inboundScope) !== stable(scope)) c.grantStamp = (c.grantStamp ?? 0) + 1;
+          if (stable(c.inboundScope) !== stable(scope)) c.grantStamp = randomBytes(16).toString('hex');
           c.inboundScope = scope;
           if (newGrant) {
             c.grantId = uuid();
@@ -502,12 +502,15 @@ describe('auto-approve in the gates', () => {
     it('an older file put back after narrow-then-widen revives nothing: each grant change is a new stamp under the MAC (issue #94)', async () => {
       setAutoApprove(home, subjectOf(f.agent), PEER, null);
       const atSet = readFileSync(home.autoApprovePath, 'utf8');
-      expect(home.readAutoApprove()[PEER].stamp).toBe(0);
+      expect(home.readAutoApprove()[PEER].stamp).toBeNull();
       await regrant({ invoke: { [REQUEST_URI]: {} } });
       const atNarrow = readFileSync(home.autoApprovePath, 'utf8');
-      expect(home.readAutoApprove()[PEER].stamp).toBe(1);
+      const s1 = home.readAutoApprove()[PEER].stamp;
+      expect(s1).toMatch(/^[0-9a-f]{32}$/);
       await regrant({ invoke: { [REQUEST_URI]: {}, [CAP.uri]: {} } });
-      expect(home.readAutoApprove()[PEER]).toMatchObject({ stamp: 2, covers: [REQUEST_URI] });
+      expect(home.readAutoApprove()[PEER]).toMatchObject({ covers: [REQUEST_URI] });
+      expect(home.readAutoApprove()[PEER].stamp).toMatch(/^[0-9a-f]{32}$/);
+      expect(home.readAutoApprove()[PEER].stamp).not.toBe(s1);
       expect(autoApprovedFor(home, subjectOf(f.agent), PEER, CAP.uri)).toBe(false);
       // Same grant ID, since and scope digest as when it was set: only the stamp tells the copies apart.
       for (const copy of [atSet, atNarrow]) {
@@ -519,7 +522,40 @@ describe('auto-approve in the gates', () => {
       }
     });
 
-    it('a stamp is bound under the MAC: an entry from before #94 holds only while the grant never changed; an altered or malformed stamp approves nothing', async () => {
+    it('a timeline lost to a restore from backup never repeats a stamp: its file revives nothing (review of #115)', async () => {
+      // The grant through the real ContactBook.allowInbound on a book holding this contact.
+      const real = (scope: GrantScope) =>
+        grantKeepingAutoApprove(home, subjectOf(f.agent), PEER, async () => {
+          const b = new ContactBook({ ...new ContactBook().state, contacts: { [PEER]: f.contacts.get(PEER)! } } as never);
+          const c = b.allowInbound(PEER, { tier: 'friend', scope });
+          f.contacts.set(PEER, c);
+          return c;
+        });
+      setAutoApprove(home, subjectOf(f.agent), PEER, null);
+      const backup = { contact: structuredClone(f.contacts.get(PEER)!), file: readFileSync(home.autoApprovePath, 'utf8') };
+      // Lost timeline: narrow, widen with MORE, and "Don't ask again" for MORE.
+      await real({ invoke: { [REQUEST_URI]: {} } });
+      await real({ invoke: { [REQUEST_URI]: {}, [MORE]: {} } });
+      allowAlways(home, subjectOf(f.agent), PEER, MORE);
+      expect(autoApprovedFor(home, subjectOf(f.agent), PEER, MORE)).toBe(true);
+      const lost = readFileSync(home.autoApprovePath, 'utf8');
+      // The owner restores the backup (agent state and autoapprove.json together): it holds.
+      f.contacts.set(PEER, structuredClone(backup.contact));
+      writeFileSync(home.autoApprovePath, backup.file);
+      expect(autoApprovedFor(home, subjectOf(f.agent), PEER, REQUEST_URI)).toBe(true);
+      // The same grant changes again; MORE is never approved this time.
+      await real({ invoke: { [REQUEST_URI]: {} } });
+      await real({ invoke: { [REQUEST_URI]: {}, [MORE]: {} } });
+      expect(autoApprovedFor(home, subjectOf(f.agent), PEER, MORE)).toBe(false);
+      expect(home.readAutoApprove()[PEER].stamp).not.toBe(JSON.parse(lost)[PEER].stamp);
+      // The lost timeline's file put back: same grant ID, since and scope digest, another stamp.
+      writeFileSync(home.autoApprovePath, lost);
+      expect(autoApprovedFor(home, subjectOf(f.agent), PEER, MORE)).toBe(false);
+      expect(home.readAutoApprove()).toEqual({});
+      expect(home.readAudit().at(-1)).toMatchObject({ action: 'off', reason: 'grant-changed' });
+    });
+
+    it('a stamp is bound under the MAC: an entry from before #94 holds only while the grant never changed since; an altered or malformed stamp approves nothing', async () => {
       const set = setAutoApprove(home, subjectOf(f.agent), PEER, null);
       const remac = (body: Omit<AutoApproveEntry, 'mac'>) =>
         ({ ...body, mac: createHmac('sha256', f.agent.key.secretKey).update(`rdv1/auto-approve\0${stable(body)}`).digest('hex') }) as AutoApproveEntry;
@@ -527,18 +563,18 @@ describe('auto-approve in the gates', () => {
       home.writeAutoApprove({ [PEER]: remac(legacy) });
       expect(autoApprovedFor(home, subjectOf(f.agent), PEER, CAP.uri)).toBe(true);
       // The stamp edited without the key: the MAC fails.
-      home.writeAutoApprove({ [PEER]: { ...set.entry, stamp: 5 } });
+      home.writeAutoApprove({ [PEER]: { ...set.entry, stamp: 'ab'.repeat(16) } });
       expect(autoApprovedFor(home, subjectOf(f.agent), PEER, CAP.uri)).toBe(false);
       expect(home.readAudit().at(-1)).toMatchObject({ action: 'off', reason: 'invalid' });
       // MACed but malformed: invalid all the same.
-      for (const stamp of [-1, 1.5, '0']) {
+      for (const stamp of [0, 2, '0', 'AB'.repeat(16), 'ab'.repeat(15), '']) {
         const { mac: _m, ...body } = set.entry;
-        home.writeAutoApprove({ [PEER]: remac({ ...body, stamp: stamp as number }) });
+        home.writeAutoApprove({ [PEER]: remac({ ...body, stamp: stamp as string }) });
         expect(autoApprovedFor(home, subjectOf(f.agent), PEER, CAP.uri)).toBe(false);
         expect(home.readAudit().at(-1)).toMatchObject({ action: 'off', reason: 'invalid' });
       }
-      // Once our human changed the grant, the pre-#94 entry (no stamp: 0) no longer matches.
-      f.contacts.get(PEER)!.grantStamp = 1;
+      // Once our human changed the grant, the pre-#94 entry (no stamp) no longer matches.
+      f.contacts.get(PEER)!.grantStamp = randomBytes(16).toString('hex');
       home.writeAutoApprove({ [PEER]: remac(legacy) });
       expect(autoApprovedFor(home, subjectOf(f.agent), PEER, CAP.uri)).toBe(false);
       expect(home.readAudit().at(-1)).toMatchObject({ action: 'off', reason: 'grant-changed' });
@@ -547,7 +583,7 @@ describe('auto-approve in the gates', () => {
     it('the "on" consent digest binds the stamp: a grant changed and changed back while the form was open refuses it', () => {
       const c = f.contacts.get(PEER)!;
       const before = autoApproveDigest(c, [REQUEST_URI], null, 'owner');
-      expect(autoApproveDigest({ ...c, grantStamp: 1 }, [REQUEST_URI], null, 'owner')).not.toBe(before);
+      expect(autoApproveDigest({ ...c, grantStamp: randomBytes(16).toString('hex') }, [REQUEST_URI], null, 'owner')).not.toBe(before);
       expect(autoApproveDigest({ ...c }, [REQUEST_URI], null, 'owner')).toBe(before);
     });
 

@@ -627,16 +627,19 @@ describe('received grants never widen inbound rights (security review H1/H2)', (
     expect(c?.grantStamp).toBeUndefined();
     const wide = { may_initiate: true, may_propose_meetings: true };
     const narrow = { may_initiate: true, may_propose_meetings: false };
-    // Granted for the first time (even the default scope): a change.
-    expect(book.allowInbound(mallory.id, { tier: 'stranger', scope: c!.inboundScope! }).grantStamp).toBe(1);
-    expect(book.allowInbound(mallory.id, { tier: 'friend', scope: wide }).grantStamp).toBe(2);
-    expect(book.allowInbound(mallory.id, { tier: 'family', scope: { ...wide } }).grantStamp).toBe(2);
-    expect(book.allowInbound(mallory.id, { tier: 'friend', scope: narrow }).grantStamp).toBe(3);
+    const stamp = (scope: typeof wide, tier: 'stranger' | 'friend' | 'family' = 'friend') => book.allowInbound(mallory.id, { tier, scope }).grantStamp;
+    // Granted for the first time (even the default scope): a change. Each stamp is 128 random bits.
+    const s1 = stamp(c!.inboundScope! as typeof wide, 'stranger');
+    expect(s1).toMatch(/^[0-9a-f]{32}$/);
+    const s2 = stamp(wide);
+    expect(stamp({ ...wide }, 'family')).toBe(s2);
+    const s3 = stamp(narrow);
     // Back to the wide scope: same grant ID, since and scope as two changes ago, yet another stamp.
     const again = book.allowInbound(mallory.id, { tier: 'friend', scope: wide });
-    expect(again).toMatchObject({ grantId: c!.grantId, since: c!.since, grantStamp: 4 });
+    expect(again).toMatchObject({ grantId: c!.grantId, since: c!.since });
+    expect(new Set([s1, s2, s3, again.grantStamp]).size).toBe(4);
     // Local state: it survives a save.
-    expect(new ContactBook(JSON.parse(JSON.stringify(book.state))).contact(mallory.id)?.grantStamp).toBe(4);
+    expect(new ContactBook(JSON.parse(JSON.stringify(book.state))).contact(mallory.id)?.grantStamp).toBe(again.grantStamp);
   });
 
   it('a flood of answers fills only its own probe, is counted, and never evicts another probe', () => {

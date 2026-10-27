@@ -4176,7 +4176,7 @@ export class RdvMcpServer {
           ...invokeField(invoke),
           // Meetings can be ticked on here, so their limits are always offered.
           ...limitFields(limitCaps(true, invoke), limits),
-        }, undefined, bindOf({ peer: contact.peer, grantId: contact.grantId, since: contact.since, scope: contact.inboundScope ?? null, stamp: contact.grantStamp ?? 0, binding: contact.binding, label: contact.label ?? null, granted: contact.inboundGranted ?? null }),
+        }, undefined, bindOf({ peer: contact.peer, grantId: contact.grantId, since: contact.since, scope: contact.inboundScope ?? null, stamp: contact.grantStamp ?? null, binding: contact.binding, label: contact.label ?? null, granted: contact.inboundGranted ?? null }),
       );
       if (form?.kind === 'no') declined(form.why, `${what} was granted nothing more; nothing changed.`, { agent_id: safe(peer) });
       if (form?.kind === 'accept') {

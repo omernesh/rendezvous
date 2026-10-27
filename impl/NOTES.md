@@ -3917,18 +3917,28 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
     §5.5.1 "Bound to the grant": two sentences; local state only, no wire
     change, the test vectors are unchanged). Fixes the two known limits of
     item 92.
-    - **The stamp.** `Contact.grantStamp` (core, local, absent = 0) counts
-      our human's own grant changes under the founding grant:
-      `ContactBook.allowInbound` adds one when the contact was not granted
+    - **The stamp.** `Contact.grantStamp` (core, local, absent = never
+      changed since #94) is a fresh random 128-bit value (32 lowercase hex)
+      each time our human's own grant changes under the founding grant:
+      `ContactBook.allowInbound` draws one when the contact was not granted
       yet or the new scope differs canonically from the old (a tier change
       alone, or the same scope again, is not a change, so item 92's "the
-      same grant again writes nothing" holds). Every entry stores it as
-      `stamp` under the MAC (`setAutoApprove`, `allowAlways`, the rebind in
-      `keepAutoApprove`), and `checkAutoApprove` requires it to equal the
+      same grant again writes nothing" holds). Random, not a counter
+      (review of PR #115): with a counter, restoring a backup and making the
+      same narrow and widen again reached the same number, so a file copied
+      from the lost timeline matched again. A restored bundle still holds,
+      since the agent state and its `autoapprove.json` travel together.
+      Every entry stores it as `stamp` under the MAC (`setAutoApprove`,
+      `allowAlways`, the rebind in `keepAutoApprove`; null while the
+      contact has none), and `checkAutoApprove` requires it to equal the
       contact's, else `grant-changed` (removed, audited). An entry from
-      before #94 has none and counts as 0, so it holds until the first grant
-      change after the upgrade; a stamp that is not a non-negative integer
-      is `invalid`. So an `autoapprove.json` put back after
+      before #94 has none, so it holds until the first grant change after
+      the upgrade; anything else that is not 32 lowercase hex is `invalid`.
+    - **Until the first grant change after the upgrade, a pre-#94 entry can
+      still be rolled back** as before: neither it nor the contact has a
+      stamp, so an older pre-#94 copy put back matches (for example a copy
+      from before a narrow-then-widen made on 0.10.0 or earlier). The first
+      grant change on 0.10.1 gives the contact a stamp and ends that. So an `autoapprove.json` put back after
       narrow-then-widen-back has the same grant ID, `since` and scope digest
       but an older stamp, and approves nothing. The `rdv_auto_approve` "on"
       digest and the `rdv_grant` agent_id form's binding include it too, so
@@ -3936,7 +3946,10 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       the answer.
     - **Not covered: an off put back.** Turning it off changes no grant, so
       an entry copied before an off and restored afterwards still matches
-      (as before #93). Fixing that needs a counter outside
+      (as before #93). The realistic case is not an attacker but a
+      cloud-sync client (OneDrive, Dropbox, iCloud) that restores an older
+      `autoapprove.json` over the home: what the owner turned off is on
+      again. Fixing that needs a counter outside
       `autoapprove.json` that every off bumps under the agent lock; not done
       without a concrete exploit beyond "can write the home", which also
       covers `owner.json`, `consent.json` and the rest.
@@ -3955,14 +3968,19 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       the auto-approve state (it is bound to the contact and terms, as
       before): a phrase shown while it was off and used after the human
       turned it on grants what the phrase said, and the grant's result then
-      says auto-approve kept what it covers.
+      says auto-approve kept what it covers. The same holds if a cloud-sync
+      client restores an older `autoapprove.json` (one with the contact on
+      it) between the phrase and its use: the human read no note. Both stay
+      documented limits.
     - **Obsolete parts.** None: the forms of items 96 and 97 did not touch
       the grant form, and the "Don't ask again" path writes entries like
       the others, so it binds the stamp too.
     - **Tests.** core `unit.test.ts` (the stamp per change, not for the same
       scope or a tier change, survives a save); cli `autoapprove.test.ts`
       (both older copies put back after narrow-then-widen approve nothing
-      and are audited `grant-changed`; a pre-#94 entry holds at 0 and not
+      and are audited `grant-changed`; after a restore from backup and the
+      same grant changes again, the lost timeline's file approves nothing
+      (the review's proof, through the real `allowInbound`); a pre-#94 entry holds at 0 and not
       after a change; an edited stamp fails the MAC; a malformed MACed one
       is invalid; the "on" digest binds it; the note's text and nothing when
       off); MCP `autoapprove.test.ts` (the form says nothing when off and the
