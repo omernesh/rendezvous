@@ -44,6 +44,11 @@ describe('scopes', () => {
     expect(requiredScope('rdv_backup', { action: 'restore' })).toBeUndefined();
     expect(requiredScope('rdv_auto_approve', { action: 'on' })).toBeUndefined();
     expect(requiredScope('rdv_file', { action: 'prepare' })).toBeUndefined();
+    // Issue #102: the owner's settings that go through the page ask under contact:request; the passphrase never does.
+    expect(requiredScope('rdv_label', { agent_id: 'rdv1:x' })).toBe('contact:request');
+    expect(requiredScope('rdv_resync', { agent_id: 'rdv1:x' })).toBe('contact:request');
+    expect(requiredScope('rdv_file', { action: 'direct-transfer', direct_transfer: 'on' })).toBe('contact:request');
+    expect(requiredScope('rdv_owner_passphrase', {})).toBeUndefined();
     expect(authorizeCall(['read'], 'rdv_send', {})).toMatch(/lacks the "send" scope/);
     expect(authorizeCall(['read', 'send', 'contact:request', 'negotiate'], 'rdv_init', {})).toMatch(/not available/);
   });

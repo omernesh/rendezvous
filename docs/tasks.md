@@ -117,8 +117,10 @@ can go inline.
   file is saved in quarantine under the home: `files/incoming/<task>/`, mode
   600, `.quarantine` appended after an active extension, a Mark of the Web on
   Windows. Its content stays untrusted.
-- **Direct transfer.** Your setting, `rdv file direct-transfer on|off`, off by
-  default. Off, a contact's request for a direct transfer is declined. On, the
+- **Direct transfer.** Your setting, off by default. Ask your assistant
+  (`rdv_file` "direct-transfer": turning it off needs no form, turning it on
+  opens an approval form), or in your terminal: `rdv file direct-transfer
+  on|off`. Off, a contact's request for a direct transfer is declined. On, the
   request is shown to you. Nothing ever connects on its own, and no
   direct-transfer protocol is implemented yet, so files move by URL.
 
@@ -130,8 +132,12 @@ own initiative.
 Approving every task by hand is safe and tiring. For one contact you trust as
 you trust your own agent, you can switch on **auto-approve**:
 
+Ask your assistant to set an owner passphrase once (`rdv_owner_passphrase`,
+an approval form), then to turn auto-approve on for the contact. Or in your
+terminal:
+
 ```bash
-rdv owner-secret set                                 # once, in your own terminal
+rdv owner-secret set                                 # once
 rdv contact auto-approve john@doe.com all --until 7d
 rdv contact auto-approve john@doe.com off
 ```
@@ -145,7 +151,8 @@ the audit log.
 - **Only you can turn it on.** It shows a warning (the contact and its
   fingerprint, what it allows, the capabilities it covers, that prompt
   injection gets the agent's tools, the expiry, how to turn it off) and asks
-  for your **owner passphrase**, which you set with `rdv owner-secret set`.
+  for your **owner passphrase**, which you set through your assistant's
+  `rdv_owner_passphrase` tool (an approval form) or with `rdv owner-secret set`.
   Type it in your own terminal (`rdv contact auto-approve`, read from the
   terminal device, never echoed), or, when you ask your assistant to turn it
   on, into the approval form its `rdv_auto_approve` tool opens: what you type

@@ -130,6 +130,7 @@ import {
   OWNER_SECRET_MIN,
   ownerSecretBinding,
   ownerSecretLock,
+  RESET_COOLDOWN_MS,
   storeOwnerSecret,
   weakOwnerSecret,
   parseUntil,
@@ -583,6 +584,9 @@ interface OpenForm {
 const DECLINE_RUNS = new Set(['rdv_task/approve-start', 'rdv_task/approve-release', 'rdv_negotiate/confirm']);
 
 /** A form answered for an item that changed since it was shown (its digest differs now). */
+/** A step's own check under the lock found its item changed since the form (issue #102): what it says. */
+const changedNote = (what: string): string => `${what.charAt(0).toUpperCase()}${what.slice(1)}${CHANGED_NOTE.slice('it'.length)}`;
+
 const CHANGED_NOTE =
   'it changed since your user reviewed it in the approval form, so their answer did nothing. Nothing was done; if they still want it, call the tool again: a new form shows it as it is now.';
 
@@ -2158,7 +2162,8 @@ export class RdvMcpServer {
         replace: z.boolean().optional().describe('Replace the agent that exists here with a new identity (your user approves it in a form; it cannot be undone)'),
       },
       async (a) => {
-        if (a.replace === true) return this.replaceAgent(a);
+        // Nothing to replace yet: a plain create.
+        if (a.replace === true && home.initialized()) return this.replaceAgent(a);
         await this.applySettings(a);
         let created = false;
         if (!home.initialized()) {
@@ -2594,9 +2599,9 @@ export class RdvMcpServer {
 
     this.tool(
       'rdv_owner_passphrase',
-      "Set or change your user's owner passphrase (the one rdv_auto_approve \"on\" asks for), only when they ask. " +
+      "Set or change your user's owner passphrase (what they type to give a contact standing approval), only when they ask. " +
         'An approval form asks them to type the new passphrase twice (and the current one, when changing it); only this server sees what they type. ' +
-        'Setting one turns auto-approve off for every contact (they turn it back on afterwards). Never ask for the passphrase, never accept it in chat, never put it in an argument: ' +
+        'Setting one ends every standing approval (they give each one again afterwards, if they want). Never ask for the passphrase, never accept it in chat, never put it in an argument: ' +
         'without a form this tool refuses, with no confirm phrase, and your user can set it in their own terminal.',
       {},
       async () => this.ownerPassphrase(),
@@ -2758,7 +2763,7 @@ export class RdvMcpServer {
         '"list" shows prepared files, files peers sent for tasks (never fetched on arrival), and direct-transfer requests. ' +
         '"fetch" (task_id, and file index or sha256) fetches one peer file, only for a task your user started (or a result for a task you requested): https only, no credentials, size cap, hash and decryption checked; it is saved in quarantine and you get its path and metadata, not its content (short text comes back as untrusted_peer_text). ' +
         '"decline-transfer" (transfer_id) says no to a peer asking for a direct transfer. ' +
-        '"direct-transfer" (direct_transfer "on" or "off") is your user's setting, only when they ask: "off" needs no approval (requests are then declined); "on" opens an approval form, and with it on, requests are shown to your user (nothing connects on its own). Without a form "on" is refused (no confirm phrase).',
+        '"direct-transfer" (direct_transfer "on" or "off") is your user\'s setting, only when they ask: "off" needs no approval (requests are then declined); "on" opens an approval form, and with it on, requests are shown to your user (nothing connects on its own). Without a form "on" is refused (no confirm phrase).',
       {
         action: z.enum(['prepare', 'list', 'fetch', 'decline-transfer', 'direct-transfer']),
         path: z.string().max(4096).optional().describe('prepare: the local file'),
@@ -2853,6 +2858,28 @@ export class RdvMcpServer {
     this.defs.splice(at('rdv_init'), 1);
     // A backup holds the agent's key, and a restore replaces who the agent is: the owner's, on their machine (issue #88).
     this.defs.splice(at('rdv_backup'), 1);
+    // A passphrase is typed only where the owner's own machine reads it, never into a web page (issue #102).
+    this.defs.splice(at('rdv_owner_passphrase'), 1);
+    const labelFn = def('rdv_label').fn;
+    change('rdv_label', {
+      description:
+        'Rename a contact: its local_label, the name rdv_send "to" resolves. Only when your user asks. It returns an approve_url: on the approval page your user sees the contact (agent ID, fingerprint) and types the new name themselves; ' +
+        'your label is only a suggestion shown there.',
+      shape: {
+        agent_id: def('rdv_label').shape.agent_id,
+        label: z.string().max(LABEL_MAX).optional().describe("A suggestion only, from your user's words: they type the label on the approval page"),
+      },
+      fn: async (a) => {
+        const { agent_id, label } = a as { agent_id: string; label?: string };
+        const suggestions: ApprovalAsk['suggestions'] = label === undefined ? [] : [{ field: 'label', value: checkLabel(label) ?? '' }];
+        try {
+          return await labelFn({ agent_id });
+        } catch (err) {
+          if (err instanceof AwaitingHuman) err.suggestions = suggestions;
+          throw err;
+        }
+      },
+    });
     const listOnly = (name: string, description: string) => {
       const fn = def(name).fn;
       change(name, { description, shape: { action: z.literal('list').optional() }, fn: async () => fn({ action: 'list' }), annotations: { readOnlyHint: true } });
@@ -2870,8 +2897,10 @@ export class RdvMcpServer {
       description:
         'Files in tasks (SPEC §7.7). "list" shows files peers sent for tasks (never fetched on arrival), your user\'s prepared files and direct-transfer requests. ' +
         '"fetch" (task_id, and file index or sha256) fetches one peer file into quarantine on your user\'s machine, only for a task your user started: you get its metadata, never its content. ' +
-        '"decline-transfer" (transfer_id) says no to a peer asking for a direct transfer. Preparing your user\'s own files is theirs, in their own terminal.',
-      shape: { ...without('rdv_file', ['path', 'name', 'mime_type', 'plain']), action: z.enum(['list', 'fetch', 'decline-transfer']) },
+        '"decline-transfer" (transfer_id) says no to a peer asking for a direct transfer. ' +
+        '"direct-transfer" (direct_transfer "on" or "off") is your user\'s setting, only when they ask: "off" needs no approval; "on" returns an approve_url for their approval page. ' +
+        'Preparing your user\'s own files is theirs, in their own terminal.',
+      shape: { ...without('rdv_file', ['path', 'name', 'mime_type', 'plain']), action: z.enum(['list', 'fetch', 'decline-transfer', 'direct-transfer']) },
       fn: async (a) => withoutFileContent(await fileFn(a)),
     });
     change('rdv_task', { shape: without('rdv_task', ['confirm_phrase', 'inline_files']) });
@@ -3144,7 +3173,7 @@ export class RdvMcpServer {
     const terminal = `rdv contact auto-approve ${seen.peer} all${until ? ` --until ${until}` : ''} --home "${home.dir}"`;
     if (!hasOwnerSecret(home)) {
       throw new ToolError(
-        'no owner passphrase is set, so auto-approve cannot be turned on. Your user sets one in their own terminal, never through you: ' +
+        'no owner passphrase is set, so auto-approve cannot be turned on. Your user sets one first, only when they ask: rdv_owner_passphrase opens an approval form where they type it (never in the chat), or in their own terminal: ' +
           `rdv owner-secret set --home "${home.dir}". Nothing was changed.`,
       );
     }
@@ -3347,6 +3376,384 @@ export class RdvMcpServer {
         (r.auto_approve.length
           ? 'Tell them which contacts are again approved without asking (standing_approvals_restored, by fingerprint), as they were when the backup was made: if that is no longer what they want, they can turn it off (that needs no form).'
           : ''),
+    };
+  }
+
+  // --- the owner's settings from the chat (issue #102) ---------------------------------
+
+  /**
+   * A setting only the human changes (issue #102): asked in an approval form
+   * and nothing else. There is no confirm phrase, since it would pass through
+   * the model; without a form (a client without them, RDV_ELICIT=off, the
+   * REST entry point, a form dismissed) it is refused and names the terminal
+   * command. A no comes back as `declined`. The form's content, as the human
+   * left it, otherwise.
+   */
+  private async settingForm(terminal: string, message: string, properties: Record<string, unknown>, required: string[] = ['approve'], bind?: string): Promise<Record<string, unknown>> {
+    const form = await this.askForm(message, properties, required, bind);
+    if (form?.kind === 'no') declined(form.why, 'Nothing was changed.');
+    if (form?.kind !== 'accept') {
+      const why = form ? form.note : `This client cannot show an approval form now${this.formsEnabled ? '' : ' (approval forms are turned off: RDV_ELICIT=off)'}.`;
+      this.humanLog(`${firstFormLine(message)}: NOT done (${why}) It has no confirm phrase. In your own terminal: ${terminal}`);
+      throw new ToolError(`${why} Nothing was changed: this needs your user's answer in an approval form, and there is no confirm phrase for it. Your user can do it in their own terminal: ${terminal}`);
+    }
+    return (form as { content: Record<string, unknown> }).content;
+  }
+
+  /**
+   * rdv_label: our human renames a contact (the name "tell John" resolves).
+   * The model's label is only what the form starts with (remote: only a
+   * suggestion on the page, which starts at the current label); what applies
+   * is what the human leaves in the form, bound to the contact and its label
+   * as shown.
+   */
+  private async labelContact(agentIdArg: string, suggested: string | undefined) {
+    if (!isAgentId(agentIdArg)) throw new ToolError('agent_id is not an agent ID (rdv1:…): rdv_status lists your contacts');
+    const given = checkLabel(suggested);
+    const seen = await this.withAgent(async (agent) => {
+      const c = agent.book.contact(agentIdArg);
+      if (!c) throw new ToolError(`no active contact ${safe(agentIdArg)}: rdv_status lists your contacts. Nothing was changed.`);
+      return { label: c.label };
+    });
+    const shown = this.remote ? seen.label : (given ?? seen.label);
+    const content = await this.settingForm(
+      `rdv contact label ${agentIdArg} "<label>" --home "${this.home.dir}"`,
+      `Rendezvous: rename this contact?\n\n  Agent ID:     ${agentIdArg}\n  Fingerprint:  ${fingerprint(agentIdArg)}\n  Label now:    ${seen.label ? clean(seen.label) : '(none)'}\n\n` +
+        'The label is how your assistant finds this contact: "tell <label>" goes to them. Check that the fingerprint is the person you mean, and type the name you want below.',
+      { approve: { type: 'boolean', title: 'Rename this contact', default: false }, label: { ...labelField(shown), title: 'New label', description: 'What "tell …" will reach' } },
+      ['approve'],
+      bindOf({ peer: agentIdArg, label: seen.label ?? null }),
+    );
+    const label = formLabel(content, shown);
+    if (label === undefined) throw new ToolError('the label your user left in the form is empty, and a contact\'s label cannot be removed. Nothing was changed.');
+    const r = await this.withAgent(async (agent) => {
+      const now = agent.book.contact(agentIdArg);
+      // Still the contact and the label the form showed.
+      if (!now || (now.label ?? null) !== (seen.label ?? null)) throw new ToolError(changedNote('the contact or its label'));
+      return { c: agent.book.setLabel(agentIdArg, label), same: agent.book.byLabel(label).length };
+    });
+    const { c, same } = r;
+    this.humanLog(`contact ${fingerprint(agentIdArg)} renamed "${label}" through the approval form`);
+    return {
+      labeled: true,
+      agent_id: safe(agentIdArg),
+      fingerprint: safe(fingerprint(agentIdArg)),
+      local_label: safe(c.label ?? ''),
+      ...(same > 1 ? { label_conflict: 'another contact has the same local_label, so rdv_send "to" refuses it: ask your user which fingerprint they mean and use agent_id, or rename one' } : {}),
+      note: 'Your user set this label in the approval form. Tell them; rdv_send "to" now resolves it.',
+    };
+  }
+
+  /**
+   * rdv_owner_passphrase (issue #102): set or change the owner passphrase in
+   * an approval form, typed twice (and the current one first, when changing
+   * it), seen only by this server: never in a result, event, log or error.
+   * The checks are the terminal's (strength, lockout, the cooldown after a
+   * reset), and like there a new passphrase ends every auto-approve.
+   */
+  private async ownerPassphrase() {
+    const home = this.home;
+    if (!home.initialized()) throw new ToolError(`no agent at ${home.dir} yet: call rdv_init first`);
+    const terminal = `rdv owner-secret set --home "${home.dir}"`;
+    const had = hasOwnerSecret(home);
+    const lock = ownerSecretLock(home);
+    if (lock) throw new ToolError(`too many wrong owner passphrases: it can be changed again after ${lock.toISOString()}. Nothing was changed.`);
+    const reset = ownerSecretInfo(home).reset;
+    const end = reset ? Date.parse(reset) + RESET_COOLDOWN_MS : 0;
+    if (end > Date.now()) throw new ToolError(`the owner passphrase was reset: a new one can be set after ${new Date(end).toISOString()}. Nothing was changed.`);
+    const field = (title: string, description: string) => ({ type: 'string', title, description, minLength: 1, maxLength: OWNER_SECRET_MAX });
+    const content = await this.settingForm(
+      terminal,
+      `Rendezvous: ${had ? 'change' : 'set'} your owner passphrase?\n\n` +
+        'The owner passphrase is what you type to turn auto-approve on for a contact (rdv_auto_approve "on"). ' +
+        `${had ? 'Type your current one, then the new one twice. ' : 'Type it twice. '}At least ${OWNER_SECRET_MIN} characters, no spaces at the start or end. ` +
+        `Setting one turns auto-approve off for every contact; you turn it back on where you want it. Forgot it later: "rdv owner-secret reset" in your own terminal. ` +
+        'Only the Rendezvous server sees what you type here: your assistant never does. Never type it into the chat.',
+      {
+        approve: { type: 'boolean', title: had ? 'Change my passphrase' : 'Set my passphrase', default: false },
+        ...(had ? { current_passphrase: field('Current passphrase', 'The one you set before. Only the Rendezvous server sees it.') } : {}),
+        passphrase: field('New passphrase', 'Only the Rendezvous server sees it.'),
+        passphrase_again: field('New passphrase again', 'The same passphrase, once more.'),
+      },
+      ['approve', ...(had ? ['current_passphrase'] : []), 'passphrase', 'passphrase_again'],
+      bindOf({ owner: ownerSecretBinding(home) }),
+    );
+    const { current_passphrase: current, passphrase, passphrase_again: again } = content;
+    if (typeof passphrase !== 'string' || typeof again !== 'string' || passphrase === '') throw new ToolError('The approval form came back without the new passphrase. Nothing was changed.');
+    if (passphrase !== again) throw new ToolError('The two new passphrases in the form did not match. Nothing was changed; ask your user whether to try again.');
+    const weak = weakOwnerSecret(passphrase);
+    if (weak) throw new ToolError(`The new passphrase in the form was too weak (it needs ${weak}). Nothing was changed; ask your user whether to try again.`);
+    if (had) {
+      if (typeof current !== 'string' || current === '') throw new ToolError('The approval form came back without the current passphrase. Nothing was changed.');
+      // Checked as in the terminal: a miss counts toward the lockout.
+      const check = await checkOwnerSecret(home, current);
+      if (!check.ok) {
+        const why =
+          check.reason === 'locked'
+            ? `The current passphrase was wrong too many times; it is locked until ${check.lockedUntil}.`
+            : check.reason === 'none'
+              ? 'No owner passphrase is set any more.'
+              : `The current passphrase in the form was wrong (${check.triesLeft} more ${check.triesLeft === 1 ? 'try' : 'tries'} before a lockout).`;
+        this.humanLog(`the owner passphrase was NOT changed: ${why}`);
+        throw new ToolError(`${why} Nothing was changed. Tell your user; never ask them for the passphrase.`);
+      }
+    }
+    const action = had ? 'changed' : 'set';
+    const { autoApproveOff } = await storeOwnerSecret(home, passphrase, action, new Date(), 'form');
+    if (autoApproveOff.length) {
+      await this.publish(autoApproveOff.map((p) => ({ type: 'auto_approve_off', peer: safe(p), fingerprint: safe(fingerprint(p)), reason: 'owner-secret', next_step: AUTO_OFF_NEXT })));
+    }
+    this.humanLog(`owner passphrase ${action} through the approval form (audited)${autoApproveOff.length ? `; auto-approve turned off for ${autoApproveOff.map((p) => fingerprint(p)).join(', ')}` : ''}`);
+    return {
+      owner_passphrase: action,
+      set: safe(ownerSecretInfo(home).set ?? ''),
+      auto_approve_turned_off: autoApproveOff.map((p) => ({ agent_id: safe(p), fingerprint: safe(fingerprint(p)) })),
+      note:
+        `Your user ${action} their owner passphrase in the approval form (audited). ` +
+        (autoApproveOff.length ? 'Auto-approve is now off for the contacts listed; tell them, and that they can turn it back on (rdv_auto_approve "on", only when they ask). ' : '') +
+        'Never ask them for the passphrase.',
+    };
+  }
+
+  /**
+   * rdv_resync (issue #102): after a fork or rollback, accept again what this
+   * agent refused, once our human checked with the person: a contact's
+   * channel (agent_id), a frozen group's membership (group_id), or a refused
+   * or muted member's group messages (both). The form explains what was seen
+   * and is bound to it; the step checks it again under the lock.
+   */
+  private async resync(agentIdArg: string | undefined, groupId: string | undefined) {
+    if (agentIdArg === undefined && groupId === undefined) throw new ToolError('give agent_id (a contact), group_id (a group), or both (a member of a group)');
+    if (agentIdArg !== undefined && !isAgentId(agentIdArg)) throw new ToolError('agent_id is not an agent ID (rdv1:…)');
+    if (groupId !== undefined && !isDocId(groupId)) throw new ToolError('group_id is not a group ID');
+    const home = this.home;
+    const check = 'Check with them directly (a call, in person, not through Rendezvous) before you accept.';
+    if (groupId === undefined) {
+      const peer = agentIdArg!;
+      const seen = await this.withAgent(async (agent) => {
+        const r = agent.refusedChannels().find((c) => c.peer === peer);
+        if (!r) throw new ToolError(`this agent is not refusing ${safe(peer)}'s messages, so there is nothing to accept again. Nothing was changed.`);
+        return { refused: r, label: agent.book.contact(peer)?.label };
+      });
+      const what =
+        seen.refused.kind === 'rollback'
+          ? `one of its messages went back to an earlier point (#${seen.refused.seq}) than the ${seen.refused.accepted} your agent had already taken (a rollback)`
+          : `a second, different message arrived for a place in its chain your agent had already filled (#${seen.refused.seq}: a fork)`;
+      await this.settingForm(
+        `rdv contact resync ${peer} --home "${home.dir}"`,
+        `Rendezvous: take this contact's messages again?\n\n  Agent ID:     ${peer}\n  Fingerprint:  ${fingerprint(peer)}\n  Label:        ${seen.label ? clean(seen.label) : '(none)'}\n\n` +
+          `Your agent stopped taking this contact's messages: ${what}. That happens when two copies of their agent run at once or they restored an old copy, and it could also be someone replaying their messages. ${check} ` +
+          'Accepting takes their next new message as the new start of the chain; what was refused in between is not replayed.',
+        { approve: { type: 'boolean', title: 'Take their messages again', default: false } },
+        ['approve'],
+        bindOf({ peer, refused: seen.refused }),
+      );
+      await this.withAgent(async (agent) => {
+        const r = agent.refusedChannels().find((c) => c.peer === peer);
+        if (!r || bindOf(r) !== bindOf(seen.refused)) throw new ToolError(changedNote('the channel'));
+        agent.resyncChannel(peer);
+      });
+      this.humanLog(`re-synced ${fingerprint(peer)} through the approval form: its next new message starts the chain again`);
+      return { resynced: 'contact', agent_id: safe(peer), fingerprint: safe(fingerprint(peer)), note: "Your user accepted it in the approval form: this contact's next new message starts the chain again. Tell them." };
+    }
+    const group = groupId;
+    const seen = await this.withAgent(async (agent) => {
+      const r = agent.groups.group(group);
+      if (!r) throw new ToolError(`no group ${safe(group)}: rdv_group "list" shows your groups. Nothing was changed.`);
+      const v = groupView(agent, r);
+      if (agentIdArg === undefined) {
+        if (!r.frozen) throw new ToolError(`group ${safe(group)} is not frozen, so there is nothing to thaw. Nothing was changed.`);
+        return { name: v.name, frozen: r.frozen, epoch: r.state.epoch, member: undefined };
+      }
+      const m = refusedMembers(r).filter((x) => x.member === agentIdArg);
+      if (!m.length) throw new ToolError(`this agent is not refusing or muting ${safe(agentIdArg)} in group ${safe(group)}. Nothing was changed.`);
+      return { name: v.name, frozen: undefined, epoch: r.state.epoch, member: m };
+    });
+    const head = `  Group:        ${group} (named "${clean(seen.name)}" by its admin: their words)\n`;
+    if (agentIdArg === undefined) {
+      await this.settingForm(
+        `rdv group resync ${group} --home "${home.dir}"`,
+        `Rendezvous: thaw this group?\n\n${head}  Frozen at:    epoch ${seen.frozen!.epoch}, since ${seen.frozen!.since}\n  Signed by:    ${seen.frozen!.signers.map((s) => fingerprint(s)).join(', ')}\n\n` +
+          "Your agent froze this group's membership: two different versions of who is in it were signed for the same step (a fork), so it applies no membership change until you decide. " +
+          `Check with the admins directly which version is right. ${check} Thawing keeps the membership your agent holds now and applies later changes on top of it; the other version is not adopted.`,
+        { approve: { type: 'boolean', title: 'Thaw this group', default: false } },
+        ['approve'],
+        bindOf({ group, frozen: seen.frozen, epoch: seen.epoch }),
+      );
+      const r = await this.withAgent(async (agent) => {
+        const now = agent.groups.group(group);
+        if (!now?.frozen || bindOf({ group, frozen: now.frozen, epoch: now.state.epoch }) !== bindOf({ group, frozen: seen.frozen, epoch: seen.epoch })) {
+          throw new ToolError(changedNote('the group'));
+        }
+        return { ...groupModelView(agent, agent.resyncGroup(group)), resynced: 'group' };
+      });
+      this.humanLog(`group ${group} thawed through the approval form at epoch ${seen.epoch}`);
+      return { ...r, note: 'Your user thawed the group in the approval form: its membership is the one this agent held, and later changes apply again. Tell them.' };
+    }
+    const member = agentIdArg;
+    const why = seen
+      .member!.map((m) =>
+        m.kind === 'equivocation' ? `it signed two different group messages for the same place in its chain (since ${m.since})` : `it was muted for sending more than the group allows (since ${m.since})`,
+      )
+      .join('; and ');
+    await this.settingForm(
+      `rdv group resync ${group} --member ${member} --home "${home.dir}"`,
+      `Rendezvous: take this member's group messages again?\n\n${head}  Member:       ${member}\n  Fingerprint:  ${fingerprint(member)}\n\n` +
+        `Your agent refuses this member's messages in the group: ${why}. That can mean two copies of their agent run, or a fault on their side. ${check} ` +
+        'Accepting takes their next new group message again; what was refused in between is not replayed.',
+      { approve: { type: 'boolean', title: 'Take their messages again', default: false } },
+      ['approve'],
+      bindOf({ group, member, refused: seen.member }),
+    );
+    const r = await this.withAgent(async (agent) => {
+      const now = agent.groups.group(group);
+      const m = now ? refusedMembers(now).filter((x) => x.member === member) : [];
+      if (!now || bindOf(m) !== bindOf(seen.member)) throw new ToolError(changedNote('the member'));
+      try {
+        agent.resyncGroupMember(group, member);
+      } catch (err) {
+        throw new ToolError((err as Error).message);
+      }
+      return { ...groupModelView(agent, agent.groups.group(group)!), resynced: 'member', agent_id: safe(member) };
+    });
+    this.humanLog(`group ${group}: ${fingerprint(member)}'s messages taken again through the approval form`);
+    return { ...r, note: "Your user accepted it in the approval form: this member's next new group message is taken again. Tell them." };
+  }
+
+  /**
+   * rdv_file "direct-transfer" (issue #102). Off only narrows (requests are
+   * declined), so it needs no form, like rdv_auto_approve "off"; on asks the
+   * human in one. Nothing connects either way: this agent implements no
+   * transfer protocol, and each request is still shown to the human.
+   */
+  private async directTransfer(on: boolean) {
+    const home = this.home;
+    if (!home.initialized()) throw new ToolError(`no agent at ${home.dir} yet: call rdv_init first`);
+    const key = () => b64decode(home.readAgentState().secretKey);
+    const current = () => home.readOwner(key()).direct_transfer === true;
+    const set = async () =>
+      home.locked(async () => {
+        const was = current();
+        home.writeOwner(on ? { direct_transfer: true } : {}, key());
+        return was;
+      });
+    if (!on) {
+      const was = await set();
+      if (was) this.humanLog('direct transfer turned OFF through your assistant: requests for one are declined');
+      return { direct_transfer: 'off', changed: was, note: was ? 'Off now: requests for a direct transfer are declined. Tell your user.' : 'It was off already; nothing changed.' };
+    }
+    if (current()) return { direct_transfer: 'on', changed: false, note: 'It was on already; nothing changed.' };
+    await this.settingForm(
+      `rdv file direct-transfer on --home "${home.dir}"`,
+      'Rendezvous: turn direct file transfers on?\n\n' +
+        "With it on, a contact that asks to send or receive a file directly (instead of through a link) is shown to you, and you decide each one; a transfer you accepted would let that contact see your computer's network address. " +
+        'This agent implements no direct transfer yet, so nothing connects on its own, and you can decline every request. Off (the default), such requests are declined for you.',
+      { approve: { type: 'boolean', title: 'Turn direct transfers on', default: false } },
+      ['approve'],
+      bindOf({ direct_transfer: false }),
+    );
+    const was = await set();
+    if (was) throw new ToolError(changedNote('the setting'));
+    this.humanLog('direct transfer turned ON through the approval form: requests for one are shown to you; nothing connects on its own');
+    return { direct_transfer: 'on', changed: true, note: 'Your user turned it on in the approval form: a contact asking for a direct transfer is now shown to them (rdv_file "list"); nothing connects on its own. Tell them.' };
+  }
+
+  /**
+   * rdv_init with replace: true (issue #102): a new identity in place of the
+   * agent here, as `rdv init --force`. Only by a form: it shows what is lost
+   * and when this agent was last backed up (offering rdv_backup first), and
+   * the human types the last 4 characters of its fingerprint. Refused while
+   * another process receives for this agent (it holds the agent's state);
+   * this server stops listening, replaces it, and listens as the new one.
+   * Leaving out profile, addresses or relays keeps the old agent's (its
+   * public addresses only).
+   */
+  private async replaceAgent(a: {
+    profile?: string;
+    emails?: string[];
+    phones?: string[];
+    email?: string;
+    phone?: string;
+    relays?: string[];
+    public_pointer?: boolean;
+    calendar?: string;
+    window?: string;
+    tz?: string;
+  }) {
+    const home = this.home;
+    this.startListening();
+    if (this.mode === 'attached') {
+      throw new ToolError(
+        `another process (rdv listen, or another assistant's rdv-mcp) is receiving for this agent now, and would keep running as the old one. Your user stops it first, then asks again. Nothing was changed.`,
+      );
+    }
+    for (const x of [a.email, ...(a.emails ?? []), a.phone, ...(a.phones ?? [])]) if (x !== undefined) strictAddress(x);
+    if (a.calendar && !/\.json$/i.test(a.calendar)) throw new ToolError('calendar must be a .json calendar file');
+    const config = home.readConfig();
+    const state = home.readAgentState() as AgentState;
+    const id = state.card.id;
+    const keep = (type: 'email' | 'phone') => config.addresses.filter((x) => x.type === type && !x.private).map((x) => x.value);
+    const given = (one: string | undefined, many: string[] | undefined) => (one !== undefined || many !== undefined ? [...(one ? [one] : []), ...(many ?? [])] : undefined);
+    const next = {
+      profile: a.profile ?? config.profile,
+      emails: given(a.email, a.emails) ?? keep('email'),
+      phones: given(a.phone, a.phones) ?? keep('phone'),
+      relays: a.relays?.length ? a.relays : config.relays,
+      publicPointer: a.public_pointer ?? config.public_pointer,
+    };
+    const lost = {
+      contacts: Object.keys(state.book.contacts ?? {}).length,
+      groups: Object.keys(state.groups?.groups ?? {}).length,
+      pending_requests: Object.keys(state.book.pending ?? {}).length,
+      open_tasks: (this.taskCounts() as { open?: number }).open ?? 0,
+    };
+    let backup: string | undefined;
+    try {
+      backup = home
+        .readAudit()
+        .filter((x) => x.gate === 'backup' && x.action === 'create')
+        .at(-1)?.ts;
+    } catch {
+      backup = undefined;
+    }
+    const content = await this.settingForm(
+      `rdv init --force --profile ${next.profile} --home "${home.dir}"`,
+      `Rendezvous: REPLACE your agent with a new identity?\n\n  Agent ID now:  ${id}\n  Fingerprint:   ${fingerprint(id)}\n\n` +
+        `This cannot be undone. A new key is made, and with the old one go: ${lost.contacts} contact(s), ${lost.groups} group(s), ${lost.pending_requests} pending request(s), ${lost.open_tasks} open task(s), every grant, label and auto-approve, and the old agent's history here. ` +
+        'Your contacts keep the old identity and cannot reach the new one until you connect again.\n\n' +
+        `${backup ? `Last backup of this agent: ${backup}.` : 'There is NO backup of this agent made here.'} If you want one first, Decline, and ask your assistant to back up your agent (rdv_backup); then ask for the replacement again.\n\n` +
+        `The new agent: profile "${clean(next.profile)}", addresses ${[...next.emails, ...next.phones].map((x) => clean(x)).join(', ') || '(none)'}, relays ${next.relays.map((x) => clean(x)).join(', ')}.\n\n` +
+        'To replace it, type the last 4 characters of the fingerprint above.',
+      {
+        approve: { type: 'boolean', title: 'Replace my agent', description: 'A new identity; the old one is lost for good.', default: false },
+        fingerprint_end: { type: 'string', title: 'Last 4 of the fingerprint', description: 'The last 4 characters of the fingerprint shown above.', minLength: 4, maxLength: 4 },
+      },
+      ['approve', 'fingerprint_end'],
+      bindOf({ id, lost, backup: backup ?? null }),
+    );
+    const typed = content.fingerprint_end;
+    if (typeof typed !== 'string' || typed.trim().toLowerCase() !== id.slice(-4).toLowerCase()) {
+      throw new ToolError('The characters typed in the form do not match the end of the fingerprint. Nothing was replaced; ask your user whether they still want it.');
+    }
+    if ((home.readAgentState() as AgentState).card.id !== id) throw new ToolError(changedNote('the agent'));
+    await this.applySettings(a);
+    await this.stopListening();
+    let r;
+    try {
+      r = await initHome(home, { ...next, force: true, capabilities: hostCardCapabilities(this.registry) });
+    } finally {
+      this.startListening();
+    }
+    this.humanLog(`agent ${fingerprint(id)} REPLACED through the approval form by a new identity ${r.fingerprint}`);
+    return {
+      replaced: true,
+      old_agent_id: safe(id),
+      old_fingerprint: safe(fingerprint(id)),
+      ...this.status(),
+      next_step:
+        'Tell your user their agent now has a new identity (agent_id, fingerprint) and the old one is gone. ' +
+        (next.publicPointer ? 'Publish its card (rdv_publish_card) so it can be found, ' : '') +
+        'and connect with their contacts again (rdv_request_contact) when they ask.',
     };
   }
 
@@ -5171,13 +5578,13 @@ function groupModelView(agent: Agent, r: GroupRecord) {
     invoke: v.invoke.map(asCapability),
     ...(v.max_frequency ? { max_frequency: safe(v.max_frequency) } : {}),
     ...(v.frozen
-      ? { frozen: { epoch: v.frozen.epoch, signers: v.frozen.signers.map(agentId), note: 'Membership is frozen after a fork: only your user can thaw it (rdv group resync, in their own terminal).' } }
+      ? { frozen: { epoch: v.frozen.epoch, signers: v.frozen.signers.map(agentId), note: 'Membership is frozen after a fork: only your user can thaw it, after checking with the admins (rdv_resync with group_id, an approval form only they answer; or rdv group resync in their own terminal).' } }
       : {}),
     // Members whose group messages this agent refuses (issue #78): only the user re-syncs them.
     ...(v.refused
       ? {
           refused_members: v.refused.map((x) => ({ agent_id: agentId(x.member), reason: x.kind === 'equivocation' ? 'equivocation' : 'muted', since: safe(x.since) })),
-          refused_note: 'Only your user can take these members\' group messages again (rdv group resync <group-id> --member <agent-id>, in their own terminal), after checking with them.',
+          refused_note: 'Only your user can take these members\' group messages again, after checking with them (rdv_resync with group_id and agent_id, an approval form only they answer; or rdv group resync <group-id> --member <agent-id> in their own terminal).',
         }
       : {}),
     ...(v.departed ? { departed: v.departed.map(agentId) } : {}),

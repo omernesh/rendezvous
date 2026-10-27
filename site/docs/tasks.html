@@ -160,8 +160,10 @@ can go inline.</p>
     file is saved in quarantine under the home: <code>files/incoming/&lt;task&gt;/</code>, mode
     600, <code>.quarantine</code> appended after an active extension, a Mark of the Web on
     Windows. Its content stays untrusted.</li>
-<li><strong>Direct transfer.</strong> Your setting, <code>rdv file direct-transfer on|off</code>, off by
-    default. Off, a contact's request for a direct transfer is declined. On, the
+<li><strong>Direct transfer.</strong> Your setting, off by default. Ask your assistant
+    (<code>rdv_file</code> "direct-transfer": turning it off needs no form, turning it on
+    opens an approval form), or in your terminal: <code>rdv file direct-transfer
+    on|off</code>. Off, a contact's request for a direct transfer is declined. On, the
     request is shown to you. Nothing ever connects on its own, and no
     direct-transfer protocol is implemented yet, so files move by URL.</li>
 </ul>
@@ -170,7 +172,10 @@ own initiative.</p>
 <h2 id="auto-approve">Auto-approve<a class="anchor" href="#auto-approve" title="Link to this section" aria-label="Link to this section">#</a></h2>
 <p>Approving every task by hand is safe and tiring. For one contact you trust as
 you trust your own agent, you can switch on <strong>auto-approve</strong>:</p>
-<div class="codeblock"><pre tabindex="0"><code class="language-bash">rdv owner-secret set                                 # once, in your own terminal
+<p>Ask your assistant to set an owner passphrase once (<code>rdv_owner_passphrase</code>,
+an approval form), then to turn auto-approve on for the contact. Or in your
+terminal:</p>
+<div class="codeblock"><pre tabindex="0"><code class="language-bash">rdv owner-secret set                                 # once
 rdv contact auto-approve john@doe.com all --until 7d
 rdv contact auto-approve john@doe.com off
 </code></pre></div>
@@ -183,7 +188,8 @@ the audit log.</p>
 <li><strong>Only you can turn it on.</strong> It shows a warning (the contact and its
     fingerprint, what it allows, the capabilities it covers, that prompt
     injection gets the agent's tools, the expiry, how to turn it off) and asks
-    for your <strong>owner passphrase</strong>, which you set with <code>rdv owner-secret set</code>.
+    for your <strong>owner passphrase</strong>, which you set through your assistant's
+    <code>rdv_owner_passphrase</code> tool (an approval form) or with <code>rdv owner-secret set</code>.
     Type it in your own terminal (<code>rdv contact auto-approve</code>, read from the
     terminal device, never echoed), or, when you ask your assistant to turn it
     on, into the approval form its <code>rdv_auto_approve</code> tool opens: what you type

@@ -483,7 +483,7 @@ npm run rdv -- --help                     # or: node packages/cli/dist/src/bin.j
 </tr>
 <tr>
 <td><code>rdv contact label &lt;agent-id&gt; &lt;label&gt;</code></td>
-<td>Name a contact locally; sending by name (<code>rdv_send</code> <code>to</code>) resolves through this, never through the addresses its card claims. Yours to run: an assistant may only suggest a label, which you approve with the contact (NOTES 62)</td>
+<td>Name a contact locally; sending by name (<code>rdv_send</code> <code>to</code>) resolves through this, never through the addresses its card claims. Yours to run: an assistant may only suggest a label, which you approve with the contact (NOTES 62). From chat: the <code>rdv_label</code> tool, which asks you in an approval form</td>
 </tr>
 <tr>
 <td><code>rdv contact grant &lt;agent-id&gt; [--tier …] [--scope-file …] [--invoke &lt;capability-uri&gt;]… [--no-meetings]</code></td>
@@ -503,7 +503,7 @@ npm run rdv -- --help                     # or: node packages/cli/dist/src/bin.j
 </tr>
 <tr>
 <td><code>rdv contact resync &lt;agent-id&gt;</code></td>
-<td>After <code>listen</code> reports an <code>envelope chain fork</code> (the contact restored an old copy of its home by hand, or two copies run), accept its current chain once you have checked with them; until then its messages are refused. A restore with <code>rdv restore</code> needs none of this</td>
+<td>After <code>listen</code> reports an <code>envelope chain fork</code> (the contact restored an old copy of its home by hand, or two copies run), accept its current chain once you have checked with them; until then its messages are refused. A restore with <code>rdv restore</code> needs none of this. From chat: the <code>rdv_resync</code> tool (approval form)</td>
 </tr>
 <tr>
 <td><code>rdv backup &lt;file&gt; [--stdin]</code></td>
@@ -587,7 +587,7 @@ npm run rdv -- --help                     # or: node packages/cli/dist/src/bin.j
 </tr>
 <tr>
 <td><code>rdv group resync &lt;group-id&gt; [--member &lt;agent-id&gt;]</code></td>
-<td>Thaw a group whose admin signed two member lists for one step, after checking with them; with <code>--member</code>, take the group messages of a member that equivocated or was muted again, after checking with them. Yours to run</td>
+<td>Thaw a group whose admin signed two member lists for one step, after checking with them; with <code>--member</code>, take the group messages of a member that equivocated or was muted again, after checking with them. Yours to run; from chat: <code>rdv_resync</code> with <code>group_id</code> (approval form)</td>
 </tr>
 <tr>
 <td><code>rdv group post &lt;group-id&gt; --json '&lt;body&gt;' [--to &lt;agent-id&gt;]…</code></td>
@@ -635,7 +635,7 @@ npm run rdv -- --help                     # or: node packages/cli/dist/src/bin.j
 </tr>
 <tr>
 <td><code>rdv file decline-transfer &lt;transfer-id&gt;</code> / <code>rdv file direct-transfer on\|off</code></td>
-<td>Say no to a contact's direct-transfer request; or your setting for them (default off: declined; on: requests are shown, nothing connects on its own; no transfer protocol exists yet). The setting is yours to run</td>
+<td>Say no to a contact's direct-transfer request; or your setting for them (default off: declined; on: requests are shown, nothing connects on its own; no transfer protocol exists yet). The setting is yours; from chat: <code>rdv_file</code> "direct-transfer" (<code>off</code> needs no approval, <code>on</code> asks in a form)</td>
 </tr>
 <tr>
 <td><code>rdv contact auto-approve &lt;agent-id\|label&gt; all [--until 7d]</code> / <code>… off</code></td>
@@ -643,7 +643,7 @@ npm run rdv -- --help                     # or: node packages/cli/dist/src/bin.j
 </tr>
 <tr>
 <td><code>rdv owner-secret set</code></td>
-<td>Set or change the owner passphrase that turning auto-approve on asks for: typed twice, never shown, stored as a scrypt hash; three misses lock it for a minute, doubling; audited, and <code>rdv whoami</code> shows when it was set (NOTES 77). <code>rdv init</code> in a terminal offers it too. Yours to run, in your own terminal</td>
+<td>Set or change the owner passphrase that turning auto-approve on asks for: typed twice, never shown, stored as a scrypt hash; three misses lock it for a minute, doubling; audited, and <code>rdv whoami</code> shows when it was set (NOTES 77). <code>rdv init</code> in a terminal offers it too. Yours to run; from chat: the <code>rdv_owner_passphrase</code> tool, which asks for it in an approval form</td>
 </tr>
 <tr>
 <td><code>rdv owner-secret reset</code></td>

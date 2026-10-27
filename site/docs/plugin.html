@@ -100,7 +100,10 @@ John I'm running late", "check rendezvous".</p>
     your own terminal.</p>
 <p><strong>Auto-approve and your owner passphrase</strong> (issues #47, #44). Turning
 auto-approve on asks for a passphrase you set yourself with
-<code>rdv owner-secret set</code>, in your own terminal. You type it either in your
+<code>rdv_owner_passphrase</code> (ask Claude to set an owner passphrase; you type it
+twice into an approval form, and only the Rendezvous server sees it), or
+<code>rdv owner-secret set</code> in your own terminal. Setting one turns auto-approve off
+for every contact. You type it either in your
 own terminal (<code>rdv contact auto-approve &lt;contact&gt; all</code>) or, when you ask
 Claude to turn it on, into the approval form <code>rdv_auto_approve</code> opens: the
 form shows the contact, its fingerprint, what it covers and until when,
@@ -112,8 +115,8 @@ from the terminal device itself (<code>/dev/tty</code>, or <code>CONIN$</code> o
 from stdin; it is never echoed or printed, and only a scrypt hash is kept
 (<code>owner-secret.json</code>, mode 600); three wrong answers lock it for a minute,
 then twice as long after each further miss. <code>rdv init</code> in a terminal
-offers to set it, and so does <code>/rdv-onboarding</code> (it asks you to run the
-command in your own terminal). The first passphrase is trust on first
+offers to set it, and so does <code>/rdv-onboarding</code> (it calls
+<code>rdv_owner_passphrase</code> and opens the form). The first passphrase is trust on first
 use: it is audited, and <code>rdv whoami</code> and <code>rdv_status</code> show when it was
 set; if that wasn't you, run <code>rdv owner-secret reset</code> in your own
 terminal (refused while locked; it turns every auto-approve off and only
@@ -160,12 +163,27 @@ backup": the form shows the agent ID and fingerprint in the file before you
 type the passphrase. Your contacts are told the agent was restored, so your
 conversations go on with no resync. <code>rdv backup</code> and <code>rdv restore</code> are
 yours, in your own terminal; the hook refuses them for Claude.</p>
+<p>Other settings are chat tools too, each finished by an approval form that
+only you answer (Claude never does; there is no confirm phrase for them):
+"rename this contact" (<code>rdv_label</code>), "set or change my owner passphrase"
+(<code>rdv_owner_passphrase</code>), "take John's messages again" after a fork or
+rollback (<code>rdv_resync</code>, for a contact, a frozen group or a muted member; check
+with the person first), "allow direct transfers" (<code>rdv_file</code> "direct-transfer";
+turning it off needs no form), and "start over with a new identity"
+(<code>rdv_init</code> with <code>replace</code>: the form shows what you lose, offers a backup
+first and asks you to type the last 4 characters of the fingerprint). Or in
+your own terminal: <code>rdv contact label</code>, <code>rdv owner-secret set</code>, <code>rdv contact
+resync</code> / <code>rdv group resync</code>, <code>rdv file direct-transfer on|off</code>, <code>rdv init
+--force</code>. Still terminal-only for now: the owner passphrase reset
+(<code>rdv owner-secret reset</code>), gateway administration, and the always-on
+listener (<code>rdv listen</code>).</p>
 <p>Sending: Claude picks the recipient by its <code>local_label</code>, never by an address
 the other agent's card claims, and shows you the fingerprint before the first
 message. Only you set a label: it is part of what you approve (the form shows
 it next to the fingerprint and you can change it; a confirm phrase approves
-only the label it was shown with), or you name a contact yourself with
-<code>rdv contact label &lt;agent-id&gt; &lt;label&gt;</code> in your own terminal. A card found by
+only the label it was shown with), or you rename a contact by asking Claude
+(<code>rdv_label</code> opens a form with the current name), or in your own terminal with
+<code>rdv contact label &lt;agent-id&gt; &lt;label&gt;</code>. A card found by
 address is only a claim, so it never labels a contact.</p>
 <p>Approving a contact: Claude calls <code>rdv_grant</code>, and Claude Code shows you an
 approval form (MCP elicitation) once Claude's reply ends. Claude can't fill

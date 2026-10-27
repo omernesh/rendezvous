@@ -177,7 +177,7 @@ call `rdv_status` and show `agent_id`, `fingerprint` and `our_addresses`
 Explain that the fingerprint is what the other person compares, through
 another channel, before trusting a contact.
 
-Then hand one thing to the user, which you cannot do for them: an owner passphrase. Ask them to run `rdv owner-secret set` in their own terminal, one they opened themselves, now, and to type a passphrase only they know (it is never shown, and some settings that only they may change ask for it). Never ask for the passphrase, never type it, and never run that command yourself. Verify: call `rdv_status` and show `owner_passphrase.set` (a time). If they skip it, say they can do it later, the same way. If `owner_passphrase.note` ever shows a time they don't recognize, tell them to run `rdv owner-secret reset` in their own terminal.
+Then hand one thing to the user, which you cannot do for them: an owner passphrase. Call `rdv_owner_passphrase` (no arguments). It opens an approval form where the user types a passphrase only they know, twice (it is never shown, and some settings that only they may change ask for it). Only the Rendezvous server sees what they type. Never ask for the passphrase in chat, never accept it, and never run `rdv owner-secret set` yourself. If the client shows no form, the tool refuses and names `rdv owner-secret set`: then ask them to run it in a terminal they opened themselves. Verify: call `rdv_status` and show `owner_passphrase.set` (a time). If they skip it, say they can do it later the same way. If `owner_passphrase.note` ever shows a time they don't recognize, tell them to run `rdv owner-secret reset` in their own terminal (resetting is terminal-only for now).
 
 ## Step 9 of 11: publish the card
 
@@ -230,6 +230,8 @@ contact. Then tell the user:
   rendezvous"); contacts are kept.
 
 - To read new messages and requests, say "check rendezvous".
+- To rename a contact later, say so ("call this contact John"); an approval
+  form asks them to confirm the name (`rdv_label`).
 - To stay reachable when Claude Code is closed, run `rdv listen` in a
-  terminal of their own; this server then attaches to it.
+  terminal of their own; this server then attaches to it (terminal-only for now).
 - Approvals always come to them, as a form or a confirm phrase.

@@ -3618,6 +3618,102 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       `e2e.test.ts` (the page shows the box; ticked, the next task from that
       contact starts without asking, audited `via: "form"`).
 
+## Chat-first control (v0.9.0, issue #102)
+
+97. **The owner's settings are chat tools behind an approval form, with no
+    confirm phrase; the terminal is the fallback** (**spec change**, the
+    reference-implementation paragraph of §5.5.1: the owner passphrase may
+    also be set in an elicitation form; no wire change, the test vectors are
+    unchanged). The owner's goal of 2026-10-27: people won't open a terminal.
+    - **One gate for all of them** (`settingForm`). The step opens a form
+      through `askForm`, so it rides the non-blocking forms of item 96 (the
+      answer re-runs it bound to the form's digest; a stale answer is
+      `changed`) and the gateway's page in remote mode. There is no phrase
+      path: a phrase passes through the model, and these settings are exactly
+      what the model must not reach. Without a form (no elicitation,
+      `RDV_ELICIT=off`, the REST entry point, a form dismissed while its call
+      waited) the step is refused and names the terminal command. A no is
+      `declined` and runs nothing (none of these is in `DECLINE_RUNS`). Each
+      form binds (`bind`) what the step read before it, and the step checks it
+      again under the home lock before it writes.
+    - **`rdv_label`** (agent_id, label). The form shows the agent ID,
+      fingerprint and current label; the label field starts at the model's
+      suggestion, and what the human leaves applies. Bound to the contact and
+      its current label, so two open rename forms cannot both apply (the
+      second is `changed`). An empty answer is refused (a label cannot be
+      removed, as in `rdv contact label`). Remote: `label` is optional and only
+      a suggestion shown on the page (never prefilled); the field starts at the
+      current label.
+    - **`rdv_owner_passphrase`** (no arguments). Typed twice in the form, plus
+      the current one when one is set; strength (`weakOwnerSecret`), the
+      lockout (a wrong current one counts) and the reset cooldown
+      (`RESET_COOLDOWN_MS`, now exported) are the terminal's; stored by
+      `storeOwnerSecret` with `via: "form"` in its audit line, which ends every
+      auto-approve as before (published as `auto_approve_off`). Bound to the
+      passphrase record. Never in a result, event, log or error (the test
+      greps all four). The first set stays trust on first use, now also from
+      a form: a form answer comes from the client's UI, the channel item 96
+      already trusts for "Don't ask again", and a host that auto-accepts forms
+      sends no passphrase (the fields have no default), so it sets nothing.
+      The tool's description avoids the words "auto-approve" (a test keeps
+      every tool but `rdv_auto_approve` from naming it). `rdv owner-secret
+      reset` stays terminal-only (it needs no current passphrase). Not offered
+      remotely: a passphrase is never typed into a web page (`boundForm`
+      refuses such a field there anyway).
+    - **`rdv_resync`**: agent_id alone re-syncs a refused channel
+      (`resyncChannel`), group_id alone thaws a frozen group (`resyncGroup`;
+      refused when it is not frozen, which the CLI allows as a no-op), both
+      take a refused or muted member again (`resyncGroupMember`). Each form
+      says what was seen (a fork or rollback with its seq; the frozen epoch
+      and its signers' fingerprints; equivocation or mute and since when),
+      that the human should check with the person outside Rendezvous, and
+      what accepting does; it is bound to that record.
+    - **`rdv_file` "direct-transfer"**. "on" asks in a form; **"off" needs
+      none** (deviation from "every setting asks": like `rdv_auto_approve`
+      "off", it only narrows, and making the human approve a narrowing only
+      trains them to click yes). Already in the asked state: no form.
+    - **`rdv_init` `replace: true`**. A new identity in place of the agent
+      here, as `rdv init --force` (`initHome` with `force`). The form names
+      what goes (contacts, groups, pending requests, open tasks, grants,
+      labels, auto-approve), when this agent was last backed up here (the
+      audit's last `backup create`, or "NO backup"), and offers `rdv_backup`
+      first: decline, back up, ask again. The human types the last 4
+      characters of the fingerprint (a typed answer, so a click-through or an
+      auto-accepting host replaces nothing). Refused while this server runs
+      attached (another process holds `listener.lock` and would go on as the
+      old agent); otherwise it stops listening, replaces, and listens as the
+      new agent. Profile, addresses and relays left out are the old agent's
+      (its public addresses only: a private one is not carried onto a card).
+      With no agent yet, `replace` is a plain create. Not offered remotely
+      (`rdv_init` is not).
+    - **Gateway.** `rdv_label`, `rdv_resync` and `rdv_file`
+      "direct-transfer" are under `contact:request`, whose page text says so;
+      `rdv_owner_passphrase` is dropped from remote mode.
+    - **Texts.** The fork and resync notes in `events.ts`, the frozen and
+      refused-member notes, the "no owner passphrase" notes (`whoami`,
+      `rdv_status`) and the consent guard's refusals now name the tool first
+      and the terminal second.
+    - **Not audited** (as in the terminal): renames, resyncs, direct transfer
+      and a replacement write no audit line (the human log says each; a
+      replacement starts a new audit log anyway).
+    - **Known limits.** A second rdv-mcp attached to this home while the
+      consumer replaces the agent is not detected (only our own mode is), so
+      it keeps the old agent's transport until restarted. Still terminal-only:
+      `rdv owner-secret reset`, gateway administration (PIN, tokens, OAuth
+      clients), and a background listener while the chat client is closed
+      (issue #102 items 6 and 7, follow-ups).
+    - **Tests.** MCP `settings.test.ts` (without forms each is refused, names
+      its command and changes nothing, no phrase is issued, "off" works; the
+      rename form, a no, the human's label over the model's, a stale answer;
+      the passphrase set and changed, mismatch, weak, wrong current, audited
+      `via: "form"`, in no result, event, log or audit text; direct transfer
+      no and yes; resync of a contact, a group and a member; replace refused
+      while attached, refused on a wrong fingerprint end, and done with the
+      old public address kept); the stdio tool list in `mcp.test.ts`; gateway
+      `settings.test.ts` (what is listed, label as a suggestion with the
+      current label on the page, direct transfer on the page) and the scopes
+      in `auth.test.ts`.
+
 ## Not implemented yet
 
 
