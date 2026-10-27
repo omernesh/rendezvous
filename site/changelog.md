@@ -1,6 +1,6 @@
 # Changelog
 
-What changed in Rendezvous, newest first. Versions are those of the Claude Code plugin, which ships together with the `rdv` CLI, the `rdv-mcp` server and the skill. Rendezvous is alpha: expect changes between versions. Security fixes are marked **Security**.
+What changed in Rendezvous, newest first. Versions are those of the Claude Code plugin, which ships together with the `rdv` CLI, the `rdv-mcp` server and the skill. Rendezvous is in early access: expect changes between versions. Security fixes are marked **Security**.
 
 The format follows Keep a Changelog. One line per change a user can see; PR numbers link to GitHub.
 

@@ -6,7 +6,7 @@ An open protocol for agent-to-agent contact — how personal AI agents belonging
 
 **Status:** Draft v0.1 rev 3 (2026-10-25) — for discussion. Codename provisional.
 
-> **Alpha software.** Rendezvous is experimental: the protocol and wire format may still change, and it has **not been independently security-audited**. Don't rely on it for anything sensitive yet. To report a vulnerability, see [`SECURITY.md`](SECURITY.md).
+> **Early access.** Rendezvous has **not yet been independently audited**, and updates may still change the protocol. To report a vulnerability, see [`SECURITY.md`](SECURITY.md).
 
 ## See it
 
