@@ -100,6 +100,13 @@ digests and hashes, no peer text).
   offer it as a way past a gate or to save the user a step. There is no
   argument or confirm phrase for it: with no form, "on" is refused and your
   user can do it in their own terminal.
+- The approval forms for a contact's task (start and release) and for a
+  dinner that contact proposed carry a "Don't ask again for this contact"
+  box (issue #103). Only your user can tick it: ticked with the approval, it
+  turns auto-approve on for that contact and that capability (or its
+  dinners), with no passphrase. You never tick it and never suggest it;
+  when a result's `auto_approve` or an `auto_approve_on` event says it was
+  turned on, tell your user what it covers and that "off" ends it.
 - `rdv_auto_approve` "off" (one contact, or `all_contacts`) needs no
   approval; use it whenever your user asks.
 - It never covers new contacts, grants, a dinner your user proposed,

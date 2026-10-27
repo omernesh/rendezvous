@@ -253,8 +253,8 @@ export interface AuditEntry {
   dropped?: string[];
   /** gate `meeting`: which step auto-approve took for our human (accepting the peer's time, or confirming our offer it accepted). */
   meeting?: 'accept' | 'confirm';
-  /** gate `auto-approve`, a change our human made: from their terminal (`cli`) or through the MCP approval form (`mcp`, issue #44). */
-  via?: 'cli' | 'mcp';
+  /** gate `auto-approve`, a change our human made: from their terminal (`cli`) or through the MCP approval form (`mcp`, issue #44), or the "Don't ask again" box on a gate's approval form or the gateway's page (`form`, issue #103). */
+  via?: 'cli' | 'mcp' | 'form';
 }
 
 /** One contact on auto-approve (autoapprove.json). Bound to the grant it was set on; `mac` keys it to this agent. */
@@ -274,7 +274,12 @@ export interface AutoApproveEntry {
   grantId: string;
   since: string;
   scope: string;
-  /** The owner passphrase record it was set under (ownerSecretBinding): another passphrase, or none, ends it. */
+  /**
+   * The owner passphrase record it was set under (ownerSecretBinding): another
+   * passphrase, or none, ends it. `none` (UNBOUND_OWNER, issue #103): set
+   * from an approval form while no passphrase was set; it holds only while
+   * none is set, so setting one ends it.
+   */
   owner: string;
   /**
    * What the owner was shown it covers when they set it (issue #44 review),

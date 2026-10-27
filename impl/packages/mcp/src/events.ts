@@ -425,7 +425,7 @@ export function toModelEvent(e: Raw, negotiating: boolean): Omit<McpEvent, 'n' |
         reason: oneOf(['owner', 'expired', 'revoked', 'blocked', 'grant-changed', 'fork', 'invalid', 'owner-secret'])(e.reason),
         next_step:
           `Auto-approve for ${who(e.peer)} is off: its tasks and the dinners it proposes need your user's approval again. Tell your user. ` +
-          "Only they can turn it back on: in their own terminal, or with their owner passphrase in rdv_auto_approve's approval form.",
+          "Only they can turn it back on: in their own terminal, with their owner passphrase in rdv_auto_approve's approval form, or by ticking \"Don't ask again\" on an approval form.",
       };
     case 'task-abuse': {
       // Our own agent revoked the contact (§5.3 (b), issue #28). The fields are ours; checked anyway.

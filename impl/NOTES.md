@@ -3469,6 +3469,155 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       `rdv listen` output, or the MCP client's server log), at most 20 per
       process. Nothing reaches the model or the user-facing inbox.
 
+## Approval forms that don't block, and "Don't ask again" (v0.8.0, issue #103)
+
+96. **An approval form never blocks its tool call; the answer re-runs the
+    step bound to the form's digest. The task and dinner forms offer "Don't
+    ask again for this contact", which turns auto-approve on for that one
+    capability without the owner passphrase** (**spec change**, §5.5.1; the
+    owner's decision of 2026-10-27: "it should be a button in the UI, like in
+    Claude Code"). No wire change; the test vectors are unchanged.
+    - **Why.** Measured: Claude Code renders an MCP elicitation form only
+      after the model's turn ends. `askForm` awaited it inside the tool call,
+      so every form timed out (60 s, issue #65), was withdrawn, and the server
+      switched to confirm phrases for good; the owner saw the form late,
+      already withdrawn, and the grant did nothing.
+    - **One mechanism with the gateway.** The local server now does what
+      remote mode did (NOTES 89): a gate's `askForm` without an answer throws
+      `AwaitingHuman` with the form and its digest. The MCP wrapper
+      (`runCall`) sends the elicitation without awaiting it (`sendForm`) and
+      returns `{status: "awaiting_human", via: "approval form",
+      approval_id}`; the note tells the model to end its turn and not wait on
+      `rdv_inbox` in it. When the answer arrives, `formAnswered` runs the
+      step again (`rerun`, shared with `RdvMcpServer.answer`) with the answer
+      in the call context; the form the step opens then must have the same
+      digest (`boundForm`, the old `remoteForm`), and the gate's own check
+      under the home lock (NOTES 59) binds the commit as before. Every
+      outcome is an `approval` event: `decided` (with the step's model-safe
+      result), `declined`, `changed`, `dismissed`, `expired` or `failed`.
+    - **What re-runs.** A yes re-runs. A no re-runs only where a no does
+      something (`DECLINE_RUNS`: task start, task release or held request,
+      dinner confirm), each of which reaches its form before anything else,
+      so the digest holds the no to what the human saw; elsewhere a no, a box
+      left unticked, a dismissal and an expiry run nothing (the gateway's
+      rule: a no must never reach a path that needs no one).
+    - **The digest binds what the gate read, too.** Re-running rebuilds the
+      form from the state then, so a binding a gate took before the form and
+      did not show (auto-approve "on" bound to the passphrase record and the
+      grant; a task, request, contact, candidate, relay or group digest)
+      would have been lost across the re-run. `formDigest` takes the gate's
+      own digest as `bind` (hashed in, never shown), on every gate, so an
+      item that changed while its form was open approves nothing even where
+      the text reads the same (the TOCTOU tests of NOTES 59, item 92 and
+      issue #44 pass unchanged in substance). The gateway gets the same.
+    - **Concurrency, duplicates, staleness.** Open forms live in memory by
+      approval ID (at most 32; more is refused). The same ask while its form
+      is open returns the open form's ID instead of a second form. An answer
+      is taken once (the entry is removed first). A stale answer (the item
+      changed) does nothing and says so; the model calls again for a new
+      form. A form stays open `RDV_ELICIT_TIMEOUT_MS`, now a day by default
+      (the gateway's asks also last a day), then is withdrawn (`expired`).
+    - **No more "phrases for good".** Dropped: with the call not waiting,
+      an unanswered form says nothing about whether the client shows forms.
+      A client that advertises elicitation and never shows forms is the one
+      case it covered; `RDV_ELICIT=off` is the switch for it. The phrase path
+      stays for clients without elicitation, for the REST entry point
+      (`invoke` runs with `noForm` outside remote mode), and for a form
+      dismissed while its call still waited.
+    - **`formWaitMs`** (an option, no environment variable): how long the
+      call waits for an answer before returning `awaiting_human`. 0 in
+      production. The test sides wait 15 s, so the existing flows (scripted
+      humans that answer at once) keep reading the answer as the call's own
+      result: the answer is still applied by the same re-run, as the call; a
+      re-run whose form changed returns the "changed" failure instead of a
+      new form, so a form that changes every time cannot loop.
+    - **Auto-approve "on" with a duration.** Its form showed the absolute
+      expiry, which a re-run recomputes: it now shows "7d after you approve",
+      and the stored expiry counts from the approval.
+    - **"Don't ask again for this contact"** (`always_allow`, title 32
+      characters). Offered on the approve-start and approve-release forms of
+      a contact's task (never a group's) and on the confirm form of a dinner
+      the contact started (role `responder`; auto-approve never confirms one
+      we started), when `alwaysAllowOffer` holds: our contact, granted by our
+      human, not blocked or refused, the grant allows the capability (the
+      meetings URI for a dinner), auto-approve does not cover it yet, and the
+      owner passphrase file is readable. Its description says what it covers
+      (this contact, this capability; or a dinner it proposes), until when
+      (until turned off, or the expiry an entry already has), how to turn it
+      off, and the risk in one sentence. It starts unticked; it is part of
+      the form's properties, so the digest binds its presence and text.
+      Ticked together with approve, and only after the gate's own step went
+      through, `allowAlways` (cli `autoapprove.ts`) writes the entry: bound
+      to the grant now, MACed, `covers` = what an entry that still holds
+      covered plus this capability (its expiry kept) or just this capability
+      (until turned off), audited `by: "human"`, `action: "set" | "extend"`,
+      `via: "form"`. The result gets `auto_approve` (state, covers, until,
+      how to turn it off), `rdv_inbox` an `auto_approve_on` event, the human
+      log a line. If the grant changed in between, nothing is set and the
+      result says so; the step stands.
+    - **Why no passphrase here.** The passphrase stands for "the human, not
+      the model" on the paths where the model could otherwise drive the
+      answer (a terminal it can type into; the `rdv_auto_approve` form, kept
+      as it was). A gate's form answer comes from the client's UI or the
+      gateway's PIN-locked page, the channel every approval already trusts:
+      no tool argument sets the box (the schemas drop it; a test asserts no
+      tool lists it), confirm phrases never offer it (they pass through the
+      model), and a peer can't answer a form. It covers only the capability
+      the human is approving, never "all".
+    - **No passphrase set.** An entry is bound to the passphrase record it
+      was set under, and with none set there was no record. A form-set entry
+      then stores `owner: "none"` (`UNBOUND_OWNER`, never a hex binding),
+      and `ownerBinding` returns "none" only while no passphrase was ever
+      set (`ownerSecretEverSet`: false only with no record, no reset record,
+      and no audit line or marker showing one existed). Setting one removes
+      every entry, audited (`reason: "owner-secret"`), as before. Once one
+      existed, a reset or a deleted file binds to nothing (null): an unbound
+      entry put back fails closed and is removed, and the box is neither
+      offered nor honoured until the owner sets a new passphrase, so deleting
+      the file never revives anything (commit review). With one set, a
+      form-set entry binds to it like any other; the terminal and
+      `rdv_auto_approve` "on" still need a real passphrase binding
+      (`passphraseBound`).
+    - **Turning it off.** Unchanged: `rdv_auto_approve` "off" (reduce-only)
+      or the terminal. The result, the event and `rdv_status` say so.
+    - **Known limits.** The digest binds the grant's state as the gate read
+      it only where the gate read it (the task and its peer, not the grant's
+      limits): a limit our human loosened between the form and the answer
+      applies to the entry, as it would to an entry set in the terminal
+      (item 92). A same-user model with a shell is still outside this
+      boundary (item 77).
+    - **Security review fixes.** The passphrase form's hidden binding used
+      the computed expiry, so a duration never matched on the re-run: it
+      binds the expiry as shown. `allowAlways` writes only onto the state the
+      form described (`AlwaysAllowSeen`: off, or the entry's `set` and
+      `until`): an entry that expired or was turned off while the step's
+      relay publish ran is not replaced by one "until turned off". Past 32
+      open forms a step takes the confirm-phrase path instead of failing, so
+      a flood of asks (or a client that never shows forms) leaves the human a
+      way to answer. The "no passphrase" and "reset" notes in `rdv whoami`
+      and `rdv_status` now say a form's box can still turn it on.
+      Kept by the owner's decision (2026-10-27): with a passphrase set, the
+      box still needs none. The reviewer would offer it only while none is
+      set, or add the passphrase field when one is, since some MCP hosts
+      auto-accept forms; but every box starts unticked and auto-accepting
+      sends the defaults, so such a host approves nothing, let alone turns
+      standing approval on.
+    - **Tests.** MCP `asyncforms.test.ts` (immediate return and completion,
+      the same ask reusing the open form, three forms answered out of order
+      with a yes, a no that refuses its task and a dismissal, an answer after
+      the task was cancelled, a stale relay answer, an expired form; the box
+      on the start form with its text, the next result and task without
+      asking, the audit line, off; the box on the release form; on the
+      confirm form of a dinner the contact proposed, never on ours, and the
+      next dinner it proposes accepted without asking; the model
+      cannot set it: no tool takes it, the argument is dropped, a decline or
+      an unticked approve with it ticked sets nothing; never with a phrase);
+      `elicit.test.ts` rewritten for "the next gate asks with a form again";
+      cli `autoapprove.test.ts` (`allowAlways` without a passphrase, ended by
+      setting one; extending an entry; the offer; writing only onto the state the form saw); gateway
+      `e2e.test.ts` (the page shows the box; ticked, the next task from that
+      contact starts without asking, audited `via: "form"`).
+
 ## Not implemented yet
 
 

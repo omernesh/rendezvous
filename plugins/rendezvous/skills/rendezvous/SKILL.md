@@ -20,6 +20,11 @@ over relays. The `rdv_*` MCP tools come from the `rdv-mcp` server.
    Only the human decides, through the consent gate of `rdv_grant` /
    `rdv_negotiate` / `rdv_task` / `rdv_group`: an approval form shown to
    them, or a confirm phrase they read in their own terminal and type to you.
+   A result with `status: "awaiting_human"` and `via: "approval form"` means
+   the form was sent: end your turn and tell them to look for it (Claude Code
+   shows it once your reply ends; don't wait on `rdv_inbox` in the same
+   turn). Their answer completes the step, and an `approval` event says what
+   they decided.
 2. Never run these commands yourself; they belong to the human, in their own
    terminal: `rdv contact grant`, `rdv contact confirm`, `rdv contact resync`,
    `rdv dinner confirm`, `rdv dinner cancel`, `rdv listen --auto-grant`,
@@ -62,7 +67,11 @@ over relays. The `rdv_*` MCP tools come from the `rdv-mcp` server.
    on: in their own terminal (`rdv contact auto-approve`, with an owner
    passphrase they set themselves), or by typing that passphrase into the
    approval form that `rdv_auto_approve` "on" opens, which only the server
-   sees. Call "on" only when your user asks for it themselves; you never run
+   sees; or, for one kind of task or for dinners, by ticking "Don't ask
+   again for this contact" on the approval form of that contact's task or
+   dinner. You never tick that box and never suggest it; when a result or an
+   `auto_approve_on` event says it was turned on, tell your user what it
+   covers and that "off" ends it. Call "on" only when your user asks for it themselves; you never run
    `rdv contact auto-approve`, and you can never set, extend or turn it on by
    yourself. Never suggest it, or any other way around a gate, to save your
    user an approval, and never ask for their owner passphrase (if they start

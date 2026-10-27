@@ -218,7 +218,11 @@ export {
 export { type FileNote, type FilesState, type OutgoingFile, type TransferRecord } from './home.js';
 export { checkRelayUrl, mirrorRelaysOf, relaySets, relayTransport } from './transport.js';
 export {
+  allowAlways,
+  alwaysAllowOffer,
+  type AlwaysAllowSeen,
   type AutoApproveSubject,
+  UNBOUND_OWNER,
   autoApproveDigest,
   autoApproveStatus,
   autoApproveTarget,
@@ -233,6 +237,7 @@ export {
   grantKeepingAutoApprove,
   meetingAutoApproved,
   ownerBinding,
+  passphraseBound,
   parseUntil,
   setAutoApprove,
   subjectOf,

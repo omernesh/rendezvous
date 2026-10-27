@@ -115,11 +115,19 @@ describe('rdv-gateway end to end', () => {
       await inbox((e) => e.type === 'task' && e.task_id === t.task_id, 'the task');
       const start = await call('rdv_task', { action: 'approve-start', task_id: t.task_id });
       expect(start.status).toBe('awaiting_human');
-      const startPage = await page2(start.approve_url);
+      // Omer ticks "Don't ask again for this contact" on the page (issue #103): the box starts unticked.
+      const startPage = await page2(start.approve_url, { f_always_allow: '1' });
       expect(startPage).toContain('let your agent do this task?');
       expect(startPage).toContain('&lt;b&gt;draft&lt;/b&gt;');
+      expect(startPage).toContain('Don&#39;t ask again for this contact');
+      expect(startPage).toMatch(/<input type="checkbox" id="f_always_allow" name="f_always_allow" value="1">/);
       const started = await inbox((e) => e.type === 'approval' && e.tool === 'rdv_task', 'the task start');
       expect(started.result.next).toMatch(/^Approved/);
+      expect(started.result.auto_approve).toMatchObject({ state: 'on', covers: [capability] });
+      expect(g.home.readAudit().find((a) => a.gate === 'auto-approve')).toMatchObject({ peer: j.agent_id, action: 'set', by: 'human', via: 'form', capabilities: [capability] });
+      // John's next task starts without asking: no approval link.
+      const t2 = await ok(john, 'rdv_task', { action: 'request', agent_id: omerId, text: 'And one more.' });
+      await inbox((e) => e.type === 'task' && e.task_id === t2.task_id && e.kind === 'started' && e.auto_approved === true, 'the auto start');
 
       // 8. A group decision too: inviting John to a group Omer's assistant made.
       const group = await call('rdv_group', { action: 'create', name: 'Dinner club' });

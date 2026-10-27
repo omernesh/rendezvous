@@ -174,6 +174,16 @@ export function ownerSecretBinding(home: Home): string | null {
   return r ? sha('rdv1/auto-approve-owner', { set: r.set, salt: sha256(Buffer.from(r.salt, 'hex')) }) : null;
 }
 
+/**
+ * Was an owner passphrase ever set here? True while one is set, and after a
+ * reset or a deleted file (readAny counts a missing file as a reset when the
+ * audit log or the marker shows one existed). Only "never" is false. Throws
+ * when the file is unreadable.
+ */
+export function ownerSecretEverSet(home: Home): boolean {
+  return readAny(home) !== null;
+}
+
 function read(home: Home): OwnerSecretRecord | null {
   const r = readAny(home);
   return r && 'hash' in r ? r : null;
@@ -291,7 +301,7 @@ export async function clearOwnerSecret(home: Home, now = new Date()): Promise<vo
 }
 
 /** The note for a home that never had an owner passphrase: the plain fresh-install state, nothing to warn about. */
-export const NO_OWNER_SECRET_NOTE = 'no owner passphrase is set, so auto-approve cannot be turned on: the owner sets one with "rdv owner-secret set" in their own terminal';
+export const NO_OWNER_SECRET_NOTE = 'no owner passphrase is set, so auto-approve can be turned on only from an approval form ("Don\'t ask again for this contact"), not in the terminal or with rdv_auto_approve: the owner sets one with "rdv owner-secret set" in their own terminal';
 
 /** What `rdv whoami` and `rdv_status` show: when it was set, or that it isn't (never the hash). */
 export function ownerSecretInfo(home: Home): { set: string | null; reset?: string; missing?: true; locked_until?: string; note: string } {
@@ -308,7 +318,7 @@ export function ownerSecretInfo(home: Home): { set: string | null; reset?: strin
       set: null,
       reset: r.reset,
       ...(r.missing ? { missing: true as const } : {}),
-      note: `OWNER PASSPHRASE ${what}: none is set, so auto-approve is off for everyone. ${end ? `A new one can be set after ${end.toISOString()}` : 'Set a new one'} with "rdv owner-secret set" in your own terminal. If you did not ${r.missing ? 'delete owner-secret.json' : 'reset it'}, someone with access to your account did`,
+      note: `OWNER PASSPHRASE ${what}: none is set, so auto-approve set before is off for everyone (only a "Don't ask again" box on an approval form can turn it on until a new one is set).${end ? `A new one can be set after ${end.toISOString()}` : 'Set a new one'} with "rdv owner-secret set" in your own terminal. If you did not ${r.missing ? 'delete owner-secret.json' : 'reset it'}, someone with access to your account did`,
     };
   }
   if (!r) return { set: null, note: NO_OWNER_SECRET_NOTE };

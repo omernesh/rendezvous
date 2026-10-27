@@ -125,18 +125,22 @@ first argument. Claude Code without the plugin:
 <p>Approval forms need a client that supports MCP elicitation; Claude Code does in
 interactive sessions (not in <code>-p</code>). Elsewhere approvals use the confirm phrase
 the human reads in their own terminal (<code>rdv contact pending</code>), below.</p>
-<p>A form waits at most <code>RDV_ELICIT_TIMEOUT_MS</code> (default 60000 ms) for an answer
-(issue #65: some clients show a form only after the assistant's turn ends,
-which can't happen while the tool call waits). Unanswered by then, the server
-withdraws it (<code>notifications/cancelled</code>, so a form shown later approves
-nothing), issues the confirm phrase exactly as for a client without forms, and
-says so in the tool result, which names the terminal command that shows the
-phrase. It then uses phrases for the rest of its life. A form the client
-closes without an answer (cancel) also falls back to the phrase for that call.
-A decline, or Accept with the box unticked, is a plain result (<code>approved:
-false</code>) that changes nothing; neither a cancel nor a timeout ever approves.
-<code>RDV_ELICIT=off</code> turns forms off entirely. <code>rdv_status</code> shows the mode in
-<code>approval</code>.</p>
+<p>A form never blocks the tool call (issue #103: Claude Code shows a form only
+after the assistant's turn ends, which can't happen while the call waits). When
+a step needs the human, the server sends the form and the tool returns at once
+<code>{status: "awaiting_human", via: "approval form", approval_id}</code>: the model
+ends its turn and the form appears. The human's answer runs the step again,
+bound to the form's digest (built again from the state then: a changed item
+does nothing and says so), exactly as the gateway's approval page does, and an
+<code>approval</code> event in <code>rdv_inbox</code> says what they decided (<code>decided</code>, <code>declined</code>,
+<code>changed</code>, <code>dismissed</code>, <code>expired</code> or <code>failed</code>, with the step's result). Several
+forms can be open at once (at most 32); the same form is not sent twice, and an
+answer counts once. A form stays open <code>RDV_ELICIT_TIMEOUT_MS</code> (default a day),
+then it is withdrawn. A decline, or Accept with the box unticked, changes
+nothing (a declined task is refused and a declined dinner released, as
+before); neither a dismissal nor an expiry ever approves. The confirm phrase
+stays for clients without forms. <code>RDV_ELICIT=off</code> turns forms off entirely.
+<code>rdv_status</code> shows the mode in <code>approval</code>.</p>
 <h2 id="tools">Tools<a class="anchor" href="#tools" title="Link to this section" aria-label="Link to this section">#</a></h2>
 <div class="tablewrap" tabindex="0"><table>
 <thead>
@@ -369,14 +373,24 @@ human's own terminal):</p>
     misses), and never reaches a tool result, an event or the log. The change
     is bound to what the form showed: another grant, label, expiry or
     passphrase record in between, and nothing is set. With no form (a client
-    without elicitation, <code>RDV_ELICIT=off</code>, a form that went unanswered), a
-    cancelled form, or no passphrase set, "on" is refused and points to the
+    without elicitation, <code>RDV_ELICIT=off</code>), a dismissed or expired form, or no passphrase set, "on" is refused and points to the
     terminal: there is no confirm phrase for it, and no argument takes a
     passphrase. MCP elicitation has no password field type, so the form's
     field is plain text (NOTES 85).</li>
 </ul>
+<p>And one way for one capability, with no passphrase (issue #103, NOTES 96):
+the approval forms for a contact's task start, its result's release, and the
+confirm of a dinner the contact started carry a "Don't ask again for this
+contact" box (unticked by default; the gateway's page shows it too). Ticked
+with the approval, and once the step went through, auto-approve covers that
+capability for that contact (added to an entry that already holds, keeping
+its expiry; otherwise until turned off). The answer comes from the human's
+client or PIN-locked page, never from the model: no tool argument sets it, a
+confirm phrase never offers it, and the form's digest binds it. Not offered
+for a task in a group or a dinner we started.</p>
 <p>"off" (one contact or <code>all_contacts</code>) needs nothing. Every change is audited
-with <code>via: "cli"</code> or <code>"mcp"</code>. <code>rdv_status</code> (per contact <code>auto_approve</code>, until
+with <code>via: "cli"</code>, <code>"mcp"</code> or <code>"form"</code>; an <code>auto_approve_on</code> event says how to
+turn it off. <code>rdv_status</code> (per contact <code>auto_approve</code>, until
 when, how many actions it passed) and <code>rdv_task</code> show it, and <code>rdv_inbox</code>
 reports <code>auto_approved</code> task starts and dinner steps and an
 <code>auto_approve_off</code> event when it ends (NOTES 77, 85).</p>

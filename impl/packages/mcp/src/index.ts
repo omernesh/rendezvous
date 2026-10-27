@@ -1,4 +1,5 @@
 export {
+  ALWAYS_ALLOW_FIELD,
   type ApprovalAnswer,
   type ApprovalAsk,
   type ApprovalForm,

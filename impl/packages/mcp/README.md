@@ -89,18 +89,22 @@ Approval forms need a client that supports MCP elicitation; Claude Code does in
 interactive sessions (not in `-p`). Elsewhere approvals use the confirm phrase
 the human reads in their own terminal (`rdv contact pending`), below.
 
-A form waits at most `RDV_ELICIT_TIMEOUT_MS` (default 60000 ms) for an answer
-(issue #65: some clients show a form only after the assistant's turn ends,
-which can't happen while the tool call waits). Unanswered by then, the server
-withdraws it (`notifications/cancelled`, so a form shown later approves
-nothing), issues the confirm phrase exactly as for a client without forms, and
-says so in the tool result, which names the terminal command that shows the
-phrase. It then uses phrases for the rest of its life. A form the client
-closes without an answer (cancel) also falls back to the phrase for that call.
-A decline, or Accept with the box unticked, is a plain result (`approved:
-false`) that changes nothing; neither a cancel nor a timeout ever approves.
-`RDV_ELICIT=off` turns forms off entirely. `rdv_status` shows the mode in
-`approval`.
+A form never blocks the tool call (issue #103: Claude Code shows a form only
+after the assistant's turn ends, which can't happen while the call waits). When
+a step needs the human, the server sends the form and the tool returns at once
+`{status: "awaiting_human", via: "approval form", approval_id}`: the model
+ends its turn and the form appears. The human's answer runs the step again,
+bound to the form's digest (built again from the state then: a changed item
+does nothing and says so), exactly as the gateway's approval page does, and an
+`approval` event in `rdv_inbox` says what they decided (`decided`, `declined`,
+`changed`, `dismissed`, `expired` or `failed`, with the step's result). Several
+forms can be open at once (at most 32); the same form is not sent twice, and an
+answer counts once. A form stays open `RDV_ELICIT_TIMEOUT_MS` (default a day),
+then it is withdrawn. A decline, or Accept with the box unticked, changes
+nothing (a declined task is refused and a declined dinner released, as
+before); neither a dismissal nor an expiry ever approves. The confirm phrase
+stays for clients without forms. `RDV_ELICIT=off` turns forms off entirely.
+`rdv_status` shows the mode in `approval`.
 
 ## Tools
 
@@ -260,14 +264,25 @@ human's own terminal):
   misses), and never reaches a tool result, an event or the log. The change
   is bound to what the form showed: another grant, label, expiry or
   passphrase record in between, and nothing is set. With no form (a client
-  without elicitation, `RDV_ELICIT=off`, a form that went unanswered), a
-  cancelled form, or no passphrase set, "on" is refused and points to the
+  without elicitation, `RDV_ELICIT=off`), a dismissed or expired form, or no passphrase set, "on" is refused and points to the
   terminal: there is no confirm phrase for it, and no argument takes a
   passphrase. MCP elicitation has no password field type, so the form's
   field is plain text (NOTES 85).
 
+And one way for one capability, with no passphrase (issue #103, NOTES 96):
+the approval forms for a contact's task start, its result's release, and the
+confirm of a dinner the contact started carry a "Don't ask again for this
+contact" box (unticked by default; the gateway's page shows it too). Ticked
+with the approval, and once the step went through, auto-approve covers that
+capability for that contact (added to an entry that already holds, keeping
+its expiry; otherwise until turned off). The answer comes from the human's
+client or PIN-locked page, never from the model: no tool argument sets it, a
+confirm phrase never offers it, and the form's digest binds it. Not offered
+for a task in a group or a dinner we started.
+
 "off" (one contact or `all_contacts`) needs nothing. Every change is audited
-with `via: "cli"` or `"mcp"`. `rdv_status` (per contact `auto_approve`, until
+with `via: "cli"`, `"mcp"` or `"form"`; an `auto_approve_on` event says how to
+turn it off. `rdv_status` (per contact `auto_approve`, until
 when, how many actions it passed) and `rdv_task` show it, and `rdv_inbox`
 reports `auto_approved` task starts and dinner steps and an
 `auto_approve_off` event when it ends (NOTES 77, 85).

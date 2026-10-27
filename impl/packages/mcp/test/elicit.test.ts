@@ -1,9 +1,10 @@
-// Approval forms that never get answered (issues #65, #64). Some clients
-// (Claude Code) show an elicitation form only after the model's turn ends,
-// which can't happen while the tool call waits for it. The server bounds the
-// wait, withdraws the form, falls back to the confirm phrase (the path for
-// clients without elicitation) and uses phrases from then on. A cancelled or
-// withdrawn form never approves anything; a decline is a plain "no" result.
+// Approval forms answered, or not, while the tool call still waits (issues
+// #65, #64, #103). The real server never waits (formWaitMs 0: Claude Code shows
+// a form only after the model's turn ends; see asyncforms.test.ts); these
+// sides wait, so an answer, a dismissal or a form withdrawn at the timeout is
+// that call's own result, as before: a cancelled or withdrawn form falls back
+// to the confirm phrase for that call and never approves anything; a decline
+// is a plain "no" result. The next gate asks with a form again.
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -91,7 +92,7 @@ async function pendingRequest(john: Side): Promise<{ requestId: string; omer: Si
 }
 
 describe('approval forms nobody answers fall back to the confirm phrase (issue #65)', () => {
-  it('rdv_relays: an unanswered form is withdrawn within the timeout, the phrase path takes over, and later gates skip forms', async () => {
+  it('rdv_relays: an unanswered form is withdrawn at the timeout, the phrase path takes over for that call, and the next gate asks with a form again', async () => {
     root = mkdtempSync(join(tmpdir(), 'rdv-elicit-'));
     const h = human(() => 'never');
     const omer = await side('omer', h);
@@ -104,6 +105,7 @@ describe('approval forms nobody answers fall back to the confirm phrase (issue #
     expect(r.isError).toBe(true);
     expect(r.text).toContain('got no answer within');
     expect(r.text).toContain('nothing was approved');
+    expect(r.text).not.toContain('from now on'); // no longer "phrases for good" (issue #103)
     expect(r.text).toContain('rdv relays list'); // the terminal command that shows the human the phrase
     expect(r.text).toContain('confirm_phrase');
     expect(r.text).not.toContain('details are in the rdv-mcp server log'); // never the generic failure (issue #64)
@@ -119,14 +121,14 @@ describe('approval forms nobody answers fall back to the confirm phrase (issue #
     await new Promise((res) => setTimeout(res, 100));
     expect((await ok(omer, 'rdv_relays', { action: 'list' })).relays).toEqual([relay.url]);
 
-    // From now on: no form, straight to the phrase.
-    expect((await ok(omer, 'rdv_status')).approval).toContain('went unanswered');
+    // The next gate sends a form again (an unanswered one says nothing about the client: issue #103).
+    expect((await ok(omer, 'rdv_status')).approval).toContain('approval form (elicitation)');
     const three = await newRelay();
     const again = await omer.call('rdv_relays', { action: 'add', url: three });
     expect(again.isError).toBe(true);
-    expect(again.text).not.toContain('got no answer');
+    expect(again.text).toContain('got no answer');
     expect(again.text).toContain('rdv relays list');
-    expect(h.forms).toHaveLength(1);
+    expect(h.forms).toHaveLength(2);
 
     // The human's phrase (the latest relay ask replaces the earlier one), typed to the model, approves exactly that change.
     expect((await ok(omer, 'rdv_relays', { action: 'add', url: three, confirm_phrase: phraseFromHumanLog(omer, three) })).relays).toEqual([relay.url, three]);
@@ -159,11 +161,11 @@ describe('approval forms nobody answers fall back to the confirm phrase (issue #
     expect([unticked.isError, unticked.json.answer]).toEqual([false, 'left unticked']);
     expect(unticked.text).toContain('tick the box before Accept');
     expect((await ok(omer, 'rdv_relays', { action: 'list' })).relays).toEqual([relay.url]);
-    expect((await ok(omer, 'rdv_status')).approval).toBe('approval form (elicitation)');
+    expect((await ok(omer, 'rdv_status')).approval).toContain('approval form (elicitation)');
     expectNoPhrase(omer);
   }, 30_000);
 
-  it('rdv_grant: a form nobody answers falls back to the request phrase within the timeout; a late accept grants nothing', async () => {
+  it('rdv_grant: a form nobody answers falls back to the request phrase at the timeout; a late accept grants nothing', async () => {
     root = mkdtempSync(join(tmpdir(), 'rdv-elicit-'));
     const h = human(() => 'never');
     const john = await side('john', h);
@@ -186,9 +188,9 @@ describe('approval forms nobody answers fall back to the confirm phrase (issue #
     expect((await ok(john, 'rdv_status')).contacts).toEqual([]);
     expect((await ok(john, 'rdv_pending_requests')).pending.map((p: { request_id: string }) => p.request_id)).toContain(requestId);
 
-    // Next time: straight to the phrase, no form; the phrase approves it.
+    // Next time: a form again, unanswered again, then the phrase approves it.
     const again = await john.call('rdv_grant', { request_id: requestId });
-    expect([again.isError, h.forms.length]).toEqual([true, 1]);
+    expect([again.isError, h.forms.length]).toEqual([true, 2]);
     const granted = await ok(john, 'rdv_grant', { request_id: requestId, confirm_phrase: phraseFromHumanLog(john, requestId) });
     expect(granted).toMatchObject({ granted: true });
     expectNoPhrase(john);
@@ -240,7 +242,7 @@ describe('approval forms nobody answers fall back to the confirm phrase (issue #
 
 describe('elicitOptionsFromEnv', () => {
   it('reads RDV_ELICIT_TIMEOUT_MS and RDV_ELICIT', () => {
-    expect(DEFAULT_ELICIT_TIMEOUT_MS).toBe(60_000);
+    expect(DEFAULT_ELICIT_TIMEOUT_MS).toBe(24 * 3_600_000); // a day: the call never waits for it (issue #103)
     expect(elicitOptionsFromEnv({})).toEqual({ elicitTimeoutMs: undefined, forms: true });
     expect(elicitOptionsFromEnv({ RDV_ELICIT_TIMEOUT_MS: '15000' })).toEqual({ elicitTimeoutMs: 15_000, forms: true });
     expect(elicitOptionsFromEnv({ RDV_ELICIT: 'off' }).forms).toBe(false);
