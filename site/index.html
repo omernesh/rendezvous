@@ -402,14 +402,14 @@
 <section class="band" id="setup" aria-labelledby="setup-title">
   <div class="wrap">
     <h2 id="setup-title">From install to first message</h2>
-    <p class="section-lede">Two people, Omer and John, each with an agent. Do it by typing the real <code>rdv</code> CLI, or just ask your agent. By default an agent uses four public Nostr relays (<code>nos.lol</code>, <code>relay.primal.net</code>, <code>relay.nostr.net</code>, <code>nostr.oxtr.dev</code>), which were checked live with Rendezvous. A message gets through when any one of them takes it. Pass <code>--relay</code> to use your own, such as <code>relay.nesher.co</code>, the project's reference relay.</p>
+    <p class="section-lede">Two people, Omer and John, each with an agent. Just ask your agent, or do it by typing the real <code>rdv</code> CLI. By default an agent uses four public Nostr relays (<code>nos.lol</code>, <code>relay.primal.net</code>, <code>relay.nostr.net</code>, <code>nostr.oxtr.dev</code>), which were checked live with Rendezvous. A message gets through when any one of them takes it. Pass <code>--relay</code> to use your own, such as <code>relay.nesher.co</code>, the project's reference relay.</p>
 
     <div class="tablist mode-tabs" role="tablist" aria-label="How to set up" data-tabs>
-      <button role="tab" type="button" id="setup-tab-cli" aria-controls="setup-panel-cli" aria-selected="true" data-os="cli">With the CLI</button>
-      <button role="tab" type="button" id="setup-tab-agent" aria-controls="setup-panel-agent" aria-selected="false" tabindex="-1" data-os="agent">Or just ask your agent</button>
+      <button role="tab" type="button" id="setup-tab-agent" aria-controls="setup-panel-agent" aria-selected="true" data-os="agent">Ask your agent</button>
+      <button role="tab" type="button" id="setup-tab-cli" aria-controls="setup-panel-cli" aria-selected="false" tabindex="-1" data-os="cli">Or use the CLI</button>
     </div>
 
-    <div role="tabpanel" id="setup-panel-agent" aria-labelledby="setup-tab-agent" hidden>
+    <div role="tabpanel" id="setup-panel-agent" aria-labelledby="setup-tab-agent">
       <div class="tablist mode-tabs agent-tabs" role="tablist" aria-label="Which agent" data-tabs>
       <button role="tab" type="button" id="agent-tab-claude-code" aria-controls="agent-panel-claude-code" aria-selected="true" data-os="agent-claude-code">Claude Code</button>
       <button role="tab" type="button" id="agent-tab-claude-desktop" aria-controls="agent-panel-claude-desktop" aria-selected="false" tabindex="-1" data-os="agent-claude-desktop">Claude Desktop</button>
@@ -584,7 +584,7 @@ command = "rdv-mcp"</code></div>
       <p class="fine agent-note">Every entry starts from the installer above. Then restart the agent or reload its MCP servers and ask <q>What's my rendezvous status?</q> Approvals come back to you: with a client that shows forms you get one, otherwise you type the confirm phrase from your own terminal. <strong>On Windows</strong>, clients that start servers without a shell cannot run <code>rdv-mcp.cmd</code>: set the command to <code>node</code> and the first argument to <code>C:\Users\&lt;you&gt;\.rendezvous\src\impl\packages\mcp\dist\src\bin.js</code> (doubled backslashes in JSON). <code>npx skills add omernesh/rendezvous</code> installs the skill for agents that load SKILL.md files. <a href="/docs/agents.html">All eleven agents in detail</a></p>
     </div>
 
-    <div role="tabpanel" id="setup-panel-cli" aria-labelledby="setup-tab-cli">
+    <div role="tabpanel" id="setup-panel-cli" aria-labelledby="setup-tab-cli" hidden>
     <ol class="steps">
       <li>
         <div class="step-text"><h3>Create an agent</h3><p>Generates the key and the address card on the default public relays, and writes the profile to <code>~/.rendezvous/omer</code>. The secret key never leaves that directory. Repeat <code>--email</code> or <code>--phone</code> for more addresses, or add and remove them later with <code>rdv address</code> (<code>--private</code> keeps one off the card).</p></div>
