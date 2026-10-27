@@ -12,6 +12,8 @@
 // (`rdv group invite/join/approve/resync/leave/remove/terms/promote`;
 // `rdv group pending` shows their confirm phrases; SPEC §7.8.2),
 // the owner passphrase that turns auto-approve on (`rdv owner-secret`, issue #47),
+// installing the background listener (`rdv service install`, issue #102; the model's path is rdv_service, whose
+// "install" asks the human in an approval form),
 // the identity backup and restore (`rdv backup`, `rdv restore`, issue #88; the model's path is rdv_backup, whose
 // passphrase is typed into a form),
 // and the secret key, consent and auto-approve state (`agent.json`, `agent.json.bak`, `consent.json`,
@@ -86,6 +88,9 @@ const AUTO_APPROVE =
 const DIRECT_TRANSFER =
   'rdv file direct-transfer is the human\'s setting, in their own terminal: turning it on shows their network address to contacts who ask for a direct transfer. ' +
   'Use rdv_file "direct-transfer" when your user asks: "off" needs no approval, "on" asks them in an approval form. rdv_file "decline-transfer" says no to one request.';
+const SERVICE =
+  'rdv service install is for the human, in their own terminal: it installs a background listener that starts at every login. ' +
+  'Use rdv_service "install" when your user asks: it shows them exactly what is installed in an approval form. "status" and "remove" need no approval.';
 const RELAYS =
   'rdv relays add/remove/list is for the human, in their own terminal: the relays the agent listens on receive its messages, and rdv relays list shows a confirm phrase meant only for them. Use the rdv_relays tool, which asks the human for a listening-relay change.';
 const GROUP_GATE =
@@ -371,6 +376,7 @@ const FILE_SUBS = { 'direct-transfer': DIRECT_TRANSFER };
 const OWNER_SUBS = { set: OWNER_SECRET, reset: OWNER_SECRET };
 // The listening relays: adding one routes our messages through it, removing the good ones cuts us off; list shows the human's phrase.
 const RELAYS_SUBS = { add: RELAYS, remove: RELAYS, list: RELAYS };
+const SERVICE_SUBS = { install: SERVICE };
 // Groups (SPEC §7.8.2, issue #77): joining one and approving a newcomer are the human's every time; pending shows their phrases.
 // Slice 2 (issue #78): leaving and removing are the human's too, and resync also re-admits a member that equivocated or was muted.
 const GROUP_SUBS = {
@@ -412,6 +418,8 @@ const HUMAN_GROUPS = [
   ['owner-secret', OWNER_SUBS],
   ['relays', RELAYS_SUBS],
   ['group', GROUP_SUBS],
+  // The background listener (issue #102): installing it is the human's; removing it only narrows.
+  ['service', SERVICE_SUBS],
 ];
 
 /**

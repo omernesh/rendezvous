@@ -243,6 +243,8 @@ export interface ListenOptions {
   negotiate?: NegotiateOptions;
   /** The capabilities tasks/v1 payloads are routed to (always on; default: hostRegistry()). */
   tasks?: { registry: CapabilityRegistry };
+  /** Who holds listener.lock (default "rdv listen"): the background service names itself (rdv service, issue #102). */
+  role?: string;
 }
 
 /**
@@ -582,9 +584,9 @@ export function hasExpiring(home: Home, opts: { meetings?: boolean } = {}): bool
  * Take the home's `listener.lock` for this process's lifetime, or refuse:
  * two consumers on one home would split inbound events between them (issue #9).
  */
-export function claimListener(home: Home): () => void {
+export function claimListener(home: Home, role = 'rdv listen'): () => void {
   home.ensureDir();
-  const lock = tryLongLock(home.listenerLockPath, 'rdv listen');
+  const lock = tryLongLock(home.listenerLockPath, role);
   if (lock.release) return lock.release;
   throw new CliError(
     `another listener already receives for this home (${lock.owner}). Only one process per home may consume inbound ` +
@@ -593,7 +595,7 @@ export function claimListener(home: Home): () => void {
 }
 
 export async function listen(home: Home, out: Output, opts: ListenOptions): Promise<void> {
-  const releaseListener = claimListener(home);
+  const releaseListener = claimListener(home, opts.role);
   const config = home.readConfig();
   const sets = relaySets(config);
   const boot = Agent.fromJSON(home.readAgentState(), (key) => relayTransport(key, sets.relays, home, sets.mirror));

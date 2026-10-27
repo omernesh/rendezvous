@@ -927,6 +927,7 @@ describe('rdv-mcp over stdio', () => {
           'rdv_resync',
           'rdv_revoke',
           'rdv_send',
+          'rdv_service',
           'rdv_status',
           'rdv_file',
           'rdv_group',

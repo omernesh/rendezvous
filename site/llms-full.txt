@@ -104,9 +104,10 @@ or with `rdv task approve` / `rdv task release` in your own terminal. See
 Settings follow the same rule. Renaming a contact (`rdv_label`), setting the
 owner passphrase (`rdv_owner_passphrase`), taking a contact's or group's
 messages again after a fork (`rdv_resync`), turning direct transfer on
-(`rdv_file` "direct-transfer") and replacing the agent with a new identity
-(`rdv_init` with `replace`) each take effect only when the human answers an
-approval form. Without elicitation the tool refuses and names the command the
+(`rdv_file` "direct-transfer"), replacing the agent with a new identity
+(`rdv_init` with `replace`) and installing a background listener that keeps
+the agent reachable while the client is closed (`rdv_service` "install")
+each take effect only when the human answers an approval form. Without elicitation the tool refuses and names the command the
 human can run in their own terminal instead.
 
 Elicitation support, as far as it could be checked:
@@ -520,12 +521,14 @@ rollback (`rdv_resync`, for a contact, a frozen group or a muted member; check
 with the person first), "allow direct transfers" (`rdv_file` "direct-transfer";
 turning it off needs no form), and "start over with a new identity"
 (`rdv_init` with `replace`: the form shows what you lose, offers a backup
-first and asks you to type the last 4 characters of the fingerprint). Or in
-your own terminal: `rdv contact label`, `rdv owner-secret set`, `rdv contact
-resync` / `rdv group resync`, `rdv file direct-transfer on|off`, `rdv init
---force`. Still terminal-only for now: the owner passphrase reset
-(`rdv owner-secret reset`), gateway administration, and the always-on
-listener (`rdv listen`).
+first and asks you to type the last 4 characters of the fingerprint), and
+"keep my agent reachable while Claude Code is closed" (`rdv_service`: the
+form shows the background listener it installs, its command line and how to
+remove it; removing it needs no form). Or in your own terminal: `rdv contact
+label`, `rdv owner-secret set`, `rdv contact resync` / `rdv group resync`,
+`rdv file direct-transfer on|off`, `rdv init --force`, `rdv service install`.
+Still terminal-only for now: the owner passphrase reset (`rdv owner-secret
+reset`) and gateway administration.
 
 Sending: Claude picks the recipient by its `local_label`, never by an address
 the other agent's card claims, and shows you the fingerprint before the first
@@ -1238,6 +1241,7 @@ State lives in a directory: `--home <dir>`, else `$RDV_HOME`, else
 
 | `lock` | held while a command reads and writes state |
 | `listener.lock` | held for its lifetime by the home's one inbound consumer (`rdv listen` or `rdv-mcp`) |
+| `service/` | the background listener's Windows script and task definition (`rdv-listen-<profile>.vbs`, `.xml`), or its macOS error log; written by `rdv service install` |
 
 | Command | Does |
 |---|---|
@@ -1264,6 +1268,8 @@ State lives in a directory: `--home <dir>`, else `$RDV_HOME`, else
 | `rdv restore <file> [--replace] [--stdin]` | Bring the agent back on a new machine: shows the agent ID, fingerprint and backup time in the file, asks for its passphrase, and refuses to replace an agent that exists here without `--replace`. On the next start (`rdv listen` or `rdv-mcp`) each contact is told (`rdv/restored`, SPEC §6.4.1), so conversations go on with no resync; `rdv whoami` shows who confirmed. Open tasks, dinners and pending requests are not in a backup. Yours to run |
 | `rdv send <agent-id> --json '{"type":"a2a/message","text":"hi"}'` | Send any payload (`--payload '…'` is the same without JSON output) |
 | `rdv listen [--auto-grant <tier> [--auto-grant-any-tier]] [--exec <script>] [--negotiate --calendar cal.json [--window "…"] [--tz +02:00]]` | Long-running: print events; auto-grant is for demos only and stops at `stranger` unless `--auto-grant-any-tier`; `--exec` gets each event as a JSON line on stdin (`RDV_EVENT`, `RDV_HOME` set); `--negotiate` answers dinner proposals from the calendar (window default `next week evenings`) and holds a slot for you to confirm; `--auto-confirm` skips the human (bots, demos) |
+| `rdv service install [--dry-run]` | Keep the agent reachable while no chat or terminal is open: installs `rdv listen` for this home as a background listener that starts at your login, as you, with no administrator rights. Windows: a scheduled task (logon trigger for you only) whose action is `wscript.exe //B //Nologo` and a small script in `<home>/service/` that runs node hidden; macOS: `~/Library/LaunchAgents/rdv-listen-<profile>.plist` (`RunAtLoad`, `KeepAlive`); Linux: `~/.config/systemd/user/rdv-listen-<profile>.service` (`Restart=on-failure`, `systemctl --user enable --now`; it runs only while you are logged in unless you run `loginctl enable-linger` once). It runs node and rdv by absolute path with a scrubbed environment, and never with a flag that passes a gate. `--dry-run` prints the definition. Yours to run (an assistant uses `rdv_service`, which asks you in a form) |
+| `rdv service remove` / `rdv service status` | Stop and remove it; show whether it is installed and running and who holds `listener.lock` |
 | `rdv dinner propose <agent-id> --calendar cal.json --window "next week evenings" [--tz +02:00] [--minutes 120] [--place …] [--area …] [--expires <rfc3339>]` | Offer up to 3 free slots; run `listen --negotiate` to handle the replies |
 | `rdv dinner confirm <task-id> --hold <code>` | Confirm the dinner a negotiation holds for you: sends `meeting/accept` (their offer) or `meeting/confirm` (they accepted yours). `--hold` is the code `rdv dinner list` shows; it is refused if the meeting changed since |
 | `rdv dinner cancel <task-id> [--reason …]` | Send `rdv/cancel` for a pending negotiation and release its hold; for an agreed (completed) dinner, send `meeting/cancel`: it leaves your calendar and the peer's agent removes it from theirs |
@@ -1645,6 +1651,7 @@ stays for clients without forms. `RDV_ELICIT=off` turns forms off entirely.
 | `rdv_label` | agent_id, label | renames a contact (its `local_label`, what `rdv_send` "to" resolves). The approval form shows the agent ID, the fingerprint and the current label; the human may change the name, and what they leave applies. Without a form it is refused and names `rdv contact label <agent-id> <label>`. Through rdv-gateway the label is only a suggestion: the owner types the name on the page, which starts at the current label |
 | `rdv_owner_passphrase` | — | sets or changes the owner passphrase (the one `rdv_auto_approve` "on" asks for). The human types it twice into the approval form (and the current one when changing); only this server sees it, and it never reaches a tool result. Setting one turns auto-approve off for every contact. Without a form it is refused and names `rdv owner-secret set`. Not available through rdv-gateway |
 | `rdv_resync` | agent_id and / or group_id | after a fork or rollback: with agent_id, take a contact's messages again; with group_id, thaw a frozen group; with both, take a refused or muted member's group messages again. The form explains what the fork means; the human should check with the person directly first. Without a form it is refused and names `rdv contact resync` or `rdv group resync [--member]` |
+| `rdv_service` | action `install` / `remove` / `status` | the background listener that keeps the agent reachable while the client is closed (issue #102, NOTES 100): `rdv listen --service rdv-listen-<profile> --home <home>` with absolute paths, started at the user's login by a scheduled task through a hidden `wscript` launcher (Windows), a LaunchAgent (macOS) or a systemd user unit (Linux), never with a gate-passing flag. `install` opens an approval form that shows what is installed, the exact command line, the profile and home, that it runs at login as the user, and how to remove it; bound to the definition and to what is installed now. Without a form it is refused and names `rdv service install`. When this server holds `listener.lock` it hands it to the service and attaches. `remove` needs no form (it only narrows); `status` (read-only): installed, running, profile and home, who holds `listener.lock`. Not available through rdv-gateway |
 | `rdv_backup` | action `create` / `restore`; path (absolute: a new file for `create`, the backup for `restore`) | `create`: the file, the agent ID and fingerprint, and `verified_agent_id_matches` (read back and opened); `restore` (only into a home with no agent): the restored agent ID, fingerprint, backup time and contact count, then the agent starts and tells its contacts. The passphrase is typed only into the approval form (twice and at least 12 characters for `create`; once for `restore`, after the form shows the agent ID and fingerprint in the file); without a form it is refused, with no phrase. Not available through rdv-gateway (issue #88, NOTES 91) |
 | `rdv_send` | agent_id or to (a `local_label`), payload `{type, …}` (not `a2a/*`, `rdv/*`) | agent ID, fingerprint, envelope seq, `delivery` (`pending` until the contact's receipt comes, or `untracked` when its agent sends none); `to` is refused when no contact, or more than one, has that label |
 | `rdv_inbox` | since cursor, limit, wait_seconds (≤ 60) | events + next_cursor |
@@ -1653,7 +1660,7 @@ stays for clients without forms. `RDV_ELICIT=off` turns forms off entirely.
 | `rdv_group` | action `list` / `create` / `invite` / `join` / `decline` / `approve` / `board` / `post` / `request` / `claim` / `assign` / `unassign` / `cancel` / `input` / `leave` / `remove` / `terms`; name (create), group_id, agent_id or to, name and greeting (invite), invite_id (join, decline), invoke, max_frequency, newcomers `ask` / `trust-admin` (join, terms), text (post, request, claim, input), capability, private, references, input, expires (request), task_id and requester (claim, assign, unassign, cancel, input), confirm_phrase (invite, join, approve, leave, remove, terms) | groups (SPEC §7.8): members with, for each, whether they are the user's contact or only named by the admin (`untrusted_peer_text`), who the user approved and who waits for them; invites waiting for the user; the board (SPEC §7.8.4: tasks, claims, assignees, states, results as `untrusted_peer_text`). `invite`, `join`, `approve`, `leave`, `remove` and `terms` need the human (below); a task a member gives the agent waits for the human through `rdv_task` with `group_id`. No result carries a phrase |
 | `rdv_file` | action `prepare` / `list` / `fetch` / `decline-transfer` / `direct-transfer`; path, name, mime_type, plain (prepare); task_id, file or sha256 (fetch); transfer_id; direct_transfer `on` / `off` (direct-transfer) | `prepare`: the encrypted copy for the human to upload (nothing is sent); `list`: prepared files, files peers sent (never fetched on arrival), transfer requests; `fetch`: path and metadata of a quarantined file; `decline-transfer`; `direct-transfer`: `off` needs no approval (it only narrows), `on` opens an approval form (nothing connects on its own either way; without a form `on` is refused and names `rdv file direct-transfer on`). There is no tool to accept a transfer |
 
-Each of `rdv_label`, `rdv_owner_passphrase`, `rdv_resync`, `rdv_file` "direct-transfer" (on) and `rdv_init` `replace` takes effect only when the human answers an approval form; the model never answers, and there is no confirm phrase for them. Through rdv-gateway (cloud assistants), `rdv_label`, `rdv_resync` and `rdv_file` "direct-transfer" are available under the `contact:request` scope and return an `approve_url`; `rdv_owner_passphrase` and `rdv_init` are not offered there.
+Each of `rdv_label`, `rdv_owner_passphrase`, `rdv_resync`, `rdv_file` "direct-transfer" (on), `rdv_init` `replace` and `rdv_service` "install" takes effect only when the human answers an approval form; the model never answers, and there is no confirm phrase for them. Through rdv-gateway (cloud assistants), `rdv_label`, `rdv_resync` and `rdv_file` "direct-transfer" are available under the `contact:request` scope and return an `approve_url`; `rdv_owner_passphrase` and `rdv_init` are not offered there.
 
 Resource `rdv://inbox` holds the latest 50 events; the server supports
 `resources/subscribe` and sends `notifications/resources/updated` when events
@@ -4533,6 +4540,11 @@ What changed in Rendezvous, newest first. Versions are those of the Claude Code 
 The format follows Keep a Changelog. One line per change a user can see; PR numbers link to GitHub.
 
 ## Unreleased
+
+## 0.11.0 - 2026-10-27 {#v0-11-0}
+
+### Added
+- Your agent can stay reachable while your chat app is closed: ask your assistant, approve the form that shows exactly what it installs, and a background listener starts whenever you log in (a scheduled task on Windows, a LaunchAgent on macOS, a systemd user service on Linux); it never approves anything on its own, and you can remove it any time (`rdv_service`, or `rdv service install` in a terminal). ([#102](https://github.com/omernesh/rendezvous/issues/102))
 
 ### Fixed
 - The standing-approval demo clip on the site no longer says no tool can turn it on: it now shows the agent opening the approval form where you type your owner passphrase. ([#106](https://github.com/omernesh/rendezvous/issues/106))

@@ -35,7 +35,8 @@ tool (an approval form), or with `rdv contact label` in their own terminal
 what you want. Replacing one is the user's call: `rdv_init` with `replace:
 true` opens an approval form (what is lost, last backup, a backup offered
 first, last 4 characters of the fingerprint to type). Don't start `rdv listen` yourself: it would stay running in
-your shell. The user can run it in a terminal of their own.
+your shell. To keep the agent reachable while the chat is closed, use `rdv_service` "install" (an approval
+form shows the background listener it installs); the user can also run it in a terminal of their own.
 
 ## Human only
 
@@ -48,13 +49,14 @@ or without `--json`): `rdv contact grant`, `rdv contact confirm`,
 `rdv file direct-transfer`, `rdv relays add`, `rdv relays remove`, `rdv relays list`, `rdv init --force`,
 `rdv group invite`, `rdv group join`, `rdv group approve`, `rdv group resync`, `rdv group pending`,
 `rdv group leave`, `rdv group remove`, `rdv group terms`, `rdv group promote`,
-`rdv listen --auto-grant` and `rdv listen --auto-confirm`. Use
+`rdv listen --auto-grant`, `rdv listen --auto-confirm` and `rdv service install`. Use
 `rdv_pending_requests`, `rdv_negotiate` (action `status`), `rdv_task`
 (action `list`), `rdv_file` (action `list`), `rdv_group` (action `list`) and `rdv_relays` instead.
 For the settings among them there are tools that end in an approval form:
 `rdv_label` (`contact label`), `rdv_owner_passphrase` (`owner-secret set`),
 `rdv_resync` (`contact resync`, `group resync`), `rdv_file` "direct-transfer"
-(`file direct-transfer`) and `rdv_init` with `replace` (`init --force`). The
+(`file direct-transfer`), `rdv_init` with `replace` (`init --force`) and
+`rdv_service` "install" (`service install`; "status" and "remove" need no form). The
 CLI is the fallback when the client shows no forms.
 
 ## Files

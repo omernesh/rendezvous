@@ -232,6 +232,7 @@ contact. Then tell the user:
 - To read new messages and requests, say "check rendezvous".
 - To rename a contact later, say so ("call this contact John"); an approval
   form asks them to confirm the name (`rdv_label`).
-- To stay reachable when Claude Code is closed, run `rdv listen` in a
-  terminal of their own; this server then attaches to it (terminal-only for now).
+- To stay reachable when Claude Code is closed, say so ("keep my agent
+  reachable"): an approval form shows them the background listener it
+  installs and how to remove it (`rdv_service`).
 - Approvals always come to them, as a form or a confirm phrase.

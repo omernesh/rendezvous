@@ -108,6 +108,7 @@ import { cardSyncText } from './cardupdate.js';
 import { auditBackup, createBackup, describeBackup, readBackupFile, restoreBackup, writeBackupFile } from './backup.js';
 import { groupTaskEventText, groupTaskEventView } from './grouptasks.js';
 import { listen } from './listen.js';
+import { SERVICE_NAME_RE, serviceRole } from './service.js';
 import { checkRelayUrl, MAX_MIRROR_RELAYS, MAX_RELAYS, mirrorRelaysOf, relaySets, relayTransport } from './transport.js';
 import {
   buildCtx,
@@ -1505,7 +1506,13 @@ export async function listenCmd({ home, out, values }: Ctx): Promise<void> {
     );
   }
   if (anyTier && !autoGrant) throw new CliError('--auto-grant-any-tier goes with --auto-grant <tier>', 2);
-  await listen(home, out, { autoGrant, autoGrantAnyTier: anyTier, exec: str(values.exec), negotiate });
+  const service = str(values.service);
+  if (service !== undefined) {
+    // The background service (issue #102): its own name, and never a flag that passes a human gate.
+    if (!SERVICE_NAME_RE.test(service)) throw new CliError('--service takes the service name (rdv-listen-<profile>)', 2);
+    if (autoGrant || negotiate || values.exec !== undefined) throw new CliError('--service runs with no --auto-grant, --exec or --negotiate: approvals wait for you', 2);
+  }
+  await listen(home, out, { autoGrant, autoGrantAnyTier: anyTier, exec: str(values.exec), negotiate, ...(service ? { role: serviceRole(service) } : {}) });
 }
 
 export async function inbox({ home, out, values }: Ctx): Promise<void> {

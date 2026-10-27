@@ -4011,6 +4011,102 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       note when on, the result never; the phrase line in the human log and
       `rdv contact pending` carry it; the transcript does not).
 
+## The background listener from the chat (v0.11.0, issue #102 item 6)
+
+100. **`rdv_service` installs a background `rdv listen` behind an approval
+    form; removing it needs none** (no spec change: it is the reference
+    implementation's packaging, nothing on the wire). Until now staying
+    reachable while the chat client was closed meant a terminal running
+    `rdv listen`.
+    - **What runs.** `<node> <rdv bin.js> listen --service rdv-listen-<profile>
+      --home <home>`, with the absolute path of the node that runs the
+      installer (`process.execPath`) and of the CLI's own `dist/src/bin.js`:
+      no PATH lookup. The environment is scrubbed: `/usr/bin/env -i HOME=…
+      PATH=/usr/bin:/bin` on macOS and Linux; on Windows the script drops
+      every variable but Windows' own (SystemRoot, USERPROFILE, APPDATA, TEMP
+      and the like) and sets PATH to System32, so NODE_OPTIONS, RDV_HOME and
+      the like never reach it. `--service <name>` only names the lock's role
+      (`rdv service <name>`), so status can tell the service from a
+      terminal's `rdv listen`; it refuses `--auto-grant`, `--exec` and
+      `--negotiate`, and the definition (`serviceDefinition`, a pure
+      function) throws if one ever got in. A test greps every platform's
+      files and command line for the gate flags.
+    - **Per OS.** Windows: a scheduled task in the root folder, a logon
+      trigger and principal for the current user only (`InteractiveToken`,
+      `LeastPrivilege`, so no administrator rights), registered with
+      `schtasks /Create /XML` from a UTF-16 file in `<home>/service/`. Its
+      action is `wscript.exe //B //Nologo <home>/service/rdv-listen-<p>.vbs`,
+      never node or powershell, so no console flashes. The script runs the
+      command with `WShell.Run cmd, 0, True` in a loop: a listener that exits
+      with an error (another process holds `listener.lock`, a crash) is
+      started again after 30 s, while the script's own file exists. That
+      differs from the brief's `Run cmd, 0, False`: with False the task ends
+      at once and Task Scheduler has nothing to restart. macOS:
+      `~/Library/LaunchAgents/rdv-listen-<p>.plist` (`RunAtLoad`, `KeepAlive`,
+      `ThrottleInterval` 30, stderr to `<home>/service/`), loaded with
+      `launchctl bootstrap gui/<uid>`. Linux:
+      `~/.config/systemd/user/rdv-listen-<p>.service` (`Restart=on-failure`,
+      `RestartSec=30`, `StartLimitIntervalSec=0`, `NoNewPrivileges`),
+      `systemctl --user enable --now`. The unit file is named like the other
+      two (`rdv-listen-<profile>`), not `rdv-<profile>`, so one name holds on
+      every OS. A user unit runs only while the user is logged in; lingering
+      (`loginctl enable-linger`) is theirs to turn on, so the docs and the
+      result say it and the tool never runs it.
+    - **Quoting.** Windows arguments as CommandLineToArgvW reads them (paths
+      always quoted, trailing backslashes doubled, a `"` refused), then
+      doubled again inside the VBScript string; the plist gets one
+      `<string>` per argument; ExecStart words are quoted with `\` and `"`
+      escaped and `%` and `$` doubled (systemd expands both otherwise).
+      Control characters are refused everywhere. Tested with `C:\Users\First
+      Last` and `/home/first last`.
+    - **Whose it is.** Every file carries `rdv-home: "<home>"` (in the task's
+      description on Windows), so a service of the same name installed for
+      another home (two homes with one profile name) is reported, never
+      replaced and never removed from here. `status` is `current` when the
+      file on disk is exactly what this version would write; a new node path
+      makes it not current, and install then replaces it.
+    - **The form.** `rdv_service` "install" goes through `settingForm` (item
+      97): no confirm phrase; without a form it is refused and names
+      `rdv service install`. The form states what is installed and where,
+      the exact command line (the hidden one too, on Windows), the profile,
+      the home, the files, that it runs at every login as the user with
+      their privileges and no administrator rights, that it never approves
+      anything, and how to remove it (`rdv_service` "remove" or
+      `rdv service remove --home …`). It is bound to the definition's digest
+      and to what is installed now; both are read again after the answer, so
+      a changed node path is `changed` and a service installed for another
+      home meanwhile is refused.
+    - **remove needs no form**, like `rdv_auto_approve` "off": it only
+      narrows (the agent then receives while a client or terminal runs, as
+      before). It removes only this home's service. On Windows the script
+      file goes first, so the loop cannot start the listener again, then
+      `schtasks /End` and `/Delete`; a listener still holding the lock under
+      the service's role on this host is stopped. "status" is read-only.
+    - **listener.lock.** An rdv-mcp that holds the lock when the human
+      approves lets go of it first and attaches, and does not take it back
+      for 60 s, so the service's first try takes it; the result says whether
+      it did. If install fails, it takes the lock back on its next tick. After
+      a remove it takes over within a second (the attached takeover of issue
+      #9). A service started while an rdv-mcp holds the lock exits 1 and is
+      started again every 30 s until the lock is free.
+    - **Not through the gateway.** The listener would run on the gateway's
+      host, which is not the user's machine: `rdv_service` is removed in
+      remote mode, and the gateway's scopes do not know it.
+    - **The terminal.** `rdv service install [--dry-run] | remove | status`.
+      The consent guard refuses `rdv service install` to the assistant (the
+      tool asks the human); `status` and `remove` stay allowed.
+    - **Tests.** cli `service.test.ts` (each OS's definition, quoting with
+      spaces and `%`/`$`, no gate flag, one name per profile, refusals;
+      install, status, refusing another home, remove, with a fake runner per
+      OS; `rdv listen --service` refusing a bad name and `--auto-grant`; the
+      dry run); MCP `service.test.ts` (no form: refused, nothing run; a no;
+      a yes with what the form says, the lock handed over and taken back
+      after remove; a stale answer `changed`; another home's service refused
+      and not removable); gateway (not listed, no scope); the plugin's guard
+      cases. A live run on Windows registered the task in a throwaway home
+      under the scratchpad (a path with spaces), saw it take the lock with a
+      scrubbed environment, and removed it.
+
 ## Not implemented yet
 
 

@@ -891,6 +891,13 @@ describe('auto-approve is the human’s (issue #25)', () => {
   });
 });
 
+describe('installing the background listener is the human’s (issue #102)', () => {
+  const denied = ['rdv service install', 'rdv --home ./h service install', 'npx rdv service install --dry-run', 'bash -c "rdv service install"', 'echo install | xargs rdv service'];
+  const allowed = ['rdv service status', 'rdv service remove', 'rdv service status --json', 'systemctl --user status rdv-listen-omer.service', 'launchctl print gui/501/rdv-listen-omer'];
+  it.each(denied)('the guard refuses %s', (c) => expect(checkCommand(c)).toBeTruthy());
+  it.each(allowed)('the guard allows %s', (c) => expect(checkCommand(c)).toBeUndefined());
+});
+
 describe('the direct-transfer setting is the human’s (issue #26)', () => {
   const denied = [
     'rdv file direct-transfer on',
@@ -1072,6 +1079,8 @@ describe('the skill covers general tasks, files and auto-approve (issue #29)', (
     // Slice 3 (issue #79).
     'rdv group terms',
     'rdv group promote',
+    // Issue #102 item 6: the background listener.
+    'rdv service install',
   ];
   it.each(humanOnly)('the skill names %s as the human’s, and the guard refuses it', (c) => {
     expect(skill).toContain(c);

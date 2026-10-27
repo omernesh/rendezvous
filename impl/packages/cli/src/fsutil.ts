@@ -216,6 +216,24 @@ function lockContent(role?: string): string {
   return JSON.stringify({ pid: process.pid, host: hostname(), since: new Date().toISOString(), ...(role ? { role } : {}) } satisfies LockInfo);
 }
 
+/**
+ * Who holds a long-lived lock now (read-only: nothing is broken or taken),
+ * or undefined when it is free, unreadable, or held by a process on this host
+ * that is gone. `here`: the holder runs on this host.
+ */
+export function longLockHolder(path: string): { role?: string; pid: number; host: string; since: string; here: boolean } | undefined {
+  let info: LockInfo;
+  try {
+    info = JSON.parse(readFileSync(path, 'utf8')) as LockInfo;
+  } catch {
+    return undefined;
+  }
+  if (typeof info?.pid !== 'number' || typeof info.host !== 'string') return undefined;
+  const here = info.host === hostname();
+  if (here && !pidAlive(info.pid)) return undefined;
+  return { ...(typeof info.role === 'string' ? { role: info.role } : {}), pid: info.pid, host: info.host, since: String(info.since), here };
+}
+
 function describeOwner(path: string): string {
   try {
     const info = JSON.parse(readFileSync(path, 'utf8')) as LockInfo;

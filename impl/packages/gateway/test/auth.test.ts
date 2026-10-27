@@ -49,6 +49,9 @@ describe('scopes', () => {
     expect(requiredScope('rdv_resync', { agent_id: 'rdv1:x' })).toBe('contact:request');
     expect(requiredScope('rdv_file', { action: 'direct-transfer', direct_transfer: 'on' })).toBe('contact:request');
     expect(requiredScope('rdv_owner_passphrase', {})).toBeUndefined();
+    expect(requiredScope('rdv_service', { action: 'install' })).toBeUndefined();
+    expect(requiredScope('rdv_service', { action: 'status' })).toBeUndefined();
+    expect(authorizeCall(['read', 'send', 'contact:request', 'negotiate'], 'rdv_service', { action: 'status' })).toMatch(/not available/);
     expect(authorizeCall(['read'], 'rdv_send', {})).toMatch(/lacks the "send" scope/);
     expect(authorizeCall(['read', 'send', 'contact:request', 'negotiate'], 'rdv_init', {})).toMatch(/not available/);
   });
