@@ -14,6 +14,7 @@ import { Home } from '../src/home.js';
 import {
   checkServiceArgv,
   homeService,
+  quickServiceCheck,
   GATE_FLAGS,
   installService,
   markedHome,
@@ -231,6 +232,8 @@ async function machine(platform: 'linux' | 'darwin' | 'win32') {
     /** linux/darwin: what the OS says it runs (undefined: nothing loaded). */
     registered: undefined as string | undefined,
     dropins: '',
+    /** linux: where systemd loads the unit from (undefined: ours while registered). */
+    fragment: undefined as string | undefined,
     /** powershell's answer about a pid (L1). */
     process: '',
     fail: undefined as string | undefined,
@@ -244,7 +247,8 @@ async function machine(platform: 'linux' | 'darwin' | 'win32') {
     if (argv[0] === 'systemctl') {
       if (argv.includes('enable')) m.registered = serviceDefinition(home.dir, 'omer', env).registered;
       if (argv.includes('disable')) m.registered = undefined;
-      if (argv.includes('show')) return ok(`ExecStart={ path=/usr/bin/env ; argv[]=${m.registered ?? ''} ; ignore_errors=no ; start_time=[n/a] }\nDropInPaths=${m.dropins}\n`);
+      const unit = serviceDefinition(home.dir, 'omer', env).files[0].path;
+      if (argv.includes('show')) return ok(`ExecStart={ path=/usr/bin/env ; argv[]=${m.registered ?? ''} ; ignore_errors=no ; start_time=[n/a] }\nDropInPaths=${m.dropins}\nFragmentPath=${m.fragment ?? (m.registered ? unit : '')}\n`);
       return ok();
     }
     if (argv[0] === 'launchctl') {
@@ -371,6 +375,37 @@ describe('install, status and remove', () => {
     expect(status().tamper_reasons).toContain('there is no record of what was installed');
   });
 
+  it('linux: a unit of that name systemd loads from elsewhere is never written over or disabled', async () => {
+    const m = await machine('linux');
+    const d = serviceDefinition(m.home.dir, 'omer', m.env);
+    m.fragment = '/etc/systemd/user/rdv-listen-omer.service';
+    expect(() => installService(m.home, d, m.run)).toThrow(/already exists at \/etc\/systemd\/user\/rdv-listen-omer.service, which is not Rendezvous's/);
+    for (const f of d.files) expect(existsSync(f.path)).toBe(false);
+    expect(m.calls.some((c) => c.includes('enable') || c.includes('disable'))).toBe(false);
+    // Ours installed first, then a foreign one shows up as what systemd loads: remove leaves the OS alone.
+    m.fragment = undefined;
+    installService(m.home, d, m.run);
+    m.fragment = '/usr/lib/systemd/user/rdv-listen-omer.service';
+    m.calls.length = 0;
+    removeService(m.home, d, m.run);
+    expect(m.calls.some((c) => c.includes('disable'))).toBe(false);
+    for (const f of d.files) expect(existsSync(f.path)).toBe(false);
+  });
+
+  it.each(platforms)('%s: the quick check (no OS command) sees a changed file or a missing record', async (platform) => {
+    const m = await machine(platform);
+    const d = serviceDefinition(m.home.dir, 'omer', m.env);
+    expect(quickServiceCheck(m.home, m.env)).toEqual({ name: d.name, installed: false, reasons: [] });
+    installService(m.home, d, m.run);
+    m.calls.length = 0;
+    expect(quickServiceCheck(m.home, m.env)).toEqual({ name: d.name, installed: true, reasons: [] });
+    writeFileSync(d.files[0].path, 'changed');
+    expect(quickServiceCheck(m.home, m.env)!.reasons).toEqual([`${d.files[0].path} was changed`]);
+    rmSync(join(m.home.dir, 'service', `${d.name}.json`));
+    expect(quickServiceCheck(m.home, m.env)!.reasons).toEqual(['there is no record of what was installed']);
+    expect(m.calls).toEqual([]);
+  });
+
   it('linux: a drop-in or a second ExecStart is reported as tampered', async () => {
     const m = await machine('linux');
     const d = serviceDefinition(m.home.dir, 'omer', m.env);
@@ -399,7 +434,7 @@ describe('install, status and remove', () => {
     const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore', windowsHide: true });
     try {
       writeFileSync(m.home.listenerLockPath, JSON.stringify({ pid: child.pid, host: hostname(), since: '2026-10-27T00:00:00Z', role: serviceRole(d.name) }));
-      m.process = `node.exe\r\n"node" something-else.js`;
+      m.process = `node.exe\r\n"node" bin.js listen --service ${d.name}2 --home x`; // another profile's name that starts the same
       const d2 = serviceDefinition(m.home.dir, 'omer', { ...m.env, node: `${m.env.node}x` });
       removeService(m.home, d2, m.run);
       await new Promise((r) => setTimeout(r, 300));

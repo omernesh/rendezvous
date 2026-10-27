@@ -637,6 +637,31 @@ function tamperReasons(home: Home, d: ServiceDefinition, seen: Seen): string[] {
   return [...new Set(reasons)];
 }
 
+/**
+ * The cheap check (no OS command): the record of what was installed and the
+ * hashes of its files. `installed` false: nothing of ours is here. Used at
+ * rdv-mcp start and on its tick, so a changed service is reported without
+ * anyone asking; the full serviceStatus reads back what the OS runs.
+ */
+export function quickServiceCheck(home: Home, env: ServiceEnv): { name: string; installed: boolean; reasons: string[] } | undefined {
+  let d: ServiceDefinition;
+  try {
+    d = serviceDefinition(home.dir, home.readConfig().profile, env);
+  } catch {
+    return undefined; // no agent, or a profile that cannot name a service: nothing can be installed
+  }
+  const anyFile = d.files.some((f) => existsSync(f.path));
+  if (!existsSync(recordPath(home, d.name))) return { name: d.name, installed: anyFile, reasons: anyFile ? ['there is no record of what was installed'] : [] };
+  const rec = readRecord(home, d.name);
+  if (rec === 'forged' || rec === 'missing') return { name: d.name, installed: true, reasons: ['the record of what was installed was changed'] };
+  const reasons: string[] = [];
+  for (const [path, want] of Object.entries(rec.files)) {
+    if (!existsSync(path)) reasons.push(`${path} is gone`);
+    else if (sha(readFileSync(path)) !== want) reasons.push(`${path} was changed`);
+  }
+  return { name: d.name, installed: true, reasons };
+}
+
 /** The service for this home: installed or not, running or not, changed or not, and who holds listener.lock (read-only). */
 export function serviceStatus(home: Home, profile: string, env: ServiceEnv, run: ServiceRunner = spawnRunner): ServiceStatus {
   const d = serviceDefinition(home.dir, profile, env);
@@ -687,7 +712,7 @@ function stopWindowsListener(home: Home, d: ServiceDefinition, run: ServiceRunne
   const q = run(['powershell.exe', '-NoProfile', '-NonInteractive', '-Command', `$p = Get-CimInstance Win32_Process -Filter 'ProcessId=${h.pid}'; if ($p) { $p.Name; $p.CommandLine }`]);
   const [image, ...rest] = q.stdout.trim().split(/\r?\n/);
   const cmdline = rest.join(' ');
-  if (q.code !== 0 || !/^node(\.exe)?$/i.test((image ?? '').trim()) || !cmdline.includes(`--service ${d.name}`)) return;
+  if (q.code !== 0 || !/^node(\.exe)?$/i.test((image ?? '').trim()) || !new RegExp(`(^|\\s)--service ${d.name.replace(/[.]/g, '\\.')}(\\s|$)`).test(cmdline)) return;
   try {
     process.kill(h.pid);
   } catch {
@@ -701,11 +726,27 @@ const notOurs = (d: ServiceDefinition, other: string | null): CliError =>
       'Nothing was changed: remove it from that home first, or use another profile name.',
   );
 
+/**
+ * Linux: the file systemd loads a unit of this name from ("" when it has
+ * none). A unit by that name somewhere else (/etc/systemd/user, a package's
+ * /usr/lib/systemd/user) is not ours: never written over, never disabled.
+ */
+function unitFragment(d: ServiceDefinition, run: ServiceRunner): string {
+  const r = run(['systemctl', '--user', 'show', '-p', 'FragmentPath', `${d.name}.service`]);
+  return r.code === 0 ? (/^FragmentPath=(.*)$/m.exec(r.stdout)?.[1].trim() ?? '') : '';
+}
+const foreignUnit = (d: ServiceDefinition, run: ServiceRunner): string | undefined => {
+  const at = unitFragment(d, run);
+  return at && at !== d.files[0].path ? at : undefined;
+};
+
 /** Stop and unregister, delete the files and the record (each step may find it gone already). */
 function teardown(home: Home, d: ServiceDefinition, run: ServiceRunner, strict: boolean): void {
+  // A unit of this name that systemd loads from elsewhere is someone else's: leave it alone.
+  const skipOs = d.platform === 'linux' && foreignUnit(d, run) !== undefined;
   // Windows: the files first, so the script stops starting the listener again once its own file is gone.
   if (d.platform === 'win32') for (const f of d.files) rmSync(f.path, { force: true });
-  for (const [i, argv] of d.remove.entries()) {
+  for (const [i, argv] of skipOs ? [] : d.remove.entries()) {
     const r = run(argv);
     // Ending a task that is not running, or stopping what is stopped already, fails harmlessly; deleting the task must work.
     if (strict && r.code !== 0 && d.platform === 'win32' && i === 1) throw failed(argv, r);
@@ -733,6 +774,10 @@ export function installService(home: Home, d: ServiceDefinition, run: ServiceRun
       run(['schtasks', '/End', '/TN', d.name]);
       stopWindowsListener(home, d, run);
     }
+  }
+  if (d.platform === 'linux') {
+    const other = foreignUnit(d, run);
+    if (other) throw new CliError(`a systemd user unit named ${d.name}.service already exists at ${other}, which is not Rendezvous's. Nothing was installed.`);
   }
   for (const f of d.files) writeText(f);
   const steps = [...d.install, ...(d.platform === 'linux' && before.installed ? [['systemctl', '--user', 'restart', `${d.name}.service`]] : [])];
