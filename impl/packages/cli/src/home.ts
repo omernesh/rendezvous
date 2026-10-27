@@ -283,9 +283,10 @@ export interface AutoApproveEntry {
   /**
    * Contact.grantStamp then (issue #94): which of our human's grant changes
    * it is bound to, so an older file put back after the grant changed and
-   * changed back matches nothing. Absent (set before #94): 0.
+   * changed back matches nothing; random per change (32 hex), null while the
+   * grant was not changed since #94. Absent (set before #94): null.
    */
-  stamp?: number;
+  stamp?: string | null;
   /**
    * The owner passphrase record it was set under (ownerSecretBinding): another
    * passphrase, or none, ends it. `none` (UNBOUND_OWNER, issue #103): set

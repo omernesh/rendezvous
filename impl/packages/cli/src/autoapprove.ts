@@ -80,11 +80,12 @@ export const scopeDigest = (scope: GrantScope | null | undefined): string => sha
  * Which of our human's grant changes the contact is at (Contact.grantStamp,
  * issue #94): an entry stores it under the MAC, so an older autoapprove.json
  * put back after a narrowing that was later widened again matches nothing.
- * An entry without one (set before #94) holds only while the grant was never
- * changed since (0).
+ * A random value per change, not a counter, so a timeline lost to a restore
+ * from backup never repeats one (review of #115). null: never changed since
+ * #94; an entry without one (set before #94) holds only while that is so.
  */
-export const grantStamp = (c: Contact): number => c.grantStamp ?? 0;
-const validStamp = (v: unknown): boolean => v === undefined || (Number.isSafeInteger(v) && (v as number) >= 0);
+export const grantStamp = (c: Contact): string | null => (typeof c.grantStamp === 'string' ? c.grantStamp : null);
+const validStamp = (v: unknown): boolean => v === undefined || v === null || (typeof v === 'string' && /^[0-9a-f]{32}$/.test(v));
 
 function macOf(secretKey: Uint8Array, body: Omit<AutoApproveEntry, 'mac'>): string {
   return createHmac('sha256', secretKey).update(`rdv1/auto-approve\0${stable(body)}`).digest('hex');
@@ -162,7 +163,7 @@ export function checkAutoApprove(entry: AutoApproveEntry | undefined, subject: A
   const c = subject.contact(peer, now);
   if (!c) return { ok: false, reason: 'revoked' };
   if (!validStamp(entry.stamp)) return { ok: false, reason: 'invalid' };
-  if (c.inboundGranted !== true || c.grantId !== entry.grantId || c.since !== entry.since || scopeDigest(c.inboundScope) !== entry.scope || grantStamp(c) !== (entry.stamp ?? 0)) {
+  if (c.inboundGranted !== true || c.grantId !== entry.grantId || c.since !== entry.since || scopeDigest(c.inboundScope) !== entry.scope || grantStamp(c) !== (entry.stamp ?? null)) {
     return { ok: false, reason: 'grant-changed' };
   }
   if (subject.refused(peer)) return { ok: false, reason: 'fork' };
@@ -366,7 +367,7 @@ function keepAutoApprove(home: Home, subject: AutoApproveSubject, peer: string, 
   const e = before.entry;
   const scope = scopeDigest(c.inboundScope);
   // The same grant: nothing to rebind, and the entry (which held a moment ago) is left as it is.
-  if (c.grantId === e.grantId && c.since === e.since && scope === e.scope && grantStamp(c) === (e.stamp ?? 0)) return { ...kept, ended: false };
+  if (c.grantId === e.grantId && c.since === e.since && scope === e.scope && grantStamp(c) === (e.stamp ?? null)) return { ...kept, ended: false };
   if (kept.ended) return kept;
   // Still the entry checked before the grant, under the passphrase record it was set under.
   let all: Record<string, AutoApproveEntry>;
