@@ -71,7 +71,7 @@ import {
   weakOwnerSecret,
 } from './ownersecret.js';
 import { candidateDigest, describeApproval, describeRelaysAsk, dropPhrase, inboundSubject, relaysAsk, reissueForDisplay, requestSubject, type ShownPhrase } from './consent.js';
-import { type AuditEntry, CliError, type Config, type ConfigAddress, type RelayFailure, RelayPublishError, type ConsentAction, consentKey, Home, type InboxEntry, parseJsonLines, type PendingRelease } from './home.js';
+import { type AuditEntry, checkProfile, CliError, type Config, type ConfigAddress, type RelayFailure, RelayPublishError, type ConsentAction, consentKey, Home, type InboxEntry, parseJsonLines, type PendingRelease } from './home.js';
 import {
   answerPeer,
   approveHeldRequest,
@@ -108,7 +108,7 @@ import { cardSyncText } from './cardupdate.js';
 import { auditBackup, createBackup, describeBackup, readBackupFile, restoreBackup, writeBackupFile } from './backup.js';
 import { groupTaskEventText, groupTaskEventView } from './grouptasks.js';
 import { listen } from './listen.js';
-import { SERVICE_NAME_RE, serviceRole } from './service.js';
+import { checkServiceArgv, SERVICE_NAME_RE, serviceRole } from './service.js';
 import { checkRelayUrl, MAX_MIRROR_RELAYS, MAX_RELAYS, mirrorRelaysOf, relaySets, relayTransport } from './transport.js';
 import {
   buildCtx,
@@ -243,7 +243,7 @@ export interface InitOptions {
 
 /** `rdv init` without the output: validate, generate key and card, write state. Shared with the MCP server. */
 export async function initHome(home: Home, opts: InitOptions): Promise<{ id: string; fingerprint: string; config: Config }> {
-  const { profile } = opts;
+  const profile = checkProfile(opts.profile);
   // Copied, so the frozen default never ends up shared with config or card.
   const relays = opts.relays?.length ? [...new Set(opts.relays)] : [...DEFAULT_RELAYS];
   for (const r of relays) if (!/^wss?:\/\/\S+$/.test(r)) throw new CliError(`not a ws:// or wss:// relay URL: ${r}`, 2);
@@ -1510,7 +1510,8 @@ export async function listenCmd({ home, out, values }: Ctx): Promise<void> {
   if (service !== undefined) {
     // The background service (issue #102): its own name, and never a flag that passes a human gate.
     if (!SERVICE_NAME_RE.test(service)) throw new CliError('--service takes the service name (rdv-listen-<profile>)', 2);
-    if (autoGrant || negotiate || values.exec !== undefined) throw new CliError('--service runs with no --auto-grant, --exec or --negotiate: approvals wait for you', 2);
+    if (autoGrant || negotiate || values.exec !== undefined) throw new CliError('--service runs with no --auto-grant, --exec or --negotiate: approvals wait for you', 2);    // Exactly the command line install wrote: an edited script or unit that adds a flag starts nothing.
+    checkServiceArgv(home, service, process.argv.slice(2));
   }
   await listen(home, out, { autoGrant, autoGrantAnyTier: anyTier, exec: str(values.exec), negotiate, ...(service ? { role: serviceRole(service) } : {}) });
 }

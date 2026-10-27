@@ -21,14 +21,15 @@
 // profile (serviceDefinition), so it is tested for every OS on any OS; the
 // side effects (files, the OS's own commands) go through an injected runner.
 import { spawnSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, userInfo } from 'node:os';
-import { dirname, posix, win32 } from 'node:path';
+import { dirname, join, posix, resolve, win32 } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Ctx } from './commands.js';
 import { longLockHolder } from './fsutil.js';
-import { CliError, type Home } from './home.js';
+import { b64decode } from '@rendezvous/core';
+import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
+import { CliError, type Home, PROFILE_RE } from './home.js';
 
 export type ServicePlatform = 'win32' | 'darwin' | 'linux';
 
@@ -78,6 +79,12 @@ export interface ServiceDefinition {
   install: string[][];
   /** The OS commands that stop and unregister it (each may fail: it is gone already). */
   remove: string[][];
+  /**
+   * What the OS has registered, as status reads it back (registeredOf): the
+   * task's command and arguments, the unit's ExecStart argv, the LaunchAgent's
+   * arguments. Anything else there was changed outside Rendezvous.
+   */
+  registered: string;
   /** sha256 over everything above: what an approval is bound to. */
   digest: string;
 }
@@ -88,13 +95,24 @@ export const GATE_FLAGS = ['--auto-grant', '--auto-grant-any-tier', '--auto-conf
 export const SERVICE_NAME_RE = /^rdv-listen-[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/;
 /** listener.lock's role while the service holds it, so status can tell it from a terminal's `rdv listen`. */
 export const serviceRole = (name: string): string => `rdv service ${name}`;
-/** How long the Windows script waits before it starts `rdv listen` again after it stopped with an error. */
+/** How long the service waits before it starts `rdv listen` again after it stopped with an error (then twice that, up to RESTART_MAX_SECONDS). */
 export const RESTART_SECONDS = 30;
+/** The longest wait between restarts (Windows script, systemd); a run of 10 minutes or more starts the backoff over. */
+export const RESTART_MAX_SECONDS = 300;
 
-/** rdv-listen-<profile>, from the home's profile (characters outside the profile alphabet become "-"). */
+/**
+ * rdv-listen-<profile>. A profile outside PROFILE_RE is refused, never
+ * cleaned up (security review of PR #117: a newline in it would have become
+ * a systemd directive).
+ */
 export function serviceName(profile: string): string {
-  const p = profile.replace(/[^A-Za-z0-9_.-]/g, '-').replace(/^[^A-Za-z0-9]+/, '').slice(0, 64);
-  return `rdv-listen-${p || 'default'}`;
+  if (typeof profile !== 'string' || !PROFILE_RE.test(profile)) {
+    throw new CliError(
+      `this agent's profile name ${JSON.stringify(profile)} cannot name a background service (letters, digits, ".", "_" and "-" only). ` +
+        'Nothing was installed. Make the agent again under a plain profile name (rdv init --force --profile <name>), or run "rdv listen" yourself.',
+    );
+  }
+  return `rdv-listen-${profile}`;
 }
 
 // --- quoting ------------------------------------------------------------------
@@ -128,8 +146,15 @@ export function quoteSystemd(arg: string): string {
 
 const xml = (s: string): string => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
 const vbsString = (s: string): string => `"${s.replace(/"/g, '""')}"`;
-/** The home a definition was made for, in a comment line any of our files can carry ("-" escaped, so it never ends an XML comment). */
-const marker = (home: string): string => `rdv-home: ${JSON.stringify(home).replace(/-/g, '\\u002d')}`;
+/**
+ * The home a definition was made for, in a comment line any of our files can
+ * carry: ASCII only (anything else as \uXXXX, so no code page or XML round
+ * trip changes it), and "-" escaped, so it never ends an XML comment.
+ */
+const marker = (home: string): string =>
+  `rdv-home: ${JSON.stringify(home).replace(/[^\x20-\x2c\x2e-\x7e]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`)}`;
+/** Text for an XML comment: no "--" in it. */
+const xmlComment = (s: string): string => xml(s).replace(/-(?=-)/g, '- ');
 
 /** The home named by a definition's marker (rdv-home: "…"), or null. */
 export function markedHome(text: string): string | null {
@@ -153,18 +178,22 @@ const WIN_KEEP = ['SYSTEMROOT', 'WINDIR', 'SYSTEMDRIVE', 'USERPROFILE', 'USERNAM
  * definition safely (relative, or with a quote or control character).
  */
 export function serviceDefinition(homeDir: string, profile: string, env: ServiceEnv): ServiceDefinition {
+  const name = serviceName(profile); // first: a profile that cannot name a service says so, whatever else is wrong
   const p = env.platform === 'win32' ? win32 : posix;
   for (const [what, v] of [['node', env.node], ['the rdv entry point', env.bin], ['the home', homeDir], ['the user home', env.userHome]] as const) {
     if (!p.isAbsolute(v)) throw new CliError(`${what} must be an absolute path for the service (got ${v})`);
     refuseControl(v);
   }
-  const name = serviceName(profile);
   const argv = [env.node, env.bin, 'listen', '--service', name, '--home', homeDir];
-  const head = `Rendezvous: keeps profile ${JSON.stringify(profile)} reachable (rdv listen). Made by "rdv service install"; "rdv service remove" deletes it.`;
+  const head = `Rendezvous: ${name} keeps this agent reachable (rdv listen). Made by "rdv service install"; "rdv service remove" deletes it.`;
   let d: Omit<ServiceDefinition, 'digest'>;
   if (env.platform === 'win32') {
     const root = env.systemRoot ?? 'C:\\Windows';
     if (!win32.isAbsolute(root)) throw new CliError(`SystemRoot must be an absolute path (got ${root})`);
+    // WshShell.Run expands %VAR%: a path with a % in it could run another program or home than the form showed.
+    for (const v of [env.node, env.bin, homeDir, root]) {
+      if (v.includes('%')) throw new CliError(`a path for the service has a "%" in it, which Windows would expand: ${v}. Nothing was installed; run "rdv listen" yourself.`);
+    }
     const user = env.user;
     if (!user || /["<>&\u0000-\u001f]/.test(user)) throw new CliError('the Windows account the service runs as is unknown');
     const commandLine = [quoteWin(env.node, true), quoteWin(env.bin, true), 'listen', '--service', name, '--home', quoteWin(homeDir, true)].join(' ');
@@ -174,13 +203,14 @@ export function serviceDefinition(homeDir: string, profile: string, env: Service
     const wscript = win32.join(root, 'System32', 'wscript.exe');
     const launcher = [wscript, '//B', '//Nologo', vbsPath];
     const launcherArgs = ['//B', '//Nologo', quoteWin(vbsPath, true)].join(' ');
+    const logPath = win32.join(dir, `${name}.log`);
     const vbs = [
       `' ${head}`,
       `' ${marker(homeDir)}`,
       "' Runs the command below hidden (window style 0: no console), with only Windows' own variables, and again",
-      `' ${RESTART_SECONDS} s after it stops with an error, while this file exists.`,
+      `' after it stops with an error (${RESTART_SECONDS} s, doubling up to ${RESTART_MAX_SECONDS} s), while this file exists.`,
       'Option Explicit',
-      'Dim sh, fso, env, item, k, keep, names, i, cmd, rc',
+      'Dim sh, fso, env, item, k, keep, names, i, cmd, rc, delay, started, logf',
       'Set sh = CreateObject("WScript.Shell")',
       'Set fso = CreateObject("Scripting.FileSystemObject")',
       'Set env = sh.Environment("Process")',
@@ -200,10 +230,21 @@ export function serviceDefinition(homeDir: string, profile: string, env: Service
       'Next',
       `env("PATH") = ${vbsString(`${win32.join(root, 'System32')};${root}`)}`,
       `cmd = ${vbsString(commandLine)}`,
+      `delay = ${RESTART_SECONDS}`,
       'Do',
+      '  started = Now',
       '  rc = sh.Run(cmd, 0, True)',
       '  If rc = 0 Or Not fso.FileExists(WScript.ScriptFullName) Then Exit Do',
-      `  WScript.Sleep ${RESTART_SECONDS * 1000}`,
+      `  If DateDiff("s", started, Now) >= 600 Then delay = ${RESTART_SECONDS}`,
+      // One line per restart, for the human (the file starts over past 256 KB).
+      `  If fso.FileExists(${vbsString(logPath)}) Then`,
+      `    If fso.GetFile(${vbsString(logPath)}).Size > 262144 Then fso.DeleteFile ${vbsString(logPath)}`,
+      '  End If',
+      `  Set logf = fso.OpenTextFile(${vbsString(logPath)}, 8, True)`,
+      '  logf.WriteLine Now & " rdv listen stopped (exit " & rc & "); starting it again in " & delay & " s"',
+      '  logf.Close',
+      '  WScript.Sleep delay * 1000',
+      `  delay = delay * 2: If delay > ${RESTART_MAX_SECONDS} Then delay = ${RESTART_MAX_SECONDS}`,
       '  If Not fso.FileExists(WScript.ScriptFullName) Then Exit Do',
       'Loop',
       '',
@@ -274,6 +315,7 @@ export function serviceDefinition(homeDir: string, profile: string, env: Service
         ['schtasks', '/End', '/TN', name],
         ['schtasks', '/Delete', '/TN', name, '/F'],
       ],
+      registered: `${wscript}\n${launcherArgs}`,
     };
   } else {
     const launcher = ['/usr/bin/env', '-i', `HOME=${env.userHome}`, 'PATH=/usr/bin:/bin', ...argv];
@@ -286,8 +328,8 @@ export function serviceDefinition(homeDir: string, profile: string, env: Service
       const content = [
         '<?xml version="1.0" encoding="UTF-8"?>',
         '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
-        `<!-- ${xml(head)} -->`,
-        `<!-- ${xml(marker(homeDir))} -->`,
+        `<!-- ${xmlComment(head)} -->`,
+        `<!-- ${xmlComment(marker(homeDir))} -->`,
         '<plist version="1.0">',
         '<dict>',
         '  <key>Label</key>',
@@ -330,6 +372,7 @@ export function serviceDefinition(homeDir: string, profile: string, env: Service
           ['launchctl', 'bootstrap', domain, plist],
         ],
         remove: [['launchctl', 'bootout', `${domain}/${name}`]],
+        registered: launcher.join('\n'),
       };
     } else {
       const unit = posix.join(env.userHome, '.config', 'systemd', 'user', `${name}.service`);
@@ -337,7 +380,7 @@ export function serviceDefinition(homeDir: string, profile: string, env: Service
         `# ${head}`,
         `# ${marker(homeDir)}`,
         '[Unit]',
-        `Description=Rendezvous listener (profile ${profile.replace(/[%$\\]/g, '-')})`,
+        `Description=Rendezvous listener ${name}`,
         'StartLimitIntervalSec=0',
         '',
         '[Service]',
@@ -345,6 +388,9 @@ export function serviceDefinition(homeDir: string, profile: string, env: Service
         `ExecStart=${launcher.map(quoteSystemd).join(' ')}`,
         'Restart=on-failure',
         `RestartSec=${RESTART_SECONDS}`,
+        // systemd 254 and later: the wait doubles up to the cap (older ones ignore these two and keep 30 s).
+        'RestartSteps=4',
+        `RestartMaxDelaySec=${RESTART_MAX_SECONDS}`,
         'NoNewPrivileges=true',
         '',
         '[Install]',
@@ -369,6 +415,7 @@ export function serviceDefinition(homeDir: string, profile: string, env: Service
         ],
         // Then the unit file is deleted and systemd reloaded (removeService).
         remove: [['systemctl', '--user', 'disable', '--now', `${name}.service`]],
+        registered: launcher.join(' '),
       };
     }
   }
@@ -376,9 +423,6 @@ export function serviceDefinition(homeDir: string, profile: string, env: Service
   const digest = createHash('sha256').update(`rdv1/service\u0000${JSON.stringify(d)}`).digest('hex');
   return { ...d, digest };
 }
-
-/** The definition's own file a status reads back (the script on Windows, the plist or the unit elsewhere). */
-const mainFile = (d: ServiceDefinition): ServiceFile => d.files[0];
 
 /** This process's platform, node and rdv entry point. Throws on an OS without a supported service manager. */
 export function defaultServiceEnv(): ServiceEnv {
@@ -428,8 +472,13 @@ export interface ServiceStatus {
   installed_home: string | null;
   /** Installed for this home. */
   ours: boolean;
-  /** Installed exactly as this version would install it now (same node, rdv entry point and definition). */
+  /** Installed exactly as this version would install it now, and unchanged since. */
   current: boolean;
+  /** Ours, and changed outside Rendezvous since it was installed (its files, what the OS runs, a drop-in): see tamper_reasons. */
+  tampered: boolean;
+  tamper_reasons: string[];
+  /** not-installed, current, older (installed by another version or another node path), tampered, or other-home. */
+  state: 'not-installed' | 'current' | 'older' | 'tampered' | 'other-home';
   /** Whether the OS says it is running (null: it cannot tell). */
   running: boolean | null;
   /** Who holds this home's listener.lock now. */
@@ -438,46 +487,166 @@ export interface ServiceStatus {
   holds_listener_lock: boolean;
 }
 
-/** The OS's view of the installed service: whether it exists, the text to check, and whether it runs. */
-function inspect(d: ServiceDefinition, run: ServiceRunner): { installed: boolean; text: string; running: boolean | null } {
-  const file = mainFile(d);
-  const onDisk = existsSync(file.path) ? readText(file) : '';
+const sha = (b: Buffer | string): string => createHash('sha256').update(b).digest('hex');
+const unxml = (s: string): string => s.replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+
+/**
+ * What the OS has registered, read back: the task XML (`schtasks /Query
+ * /XML`), the unit (`systemctl --user show`), the LaunchAgent (`launchctl
+ * print`). `marker`: the text whose rdv-home marker says whose it is (on
+ * Windows only the registered task's own XML, never a file left in a home).
+ */
+interface Seen {
+  installed: boolean;
+  marker: string;
+  /** registeredOf the definition, as the OS reports it (undefined: it cannot tell). */
+  registered?: string;
+  /** More than one action or ExecStart, or a drop-in: always a change made outside Rendezvous. */
+  extra: string[];
+  running: boolean | null;
+}
+
+function inspect(d: ServiceDefinition, run: ServiceRunner): Seen {
   if (d.platform === 'win32') {
     const q = run(['schtasks', '/Query', '/TN', d.name, '/XML']);
-    if (q.code !== 0) return { installed: false, text: '', running: null };
+    if (q.code !== 0) return { installed: false, marker: '', extra: [], running: null };
+    let xmlText = q.stdout;
+    // schtasks prints in the console's code page, which loses any non-ASCII path (measured on Windows 11): read the
+    // task as UTF-8 through Export-ScheduledTask instead, so what the OS runs is compared exactly.
+    if (/[^\x00-\x7f]/.test(d.registered)) {
+      const u = run([
+        'powershell.exe',
+        '-NoProfile',
+        '-NonInteractive',
+        '-Command',
+        `[Console]::OutputEncoding = [Text.Encoding]::UTF8; Export-ScheduledTask -TaskName '${d.name}' -TaskPath '\\'`,
+      ]);
+      if (u.code === 0 && u.stdout.includes('<Task')) xmlText = u.stdout;
+    }
+    const execs = [...xmlText.matchAll(/<Exec>([\s\S]*?)<\/Exec>/g)];
+    const extra = execs.length === 1 ? [] : [`the task has ${execs.length} actions`];
+    const one = execs[0]?.[1] ?? '';
+    const cmd = unxml(/<Command>([\s\S]*?)<\/Command>/.exec(one)?.[1] ?? '').trim();
+    const args = unxml(/<Arguments>([\s\S]*?)<\/Arguments>/.exec(one)?.[1] ?? '').trim();
     const csv = run(['schtasks', '/Query', '/TN', d.name, '/FO', 'CSV', '/NH']);
     const state = csv.code === 0 ? (csv.stdout.trim().split(/\r?\n/).pop() ?? '').split('","').pop()?.replace(/"$/, '') : undefined;
-    // The task's XML names the home; the script must be the one this version writes.
-    return { installed: true, text: `${q.stdout}\n${onDisk}`, running: state === undefined ? null : /running/i.test(state) };
+    return { installed: true, marker: xmlText, registered: `${cmd}\n${args}`, extra, running: state === undefined ? null : /running/i.test(state) };
   }
-  if (!onDisk) return { installed: false, text: '', running: null };
+  const file = d.files[0];
+  if (!existsSync(file.path)) return { installed: false, marker: '', extra: [], running: null };
+  const text = readText(file);
   if (d.platform === 'darwin') {
     const p = run(['launchctl', 'print', d.remove[0][2]]);
-    return { installed: true, text: onDisk, running: p.code === 0 ? /\bstate = running\b/.test(p.stdout) : false };
+    if (p.code !== 0) return { installed: true, marker: text, extra: [], running: false };
+    const block = /\n\s*arguments = \{\n([\s\S]*?)\n\s*\}/.exec(p.stdout);
+    return { installed: true, marker: text, registered: block ? block[1].split('\n').map((l) => l.trim()).join('\n') : undefined, extra: [], running: /\bstate = running\b/.test(p.stdout) };
   }
+  const show = run(['systemctl', '--user', 'show', '-p', 'ExecStart', '-p', 'DropInPaths', `${d.name}.service`]);
   const a = run(['systemctl', '--user', 'is-active', `${d.name}.service`]);
-  return { installed: true, text: onDisk, running: a.stdout.trim() === 'active' };
+  let registered: string | undefined;
+  const extra: string[] = [];
+  if (show.code === 0) {
+    const starts = [...show.stdout.matchAll(/argv\[\]=(.*?) ; ignore_errors=/g)].map((m) => m[1]);
+    if (starts.length > 1) extra.push(`the unit runs ${starts.length} commands`);
+    registered = starts[0];
+    const drop = /^DropInPaths=(.*)$/m.exec(show.stdout)?.[1].trim();
+    if (drop) extra.push(`a drop-in changes the unit (${drop})`);
+  }
+  return { installed: true, marker: text, registered, extra, running: a.stdout.trim() === 'active' };
 }
 
 function readText(f: ServiceFile): string {
   const buf = readFileSync(f.path);
-  if (f.encoding === 'utf16le') return buf.toString('utf16le').replace(/^\uFEFF/, '');
+  if (f.encoding === 'utf16le') return buf.toString('utf16le').replace(/^﻿/, '');
   return buf.toString('utf8');
+}
+
+function fileBytes(f: ServiceFile): Buffer {
+  return f.encoding === 'utf16le' ? Buffer.from(`﻿${f.content}`, 'utf16le') : Buffer.from(f.content, 'utf8');
 }
 
 function writeText(f: ServiceFile): void {
   mkdirSync(dirname(f.path), { recursive: true });
-  writeFileSync(f.path, f.encoding === 'utf16le' ? Buffer.from(`\uFEFF${f.content}`, 'utf16le') : f.content, { mode: 0o644 });
+  writeFileSync(f.path, fileBytes(f), { mode: 0o644 });
 }
 
-/** The service for this home: installed or not, running or not, and who holds listener.lock (read-only). */
+// --- what was installed (MACed with the agent key) -------------------------------
+
+/**
+ * The record of what install wrote and registered: the definition's digest,
+ * each file's hash, and what the OS should report. MACed with the agent's key
+ * (which the assistant cannot read), so a file, a task or a unit changed
+ * afterwards is told apart from an older version of ours.
+ */
+interface Record_ {
+  v: 1;
+  name: string;
+  digest: string;
+  files: Record<string, string>;
+  registered: string;
+}
+
+const recordPath = (home: Home, name: string): string => join(home.dir, 'service', `${name}.json`);
+const agentKey = (home: Home): Uint8Array | undefined => {
+  try {
+    return b64decode(home.readAgentState().secretKey);
+  } catch {
+    return undefined;
+  }
+};
+const recordMac = (key: Uint8Array, r: Record_): string => createHmac('sha256', key).update(`rdv1/service-record\u0000${JSON.stringify(r)}`).digest('hex');
+
+function writeRecord(home: Home, d: ServiceDefinition): void {
+  const key = agentKey(home);
+  if (!key) throw new CliError(`no agent at ${home.dir}`);
+  const r: Record_ = { v: 1, name: d.name, digest: d.digest, files: Object.fromEntries(d.files.map((f) => [f.path, sha(fileBytes(f))])), registered: d.registered };
+  mkdirSync(join(home.dir, 'service'), { recursive: true });
+  writeFileSync(recordPath(home, d.name), JSON.stringify({ ...r, mac: recordMac(key, r) }, null, 2) + '\n', { mode: 0o600 });
+}
+
+function readRecord(home: Home, name: string): Record_ | 'missing' | 'forged' {
+  const path = recordPath(home, name);
+  if (!existsSync(path)) return 'missing';
+  const key = agentKey(home);
+  try {
+    const { mac, ...r } = JSON.parse(readFileSync(path, 'utf8')) as Record_ & { mac?: string };
+    if (!key || typeof mac !== 'string' || !/^[0-9a-f]{64}$/.test(mac) || r.v !== 1 || r.name !== name) return 'forged';
+    const body: Record_ = { v: 1, name: r.name, digest: String(r.digest), files: r.files ?? {}, registered: String(r.registered) };
+    if (!timingSafeEqual(Buffer.from(mac, 'hex'), Buffer.from(recordMac(key, body), 'hex'))) return 'forged';
+    return body;
+  } catch {
+    return 'forged';
+  }
+}
+
+/** Why the installed service is not what install made (empty: unchanged). */
+function tamperReasons(home: Home, d: ServiceDefinition, seen: Seen): string[] {
+  const reasons = [...seen.extra];
+  const rec = readRecord(home, d.name);
+  if (rec === 'missing') reasons.push('there is no record of what was installed');
+  else if (rec === 'forged') reasons.push('the record of what was installed was changed');
+  else {
+    for (const [path, want] of Object.entries(rec.files)) {
+      if (!existsSync(path)) reasons.push(`${path} is gone`);
+      else if (sha(readFileSync(path)) !== want) reasons.push(`${path} was changed`);
+    }
+    if (seen.registered !== undefined && seen.registered !== rec.registered) reasons.push(`what the OS runs is not what was installed: ${seen.registered.replace(/\n/g, ' ')}`);
+  }
+  const texts = [seen.registered ?? '', ...d.files.filter((f) => existsSync(f.path)).map(readText)];
+  for (const flag of GATE_FLAGS) if (texts.some((t) => t.includes(flag))) reasons.push(`it runs with ${flag}`);
+  return [...new Set(reasons)];
+}
+
+/** The service for this home: installed or not, running or not, changed or not, and who holds listener.lock (read-only). */
 export function serviceStatus(home: Home, profile: string, env: ServiceEnv, run: ServiceRunner = spawnRunner): ServiceStatus {
   const d = serviceDefinition(home.dir, profile, env);
   const seen = inspect(d, run);
-  const installedHome = seen.installed ? markedHome(seen.text) : null;
+  const installedHome = seen.installed ? markedHome(seen.marker) : null;
   const ours = installedHome !== null && samePath(installedHome, home.dir, d.platform);
-  const file = mainFile(d);
-  const current = ours && existsSync(file.path) && readText(file) === file.content;
+  const reasons = ours ? tamperReasons(home, d, seen) : [];
+  const rec = ours ? readRecord(home, d.name) : 'missing';
+  const tampered = reasons.length > 0;
+  const current = ours && !tampered && typeof rec === 'object' && rec.digest === d.digest;
   const holder = longLockHolder(home.listenerLockPath);
   return {
     platform: d.platform,
@@ -489,6 +658,9 @@ export function serviceStatus(home: Home, profile: string, env: ServiceEnv, run:
     installed_home: installedHome,
     ours,
     current,
+    tampered,
+    tamper_reasons: reasons,
+    state: !seen.installed ? 'not-installed' : !ours ? 'other-home' : tampered ? 'tampered' : current ? 'current' : 'older',
     running: seen.installed ? seen.running : false,
     listener: holder ? { holder: holder.role ?? 'unknown', pid: holder.pid, host: holder.host, since: holder.since } : null,
     holds_listener_lock: holder?.role === serviceRole(d.name),
@@ -504,25 +676,22 @@ function failed(argv: string[], r: RunResult): CliError {
 }
 
 /**
- * Write the definition's files and register and start it. Replaces an older
- * definition of ours; refuses one installed for another home.
+ * Windows: stop the listener the service started, if it still runs. Only a
+ * process on this host that holds listener.lock under the service's role,
+ * whose image is node and whose command line runs `--service <name>` (read
+ * from Win32_Process), is stopped; a pid reused by anything else never is.
  */
-export function installService(home: Home, d: ServiceDefinition, run: ServiceRunner = spawnRunner): void {
-  const before = inspect(d, run);
-  if (before.installed) {
-    const other = markedHome(before.text);
-    if (other === null || !samePath(other, home.dir, d.platform)) throw notOurs(d, other);
-  }
-  for (const f of d.files) writeText(f);
-  for (const [i, argv] of d.install.entries()) {
-    const r = run(argv);
-    // bootout of a LaunchAgent that is not loaded fails: that is the point of running it first.
-    if (r.code !== 0 && !(d.platform === 'darwin' && i === 0)) throw failed(argv, r);
-  }
-  // A systemd unit that was running the older definition: start it again on the new one.
-  if (d.platform === 'linux' && before.installed) {
-    const r = run(['systemctl', '--user', 'restart', `${d.name}.service`]);
-    if (r.code !== 0) throw failed(['systemctl', '--user', 'restart', `${d.name}.service`], r);
+function stopWindowsListener(home: Home, d: ServiceDefinition, run: ServiceRunner): void {
+  const h = longLockHolder(home.listenerLockPath);
+  if (!h?.here || h.role !== serviceRole(d.name) || !Number.isSafeInteger(h.pid) || h.pid <= 0) return;
+  const q = run(['powershell.exe', '-NoProfile', '-NonInteractive', '-Command', `$p = Get-CimInstance Win32_Process -Filter 'ProcessId=${h.pid}'; if ($p) { $p.Name; $p.CommandLine }`]);
+  const [image, ...rest] = q.stdout.trim().split(/\r?\n/);
+  const cmdline = rest.join(' ');
+  if (q.code !== 0 || !/^node(\.exe)?$/i.test((image ?? '').trim()) || !cmdline.includes(`--service ${d.name}`)) return;
+  try {
+    process.kill(h.pid);
+  } catch {
+    // gone already
   }
 }
 
@@ -532,44 +701,110 @@ const notOurs = (d: ServiceDefinition, other: string | null): CliError =>
       'Nothing was changed: remove it from that home first, or use another profile name.',
   );
 
+/** Stop and unregister, delete the files and the record (each step may find it gone already). */
+function teardown(home: Home, d: ServiceDefinition, run: ServiceRunner, strict: boolean): void {
+  // Windows: the files first, so the script stops starting the listener again once its own file is gone.
+  if (d.platform === 'win32') for (const f of d.files) rmSync(f.path, { force: true });
+  for (const [i, argv] of d.remove.entries()) {
+    const r = run(argv);
+    // Ending a task that is not running, or stopping what is stopped already, fails harmlessly; deleting the task must work.
+    if (strict && r.code !== 0 && d.platform === 'win32' && i === 1) throw failed(argv, r);
+  }
+  for (const f of d.files) rmSync(f.path, { force: true });
+  rmSync(recordPath(home, d.name), { force: true });
+  if (d.platform === 'linux') run(['systemctl', '--user', 'daemon-reload']);
+  if (d.platform === 'win32') stopWindowsListener(home, d, run);
+}
+
+/**
+ * Write the definition's files, register and start it, and record what was
+ * installed. Replaces an older (or changed) definition of ours; refuses one
+ * installed for another home. A failure after the first OS command undoes
+ * everything (security review of PR #117), so nothing half-installed stays
+ * registered.
+ */
+export function installService(home: Home, d: ServiceDefinition, run: ServiceRunner = spawnRunner): void {
+  const before = inspect(d, run);
+  if (before.installed) {
+    const other = markedHome(before.marker);
+    if (other === null || !samePath(other, home.dir, d.platform)) throw notOurs(d, other);
+    // Windows: /Create /F does not stop the script already running the old command.
+    if (d.platform === 'win32') {
+      run(['schtasks', '/End', '/TN', d.name]);
+      stopWindowsListener(home, d, run);
+    }
+  }
+  for (const f of d.files) writeText(f);
+  const steps = [...d.install, ...(d.platform === 'linux' && before.installed ? [['systemctl', '--user', 'restart', `${d.name}.service`]] : [])];
+  for (const [i, argv] of steps.entries()) {
+    const r = run(argv);
+    // bootout of a LaunchAgent that is not loaded fails: that is the point of running it first.
+    if (r.code === 0 || (d.platform === 'darwin' && i === 0)) continue;
+    const err = failed(argv, r);
+    teardown(home, d, run, false);
+    throw new CliError(`${err.message}. Nothing was left installed${before.installed ? ' (the one installed before was removed too)' : ''}.`);
+  }
+  writeRecord(home, d);
+}
+
 /**
  * Stop and unregister this home's service and delete its files. Returns
  * whether one was installed. Refuses a service of the same name installed for
- * another home. On Windows, a listener the service started that is still
- * running afterwards (it holds listener.lock under the service's role) is
- * stopped too.
+ * another home.
  */
 export function removeService(home: Home, d: ServiceDefinition, run: ServiceRunner = spawnRunner): boolean {
   const before = inspect(d, run);
   if (before.installed) {
-    const other = markedHome(before.text);
+    const other = markedHome(before.marker);
     if (other === null || !samePath(other, home.dir, d.platform)) throw notOurs(d, other);
   }
-  // Windows: the files first, so the script stops starting the listener again once its own file is gone.
-  if (d.platform === 'win32') for (const f of d.files) rmSync(f.path, { force: true });
   if (!before.installed) {
     for (const f of d.files) rmSync(f.path, { force: true });
+    rmSync(recordPath(home, d.name), { force: true });
     return false;
   }
-  for (const [i, argv] of d.remove.entries()) {
-    const r = run(argv);
-    // Ending a task that is not running, or stopping what is stopped already, fails harmlessly; deleting the task must work.
-    if (r.code !== 0 && d.platform === 'win32' && i === 1) throw failed(argv, r);
-  }
-  for (const f of d.files) rmSync(f.path, { force: true });
-  if (d.platform === 'linux') run(['systemctl', '--user', 'daemon-reload']);
-  if (d.platform === 'win32') {
-    const h = longLockHolder(home.listenerLockPath);
-    if (h?.here && h.role === serviceRole(d.name)) {
-      try {
-        process.kill(h.pid);
-      } catch {
-        // gone already
-      }
-    }
-  }
+  teardown(home, d, run, true);
   if (inspect(d, run).installed) throw new CliError(`${d.location} is still registered after removing it`);
   return true;
+}
+
+// --- handing listener.lock to the service -------------------------------------------
+
+/** The longest an rdv-mcp leaves listener.lock to a starting service (a file written by hand cannot hold it longer). */
+export const YIELD_MAX_MS = 120_000;
+const yieldPath = (home: Home): string => join(home.dir, 'listener.yield');
+
+/** Every rdv-mcp on this home leaves listener.lock free for `ms`, so the service starting now takes it. */
+export function setListenerYield(home: Home, ms: number): void {
+  writeFileSync(yieldPath(home), JSON.stringify({ until: Date.now() + Math.min(ms, YIELD_MAX_MS) }) + '\n');
+}
+
+export function clearListenerYield(home: Home): void {
+  rmSync(yieldPath(home), { force: true });
+}
+
+/** Whether listener.lock is being left to the service now (read by every rdv-mcp before it takes the lock). */
+export function listenerYielded(home: Home): boolean {
+  try {
+    const until = (JSON.parse(readFileSync(yieldPath(home), 'utf8')) as { until?: unknown }).until;
+    return typeof until === 'number' && until > Date.now() && until <= Date.now() + YIELD_MAX_MS;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * `rdv listen --service <name>`: the command line must be exactly the one
+ * the service runs (listen --service <name> --home <home>, for this home's
+ * profile), so a script or unit edited to add a flag starts nothing.
+ */
+export function checkServiceArgv(home: Home, name: string, args: string[]): void {
+  const want = serviceName(home.readConfig().profile);
+  const at = args.indexOf('--home');
+  const ok = args.length === 5 && args[0] === 'listen' && args[1] === '--service' && args[2] === name && at === 3 && samePath(resolve(args[4]), home.dir, process.platform === 'win32' ? 'win32' : 'linux');
+  if (name !== want || !ok) {
+    throw new CliError(`this is not the command line "rdv service install" wrote (${args.join(' ')}): the background listener runs exactly "listen --service ${want} --home <home>". Nothing was started; reinstall it ("rdv service install").`, 2);
+  }
 }
 
 /** Wait up to `ms` for the service to hold listener.lock. */
@@ -612,7 +847,15 @@ export const removeCommand = (home: Home): string => `rdv service remove --home 
 function statusText(s: ServiceStatus): string {
   const lock = s.listener ? `${s.listener.holder} (pid ${s.listener.pid} on ${s.listener.host}, since ${s.listener.since})` : 'nobody';
   return [
-    `${s.name}: ${s.installed ? (s.ours ? `installed (${s.location})${s.current ? '' : ', an older definition: "rdv service install" replaces it'}` : `installed for another home (${s.installed_home ?? 'unknown'})`) : 'not installed'}`,
+    `${s.name}: ${
+      s.state === 'not-installed'
+        ? 'not installed'
+        : s.state === 'other-home'
+          ? `installed for another home (${s.installed_home ?? 'unknown'})`
+          : s.state === 'tampered'
+            ? `installed (${s.location}), but CHANGED OUTSIDE RENDEZVOUS: ${s.tamper_reasons.join('; ')}. "rdv service install" puts it back as it should be, or "rdv service remove" removes it`
+            : `installed (${s.location})${s.current ? '' : ', an older definition: "rdv service install" replaces it'}`
+    }`,
     `  running:       ${s.running === null ? 'unknown' : s.running ? 'yes' : 'no'}`,
     `  profile, home: ${s.profile}, ${s.home}`,
     `  listener.lock: ${lock}${s.holds_listener_lock ? ' (the service)' : ''}`,
@@ -638,6 +881,7 @@ export async function serviceInstallCmd({ home, out, values }: Ctx): Promise<voi
     return;
   }
   const before = serviceStatus(home, d.profile, env);
+  if (before.tampered) out.error(`the installed service was modified outside Rendezvous (${before.tamper_reasons.join('; ')}); installing it again as it should be`);
   if (before.installed && before.ours && before.current) {
     out.emit({ ...before, changed: false }, `${d.name} is installed already, as this version would install it.\n${statusText(before)}`);
     return;

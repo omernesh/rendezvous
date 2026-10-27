@@ -58,8 +58,10 @@ function fakeOs(dir: string) {
   const env: ServiceEnv = { platform, node: process.execPath, bin: join(dir, 'bin.js'), userHome: join(dir, 'user'), uid: 501, systemRoot: 'C:\\Windows', user: 'HOST\\omer' };
   const calls: string[][] = [];
   const tasks = new Map<string, string>();
-  const os = { env, calls, tasks, home: undefined as Home | undefined, held: undefined as (() => void) | undefined, took: false };
+  const os = { env, calls, tasks, home: undefined as Home | undefined, held: undefined as (() => void) | undefined, took: false, noTake: false };
+  const registered = () => serviceDefinition(os.home!.dir, 'omer', env).registered;
   const take = () => {
+    if (os.noTake) return;
     const l = tryLongLock(os.home!.listenerLockPath, ROLE);
     os.took = !!l.release;
     if (l.release) {
@@ -88,9 +90,10 @@ function fakeOs(dir: string) {
     if (cmd === 'launchctl') {
       if (sub === 'bootstrap') take();
       if (sub === 'bootout') drop();
-      if (sub === 'print') return os.held ? okr('state = running') : { code: 113, stdout: '', stderr: 'Could not find service' };
+      if (sub === 'print') return os.held ? okr(`state = running\n\targuments = {\n${registered().split('\n').map((a) => `\t\t${a}`).join('\n')}\n\t}\n`) : { code: 113, stdout: '', stderr: 'Could not find service' };
       return okr();
     }
+    if (argv.includes('show')) return okr(`ExecStart={ path=/usr/bin/env ; argv[]=${registered()} ; ignore_errors=no ; }\nDropInPaths=\n`);
     if (argv.includes('enable')) take();
     if (argv.includes('disable')) drop();
     if (argv.includes('is-active')) return okr(os.held ? 'active' : 'inactive');
@@ -231,5 +234,53 @@ describe('rdv_service', () => {
     // Nor can this agent remove the other home's service.
     const r = await s.call('rdv_service', { action: 'remove' });
     expect([r.isError, r.text]).toEqual([true, expect.stringContaining('another home')]);
+  });
+
+  it('a service changed outside Rendezvous is reported (status, the human log, an event) and the install form says so', { timeout: 60_000 }, async () => {
+    const h = human(yes);
+    const { s: side, def } = await omer({ elicit: h.handler });
+    await ok(side, 'rdv_service', { action: 'install' });
+    const f = def.files[0];
+    const now = readFileSync(f.path);
+    writeFileSync(f.path, Buffer.concat([now, Buffer.from(f.encoding === 'utf16le' ? '\r\n\u0000' : '\n# --auto-grant friend\n')]));
+    const st = await ok(side, 'rdv_service', { action: 'status' });
+    expect(st).toMatchObject({ installed: true, state: 'tampered', tampered: true, current: false });
+    expect(st.tamper_reasons.join('\n')).toContain(`${f.path} was changed`);
+    expect(st.tamper_note).toMatch(/changed outside Rendezvous/);
+    expect(side.humanLog.join('\n')).toMatch(/WARNING: the background listener rdv-listen-omer was changed outside Rendezvous/);
+    const ev = await waitEvent(side, (e) => e.type === 'service_tampered', 'the warning event', T);
+    expect(ev.name).toBe(NAME);
+    // Reported once per change, not on every status.
+    await ok(side, 'rdv_service', { action: 'status' });
+    expect(side.humanLog.filter((l) => l.includes('WARNING: the background listener')).length).toBe(1);
+    // Install again: the form says it was modified, and puts it back.
+    const again = await ok(side, 'rdv_service', { action: 'install' });
+    expect(String(h.asked[1].message)).toContain('The installed service was modified outside Rendezvous');
+    expect(again).toMatchObject({ installed: true, changed: true, service: { state: 'current' } });
+  });
+
+  it('a profile that cannot name a service is refused at rdv_init, and an existing one at install', { timeout: 60_000 }, async () => {
+    const { s: side } = await omer({ elicit: human(yes).handler });
+    const bad = await side.call('rdv_init', { replace: true, profile: "x)\nExecStartPre=/bin/sh -c 'id'\n#" });
+    expect(bad.isError).toBe(true);
+    side.home.writeConfig({ ...side.home.readConfig(), profile: 'bad profile/name' });
+    const r = await side.call('rdv_service', { action: 'install' });
+    expect([r.isError, r.text]).toEqual([true, expect.stringContaining('cannot name a background service')]);
+  });
+
+  it('every rdv-mcp on the home leaves listener.lock to the starting service (listener.yield)', { timeout: 60_000 }, async () => {
+    const { s: first, os } = await omer({ elicit: human(yes).handler });
+    const second = await makeSide('omer-2', first.home.dir, { service: { env: os.env, run: os.run, waitMs: 500 } });
+    sides.push(second);
+    expect(await inbound(second)).toBe('attached');
+    os.noTake = true; // the service is slow to start: nobody holds the lock for a while
+    await ok(first, 'rdv_service', { action: 'install' });
+    expect(await inbound(first)).toBe('attached');
+    // Neither server takes the lock while it is left to the service.
+    await new Promise((r) => setTimeout(r, 1500));
+    expect([await inbound(first), await inbound(second)]).toEqual(['attached', 'attached']);
+    // Removed: one of them receives again.
+    await ok(first, 'rdv_service', { action: 'remove' });
+    await until(async () => (await inbound(first)) === 'consumer' || (await inbound(second)) === 'consumer', 'a server to take over');
   });
 });
