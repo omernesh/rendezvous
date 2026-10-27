@@ -26,6 +26,20 @@ import {
   MEETING_CAPABILITIES,
   verifyContactRequest,
 } from './contact.js';
+import {
+  ACK_TYPE,
+  ackDue,
+  ackSeq,
+  confirmsDelivery,
+  type DeliveryState,
+  type DeliverySummary,
+  deliveryOf,
+  deliverySummary,
+  type PeerDelivery,
+  RECEIPT_TIMING,
+  type ReceiptTiming,
+  retryDue,
+} from './delivery.js';
 import { type Binding, canonAgentId, dtopic, idtopic, normalizeAddresses, topicForHint } from './discovery.js';
 import { b64decode, b64encode, parseTimestamp } from './encoding.js';
 import {
@@ -87,7 +101,7 @@ import {
   takeWaiting,
 } from './groupmsg.js';
 import { type AgentKey, generateKey, keyFromSecret } from './identity.js';
-import type { MirrorOptions, MirrorReport, Transport } from './transport/transport.js';
+import type { EnvelopeMeta, MirrorOptions, MirrorReport, Transport } from './transport/transport.js';
 
 const OUTBOX_LIMIT = 64;
 /** Gap buffer bounds: per peer (OUTBOX_LIMIT envelopes) and across peers. */
@@ -113,7 +127,23 @@ export const RESTORED_TYPE = 'rdv/restored';
 export const RESTORED_ACK_TYPE = 'rdv/restored-ack';
 /** `rdv/restored` notices we act on per peer: each one re-bases its chain, so a few a day at most. */
 export const RESTORED_LIMIT = { count: 3, windowMs: 86_400_000 };
-const CONTROL_TYPES = new Set(['rdv/contact-request', 'rdv/contact-grant', 'rdv/revoke', 'rdv/resend', CARD_UPDATE_TYPE, RESTORED_TYPE, RESTORED_ACK_TYPE, ...GROUP_TYPES, ...GROUP_MSG_TYPES]);
+const CONTROL_TYPES = new Set(['rdv/contact-request', 'rdv/contact-grant', 'rdv/revoke', 'rdv/resend', CARD_UPDATE_TYPE, RESTORED_TYPE, RESTORED_ACK_TYPE, ACK_TYPE, ...GROUP_TYPES, ...GROUP_MSG_TYPES]);
+
+/** Envelopes of ours a contact did not confirm, by what happened to them (NOTES 98). */
+export interface DeliveryNews {
+  peer: string;
+  seqs: number[];
+}
+
+/** Republished from the outbox: on the backoff (`retry`), or because a relay came back (`reconnect`). */
+export interface DeliveryResent extends DeliveryNews {
+  reason: 'retry' | 'reconnect';
+}
+
+/** Still no receipt after every retry; `since`: when the oldest of them was sent. The owner is told. */
+export interface DeliveryUnconfirmed extends DeliveryNews {
+  since: string;
+}
 
 /** A peer restored its agent from a backup and re-based its chain to us (NOTES 91). */
 export interface ContactRestored {
@@ -185,6 +215,8 @@ export interface AgentState {
   groups?: GroupBookState;
   /** Set by a restore from a backup (NOTES 91): when, and when the backup was made. */
   restored?: { at: string; backup_created: string };
+  /** Delivery receipts per contact (NOTES 98): what it has not confirmed, and the ack we owe it. Absent until the first. */
+  delivery?: Record<string, PeerDelivery>;
 }
 
 /** A failed send in a group fan-out (the others still went). */
@@ -249,6 +281,12 @@ export interface AgentEvents {
   'contact-restored': [ContactRestored];
   /** After our own restore: a contact acknowledged our notice; its chain to us goes on. */
   'restore-confirmed': [RestoreConfirmed];
+  /** Envelopes a contact has not confirmed were published again (NOTES 98). */
+  'delivery-resent': [DeliveryResent];
+  /** A contact never confirmed these envelopes, after every retry: tell the human ("not confirmed delivered"). */
+  'delivery-unconfirmed': [DeliveryUnconfirmed];
+  /** A contact confirmed envelopes we had reported as not confirmed: they arrived after all. */
+  'delivery-confirmed': [DeliveryNews];
   dropped: [reason: string, detail?: unknown];
   error: [Error];
 }
@@ -260,6 +298,11 @@ export class Agent extends EventEmitter<AgentEvents> {
   private outbox: Record<string, Envelope[]>;
   private buffer: Record<string, Envelope[]>;
   private cardSent: Record<string, string>;
+  private delivery: Record<string, PeerDelivery>;
+  /** Receipt and resend timing (NOTES 98); a host may shorten it for tests. */
+  receiptTiming: ReceiptTiming = RECEIPT_TIMING;
+  private tickQueued = false;
+  private resendQueued = false;
   /** Our own restore from a backup, if this state came from one (NOTES 91). */
   restored?: { at: string; backup_created: string };
   private unsubscribers: Array<() => void> = [];
@@ -279,7 +322,7 @@ export class Agent extends EventEmitter<AgentEvents> {
     readonly key: AgentKey,
     public card: AddressCard,
     readonly transport: Transport,
-    state?: Partial<Pick<AgentState, 'book' | 'channels' | 'outbox' | 'buffer' | 'cardSent' | 'groups' | 'restored'>>,
+    state?: Partial<Pick<AgentState, 'book' | 'channels' | 'outbox' | 'buffer' | 'cardSent' | 'groups' | 'restored' | 'delivery'>>,
   ) {
     super();
     this.book = new ContactBook({ policy: card.policy.inbound, ...state?.book });
@@ -287,6 +330,10 @@ export class Agent extends EventEmitter<AgentEvents> {
     this.outbox = state?.outbox ?? {};
     this.buffer = state?.buffer ?? {};
     this.cardSent = state?.cardSent && typeof state.cardSent === 'object' ? { ...state.cardSent } : {};
+    this.delivery = {};
+    for (const [peer, d] of Object.entries(state?.delivery && typeof state.delivery === 'object' ? state.delivery : {})) {
+      if (d && typeof d === 'object' && typeof d.acked === 'number' && Array.isArray(d.pending)) this.delivery[peer] = d;
+    }
     this.groups = new GroupBook(state?.groups && typeof state.groups === 'object' ? state.groups : undefined);
     const r = state?.restored;
     if (r && typeof r === 'object' && typeof r.at === 'string' && typeof r.backup_created === 'string') this.restored = { at: r.at, backup_created: r.backup_created };
@@ -313,16 +360,52 @@ export class Agent extends EventEmitter<AgentEvents> {
       cardSent: Object.fromEntries(Object.entries(this.cardSent).filter(([peer]) => Object.hasOwn(this.book.state.contacts, peer))),
       ...(this.groups.isEmpty() ? {} : { groups: this.groups.toJSON() }),
       ...(this.restored ? { restored: this.restored } : {}),
+      ...this.deliveryToPersist(),
     };
+  }
+
+  /** Only contacts' receipts are kept (a revoked or removed contact's go with it). */
+  private deliveryToPersist(): { delivery?: Record<string, PeerDelivery> } {
+    const kept = Object.entries(this.delivery).filter(([peer]) => Object.hasOwn(this.book.state.contacts, peer));
+    return kept.length ? { delivery: Object.fromEntries(kept) } : {};
   }
 
   get id(): string {
     return this.key.id;
   }
 
-  /** Listen for envelopes and on our own discovery topics (listen mode, §4.4). */
-  start(): void {
-    this.unsubscribers.push(this.transport.onEnvelopes(this.id, (raw) => this.enqueue(() => this.handleEnvelope(raw))));
+  /**
+   * Listen for envelopes and on our own discovery topics (listen mode, §4.4).
+   * When a relay comes back, what contacts have not confirmed is published
+   * again (NOTES 98). Unless `deliveryTimer: false`, a timer also sends the
+   * receipts we owe and retries on the backoff; a host that builds an agent
+   * per item turns it off and calls `deliveryTick` itself.
+   */
+  start(opts: { deliveryTimer?: boolean } = {}): void {
+    this.unsubscribers.push(this.transport.onEnvelopes(this.id, (raw, meta) => this.enqueue(() => this.handleEnvelope(raw, meta))));
+    const off = this.transport.onReconnect?.(() => {
+      // Several relays coming back at once make one pass.
+      if (this.resendQueued) return;
+      this.resendQueued = true;
+      this.enqueue(async () => {
+        this.resendQueued = false;
+        await this.resendUnconfirmed();
+      });
+    });
+    if (off) this.unsubscribers.push(off);
+    if (opts.deliveryTimer !== false) {
+      const every = Math.max(20, Math.min(1000, this.receiptTiming.ackDelayMs));
+      const timer = setInterval(() => {
+        if (this.tickQueued) return;
+        this.tickQueued = true;
+        this.enqueue(async () => {
+          this.tickQueued = false;
+          await this.deliveryTick();
+        });
+      }, every);
+      timer.unref?.();
+      this.unsubscribers.push(() => clearInterval(timer));
+    }
     this.subscribeTopics();
   }
 
@@ -982,6 +1065,181 @@ export class Agent extends EventEmitter<AgentEvents> {
     }
   }
 
+  // -------------------------------------------------------------------------
+  // Delivery receipts (SPEC §6.4.2, NOTES 98).
+
+  /** Whether we wait for `peer`'s receipts: a contact whose card says its agent sends them. */
+  private tracksDelivery(peer: string): boolean {
+    return confirmsDelivery(this.book.contact(peer)?.card);
+  }
+
+  private peerDelivery(peer: string): PeerDelivery {
+    return (this.delivery[peer] ??= { acked: 0, pending: [] });
+  }
+
+  /** Delivery to one contact as its owner sees it: confirmed up to, waiting, not confirmed. */
+  deliveryStatus(peer: string): DeliverySummary {
+    return deliverySummary(this.delivery[peer], this.book.contact(peer)?.card);
+  }
+
+  /** What became of the envelope we sent `peer` at `seq`. */
+  deliveryOf(peer: string, seq: number): DeliveryState {
+    return deliveryOf(this.delivery[peer], seq);
+  }
+
+  /** An envelope of ours to `peer` that wants a receipt: kept until the peer confirms it. */
+  private trackPending(peer: string, env: Envelope): void {
+    const d = this.peerDelivery(peer);
+    d.pending.push({ seq: env.seq, hash: envelopeHash(env), sent: env.created, tries: 0 });
+    if (d.pending.length <= OUTBOX_LIMIT) return;
+    // Out of the outbox too, so it can no longer be resent: say so rather than forget it.
+    const gone = d.pending.splice(0, d.pending.length - OUTBOX_LIMIT).filter((p) => !p.unconfirmed);
+    if (gone.length) this.emit('delivery-unconfirmed', { peer, seqs: gone.map((p) => p.seq), since: gone[0].sent });
+  }
+
+  /**
+   * Note that we owe `env.from` a receipt, after an envelope of its chain was
+   * accepted (or arrived again). Receipts themselves are never acknowledged,
+   * or two agents would answer each other's forever. A duplicate is a relay
+   * replay unless it was published after our last ack (the carrier's
+   * timestamp, `meta.at`): then the sender is retrying because our ack was
+   * lost, and gets another.
+   */
+  private oweAck(env: Envelope, payload: Payload, meta?: EnvelopeMeta, duplicate = false): void {
+    if (payload.type === ACK_TYPE) return;
+    const peer = env.from;
+    if (!this.tracksDelivery(peer)) return;
+    const ch = this.channels.state[peer];
+    if (!ch || ch.inSeq < 1 || ch.refused) return;
+    const d = this.peerDelivery(peer);
+    const sent = d.ack_sent;
+    if (duplicate) {
+      if (env.seq > ch.inSeq) return; // not something we hold (a replay below a re-sync floor)
+      if (sent && sent.seq >= env.seq) {
+        const sentAt = Date.parse(sent.at);
+        const retried = meta?.at !== undefined ? meta.at * 1000 > sentAt : Date.now() - sentAt > this.receiptTiming.retryAfterMs / 2;
+        if (!retried) return;
+      }
+    } else if (sent && sent.seq >= ch.inSeq) return;
+    d.ack_owed ??= new Date().toISOString();
+  }
+
+  /**
+   * A contact's `rdv/ack` (judged before ordering: a receipt is true whatever
+   * waits in a gap, and a replay of an older one says less, never more). Only
+   * from a contact, only up to what we sent it; it moves only forward.
+   */
+  private handleAck(env: Envelope, payload: Payload): void {
+    const from = env.from;
+    if (!this.book.contact(from)) return this.drop('ack from a non-contact', from);
+    const ch = this.channels.state[from];
+    if (ch?.refused) return; // a forked chain's word is not taken until the human re-syncs it
+    const seq = ackSeq(payload);
+    if (seq === null) return this.drop('ack malformed', { peer: from });
+    if (!ch || seq > ch.outSeq) return this.drop('ack beyond our chain', { peer: from, seq });
+    const d = this.peerDelivery(from);
+    if (seq <= d.acked) return;
+    d.acked = seq;
+    const late = d.pending.filter((p) => p.seq <= seq && p.unconfirmed).map((p) => p.seq);
+    d.pending = d.pending.filter((p) => p.seq > seq);
+    if (late.length) this.emit('delivery-confirmed', { peer: from, seqs: late });
+  }
+
+  private outboxEnvelope(peer: string, hash: string): Envelope | undefined {
+    return (this.outbox[peer] ?? []).find((e) => envelopeHash(e) === hash);
+  }
+
+  /** Publish envelopes again, as they are (the receiver drops what it holds). False if none went out. */
+  private async republish(peer: string, envs: Envelope[], relays: string[]): Promise<boolean> {
+    let sent = 0;
+    for (const e of envs) {
+      try {
+        await this.transport.sendEnvelope(e, relays);
+        sent++;
+      } catch (err) {
+        this.drop('resend failed', { peer, seq: e.seq, error: err instanceof Error ? err.message : String(err) });
+        break; // the relays are not taking anything now: the next retry or reconnect tries again
+      }
+    }
+    return sent > 0;
+  }
+
+  /**
+   * Send the receipts that are due and republish what contacts have not
+   * confirmed, on the backoff; report what is still not confirmed after the
+   * last retry (`delivery-unconfirmed`). Every call moves each due time past
+   * now, so a host that loops on `nextDeliveryDue` cannot spin.
+   */
+  async deliveryTick(now = new Date()): Promise<void> {
+    const t = this.receiptTiming;
+    for (const peer of Object.keys(this.delivery)) {
+      const d = this.delivery[peer];
+      const c = this.book.contact(peer, now);
+      if (!c || this.book.isBlocked(peer)) {
+        delete this.delivery[peer]; // no longer a contact: nothing to confirm either way
+        continue;
+      }
+      const relays = relaysOf(c.card);
+      const due = ackDue(d, t);
+      if (due !== null && due <= now.getTime()) await this.sendAck(peer, d, relays, now);
+      const resend: Envelope[] = [];
+      const spent: typeof d.pending = [];
+      for (const p of d.pending) {
+        const at = retryDue(p, t);
+        if (at === null || at > now.getTime()) continue;
+        const env = p.tries < t.maxRetries ? this.outboxEnvelope(peer, p.hash) : undefined;
+        if (!env || isExpired(env, now)) {
+          p.unconfirmed = true;
+          spent.push(p);
+          continue;
+        }
+        p.tries++;
+        p.last = now.toISOString();
+        resend.push(env);
+      }
+      if (resend.length && (await this.republish(peer, resend, relays))) {
+        this.emit('delivery-resent', { peer, seqs: resend.map((e) => e.seq), reason: 'retry' });
+      }
+      if (spent.length) this.emit('delivery-unconfirmed', { peer, seqs: spent.map((p) => p.seq), since: spent[0].sent });
+    }
+  }
+
+  /** Our receipt to `peer`: the highest seq of its chain we hold without a gap. */
+  private async sendAck(peer: string, d: PeerDelivery, relays: string[], now: Date): Promise<void> {
+    const seq = this.channels.state[peer]?.inSeq ?? 0;
+    const owed = d.ack_owed;
+    delete d.ack_owed;
+    if (seq < 1) return;
+    d.ack_sent = { at: now.toISOString(), seq }; // saved by beforeSend, with the envelope
+    try {
+      await this.deliver(peer, { type: ACK_TYPE, v: 1, seq } as Payload, relays);
+    } catch (err) {
+      d.ack_owed = owed; // again after ackMinIntervalMs
+      this.drop('ack send failed', { peer, error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
+  /**
+   * A listening relay is back (NOTES 98): republish everything contacts have
+   * not confirmed, reported ones included, after the catch-up has been read.
+   * Not a retry: the backoff restarts from now.
+   */
+  async resendUnconfirmed(now = new Date()): Promise<void> {
+    for (const [peer, d] of Object.entries(this.delivery)) {
+      const c = this.book.contact(peer, now);
+      if (!c || this.book.isBlocked(peer) || d.pending.length === 0) continue;
+      const due = d.pending.flatMap((p) => {
+        const env = this.outboxEnvelope(peer, p.hash);
+        return env && !isExpired(env, now) ? [{ p, env }] : [];
+      });
+      if (due.length === 0) continue;
+      for (const x of due) x.p.last = now.toISOString();
+      if (await this.republish(peer, due.map((x) => x.env), relaysOf(c.card))) {
+        this.emit('delivery-resent', { peer, seqs: due.map((x) => x.env.seq), reason: 'reconnect' });
+      }
+    }
+  }
+
   /** Send an application payload (A2A task, message, proposal) to a contact. */
   async send(peer: string, payload: Payload): Promise<Envelope> {
     if (CONTROL_TYPES.has(payload.type)) throw new Error(`use the dedicated method for ${payload.type}`);
@@ -1016,6 +1274,7 @@ export class Agent extends EventEmitter<AgentEvents> {
     const box = (this.outbox[peer] ??= []);
     box.push(env);
     if (box.length > OUTBOX_LIMIT) box.splice(0, box.length - OUTBOX_LIMIT);
+    if (payload.type !== ACK_TYPE && this.tracksDelivery(peer)) this.trackPending(peer, env);
     await this.beforeSend?.(this);
     await this.transport.sendEnvelope(env, relays);
     return env;
@@ -1067,27 +1326,30 @@ export class Agent extends EventEmitter<AgentEvents> {
     }
   }
 
-  private async handleEnvelope(raw: unknown): Promise<void> {
+  private async handleEnvelope(raw: unknown, meta?: EnvelopeMeta): Promise<void> {
     const opened = openEnvelope(this.key, raw);
     if (!opened.ok) return this.drop(opened.reason);
     const env = opened.envelope;
+    if (env.from === this.id) return this.drop('own envelope (a relay echo)');
     if (this.book.isBlocked(env.from)) return this.drop('blocked sender');
 
     try {
-      await this.handleOpened(env, opened.payload);
+      await this.handleOpened(env, opened.payload, meta);
     } finally {
       // Only admitted senders keep channel state; a stranger's goes with its envelope (NOTES 64).
       this.pruneChannels();
     }
   }
 
-  private async handleOpened(env: Envelope, payload: Payload): Promise<void> {
+  private async handleOpened(env: Envelope, payload: Payload, meta?: EnvelopeMeta): Promise<void> {
     // A peer that restored from a backup starts its chain again: judged before ordering (NOTES 91).
     if (payload.type === RESTORED_TYPE && (await this.handleRestored(env, payload))) return;
     // What waited for the gap the ack closed is in order now: before the ack itself, which comes after it.
     if (payload.type === RESTORED_ACK_TYPE && this.handleRestoredAck(env, payload)) await this.drainBuffer(env.from);
+    // A receipt is true whatever waits in a gap (NOTES 98); the envelope still goes through ordering below.
+    if (payload.type === ACK_TYPE) this.handleAck(env, payload);
     const order = this.channels.acceptInbound(env, { adopt: !this.keepsChannel(env.from) });
-    if (order.kind === 'duplicate') return;
+    if (order.kind === 'duplicate') return this.oweAck(env, payload, meta, true);
     if (order.kind === 'fork' || order.kind === 'rollback' || order.kind === 'refused') return this.dropForked(env, order);
     if (order.kind === 'gap') {
       this.bufferEnvelope(env);
@@ -1101,6 +1363,8 @@ export class Agent extends EventEmitter<AgentEvents> {
     }
 
     await this.dispatch(env, payload);
+    // After dispatch: a grant makes its sender a contact, whose receipt is then owed.
+    this.oweAck(env, payload, meta);
     await this.drainBuffer(env.from);
   }
 
@@ -1175,7 +1439,10 @@ export class Agent extends EventEmitter<AgentEvents> {
       if (order.kind === 'fork' || order.kind === 'rollback' || order.kind === 'refused') this.dropForked(next, order);
       if (order.kind !== 'in-order') continue;
       const opened = openEnvelope(this.key, next);
-      if (opened.ok) await this.dispatch(next, opened.payload);
+      if (opened.ok) {
+        await this.dispatch(next, opened.payload);
+        this.oweAck(next, opened.payload);
+      }
       // The chain moves on either way (it would stall otherwise), but say so (L4).
       else this.drop(`buffered envelope lost (${opened.reason})`, next.seq);
     }
@@ -1316,6 +1583,7 @@ export class Agent extends EventEmitter<AgentEvents> {
       // Handled before ordering (handleOpened); in order here, nothing more to do.
       case RESTORED_TYPE:
       case RESTORED_ACK_TYPE:
+      case ACK_TYPE:
         return;
       case 'rdv/resend': {
         const c = this.book.contact(from);
@@ -1405,6 +1673,7 @@ export class Agent extends EventEmitter<AgentEvents> {
       previous_seq: before.inSeq,
       ...(before.refused ? { was_refused: before.refused } : {}),
     });
+    this.oweAck(env, payload); // the notice is the new chain's head: confirm it like any envelope
     // Our chain to it: from what its backup had accepted, as far back as our outbox goes without a hole.
     const out = this.channels.state[from];
     const resend: Envelope[] = [];

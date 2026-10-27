@@ -98,6 +98,8 @@ import {
   backupPassphraseProblem,
   openBackup,
   refusedMembers,
+  deliverySummary,
+  type DeliverySummary,
 } from '@rendezvous/core';
 import {
   addressViews,
@@ -216,6 +218,7 @@ import {
   ownerSecretInfo,
   appendEvents,
   RelayLinkMonitor,
+  DeliveryClock,
   relayHealth,
   relayTransport,
   relayWatchText,
@@ -308,6 +311,12 @@ import {
 
 export const INBOX_URI = 'rdv://inbox';
 
+/** How the model describes delivery (issue #104, NOTES 98); the gateway's instructions say the same. */
+export const DELIVERY_NOTE =
+  'Delivery: a contact whose agent confirms delivery sends a receipt for what it holds. rdv_send says "delivery": "pending" until it comes, and rdv_status shows per contact what is delivered, still waiting, or not confirmed. ' +
+  'Unconfirmed messages are sent again on their own, and again whenever a relay comes back ("delivery_resent"). A "delivery_unconfirmed" event means a message got no receipt after every retry (about half an hour): tell your user in plain words, e.g. "your message to John is not confirmed delivered yet; his agent may be offline", ' +
+  'never that it failed or was lost: it stays on the relays for 48 hours and a later receipt comes as "delivery_confirmed". "delivery": "untracked" means that contact\'s agent does not send receipts, so sent is all anyone can know.';
+
 /** Tiers a confirm phrase can approve. Closer tiers need the elicitation form or `rdv contact grant` in a terminal. */
 export const PHRASE_TIERS: Tier[] = ['friend', 'colleague', 'business', 'stranger'];
 
@@ -319,6 +328,7 @@ Rules:
 - An answer to a discovery probe (a "contact_candidate" event) could come from anyone who saw the probe. Show your user its fingerprint; it becomes a contact only when they confirm it (rdv_grant with grant_id, same human approval).
 - A contact you requested may write to you, but cannot propose meetings to you until your user grants it more: rdv_grant with agent_id (the same human approval as any grant), or "rdv contact grant <agent-id>" in their own terminal; that grant is also sent to the contact, so it can then propose. Likewise, you can propose meetings to a contact whose request your user approved only once that contact's human grants you meetings (a "reverse_grant" event with may_propose_meetings).
 - A "relay_down" event means one of your user's listening relays has been unreachable for over ten minutes (rdv_status relay_health shows down_since); "relay_up" means it is back; "relays_degraded" means fewer than two listening relays are healthy, so messages may be missed. Tell your user in plain language. You may suggest adding another relay, but rdv_relays add needs their approval like any relay change: never add or swap one on your own.
+- ${DELIVERY_NOTE}
 - ${UNTRUSTED_NOTE}
 - Negotiations run on their own once started (rdv_negotiate); follow them with rdv_inbox (use wait_seconds to wait for news) and tell your user what happened in plain language.
 - Meetings belong to the humans too. When a dinner is held for your user ("confirm-needed"), ask them; rdv_negotiate with action "confirm" succeeds only with their confirmation (a form shown to them, or the confirm phrase they read in their own terminal). Never guess or look for the phrase.
@@ -344,6 +354,7 @@ Rules:
 - An answer to a discovery probe (a "contact_candidate" event) could come from anyone who saw the probe. Show your user its fingerprint; it becomes a contact only when they confirm it on the approval page.
 - ${UNTRUSTED_NOTE}
 - Negotiations and approvals finish on their own; follow them with rdv_inbox (use wait_seconds to wait for news; an "approval" event says what your user decided) and tell your user what happened in plain language.
+- ${DELIVERY_NOTE}
 - Some of your user's settings go through the approval page too, when they ask for them: renaming a contact (rdv_label; your label is only a suggestion, they type the name), accepting a contact's or a group's messages again after a fork (rdv_resync), and turning direct file transfers on (rdv_file "direct-transfer"). Each returns an approve_url like any approval.
 - Setting up the agent (addresses, relays, auto-approve "on", local files, backups and restores), the owner passphrase, and replacing this agent's identity are your user's on their own machine (their local assistant's approval forms, or their own terminal), never through this gateway. On the approval page for a contact's task or a dinner it proposed, your user may also tick "Don't ask again for this contact"; you never can, and never suggest it. When an "approval" result or an "auto_approve_on" event says it was turned on, tell them what it covers and that rdv_auto_approve "off" turns it off.`;
 
@@ -1054,6 +1065,8 @@ export class RdvMcpServer {
   private topicUnsub?: () => void;
   private sweeper?: ReturnType<typeof setInterval>;
   private linkWatch?: ReturnType<typeof setInterval>;
+  /** The next due receipt or resend in the saved state (NOTES 98), while consuming. */
+  private deliveryClock?: DeliveryClock;
   private poller?: ReturnType<typeof setInterval>;
   /** Follows config.json's relays (rdv relays from a terminal, or rdv_relays) and moves the transport there. */
   private relayWatch?: () => void;
@@ -1370,11 +1383,23 @@ export class RdvMcpServer {
     const boot = this.boot!;
     this.mode = 'consumer';
     this.releaseListener = release;
+    const clock = (this.deliveryClock = new DeliveryClock(this.home, () => this.enqueue(() => {})));
+    // A listening relay is back: one reconnect item (republish what contacts have not confirmed), however many return together.
+    let reconnectQueued = false;
     this.unsubs = [
       // Junk (unopenable envelopes, invalid topic docs) never takes the lock or reaches the log (M1).
-      real.onEnvelopes(boot.id, (raw) => {
-        if (!isJunk(boot.key, { envelope: raw })) this.enqueue((t) => t.feedEnvelope(raw));
+      real.onEnvelopes(boot.id, (raw, meta) => {
+        if (!isJunk(boot.key, { envelope: raw })) this.enqueue((t) => t.feedEnvelope(raw, meta));
       }),
+      real.onReconnect?.(() => {
+        if (reconnectQueued) return;
+        reconnectQueued = true;
+        this.enqueue((t) => {
+          reconnectQueued = false;
+          t.feedReconnect();
+        });
+      }) ?? (() => {}),
+      () => clock.stop(),
       () => {
         this.topicUnsub?.();
         this.topicUnsub = undefined;
@@ -1385,8 +1410,10 @@ export class RdvMcpServer {
     this.subscribeTopics();
     this.sweeper = setInterval(() => {
       if (hasExpiring(this.home, { meetings: this.negotiateOpts() !== undefined })) this.enqueue(() => {}, true);
+      clock.check(); // a send from a tool call or a terminal changed the state behind the clock
     }, this.sweepMs);
     this.sweeper.unref?.();
+    clock.check();
     // A listening relay that stays down is reported once, and once more when it returns (issue #87, NOTES 90).
     const monitor = new RelayLinkMonitor(() => (real as { relayStatus?: () => RelayStatus[] }).relayStatus?.() ?? []);
     this.linkWatch = setInterval(() => {
@@ -1463,6 +1490,8 @@ export class RdvMcpServer {
     this.sweeper = undefined;
     if (this.linkWatch) clearInterval(this.linkWatch);
     this.linkWatch = undefined;
+    this.deliveryClock?.stop();
+    this.deliveryClock = undefined;
     if (this.poller) clearInterval(this.poller);
     this.poller = undefined;
     await this.chain;
@@ -1519,7 +1548,10 @@ export class RdvMcpServer {
     const real = this.real;
     if (!real) return;
     this.chain = this.chain
-      .then(async () => this.record(await handleInbound(this.home, real, feed, { negotiate: this.negotiateOpts(), tasks: { registry: this.registry } }, sweep)))
+      .then(async () => {
+        await this.record(await handleInbound(this.home, real, feed, { negotiate: this.negotiateOpts(), tasks: { registry: this.registry } }, sweep));
+        this.deliveryClock?.check();
+      })
       .catch(async (err: Error) => {
         // Details can carry peer or file content: they go to the human only.
         this.humanLog(`error handling an inbound item: ${err.message}`);
@@ -2670,7 +2702,8 @@ export class RdvMcpServer {
     this.tool(
       'rdv_send',
       'Send an end-to-end encrypted payload ({"type": "...", ...}) to a contact, by agent_id or by "to": the local_label your user gave the contact (rdv_status). ' +
-        "A contact's card addresses (unverified_claims) never pick a recipient. For dinner use rdv_negotiate instead.",
+        "A contact's card addresses (unverified_claims) never pick a recipient. For dinner use rdv_negotiate instead. " +
+        '"delivery" in the result: "pending" (its receipt is awaited; rdv_status and rdv_inbox say when it is confirmed, resent or not confirmed) or "untracked" (that contact\'s agent sends no receipts).',
       {
         agent_id: z.string().max(128).optional(),
         to: z
@@ -2686,10 +2719,12 @@ export class RdvMcpServer {
         if (payload.type.startsWith('a2a/') || payload.type.startsWith('rdv/')) {
           throw new ToolError(`"${payload.type}" is reserved: use rdv_negotiate for dinner, rdv_grant/rdv_revoke for contacts`);
         }
-        const { peer, env } = await this.withAgent(async (agent) => {
+        const { peer, env, delivery } = await this.withAgent(async (agent) => {
           const peer = agent_id ?? resolveLabel(agent, to!);
-          return { peer, env: await agent.send(peer, payload as Payload) };
+          const env = await agent.send(peer, payload as Payload);
+          return { peer, env, delivery: agent.deliveryOf(peer, env.seq) };
         });
+        this.deliveryClock?.check();
         return {
           sent: true,
           to: safe(peer),
@@ -2697,6 +2732,12 @@ export class RdvMcpServer {
           ...(to ? { local_label: safe(to) } : {}),
           seq: env.seq,
           type: safe(payload.type),
+          // Receipts (issue #104): our own state, never peer text.
+          delivery,
+          note:
+            delivery === 'pending'
+              ? 'Published to the relays; waiting for the contact\'s receipt. It is resent on its own if none comes; rdv_status and rdv_inbox say when it is confirmed.'
+              : "Published to the relays. This contact's agent does not send receipts, so delivery cannot be confirmed.",
         };
       },
     );
@@ -3101,6 +3142,8 @@ export class RdvMcpServer {
               ? 'default: may write, may not propose meetings (your user can widen it: rdv_grant with agent_id, which needs their approval)'
               : 'granted by your user',
           auto_approve: autoView(auto.get(c.peer), autoCounts.get(c.peer) ?? 0),
+          // Receipts (issue #104, NOTES 98): what this contact confirmed of ours, what is still waiting.
+          delivery: deliveryView(deliverySummary(state.delivery?.[c.peer], c.card)),
         };
       }),
       auto_approve: {
@@ -5735,6 +5778,24 @@ function autoView(a: AutoApproveShown | undefined, count: number) {
     not_covered: a.uncovered.slice(0, 32).map(asCapability),
     auto_approved_actions: count,
   };
+}
+
+/** One contact's delivery for the model (NOTES 98), with a plain-language line. Our own state only. */
+function deliveryView(d: DeliverySummary) {
+  const state = !d.confirms_delivery
+    ? 'untracked'
+    : d.not_confirmed > 0
+      ? 'not_confirmed'
+      : d.waiting > 0
+        ? 'pending'
+        : 'delivered';
+  const summary = {
+    untracked: "This contact's agent does not send receipts: messages are published, but delivery cannot be confirmed.",
+    not_confirmed: `${d.not_confirmed} message(s) got no receipt after every retry (oldest sent ${d.oldest_since}): not confirmed delivered yet; their agent may be offline.`,
+    pending: `${d.waiting} message(s) waiting for a receipt (oldest sent ${d.oldest_since}); resent on their own if none comes.`,
+    delivered: 'Everything sent to this contact is confirmed delivered.',
+  }[state];
+  return { state, confirmed_seq: d.confirmed_seq, waiting: d.waiting, not_confirmed: d.not_confirmed, oldest_since: d.oldest_since, summary };
 }
 
 /** Told to the model after a grant change: informational only, never a reason to turn anything on. */

@@ -56,6 +56,13 @@ export interface TestRelay {
    * work normally, like a relay that came back.
    */
   stall(): void;
+  /**
+   * Go deaf: every connection open now stays healthy (it answers pings and
+   * takes EVENTs with `OK true`) but its subscriptions get nothing more, as
+   * when a relay loses a subscription without telling us (NOTES 98).
+   * Connections made later work normally.
+   */
+  deafen(): void;
   close(): Promise<void>;
 }
 
@@ -68,6 +75,7 @@ export async function startTestRelay(port = 0, faults: RelayFaults = {}): Promis
   const subs = new Map<WebSocket, Map<string, Filter[]>>();
   let connections = 0;
   const stalled = new Set<WebSocket>();
+  const deaf = new Set<WebSocket>();
 
   const store = (ws: WebSocket, ev: Event) => {
     if (!verifyEvent(ev)) {
@@ -86,7 +94,7 @@ export async function startTestRelay(port = 0, faults: RelayFaults = {}): Promis
       events.push(ev);
       for (const [client, clientSubs] of subs) {
         for (const [id, filters] of clientSubs) {
-          if (!stalled.has(client) && filters.some((f) => matches(ev, f))) client.send(JSON.stringify(['EVENT', id, ev]));
+          if (!stalled.has(client) && !deaf.has(client) && filters.some((f) => matches(ev, f))) client.send(JSON.stringify(['EVENT', id, ev]));
         }
       }
     }
@@ -121,6 +129,7 @@ export async function startTestRelay(port = 0, faults: RelayFaults = {}): Promis
     ws.on('close', () => {
       subs.delete(ws);
       stalled.delete(ws);
+      deaf.delete(ws);
     });
     ws.on('message', (data) => {
       let msg: unknown[];
@@ -165,6 +174,9 @@ export async function startTestRelay(port = 0, faults: RelayFaults = {}): Promis
         // The socket stays open but is never read: no pong, no close, as when the network path dies.
         (client as unknown as { _socket: { pause(): void } })._socket.pause();
       }
+    },
+    deafen() {
+      for (const client of wss.clients) deaf.add(client);
     },
     close: () =>
       new Promise<void>((resolve) => {

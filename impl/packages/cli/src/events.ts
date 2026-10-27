@@ -43,6 +43,9 @@ export const STRANGER_DROPS = [
   'blocked sender',
   'envelope chain fork from a non-contact',
   'card update from a non-contact',
+  // Receipts (issue #104): only contacts' count; our own echo is the relay's, not news.
+  'ack from a non-contact',
+  'own envelope',
   // Groups (issue #77): only contacts invite and join, only members send states.
   'group invite from a non-contact',
   'group join from a non-contact',

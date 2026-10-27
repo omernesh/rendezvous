@@ -1095,15 +1095,16 @@ inbound loop), so `rdv` and `rdv-mcp` share profiles.
 | `discovery` | §4.4 | `dtopic()`, `idtopic()` (the agent ID's topic, NOTES 83), address and agent-ID canonicalization, binding levels |
 | `contact` | §5 | Contact request / grant / revoke, and the contact book (policy, replay, rate limits) |
 | `envelope` | §6.4, §7 | Encrypted, signed envelopes; `seq`/`prev` ordering with gap detection |
+| `delivery` | §6.4.2 | Delivery receipts: the `rdv/ack` payload (`ackSeq`), per-contact pending and owed acks, the retry backoff (`RECEIPT_TIMING`, `retryDue`, `nextDeliveryDue`), summaries for hosts (NOTES 98) |
 | `files` | §7.7 | File references (`FilePart` + files extension): strict validation, `encryptFile`, `verifyAndDecrypt`, inline parts |
 | `filefetch` | §7.7 | `fetchFileRef`: https only, SSRF-blocked and DNS-pinned, no credentials, capped, hash-verified |
 | `group` | §7.8 | Groups v1 membership: the signed `rdv/group-state` chain (`epoch`, `prev`, admin signer; any two states at one epoch are a fork), `rdv/group-invite`, `rdv/group-join` (a group-scoped grant), and the `GroupBook` (invites, newcomer policy, approvals; at most 16 members, NOTES 86) |
 | `groupmsg` | §7.8.3, §7.8.5–§7.8.7 | Group messages: `rdv/group-msg` (a signed header committing to the body by hash), the per-sender chain (`gseq`/`gprev`) and `heads`, gaps and group resend, equivocation evidence (`rdv/group-proof`, headers only), `rdv/group-leave`, `member_rate` and the mute with its `rdv/group-report` (NOTES 87) |
 | `backup` | §6.4.1 | The encrypted identity bundle (`sealBackup`, `openBackup`, strict `parseBackup`; scrypt + AES-256-GCM, the header as associated data) and the agent state for a backup and after a restore (`backupAgentState`, `restoredAgentState`: a new epoch per channel, each owing its peer an `rdv/restored` notice; NOTES 91) |
 | `transfer` | §7.7 | `rdv/transfer` messages and their pure state machine (negotiation only, no transport) |
-| `transport/nostr` | §6.2 | Nostr relay transport (kind 30417): re-subscribes when a relay drops; publishes with retries, per-relay pacing and cooldowns, and per-relay status (`relayStatus()`); `setRelays()` moves a live transport; discovery mirrors (`mirrorRelays`, `mirrorTopics()`); `DEFAULT_RELAYS`, `DEFAULT_MIRROR_RELAYS` |
+| `transport/nostr` | §6.2 | Nostr relay transport (kind 30417): re-subscribes when a relay drops; publishes with retries, per-relay pacing and cooldowns, and per-relay status (`relayStatus()`); `setRelays()` moves a live transport; pings sockets and echo-checks the envelope subscription, re-joining a deaf one (`onReconnect()`, NOTES 95, 98); discovery mirrors (`mirrorRelays`, `mirrorTopics()`); `DEFAULT_RELAYS`, `DEFAULT_MIRROR_RELAYS` |
 | `agent` | — | Ties it together: listen, discover, request, grant, send, receive |
-| `testing/relay` | — | In-memory Nostr relay on a localhost WebSocket, for tests and local demos |
+| `testing/relay` | — | In-memory Nostr relay on a localhost WebSocket, for tests and local demos (`stall()` goes half-open, `deafen()` drops subscriptions silently) |
 
 ```ts
 import { Agent, NostrTransport } from '@rendezvous/core';
@@ -1632,7 +1633,7 @@ stays for clients without forms. `RDV_ELICIT=off` turns forms off entirely.
 |---|---|---|
 | `rdv_init` | profile, emails[], phones[] (`email` / `phone`: one of each, kept as aliases), relays (omitted: the default public relays `wss://nos.lol`, `wss://relay.primal.net`, `wss://relay.nostr.net`, `wss://nostr.oxtr.dev`), public_pointer, calendar, window, tz | agent ID, fingerprint; keeps an existing agent and its relays. With `replace: true` it replaces the agent with a new identity (the chat form of `rdv init --force`), only after the human answers an approval form: it shows what is lost (contacts, groups, grants, open work) and when the agent was last backed up, offers a backup first (`rdv_backup`), and asks them to type the last 4 characters of the fingerprint. Refused while another process (`rdv listen` or another `rdv-mcp`) receives for this agent; without a form it is refused and names the terminal command. Leaving out profile, addresses and relays keeps the old agent's (public addresses only). Not available through rdv-gateway. Every address is public; at most 8 |
 | `rdv_addresses` | action `list` / `add` / `remove`, address, public (add; default true) | our addresses, each public or private; `add` / `remove` re-sign and (pointer on) republish the card and re-subscribe at once, like `rdv address`. The owner's own setup, not a consent decision; strict email / E.164 only; contacts are kept |
-| `rdv_status` | — | ID, our addresses (`addresses`, and `our_addresses` with public or private), relays, `relay_health` (per relay: `last_ok`, `last_error` with `kind` and the relay's message as `untrusted_peer_text`, `cooldown_until`), contacts (`local_label`: what your user called them; `unverified_claims`: the addresses their cards claim; `label_conflict` when two share a label), pending count, negotiation settings, approval mode |
+| `rdv_status` | — | ID, our addresses (`addresses`, and `our_addresses` with public or private), relays, `relay_health` (per relay: `last_ok`, `last_error` with `kind` and the relay's message as `untrusted_peer_text`, `cooldown_until`), contacts (`local_label`: what your user called them; `unverified_claims`: the addresses their cards claim; `label_conflict` when two share a label; `delivery`: delivered, pending, not_confirmed or untracked, with counts), pending count, negotiation settings, approval mode |
 | `rdv_relays` | action `list` / `add` / `remove`, url (add, remove), mirror (add / remove a discovery mirror instead), confirm_phrase | the listening relays (envelopes and the card) and the discovery mirrors (the card only); `add` / `remove` of a listening relay re-signs and (pointer on) republishes the card, and the server moves its subscriptions at once, like `rdv relays`. `wss://` only (`ws://` on localhost); the last listening relay cannot be removed. A listening change needs the human, like `rdv_grant`: an approval form, or a confirm phrase bound to the change, the URL and the current relays (shown by `rdv relays list` in their terminal); a mirror change needs none. A publish that no relay took fails with our own message and each relay's reason as `untrusted_peer_text` |
 | `rdv_publish_card` | mirror (optional) | topics published (each public address, then the agent ID's topic, NOTES 83), `on_relays`: per public address, whether the relays now serve this card (read back), and `by_agent_id_on_relays`, the same for the agent ID. With `mirror: true`: the card goes to our relays and each discovery mirror one at a time (paced, one try each), and `relays` lists per relay `accepted` / `rejected` / `timeout` / `skipped`, the relay's reason as `untrusted_peer_text`, and `served` (read back) (NOTES 81) |
 | `rdv_discover` | address (email, +phone, or agent ID) | cards found (agent ID, fingerprint, claimed addresses, relays), from our relays and the discovery mirrors; never a label (anyone can publish a card for any address), never our own card (for our own address: `own_card_on_relays`). With an agent ID: the one card signed by that ID, fetched from its ID topic (NOTES 83); its claimed addresses still prove nothing |
@@ -1645,7 +1646,7 @@ stays for clients without forms. `RDV_ELICIT=off` turns forms off entirely.
 | `rdv_owner_passphrase` | — | sets or changes the owner passphrase (the one `rdv_auto_approve` "on" asks for). The human types it twice into the approval form (and the current one when changing); only this server sees it, and it never reaches a tool result. Setting one turns auto-approve off for every contact. Without a form it is refused and names `rdv owner-secret set`. Not available through rdv-gateway |
 | `rdv_resync` | agent_id and / or group_id | after a fork or rollback: with agent_id, take a contact's messages again; with group_id, thaw a frozen group; with both, take a refused or muted member's group messages again. The form explains what the fork means; the human should check with the person directly first. Without a form it is refused and names `rdv contact resync` or `rdv group resync [--member]` |
 | `rdv_backup` | action `create` / `restore`; path (absolute: a new file for `create`, the backup for `restore`) | `create`: the file, the agent ID and fingerprint, and `verified_agent_id_matches` (read back and opened); `restore` (only into a home with no agent): the restored agent ID, fingerprint, backup time and contact count, then the agent starts and tells its contacts. The passphrase is typed only into the approval form (twice and at least 12 characters for `create`; once for `restore`, after the form shows the agent ID and fingerprint in the file); without a form it is refused, with no phrase. Not available through rdv-gateway (issue #88, NOTES 91) |
-| `rdv_send` | agent_id or to (a `local_label`), payload `{type, …}` (not `a2a/*`, `rdv/*`) | agent ID, fingerprint, envelope seq; `to` is refused when no contact, or more than one, has that label |
+| `rdv_send` | agent_id or to (a `local_label`), payload `{type, …}` (not `a2a/*`, `rdv/*`) | agent ID, fingerprint, envelope seq, `delivery` (`pending` until the contact's receipt comes, or `untracked` when its agent sends none); `to` is refused when no contact, or more than one, has that label |
 | `rdv_inbox` | since cursor, limit, wait_seconds (≤ 60) | events + next_cursor |
 | `rdv_negotiate` | action propose / confirm / cancel / status; agent_id, intent `dinner`, window, calendar, tz, minutes, place, area, expires, task_id, reason, confirm_phrase | task ID and state; progress via `rdv_inbox`; `confirm` needs the human (below) |
 | `rdv_task` | action `list` / `status` / `read` / `request` / `input` / `cancel` / `approve-start` / `decline` / `submit` / `approve-release`; task_id, group_id (a task a group member gave us: `status`, `read`, `approve-start`, `decline`, `submit`, `approve-release`), agent_id or to, capability (default `request/v1`), text, input, data, expires, reason, kind (`result` / `question` / `finish`), name, files, inline_files, complete, outcome, confirm_phrase | tasks with state (peer text as `untrusted_peer_text`); `read` adds the rules for handling a peer's task and changes nothing; `approve-start` and `approve-release` need the human (below). No result carries a phrase or a file key |
@@ -1661,6 +1662,7 @@ arrive, so a client that subscribes needn't poll.
 Events: `contact_request`, `contact_candidate` (an answer to our discovery
 probe, confirmed through the same human gate as a grant), `contact`, `message`, `revoked`, `dropped`, `error`,
 `relay_down` (a listening relay unreachable for 10 minutes or more), `relay_up`, `relays_degraded` (fewer than two healthy listening relays; the server never swaps relays itself),
+`delivery_resent` (a relay came back and messages a contact had not confirmed were sent again), `delivery_unconfirmed` (no receipt after every retry, about 30 minutes: "not confirmed delivered", never "failed"), `delivery_confirmed` (a late receipt for those),
 `contact_restored` (a contact restored its agent from a backup),
 `reverse_grant` (what a contact's human now lets us do: `may_propose_meetings` and `invoke`, the capability URIs),
 `group_task` (a task on a group board, SPEC §7.8.4: kind posted / claimed / assigned / released / reopened / input / status / artifact / canceled / expired; what members wrote as `untrusted_peer_text`), a `task` event with `group_id` for a task a group member gave this agent,
@@ -3194,6 +3196,75 @@ channel and announces it, so peers re-base its chain instead of refusing it.
   restored-from-old-backup agent that is restored twice is two restores; each
   is rate-limited and shown to the peer's human.
 
+#### 6.4.2 Delivery receipts and echo checks (`rdv/ack`)
+
+A relay that answers `OK true` has stored an event, not delivered it, and a
+receiver finds a gap (§7) only when a later envelope arrives: the last
+message of a conversation could be lost unseen. Receipts close that (**spec
+change**, issue #104).
+
+- **Who.** An agent that sends receipts lists
+  `https://rendezvous.nesher.co/ext/receipts/v1` in its card's
+  `capabilities` (§4.3). An agent sends receipts only to a contact whose card
+  lists it, and waits for receipts only from such a contact. A peer that does
+  not list it gets no receipt (an older agent would treat an unknown payload
+  as a message) and is never waited for.
+- **The receipt.** Inside an ordinary envelope (encrypted and signed like
+  any other, in the receiver's own chain to the sender):
+
+  ```json
+  { "type": "rdv/ack", "v": 1, "seq": 42 }
+  ```
+
+  meaning "I hold every envelope of your chain to me up to `seq`, without a
+  gap". One receipt covers everything below it, so receipts batch: the
+  receiver sends one after a quiet period (2 s in the reference
+  implementation) and at most one per contact per interval (10 s), whatever
+  the traffic. An `rdv/ack` is never acknowledged itself (two agents would
+  answer each other forever). Envelopes cannot carry a receipt in their
+  header: the header is the associated data, so a new field would break
+  older receivers; receipts are therefore their own small envelopes.
+- **Accepting one.** The receiver of a receipt takes it only from a current
+  contact (a stranger's is dropped), only with exactly these keys, `v` 1 and
+  a positive integer `seq` no greater than the last `seq` it sent that
+  contact, and not on a chain refused after a fork. It moves only forward. A
+  receipt is judged before ordering: it is true whatever waits in a gap. A
+  relay cannot forge one (the envelope signature, §6.4) and a replayed one
+  says less, never more.
+- **The sender.** It keeps each envelope of its own (receipts excepted) to a
+  receipt-sending contact until a receipt covers it, and republishes it from
+  the outbox (§7, the same envelope, so the receiver drops a duplicate) after
+  a timeout far inside the `ttl`, with a doubling backoff and capped retries
+  (60 s, then 2, 4 and 8 minutes in the reference implementation). After the
+  last retry's wait (about 31 minutes) without a receipt the sender MUST tell
+  its human the message is **not confirmed** delivered; that is not a
+  failure, since the receiver may simply be offline and the relays keep it
+  for the `ttl`, and a later receipt is shown as "delivered after all". When
+  one of its listening relays comes back after a drop, the sender first
+  reads what the relay stored meanwhile (its catch-up), then republishes
+  everything still unconfirmed and restarts the backoff.
+- **Lost receipts.** A receiver that gets an envelope it already holds again
+  sends a new receipt when that copy was published after its last receipt
+  (the carrier event's `created_at`): the sender is retrying because the
+  receipt was lost. A relay's replay of the original copy is older and gets
+  none, so restarts do not produce a burst of receipts.
+- **Echo check.** A websocket ping (NOTES 95) proves a socket, not a
+  subscription. An agent whose listening relay has delivered nothing on its
+  envelope subscription for a while (5 minutes) publishes an envelope from
+  itself to itself (payload `{"type": "rdv/echo"}`, encrypted and signed as
+  usual) on that relay, as an addressable event with `d` = `"rdv1/echo"`, so
+  the relay keeps only the latest one. If the relay accepts it and does not
+  deliver it back within a timeout (30 s), the subscription is deaf: the
+  agent drops the connection, re-joins with its usual look-back, reports the
+  relay down and up (as for any drop), and then republishes what contacts
+  have not confirmed. The check is skipped while traffic flows. A relay
+  learns nothing new from it: it already sees the agent's subscription and
+  carrier key, and the echo is addressed to the agent itself.
+- **Traffic analysis.** A receipt shows a relay that an envelope went back
+  shortly after one arrived, which a reply shows too. Batching and the
+  minimum interval keep the rate of receipts below the rate of messages;
+  receipts are not padded or delayed further (§9).
+
 ---
 
 ## 7. Session & task layer (A2A semantics)
@@ -3214,6 +3285,8 @@ channel and announces it, so peers re-base its chain instead of refusing it.
   envelopes). Receivers MAY bound and drop: the reference implementation
   buffers out-of-order envelopes only from contacts and from agents it asked
   by card (16 peers x 64 envelopes).
+  A gap shows only once a later envelope arrives; receipts (§6.4.2) tell the
+  sender what arrived, so a lost last envelope is sent again too.
 - Persistence: a sender SHOULD commit the new `seq`, `prev` and its outbox to
   durable storage before the envelope leaves, so a crash cannot reuse a
   `seq`. The worst case is then a payload delivered twice.
@@ -4408,6 +4481,11 @@ Source: https://rendezvous.nesher.co/changelog.md
 What changed in Rendezvous, newest first. Versions are those of the Claude Code plugin, which ships together with the `rdv` CLI, the `rdv-mcp` server and the skill. Rendezvous is in early access: expect changes between versions. Security fixes are marked **Security**.
 
 The format follows Keep a Changelog. One line per change a user can see; PR numbers link to GitHub.
+
+## 0.10.0 - 2026-10-27 {#v0-10-0}
+
+### Added
+- Delivery you can trust: your contact's agent confirms what it received, unconfirmed messages are sent again on their own (and again when a relay comes back), and your assistant tells you when a message is still not confirmed after about half an hour; a relay that silently stops delivering to you is caught by a periodic self-check and reconnected with a catch-up. Contacts on older versions keep working, without receipts. ([#104](https://github.com/omernesh/rendezvous/issues/104))
 
 ## 0.9.0 - 2026-10-27 {#v0-9-0}
 

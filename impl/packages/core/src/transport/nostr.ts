@@ -14,9 +14,10 @@ import { normalizeURL } from 'nostr-tools/utils';
 import WebSocket from 'ws';
 import { bytesToHex, canonicalize } from '../encoding.js';
 import type { Envelope } from '../envelope.js';
-import { envelopeHash } from '../envelope.js';
+import { envelopeHash, sealEnvelope } from '../envelope.js';
 import { type AgentKey, publicKeyFromAgentId } from '../identity.js';
 import type {
+  EnvelopeMeta,
   MirrorOptions,
   MirrorRelayResult,
   MirrorReport,
@@ -106,6 +107,14 @@ export interface NostrTransportOptions {
   pingIntervalMs?: number;
   /** Liveness: how long to wait for the pong before the socket is torn down and re-joined (ms). Default 20000. */
   pingTimeoutMs?: number;
+  /**
+   * Echo check (NOTES 98): a listening relay that has delivered nothing on our
+   * envelope subscription for this long gets an envelope from us to us, and
+   * must deliver it back. 0 turns it off. Default 300000 (5 minutes).
+   */
+  echoIntervalMs?: number;
+  /** How long an accepted echo may take to come back before the subscription counts as deaf and is re-joined. Default 30000. */
+  echoTimeoutMs?: number;
   /**
    * On re-joining a relay, fetch from the newest `created_at` seen on it minus
    * this margin (seconds), to cover clock skew and events stored while we were
@@ -254,6 +263,12 @@ class Pacer {
 /** Event ids remembered per subscription for de-duplication across relays. */
 const SEEN_IDS = 4096;
 
+/** The payload of an echo envelope (NOTES 98): from us to us, so a relay learns nothing but that we listen. */
+export const ECHO_TYPE = 'rdv/echo';
+
+/** `d` tag of an echo: one addressable event per agent and relay, so a relay keeps only the latest echo. */
+export const ECHO_TAG = 'rdv1/echo';
+
 export function nostrCarrierKey(key: AgentKey): Uint8Array {
   return hkdf(sha256, key.secretKey, undefined, utf8ToBytes('rdv1/nostr-carrier'), 32);
 }
@@ -352,6 +367,16 @@ export class NostrTransport implements Transport {
   /** Open subscriptions, so `setRelays` can join new relays and leave dropped ones. */
   private readonly subscriptions = new Set<{ joined: Map<string, () => void>; join: (relay: string) => () => void }>();
 
+  /** Called when a listening relay is back after a drop (NOTES 98). */
+  private readonly reconnectHandlers = new Set<(relay: string) => void>();
+  /** Echo check (NOTES 98): when each relay last delivered on our envelope subscription, the echo in flight per relay, its last `created_at`. */
+  private readonly heard = new Map<string, number>();
+  private readonly echoes = new Map<string, { id: string; timer?: ReturnType<typeof setTimeout> }>();
+  private readonly echoAt = new Map<string, number>();
+  /** Relays torn down because their echo never came back: their drop says so. */
+  private readonly deaf = new Set<string>();
+  private echoLoop?: ReturnType<typeof setInterval>;
+
   constructor(private readonly opts: NostrTransportOptions) {
     this.pool = new LivePool(opts.pingIntervalMs ?? 30_000, opts.pingTimeoutMs ?? 20_000);
     this.carrier = nostrCarrierKey(opts.key);
@@ -415,7 +440,7 @@ export class NostrTransport implements Transport {
    * events since the newest `created_at` that relay gave us, minus a margin;
    * events are de-duplicated by id across relays and re-joins.
    */
-  private subscribe(filter: (since: number) => Filter, onevent: (ev: Event) => void): () => void {
+  private subscribe(filter: (since: number) => Filter, onevent: (ev: Event) => void, opts: { echo?: boolean } = {}): () => void {
     let closed = false;
     const seen = new Set<string>();
     const fresh = (id: string): boolean => {
@@ -432,6 +457,7 @@ export class NostrTransport implements Transport {
       let attempt = 0;
       let newest: number | undefined; // newest created_at seen on this relay, capped at now
       let confirmed = false; // the link was confirmed up since it was last down (or since start)
+      let rejoined = false; // dropped and opened again: its EOSE is a reconnect
       this.linked.add(relay);
       this.status(relay).down_since = null;
       const open = () => {
@@ -443,6 +469,12 @@ export class NostrTransport implements Transport {
             if (!dropped && !left && !confirmed) {
               confirmed = true;
               this.linkUp(relay);
+            }
+            if (opts.echo) {
+              this.heard.set(relay, Date.now());
+              // Our carrier never writes to us but for an echo: proof that this relay's subscription delivers,
+              // never an envelope for the agent (and a replay of an older echo is swallowed the same way).
+              if (ev.pubkey === this.carrierPubkey) return this.echoBack(relay, ev.id);
             }
             if (fresh(ev.id)) onevent(ev);
           },
@@ -456,6 +488,14 @@ export class NostrTransport implements Transport {
                 confirmed = true;
                 this.linkUp(relay);
               }
+              if (opts.echo && !left) {
+                this.heard.set(relay, Date.now());
+                // Back after a drop, with what the relay stored meanwhile delivered: the agent resends what is unconfirmed.
+                if (rejoined) {
+                  rejoined = false;
+                  this.emitReconnect(relay);
+                }
+              }
             });
           },
           onclose: (reasons) => {
@@ -463,6 +503,7 @@ export class NostrTransport implements Transport {
             subs.delete(sub);
             if (closed || left || this.destroyed) return;
             confirmed = false;
+            rejoined = true;
             this.linkDown(relay, reasons?.[0]?.reason);
             const delay = Math.min(30_000, (this.opts.reconnectBaseMs ?? 1000) * 2 ** attempt++);
             const t = setTimeout(() => {
@@ -513,7 +554,11 @@ export class NostrTransport implements Transport {
   private linkDown(url: string, reason: unknown): void {
     if (this.destroyed || !this.isOwn(url)) return;
     const st = this.status(url);
-    const c = classifyRelayError(typeof reason === 'string' && reason ? reason : 'connection closed');
+    const echo = this.deaf.delete(url);
+    this.echoes.delete(url);
+    const c = echo
+      ? { kind: 'connection' as const, message: 'echo check failed: the relay took our event but the subscription never delivered it' }
+      : classifyRelayError(typeof reason === 'string' && reason ? reason : 'connection closed');
     st.last_error = { at: new Date().toISOString(), kind: c.kind, message: c.message };
     if (st.down_since === null || st.down_since === undefined) {
       st.down_since = st.last_error.at;
@@ -701,11 +746,124 @@ export class NostrTransport implements Transport {
     return this.publish(event, recipientRelays);
   }
 
-  onEnvelopes(me: string, handler: (envelope: unknown) => void): () => void {
-    return this.subscribe(
+  onEnvelopes(me: string, handler: (envelope: unknown, meta?: EnvelopeMeta) => void): () => void {
+    // The echo goes to our own `p` tag, so only a subscription for ourselves can check it.
+    const echo = me === this.opts.key.id && (this.opts.echoIntervalMs ?? 300_000) > 0;
+    const unsub = this.subscribe(
       (since) => ({ kinds: [ENVELOPE_KIND], '#p': [agentTag(me)], since }),
-      (ev) => handler(safeParse(ev.content)),
+      (ev) => handler(safeParse(ev.content), { at: ev.created_at }),
+      { echo },
     );
+    if (echo) this.startEchoes();
+    return () => {
+      unsub();
+      if (echo) this.stopEchoes();
+    };
+  }
+
+  onReconnect(handler: (relay: string) => void): () => void {
+    this.reconnectHandlers.add(handler);
+    return () => this.reconnectHandlers.delete(handler);
+  }
+
+  private emitReconnect(relay: string): void {
+    for (const h of [...this.reconnectHandlers]) {
+      try {
+        h(relay);
+      } catch {
+        // a handler's trouble is its own: the subscription goes on
+      }
+    }
+  }
+
+  private startEchoes(): void {
+    if (this.echoLoop || this.destroyed) return;
+    this.echoLoop = setInterval(() => this.echoRound(), this.opts.echoIntervalMs ?? 300_000);
+    this.echoLoop.unref?.();
+  }
+
+  private stopEchoes(): void {
+    if (this.echoLoop) clearInterval(this.echoLoop);
+    this.echoLoop = undefined;
+    for (const e of this.echoes.values()) {
+      if (e.timer) {
+        clearTimeout(e.timer);
+        this.timers.delete(e.timer);
+      }
+    }
+    this.echoes.clear();
+  }
+
+  /**
+   * Echo check (NOTES 98): a ping proves the socket, not the subscription. A
+   * listening relay that is up but has delivered nothing for an interval is
+   * sent an envelope from us to us (sealed and signed like any other); one
+   * that takes it (`OK true`) and does not deliver it back within the timeout
+   * is deaf: its socket is torn down, so the usual re-join runs, with its
+   * look-back and the link report. Skipped while traffic flows.
+   */
+  private echoRound(): void {
+    const interval = this.opts.echoIntervalMs ?? 300_000;
+    const now = Date.now();
+    for (const relay of this.listen) {
+      if (this.destroyed || this.echoes.has(relay)) continue;
+      if (!this.confirmedOnce.has(relay) || this.state.get(relay)?.down_since !== null) continue; // down: the re-join loop has it
+      if (now - (this.heard.get(relay) ?? 0) < interval) continue;
+      void this.sendEcho(relay);
+    }
+  }
+
+  private async sendEcho(relay: string): Promise<void> {
+    const me = this.opts.key.id;
+    const env = sealEnvelope(this.opts.key, me, { type: ECHO_TYPE }, { seq: 1, prev: null, ttl: '1h' });
+    // Replaces the previous echo there, so it must be dated later: a tie would be kept out and never delivered.
+    const createdAt = Math.max(Math.floor(Date.now() / 1000), (this.echoAt.get(relay) ?? 0) + 1);
+    this.echoAt.set(relay, createdAt);
+    const event = finalizeEvent(
+      {
+        kind: ENVELOPE_KIND,
+        created_at: createdAt,
+        tags: [
+          ['p', agentTag(me)],
+          ['d', ECHO_TAG],
+        ],
+        content: JSON.stringify(env),
+      },
+      this.carrier,
+    );
+    const flight: { id: string; timer?: ReturnType<typeof setTimeout> } = { id: event.id };
+    this.echoes.set(relay, flight); // before the publish: the relay may deliver it before its OK
+    const r = await this.publishTo(relay, event, 0);
+    if (this.echoes.get(relay) !== flight) return; // already back (or the relay dropped meanwhile)
+    if (!r.ok || this.destroyed) {
+      this.echoes.delete(relay); // not taken: that says nothing about the subscription
+      return;
+    }
+    const timer = setTimeout(() => {
+      this.timers.delete(timer);
+      if (this.echoes.get(relay) === flight) this.echoMissed(relay);
+    }, this.opts.echoTimeoutMs ?? 30_000);
+    flight.timer = timer;
+    this.timers.add(timer);
+  }
+
+  private echoBack(relay: string, id: string): void {
+    const flight = this.echoes.get(relay);
+    if (flight?.id !== id) return;
+    if (flight.timer) {
+      clearTimeout(flight.timer);
+      this.timers.delete(flight.timer);
+    }
+    this.echoes.delete(relay);
+  }
+
+  /** The relay took our echo and never delivered it: tear its socket down, so every subscription on it re-joins. */
+  private echoMissed(relay: string): void {
+    this.echoes.delete(relay);
+    const r = (this.pool as unknown as { relays: Map<string, LiveRelay> }).relays.get(normalizeURL(relay));
+    if (!r?.ws || this.destroyed) return;
+    this.deaf.add(relay);
+    r.ws.terminate();
   }
 
   /**
@@ -850,6 +1008,7 @@ export class NostrTransport implements Transport {
 
   close(): void {
     this.destroyed = true;
+    this.stopEchoes();
     for (const wake of [...this.sleepers]) wake();
     for (const t of this.timers) clearTimeout(t);
     this.timers.clear();

@@ -229,7 +229,12 @@ Only when the user asks ("use my own relay", "drop nostr.example.com",
    confirm it is the person. Then `rdv_send` with `to` = the `local_label`
    (it refuses a label that no contact or several contacts have) or with the
    `agent_id`, and payload `{"type": "note", "text": "…"}`. Report the
-   fingerprint and `seq` it returns.
+   fingerprint and `seq` it returns, and its `delivery`: "pending" means
+   sent and waiting for their agent's receipt (it is resent on its own;
+   `rdv_status` says when it is delivered), "untracked" that their agent
+   sends no receipts. A later `delivery_unconfirmed` event: tell the user
+   the message is not confirmed delivered yet (their agent may be offline),
+   never that it failed; `delivery_confirmed` means it arrived after all.
 9. **Let them propose meetings too (optional).** A contact the user
    requested may write to them but not propose meetings. If the user wants
    that person to be able to suggest a dinner, ask them; only on their yes,

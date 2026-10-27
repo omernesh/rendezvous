@@ -324,6 +324,9 @@ From `impl/NOTES.md`:
    also be set in an elicitation form (`rdv_owner_passphrase`), and the
    owner's other settings (label, resync, direct transfer, replacing the
    identity) have form-only chat tools with no confirm phrase (NOTES 97).
+10. §6.4.2 (new): delivery receipts (`rdv/ack`, the receipts capability on
+   the card, resend on a backoff and after a reconnect, "not confirmed"
+   after the last retry) and the echo check; a line in §7 on gaps (NOTES 98).
 
 Update the reading page with `python3 render_html.py` after editing SPEC.md.
 
