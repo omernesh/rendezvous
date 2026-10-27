@@ -1314,7 +1314,12 @@ export class RdvMcpServer {
    * listener.lock is ours already (kept across a replaced identity).
    */
   startListening(held?: () => void): void {
-    if (this.real || !this.home.initialized()) return;
+    // While the identity is being replaced, only the swap itself starts the agent again (with the lock it kept).
+    if (this.replacing && !held) return;
+    if (this.real || !this.home.initialized()) {
+      held?.(); // a kept lock that is not used here is released, never left alive by its heartbeat
+      return;
+    }
     const config = this.home.readConfig();
     const sets = relaySets(config);
     const boot = Agent.fromJSON(this.home.readAgentState(), (key) => relayTransport(key, sets.relays, this.home, sets.mirror));
@@ -1478,6 +1483,8 @@ export class RdvMcpServer {
    * carrier (security review). Cheap: the card ID only.
    */
   private following?: Promise<void>;
+  /** Set while rdv_init replace swaps the identity: other calls wait for it (withAgent) and do not start the agent. */
+  private replacing?: Promise<void>;
   private followIdentity(): Promise<void> {
     // One restart at a time: a tick and a tool call may both notice.
     this.following ??= this.restartIfReplaced().finally(() => (this.following = undefined));
@@ -1849,6 +1856,9 @@ export class RdvMcpServer {
   private async withAgent<T>(fn: (agent: Agent, config: Config) => Promise<T>): Promise<T> {
     if (!this.home.initialized()) throw new ToolError(`no agent at ${this.home.dir} yet: call rdv_init first`);
     await this.followIdentity();
+    // A replace in progress (rdv_init replace) restarts the agent itself: wait for it rather than attach to our own lock.
+    await this.replacing?.catch(() => {});
+    if (!this.home.initialized()) throw new ToolError(`no agent at ${this.home.dir} yet: call rdv_init first`);
     this.startListening();
     const real = this.real!;
     return this.home.locked(async () => {
@@ -3795,12 +3805,20 @@ export class RdvMcpServer {
     await this.applySettings(a);
     // listener.lock stays ours from the old agent to the new one, so no attached server can take over in between
     // and listen on the old key (security review); attached servers follow the new identity on their next tick.
-    const held = await this.stopListening(true);
+    let done!: () => void;
+    this.replacing = new Promise<void>((r) => (done = r));
     let r;
     try {
-      r = await initHome(home, { ...next, force: true, capabilities: hostCardCapabilities(this.registry) });
+      const held = await this.stopListening(true);
+      try {
+        r = await initHome(home, { ...next, force: true, capabilities: hostCardCapabilities(this.registry) });
+      } finally {
+        // Releases `held` itself when it cannot start (initHome failed after clearing the home).
+        this.startListening(held);
+      }
     } finally {
-      this.startListening(held);
+      this.replacing = undefined;
+      done();
     }
     this.humanLog(`agent ${fingerprint(id)} REPLACED through the approval form by a new identity ${r.fingerprint}`);
     return {
