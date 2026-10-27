@@ -39,7 +39,7 @@ export { cardSyncText, cardUpdateText, cardUpdateView, contactRestoredText, cont
 export { auditBackup, type BundleContents, createBackup, describeBackup, readBackupFile, restoreBackup, type RestoreResult, writeBackupFile } from './backup.js';
 export { restoreLine } from './commands.js';
 export { RelayLinkMonitor, relayWatchText, type RelayWatchEvent } from './relaywatch.js';
-export { confirmedText, confirmedView, DeliveryClock, receiptTiming, resentText, resentView, unconfirmedText, unconfirmedView } from './delivery.js';
+export { confirmedText, confirmedView, contactFilter, DeliveryClock, receiptTiming, resentText, resentView, unconfirmedText, unconfirmedView } from './delivery.js';
 export { appendEvents, EVENTS_FILE_KEPT, eventsStamp, isNoise, type LoggedEvent, readEvents, STRANGER_DROPS } from './events.js';
 export { acquireLock, LockTimeoutError, type LongLock, tryLongLock, writeAtomic } from './fsutil.js';
 export {

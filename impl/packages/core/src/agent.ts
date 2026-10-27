@@ -38,6 +38,7 @@ import {
   type PeerDelivery,
   RECEIPT_TIMING,
   type ReceiptTiming,
+  receiptTimingOf,
   retryDue,
 } from './delivery.js';
 import { type Binding, canonAgentId, dtopic, idtopic, normalizeAddresses, topicForHint } from './discovery.js';
@@ -299,8 +300,14 @@ export class Agent extends EventEmitter<AgentEvents> {
   private buffer: Record<string, Envelope[]>;
   private cardSent: Record<string, string>;
   private delivery: Record<string, PeerDelivery>;
-  /** Receipt and resend timing (NOTES 98); a host may shorten it for tests. */
-  receiptTiming: ReceiptTiming = RECEIPT_TIMING;
+  private timing: ReceiptTiming = RECEIPT_TIMING;
+  /** Receipt and resend timing (NOTES 98); a host may shorten it for tests. Fields that are missing or out of range get the default. */
+  get receiptTiming(): ReceiptTiming {
+    return this.timing;
+  }
+  set receiptTiming(t: Partial<ReceiptTiming>) {
+    this.timing = receiptTimingOf(t);
+  }
   /** Whether we confirm what contacts send (NOTES 98, the owner's opt-out). Their envelopes are still received and waited for. */
   sendReceipts = true;
   private tickQueued = false;
@@ -385,6 +392,8 @@ export class Agent extends EventEmitter<AgentEvents> {
    */
   start(opts: { deliveryTimer?: boolean } = {}): void {
     this.unsubscribers.push(this.transport.onEnvelopes(this.id, (raw) => this.enqueue(() => this.handleEnvelope(raw))));
+    // Only a contact's envelope proves the relay delivers (the echo check, NOTES 98).
+    this.transport.setTrafficFilter?.((from) => !!this.book.contact(from));
     const off = this.transport.onReconnect?.(() => {
       // Several relays coming back at once make one pass.
       if (this.resendQueued) return;
@@ -778,6 +787,7 @@ export class Agent extends EventEmitter<AgentEvents> {
     const c = this.book.contact(peer);
     this.book.revoke(peer);
     this.groups.forgetPeer(peer);
+    delete this.delivery[peer]; // nothing of this contact period is waited for any more
     if (c) await this.deliver(peer, createRevoke(this.key, peer, c.grantId), relaysOf(c.card));
   }
 
@@ -1082,6 +1092,15 @@ export class Agent extends EventEmitter<AgentEvents> {
     return (this.delivery[peer] ??= { acked: 0, pending: [] });
   }
 
+  /**
+   * A contact period begins (a grant issued or received): receipts start
+   * afresh, and a relay replay of one from an earlier period (the peer's
+   * clock, `since` its own request or grant) is ignored (review of #112).
+   */
+  private newContactPeriod(peer: string, since: string): void {
+    this.delivery[peer] = { acked: 0, pending: [], ...(parseTimestamp(since) === null ? {} : { ack_floor: since }) };
+  }
+
   /** Delivery to one contact as its owner sees it: confirmed up to, waiting, not confirmed. */
   deliveryStatus(peer: string): DeliverySummary {
     return deliverySummary(this.delivery[peer], this.book.contact(peer)?.card);
@@ -1110,9 +1129,9 @@ export class Agent extends EventEmitter<AgentEvents> {
    * already confirmed may be the sender retrying because our receipt was
    * lost, or anyone re-publishing an old envelope: nothing about it tells
    * which (the carrier's timestamp is the publisher's word, review of #112).
-   * So it earns another receipt at most `maxRetries + 1` times between two
-   * new envelopes from that peer, at least `retryAfterMs / 2` apart; that
-   * covers the sender's retries, and a receipt costs no chain state anyway.
+   * So it earns another receipt at most once per `retryAfterMs / 2` per peer,
+   * a window that never runs out: the sender's retries are further apart,
+   * and a receipt costs no chain state, so replays cannot use up a budget.
    */
   private oweAck(env: Envelope, payload: Payload, duplicate = false): void {
     if (payload.type === ACK_TYPE || !this.sendReceipts) return;
@@ -1126,19 +1145,13 @@ export class Agent extends EventEmitter<AgentEvents> {
     if (duplicate) {
       if (env.seq > ch.inSeq) return; // not something we hold (a replay below a re-sync floor)
       if (sent && sent.seq >= env.seq) {
-        const t = this.receiptTiming;
         const last = d.reack_at === undefined ? Number.NEGATIVE_INFINITY : Date.parse(d.reack_at);
-        if ((d.reacks ?? 0) > t.maxRetries || now - last < t.retryAfterMs / 2) return;
-        d.reacks = (d.reacks ?? 0) + 1;
+        if (now - last < this.receiptTiming.retryAfterMs / 2) return;
         d.reack_at = new Date(now).toISOString();
       }
-    } else {
-      delete d.reacks; // a new envelope: the sender's retries of it may each need an answer again
-      delete d.reack_at;
-      if (sent && sent.seq >= ch.inSeq) return;
-    }
+    } else if (sent && sent.seq >= ch.inSeq) return;
     // The receipt waits for the quiet period plus up to ackJitterMs, so its timing says less about the message's.
-    d.ack_owed ??= new Date(now + Math.floor(Math.random() * (this.receiptTiming.ackJitterMs + 1))).toISOString();
+    d.ack_owed ??= new Date(now + Math.floor(Math.random() * ((this.receiptTiming.ackJitterMs ?? 0) + 1))).toISOString();
   }
 
   /**
@@ -1156,6 +1169,10 @@ export class Agent extends EventEmitter<AgentEvents> {
     if (seq === null) return this.drop('ack malformed', { peer: from });
     if (!ch || seq > ch.outSeq) return this.drop('ack beyond our chain', { peer: from, seq });
     const d = this.peerDelivery(from);
+    // From before the peer restored, or before this contact began: it vouches for nothing we track now (review of #112).
+    const created = parseTimestamp(env.created);
+    const floor = d.ack_floor === undefined ? null : parseTimestamp(d.ack_floor);
+    if (floor !== null && !(created !== null && created > floor)) return this.drop('ack replay from before the floor', { peer: from, seq });
     if (seq <= d.acked) return;
     d.acked = seq;
     const late = d.pending.filter((p) => p.seq <= seq && p.unconfirmed).map((p) => p.seq);
@@ -1326,6 +1343,7 @@ export class Agent extends EventEmitter<AgentEvents> {
     });
     const contact = this.book.recordIssuedGrant(grant, request, binding, opts.label);
     this.cardSent[request.from] = this.card.created; // the grant carries our card
+    this.newContactPeriod(request.from, request.ts);
     await this.deliver(request.from, grant, relaysOf(request.card));
     this.emit('contact', contact);
     return contact;
@@ -1514,12 +1532,14 @@ export class Agent extends EventEmitter<AgentEvents> {
           return;
         }
         if (sentCard) this.cardSent[got.contact.peer] = sentCard;
+        this.newContactPeriod(got.contact.peer, env.created);
         this.emit('contact', got.contact);
         return;
       }
       case 'rdv/revoke':
         if (this.book.receiveRevoke(payload, this.id)) {
           this.groups.forgetPeer(from);
+          delete this.delivery[from];
           this.emit('revoked', from);
         }
         return;
@@ -1725,6 +1745,8 @@ export class Agent extends EventEmitter<AgentEvents> {
     if (this.tracksDelivery(from)) {
       const d = this.peerDelivery(from);
       d.acked = Math.min(d.acked, inSeq);
+      // Its receipts from before this notice speak for the copy it lost: a relay replay of one must not confirm what we resend.
+      if (!(d.ack_floor !== undefined && (parseTimestamp(d.ack_floor) ?? 0) >= (created ?? 0))) d.ack_floor = env.created;
       for (const e of resend) {
         if (!d.pending.some((p) => p.seq === e.seq)) d.pending.push({ seq: e.seq, hash: envelopeHash(e), sent: now.toISOString(), tries: 0 });
       }

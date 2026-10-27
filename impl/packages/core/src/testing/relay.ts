@@ -13,6 +13,12 @@ type Filter = {
   [tag: `#${string}`]: string[] | undefined;
 };
 
+/** NIP-40: `ev` carries an `expiration` at or before `now` (Unix seconds). */
+export function expiredAt(ev: Event, now: number): boolean {
+  const at = Number(ev.tags.find((t) => t[0] === 'expiration')?.[1]);
+  return Number.isFinite(at) && at <= now;
+}
+
 export function matches(ev: Event, f: Filter): boolean {
   if (f.ids && !f.ids.includes(ev.id)) return false;
   if (f.authors && !f.authors.includes(ev.pubkey)) return false;
@@ -160,7 +166,8 @@ export async function startTestRelay(port = 0, faults: RelayFaults = {}): Promis
         subs.get(ws)?.set(id, filters);
         requests.push(...filters);
         for (const f of filters) {
-          let hits = events.filter((e) => matches(e, f));
+          // NIP-40: an event whose expiration has passed is not served any more.
+          let hits = events.filter((e) => matches(e, f) && !expiredAt(e, Math.floor(Date.now() / 1000)));
           if (f.limit !== undefined) hits = hits.slice(-f.limit);
           for (const ev of hits) ws.send(JSON.stringify(['EVENT', id, ev]));
         }

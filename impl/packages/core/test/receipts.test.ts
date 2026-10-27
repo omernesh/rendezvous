@@ -22,11 +22,17 @@ import {
   signDoc,
   type Transport,
   ECHO_KIND,
+  ECHO_EXPIRES_S,
+  agentTag,
+  envelopeHash,
+  RECEIPT_TIMING,
+  receiptTimingOf,
   pendingInBackup,
   restoredAgentState,
 } from '../src/index.js';
 import { startTestRelay, type TestRelay } from '../src/testing/relay.js';
-import { WebSocketServer } from 'ws';
+import { finalizeEvent, generateSecretKey } from 'nostr-tools/pure';
+import WebSocket, { WebSocketServer } from 'ws';
 
 vi.setConfig({ testTimeout: 30_000 }); // two agents and a relay on a busy machine
 
@@ -85,7 +91,7 @@ class LossyTransport implements Transport {
   }
 }
 
-function make(relays: string[], opts: { receipts?: boolean; transport?: Partial<NostrTransportOptions> } = {}): { agent: Agent; pipe: LossyTransport } {
+function make(relays: string[], opts: { receipts?: boolean; timer?: boolean; transport?: Partial<NostrTransportOptions> } = {}): { agent: Agent; pipe: LossyTransport } {
   let pipe!: LossyTransport;
   const agent = Agent.create(
     (key: AgentKey) => (pipe = new LossyTransport(new NostrTransport({ key, relays, maxEventsPerSecond: 1000, burst: 1000, reconnectBaseMs: 30, retryBaseMs: 20, ...opts.transport }))),
@@ -95,7 +101,7 @@ function make(relays: string[], opts: { receipts?: boolean; transport?: Partial<
   agent.on('error', (e) => {
     throw e;
   });
-  agent.start();
+  agent.start({ deliveryTimer: opts.timer !== false });
   open.push(agent);
   return { agent, pipe };
 }
@@ -219,27 +225,37 @@ describe('delivery receipts between two agents', () => {
   });
 
   it('a lost ack: the sender retries, the receiver acks the duplicate again, and the sender is satisfied', async () => {
+    // No timers: each side's tick runs by hand at a clock we move, so nothing races the wall clock (review of #112).
     const r = await relay();
-    const { agent: omer, pipe: omerPipe } = make([r.url]);
-    const { agent: john } = make([r.url]);
+    const { agent: omer, pipe: omerPipe } = make([r.url], { timer: false });
+    const { agent: john } = make([r.url], { timer: false });
     await contacts(omer, john);
-    await until(() => john.deliveryStatus(omer.id).waiting === 0 && omer.deliveryStatus(john.id).waiting === 0);
-    omerPipe.lose = true; // Omer's next envelope (his ack) is lost
+    let clock = Date.now();
+    const later = () => new Date((clock += 60_000));
+    const got = new Promise((res) => omer.once('message', res));
     const env = await john.send(omer.id, { type: 'note', text: 'ack me twice' });
-    await until(() => omerPipe.lost.length > 0);
+    await got;
+    omerPipe.lose = true; // Omer's receipt (for the grant and the message at once) is lost
+    await omer.deliveryTick(later());
+    expect(omerPipe.lost).toHaveLength(1);
     omerPipe.lose = false;
-    await until(() => john.deliveryOf(omer.id, env.seq) === 'delivered', 20_000);
+    expect(john.deliveryOf(omer.id, env.seq)).toBe('pending');
+    await john.deliveryTick(later()); // John's retry: the same envelopes, published again
+    await until(() => omer.toJSON().delivery?.[john.id]?.ack_owed !== undefined); // the duplicate earned another receipt
+    await omer.deliveryTick(later());
+    await until(() => john.deliveryOf(omer.id, env.seq) === 'delivered');
     // Receipts are outside the chain: the lost one left no gap, and none took a seq or an outbox slot.
     expect(omerPipe.lost.every((e) => e.seq === 0 && e.prev === null)).toBe(true);
     expect((omer as unknown as { outbox: Record<string, Envelope[]> }).outbox[john.id]?.some((e) => e.seq === 0) ?? false).toBe(false);
   });
 
-  it('a third party re-publishing an old envelope gets a few receipts at most, and costs the chain nothing (review H1)', async () => {
+  it('a third party re-publishing an old envelope gets one receipt per window at most, and costs the chain nothing (review H1)', async () => {
     const r = await relay();
     const { agent: omer } = make([r.url]);
     const { agent: john, pipe } = make([r.url]);
     await contacts(omer, john);
     await until(() => john.deliveryStatus(omer.id).waiting === 0 && omer.deliveryStatus(john.id).waiting === 0);
+    john.receiptTiming = { ...FAST, retryAfterMs: 60_000 }; // a re-ack window of 30 s
     pipe.lose = true;
     await john.send(omer.id, { type: 'note', text: 'important' });
     pipe.lose = false;
@@ -258,8 +274,9 @@ describe('delivery receipts between two agents', () => {
     await settle(500);
     expect(john.channels.state[omer.id].outSeq).toBe(outSeq);
     expect((john as unknown as { outbox: Record<string, Envelope[]> }).outbox[omer.id].map((e) => e.seq)).toEqual(box);
-    // At most maxRetries + 1 receipts between two new envelopes, at least retryAfterMs / 2 apart.
-    expect(acks() - before).toBeLessThanOrEqual(FAST.maxRetries + 1);
+    // John never confirmed that envelope (Omer was no contact yet), so its first copy earns the receipt it never had;
+    // after that, at most one per retryAfterMs / 2 for duplicates, however many come.
+    expect(acks() - before).toBeLessThanOrEqual(2);
   });
 
   it('a forged receipt is rejected: signed by someone else under the contact\'s name', async () => {
@@ -618,5 +635,149 @@ describe('review of #112', () => {
     expect(payload).toMatchObject({ text: 'm2' });
     expect(seen).toBe('pending'); // John's backup never had it: it is waited for again
     await until(() => omer.deliveryOf(john.id, m2.seq) === 'delivered');
+  });
+});
+
+describe('re-review of #112', () => {
+  it("an old receipt replayed after the contact restored does not confirm what we resent it (H-NEW-1)", async () => {
+    const r = await relay();
+    const { agent: omer } = make([r.url]);
+    const { agent: john, pipe } = make([r.url]);
+    await contacts(omer, john);
+    const m1 = await john.send(omer.id, { type: 'note', text: 'm1' });
+    await until(() => john.deliveryOf(omer.id, m1.seq) === 'delivered');
+    const omerBackup = structuredClone(omer.toJSON());
+    const m2 = await john.send(omer.id, { type: 'note', text: 'm2' });
+    await until(() => john.deliveryOf(omer.id, m2.seq) === 'delivered');
+    const oldAck = between(r, omer, john).filter((e) => e.seq === 0).pop()!;
+    omer.close();
+    // Relay retention ran out for m2: the restored Omer can only get it from John's outbox.
+    for (let i = r.events.length - 1; i >= 0; i--) {
+      const e = JSON.parse(r.events[i].content) as Envelope;
+      if (e.from === john.id && e.seq >= m2.seq) r.events.splice(i, 1);
+    }
+    const t2 = new NostrTransport({ key: omer.key, relays: [r.url], maxEventsPerSecond: 1000, burst: 1000, reconnectBaseMs: 30, retryBaseMs: 20 });
+    const omer2 = Agent.fromJSON(restoredAgentState(omerBackup, { backupCreated: new Date().toISOString() }), () => t2);
+    omer2.receiptTiming = FAST;
+    omer2.sendReceipts = false; // the restored Omer never confirms, so only the replay could
+    open.push(omer2);
+    omer2.start();
+    await settle(300);
+    pipe.lose = true; // John's resend to Omer is lost too: m2 never reaches him
+    const restored = new Promise((res) => john.once('contact-restored', res));
+    await omer2.sendRestoredNotices();
+    await restored;
+    await until(() => john.deliveryOf(omer.id, m2.seq) === 'pending');
+    const dropped = events(john, 'dropped');
+    const attacker = new NostrTransport({ key: generateKey(), relays: [r.url], maxEventsPerSecond: 1000, burst: 1000 });
+    open.push(attacker);
+    await attacker.sendEnvelope(oldAck, [r.url]);
+    await until(() => dropped.some(([reason]) => reason === 'ack replay from before the floor'));
+    expect(john.deliveryOf(omer.id, m2.seq)).toBe('pending');
+    expect(john.toJSON().delivery?.[omer.id]?.ack_floor).toBeTruthy(); // persisted
+  });
+
+  it('an old receipt replayed after a revoke and a new contact does not confirm the new messages', async () => {
+    const r = await relay();
+    const { agent: omer, pipe: opipe } = make([r.url]);
+    const { agent: john } = make([r.url]);
+    await contacts(omer, john);
+    let last!: Envelope;
+    for (let i = 0; i < 3; i++) last = await john.send(omer.id, { type: 'note', text: `old${i}` });
+    await until(() => john.deliveryOf(omer.id, last.seq) === 'delivered');
+    const oldAck = between(r, omer, john).filter((e) => e.seq === 0).pop()!;
+    await john.revoke(omer.id);
+    await settle(1100); // the new period's request is dated in a later second
+    await contacts(omer, john);
+    opipe.lose = true; // Omer's real receipts are lost
+    let m!: Envelope;
+    do m = await john.send(omer.id, { type: 'note', text: 'new' });
+    while ((john.channels.state[omer.id]?.outSeq ?? 0) < last.seq);
+    const dropped = events(john, 'dropped');
+    const attacker = new NostrTransport({ key: generateKey(), relays: [r.url], maxEventsPerSecond: 1000, burst: 1000 });
+    open.push(attacker);
+    await attacker.sendEnvelope(oldAck, [r.url]);
+    await until(() => dropped.some(([reason]) => reason === 'ack replay from before the floor'));
+    expect(john.deliveryOf(omer.id, m.seq)).toBe('pending');
+  });
+
+  it('re-acks are one per window per peer, and the window never runs out (L-NEW-1)', async () => {
+    const r = await relay();
+    const { agent: omer } = make([r.url]);
+    const { agent: john } = make([r.url]);
+    await contacts(omer, john);
+    await until(() => john.deliveryStatus(omer.id).waiting === 0 && omer.deliveryStatus(john.id).waiting === 0);
+    john.receiptTiming = { ...FAST, retryAfterMs: 400 }; // a 200 ms window
+    const old = between(r, omer, john).find((e) => e.seq > 0)!;
+    const acks = () => between(r, john, omer).filter((e) => e.seq === 0).length;
+    // The same envelope from new carrier keys each time, so the relay passes every copy on.
+    const replay = async () => {
+      const t = new NostrTransport({ key: generateKey(), relays: [r.url], maxEventsPerSecond: 1000, burst: 1000 });
+      open.push(t);
+      await t.sendEnvelope(old, [r.url]);
+    };
+    const before = acks();
+    for (let round = 0; round < 3; round++) {
+      await Promise.all([replay(), replay(), replay()]); // three in one window: one receipt
+      await settle(1000);
+    }
+    expect(acks() - before).toBe(3); // one per window, in every window
+  });
+
+  it('a partial or bad timing falls back to the defaults instead of throwing (L-NEW-3)', async () => {
+    expect(receiptTimingOf({ ackDelayMs: 50 })).toEqual({ ...RECEIPT_TIMING, ackDelayMs: 50 });
+    expect(receiptTimingOf({ retryAfterMs: Number.NaN, maxRetries: -1, ackJitterMs: Infinity })).toEqual(RECEIPT_TIMING);
+    const r = await relay();
+    const { agent: omer } = make([r.url]);
+    const { agent: john } = make([r.url]);
+    omer.receiptTiming = { ackDelayMs: 40, ackMinIntervalMs: 80, retryAfterMs: 250, maxRetries: 2 } as ReceiptTiming; // no ackJitterMs
+    expect(omer.receiptTiming.ackJitterMs).toBe(RECEIPT_TIMING.ackJitterMs);
+    omer.receiptTiming = { ...omer.receiptTiming, ackJitterMs: 0 };
+    await contacts(omer, john);
+    const env = await john.send(omer.id, { type: 'note', text: 'no crash' });
+    await until(() => john.deliveryOf(omer.id, env.seq) === 'delivered');
+  });
+
+  it('the echo expires in a minute, and our subscription ignores an expired event (M2)', async () => {
+    const r = await relay();
+    const me = generateKey();
+    const rx = new NostrTransport({ key: me, relays: [r.url], echoIntervalMs: 150 });
+    open.push(rx);
+    const got: unknown[] = [];
+    rx.onEnvelopes(me.id, (e) => got.push(e));
+    await until(() => r.ephemeral.some((ev) => ev.pubkey === rx.carrierPubkey));
+    const echo = r.ephemeral.find((ev) => ev.pubkey === rx.carrierPubkey)!;
+    const exp = Number(echo.tags.find((t) => t[0] === 'expiration')?.[1]);
+    expect(exp - echo.created_at).toBe(ECHO_EXPIRES_S);
+    // A stranger's envelope that has expired: the relay passes it on live, we drop it.
+    const sender = generateKey();
+    const env = sealEnvelope(sender, me.id, { type: 'note' }, { seq: 1, prev: null });
+    const stale = finalizeEvent(
+      { kind: 30417, created_at: Math.floor(Date.now() / 1000) - 120, tags: [['p', agentTag(me.id)], ['d', envelopeHash(env)], ['expiration', String(Math.floor(Date.now() / 1000) - 60)]], content: JSON.stringify(env) },
+      generateSecretKey(),
+    );
+    const ws = new WebSocket(r.url);
+    await new Promise((res) => ws.once('open', res));
+    ws.send(JSON.stringify(['EVENT', stale]));
+    await settle(400);
+    ws.close();
+    expect(got).toEqual([]);
+  });
+
+  it("a stranger's valid envelope does not count as traffic when the agent says who its contacts are (L2)", async () => {
+    const r = await relay();
+    const me = generateKey();
+    const rx = new NostrTransport({ key: me, relays: [r.url], echoIntervalMs: 300 });
+    open.push(rx);
+    rx.setTrafficFilter(() => false); // nobody sending is a contact
+    rx.onEnvelopes(me.id, () => {});
+    const tx = new NostrTransport({ key: generateKey(), relays: [r.url], maxEventsPerSecond: 1000, burst: 1000 });
+    open.push(tx);
+    const stranger = generateKey();
+    for (let i = 1; i <= 12; i++) {
+      await tx.sendEnvelope(sealEnvelope(stranger, me.id, { type: 'note' }, { seq: i, prev: null }));
+      await settle(100);
+    }
+    expect(r.ephemeral.filter((ev) => ev.pubkey === rx.carrierPubkey).length).toBeGreaterThan(0);
   });
 });

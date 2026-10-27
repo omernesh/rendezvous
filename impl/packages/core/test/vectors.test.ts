@@ -213,17 +213,22 @@ describe('test vectors', () => {
 
   if (process.env.UPDATE_VECTORS || !existsSync(FILE)) {
     // Sealing is randomized: keep the saved sample envelope unless UPDATE_VECTORS=envelope asks for a new one.
-    const old = existsSync(FILE) && process.env.UPDATE_VECTORS !== 'envelope' ? JSON.parse(readFileSync(FILE, 'utf8')).envelope : undefined;
-    const envelope = old ?? {
+    const prior = existsSync(FILE) && process.env.UPDATE_VECTORS !== 'envelope' ? JSON.parse(readFileSync(FILE, 'utf8')) : undefined;
+    const envelope = prior?.envelope ?? {
       recipient_seed_hex: '22'.repeat(32),
       doc: sealEnvelope(omer, john.id, { type: 'a2a/message', text: 'Thursday 20:00?' }, { seq: 1, prev: null, now, ttl: '7d' }),
     };
-    writeFileSync(FILE, JSON.stringify({ ...current, envelope }, null, 2) + '\n');
+    // A delivery receipt (SPEC §6.4.2): John confirms Omer's chain up to seq 1, outside every chain (seq 0, prev null).
+    const ack_envelope = prior?.ack_envelope ?? {
+      recipient_seed_hex: '11'.repeat(32),
+      doc: sealEnvelope(john, omer.id, { type: 'rdv/ack', v: 1, seq: 1 } as { type: string }, { seq: 0, prev: null, now, ttl: '7d' }),
+    };
+    writeFileSync(FILE, JSON.stringify({ ...current, envelope, ack_envelope }, null, 2) + '\n');
   }
   const saved = JSON.parse(readFileSync(FILE, 'utf8'));
 
   it('reproduces keys, topics, card and request byte for byte', () => {
-    const { envelope: _e, ...rest } = saved;
+    const { envelope: _e, ack_envelope: _a, ...rest } = saved;
     expect(current).toEqual(rest);
   });
 
@@ -262,5 +267,12 @@ describe('test vectors', () => {
   it('opens the sample envelope', () => {
     const opened = openEnvelope(john, saved.envelope.doc, now);
     expect(opened.ok && opened.payload).toEqual({ type: 'a2a/message', text: 'Thursday 20:00?' });
+  });
+
+  it('opens the sample receipt: seq 0, prev null, an rdv/ack payload (SPEC §6.4.2)', () => {
+    const doc = saved.ack_envelope.doc;
+    expect([doc.seq, doc.prev]).toEqual([0, null]);
+    const opened = openEnvelope(omer, doc, now);
+    expect(opened.ok && opened.payload).toEqual({ type: 'rdv/ack', v: 1, seq: 1 });
   });
 });

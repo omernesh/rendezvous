@@ -63,11 +63,33 @@ export interface PeerDelivery {
   ack_owed?: string;
   /** Our last ack to the peer: when, and the seq it carried. */
   ack_sent?: { at: string; seq: number };
-  /** Receipts a duplicate earned since the peer's last new envelope, and when the last one did (capped, review of #112). */
-  reacks?: number;
+  /** When a duplicate last earned another receipt: at most one per `retryAfterMs / 2` (review of #112). */
   reack_at?: string;
+  /**
+   * The peer's receipts dated (`created`, its clock) at or before this are
+   * replays from before it restored or before this contact began, and are
+   * ignored (review of #112): such a receipt would vouch for envelopes the
+   * peer, as it is now, never got.
+   */
+  ack_floor?: string;
   /** When a reconnect last republished to this peer (one per `retryAfterMs`). */
   flushed_at?: string;
+}
+
+/**
+ * Timing a caller set, made safe: any field that is not a finite number of
+ * the right range falls back to the default, so a partial or bad timing can
+ * neither throw nor make a host spin.
+ */
+export function receiptTimingOf(t: Partial<ReceiptTiming> | undefined): ReceiptTiming {
+  const pick = (v: unknown, def: number, min: number) => (typeof v === 'number' && Number.isFinite(v) && v >= min ? v : def);
+  return {
+    ackDelayMs: pick(t?.ackDelayMs, RECEIPT_TIMING.ackDelayMs, 0),
+    ackMinIntervalMs: pick(t?.ackMinIntervalMs, RECEIPT_TIMING.ackMinIntervalMs, 0),
+    ackJitterMs: pick(t?.ackJitterMs, RECEIPT_TIMING.ackJitterMs, 0),
+    retryAfterMs: pick(t?.retryAfterMs, RECEIPT_TIMING.retryAfterMs, 1),
+    maxRetries: Math.floor(pick(t?.maxRetries, RECEIPT_TIMING.maxRetries, 0)),
+  };
 }
 
 /** Whether a card says its agent sends and expects receipts. */
