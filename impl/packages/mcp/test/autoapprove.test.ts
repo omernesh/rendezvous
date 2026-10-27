@@ -4,6 +4,7 @@
 // one we propose; contacts and grants still need the human; rdv_auto_approve
 // turns it off freely and on only with the owner passphrase in its form;
 // rdv_status and rdv_task show it.
+import { execFileSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -14,7 +15,7 @@ import { fingerprint, MEETINGS_CAPABILITY } from '@rendezvous/core';
 import { startTestRelay, type TestRelay } from '@rendezvous/core/testing';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { contactAutoApprove, ownerSecretSet, type Tty } from '../../cli/src/commands.js';
-import { rdv } from '../../cli/scenarios/harness.js';
+import { RDV_BIN, rdv } from '../../cli/scenarios/harness.js';
 import { hasOwnerSecret, storeOwnerSecret } from '../../cli/src/ownersecret.js';
 import { Output } from '../../cli/src/output.js';
 import { INJECTION, makeSide, ok, type Side, TZ, WINDOW, waitEvent, writeCalendars } from './flow.js';
@@ -185,6 +186,41 @@ describe('auto-approve through rdv-mcp', () => {
     await ok(john, 'rdv_grant', { request_id: req.request_id });
     expect(f.asked.length).toBe(before + 1);
     expect(f.asked.at(-1)).toContain('approve this contact request');
+  });
+
+  it('the grant form, the confirm phrase and the terminal tell the human the contact is on auto-approve; the model is never told first (issue #94)', async () => {
+    const MORE = 'https://example.com/ext/more/v1';
+    const ON = 'AUTO-APPROVE IS ON for this contact';
+    const asked: string[] = [];
+    let dismiss = false;
+    const handler = async (p: ElicitRequest['params']): Promise<ElicitResult> => {
+      asked.push(p.message);
+      return dismiss ? { action: 'cancel' } : { action: 'accept', content: { approve: true } };
+    };
+    const { john, omerId } = await connected(handler);
+    // Not on: the grant form says nothing about it.
+    await ok(john, 'rdv_grant', { agent_id: omerId, invoke: [REQUEST_URI] });
+    expect(asked.at(-1)).toContain('let this contact do more');
+    expect(asked.at(-1)).not.toContain(ON);
+
+    await humanTurnsOn(john, omerId);
+    const r = await ok(john, 'rdv_grant', { agent_id: omerId, invoke: [REQUEST_URI, MORE] });
+    expect(asked.at(-1)).toContain(`${ON} (${MEETINGS_CAPABILITY}, ${REQUEST_URI}, until you turn it off)`);
+    expect(asked.at(-1)).toContain('looser limits on them are approved without asking too');
+    expect(JSON.stringify(r)).not.toContain(ON);
+
+    // No form answer: the confirm phrase goes to the human's log with the same note; the model's result has none.
+    dismiss = true;
+    const solo = await john.call('rdv_grant', { agent_id: omerId, invoke: [REQUEST_URI] });
+    expect(solo.isError).toBe(true);
+    const line = john.humanLog.filter((l) => l.includes('asks to grant your contact') && l.includes(omerId)).at(-1);
+    expect(line).toContain(ON);
+    expect(line).toContain('confirm phrase');
+    expect(john.transcript.join('\n')).not.toContain(ON);
+    // ...and `rdv contact pending` in the human's terminal.
+    const text = execFileSync(process.execPath, [RDV_BIN, 'contact', 'pending', '--home', john.home.dir], { encoding: 'utf8' });
+    expect(text).toContain(`your assistant asks to grant contact ${omerId}`);
+    expect(text).toContain(ON);
   });
 
   it('only rdv_auto_approve "on" with the passphrase form sets it: no other tool takes it, an extra argument is ignored, no phrase is ever issued', async () => {

@@ -3246,14 +3246,14 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       the listener's allowlist auto-grant, approving a request (above), or
       a hand-edited `agent.json`. A reverse grant (NOTES 60) moves only
       `outboundScope` and never touched the binding.
-    - **Known limits (security review, issue #94).** `allowInbound` keeps
-      `grantId` and `since`, so after narrow-then-widen-back the scope
-      digest matches an older entry again: someone who can write the home
-      but not read `agent.json` could put back an older `autoapprove.json`
-      and revive a dropped capability (a file rollback, possible before
-      this change after a narrowing or an off too). And the grant form
-      does not tell the human that auto-approve stays on for the contact
-      whose limits they loosen.
+    - **Known limits (security review, issue #94; both fixed in item 99).**
+      `allowInbound` keeps `grantId` and `since`, so after
+      narrow-then-widen-back the scope digest matches an older entry again:
+      someone who can write the home but not read `agent.json` could put
+      back an older `autoapprove.json` and revive a dropped capability (a
+      file rollback, possible before this change after a narrowing or an
+      off too). And the grant form does not tell the human that
+      auto-approve stays on for the contact whose limits they loosen.
     - **Audit and display.** A rebind appends `gate: "auto-approve"`,
       `by: "human"`, `action: "keep"`, `capabilities` (still covered),
       `uncovered` (the grant allows, auto-approve does not), `dropped`
@@ -3909,6 +3909,65 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       `cli/test/receipts.test.ts`: the opt-out on the card, test timing.
       `mcp/test/receipts.test.ts`: pending, delivered, not confirmed and
       delivered after all through the tools.
+
+## Auto-approve bound to each grant change; the grant form says so (issue #94)
+
+99. **An auto-approve entry binds a per-change grant stamp, and the human is
+    told before approving a grant to a contact on it** (**spec change**,
+    §5.5.1 "Bound to the grant": two sentences; local state only, no wire
+    change, the test vectors are unchanged). Fixes the two known limits of
+    item 92.
+    - **The stamp.** `Contact.grantStamp` (core, local, absent = 0) counts
+      our human's own grant changes under the founding grant:
+      `ContactBook.allowInbound` adds one when the contact was not granted
+      yet or the new scope differs canonically from the old (a tier change
+      alone, or the same scope again, is not a change, so item 92's "the
+      same grant again writes nothing" holds). Every entry stores it as
+      `stamp` under the MAC (`setAutoApprove`, `allowAlways`, the rebind in
+      `keepAutoApprove`), and `checkAutoApprove` requires it to equal the
+      contact's, else `grant-changed` (removed, audited). An entry from
+      before #94 has none and counts as 0, so it holds until the first grant
+      change after the upgrade; a stamp that is not a non-negative integer
+      is `invalid`. So an `autoapprove.json` put back after
+      narrow-then-widen-back has the same grant ID, `since` and scope digest
+      but an older stamp, and approves nothing. The `rdv_auto_approve` "on"
+      digest and the `rdv_grant` agent_id form's binding include it too, so
+      a grant changed and changed back while either form was open refuses
+      the answer.
+    - **Not covered: an off put back.** Turning it off changes no grant, so
+      an entry copied before an off and restored afterwards still matches
+      (as before #93). Fixing that needs a counter outside
+      `autoapprove.json` that every off bumps under the agent lock; not done
+      without a concrete exploit beyond "can write the home", which also
+      covers `owner.json`, `consent.json` and the rest.
+    - **What the human is told.** `autoApproveGrantNote` (cli): "AUTO-APPROVE
+      IS ON for this contact (capabilities, until …). It stays on after this
+      grant for what the grant still allows: those run without asking you
+      under the limits set here, so looser limits on them are approved
+      without asking too. Anything this grant adds is not covered and asks
+      you as before." It is appended to the `rdv_grant` agent_id approval
+      form (so the gateway's page shows it too, and the form digest binds
+      it: auto-approve turned on or off while the form is open makes the
+      answer `changed`), to the confirm-phrase line in the server's human
+      log, and to the inbound ask in `rdv contact pending`. Never in a tool
+      result, error or description: the model is told only after the grant,
+      as item 92's `auto_approve` object. The phrase itself is not bound to
+      the auto-approve state (it is bound to the contact and terms, as
+      before): a phrase shown while it was off and used after the human
+      turned it on grants what the phrase said, and the grant's result then
+      says auto-approve kept what it covers.
+    - **Obsolete parts.** None: the forms of items 96 and 97 did not touch
+      the grant form, and the "Don't ask again" path writes entries like
+      the others, so it binds the stamp too.
+    - **Tests.** core `unit.test.ts` (the stamp per change, not for the same
+      scope or a tier change, survives a save); cli `autoapprove.test.ts`
+      (both older copies put back after narrow-then-widen approve nothing
+      and are audited `grant-changed`; a pre-#94 entry holds at 0 and not
+      after a change; an edited stamp fails the MAC; a malformed MACed one
+      is invalid; the "on" digest binds it; the note's text and nothing when
+      off); MCP `autoapprove.test.ts` (the form says nothing when off and the
+      note when on, the result never; the phrase line in the human log and
+      `rdv contact pending` carry it; the transcript does not).
 
 ## Not implemented yet
 

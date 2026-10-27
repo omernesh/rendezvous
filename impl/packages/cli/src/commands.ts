@@ -47,6 +47,7 @@ import {
   autoApproveWarning,
   autoApprovedCounts,
   autoApproveKeptText,
+  autoApproveGrantNote,
   grantKeepingAutoApprove,
   parseUntil,
   scopeDigest,
@@ -919,7 +920,7 @@ export async function contactRequest({ home, out, values, positionals }: Ctx): P
 }
 
 export async function contactPending({ home, out }: Ctx): Promise<void> {
-  const { pending, candidates, contacts, overflows, evicted } = await withAgent(
+  const { pending, candidates, contacts, overflows, evicted, auto } = await withAgent(
     home,
     async (agent) => ({
       pending: agent.pendingRequests(),
@@ -927,6 +928,8 @@ export async function contactPending({ home, out }: Ctx): Promise<void> {
       contacts: agent.contacts(),
       overflows: agent.book.probeOverflows(),
       evicted: agent.book.state.pendingEvicted ?? 0,
+      // Shown with an inbound ask's phrase (text mode, the human's terminal): the contact is on auto-approve (issue #94).
+      auto: autoApproveStatus(home, subjectOf(agent)),
     }),
     { save: false },
   );
@@ -958,9 +961,13 @@ export async function contactPending({ home, out }: Ctx): Promise<void> {
   for (const c of candidates) out.emit(candidateView(c), candidateText(c) + phraseLine('candidate', c.grant.id));
   // Text mode only (shown is empty with --json): the assistant asked to let an existing contact do more, e.g. propose meetings.
   for (const c of contacts.filter((x) => shown.has(consentKey('inbound', x.peer)))) {
+    const note = autoApproveGrantNote(auto.get(c.peer));
     out.emit(
       { event: 'inbound-ask', ...contactView(c) },
-      `your assistant asks to grant contact ${contactText(c)}` + phraseLine('inbound', c.peer) + '\n  your agent also tells theirs (a reverse grant), so it can use these rights',
+      `your assistant asks to grant contact ${contactText(c)}` +
+        phraseLine('inbound', c.peer) +
+        '\n  your agent also tells theirs (a reverse grant), so it can use these rights' +
+        (note ? `\n  ${note}` : ''),
     );
   }
   for (const o of overflows) out.emit(overflowView(o), overflowText(o));

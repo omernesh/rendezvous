@@ -959,7 +959,12 @@ MAY set `auto_approve: "all"` on that contact, optionally with an expiry
   for what it covered and the new grant still allows; a capability the new
   grant adds is not covered until the owner turns the setting on for it.
   Coverage only shrinks: a capability that a narrowing removed is not
-  covered again when a later grant adds it back.
+  covered again when a later grant adds it back. The setting is bound to
+  each such grant change, so a copy stored before one does not hold again
+  once the grant is changed back. Before the owner approves a grant to a
+  contact on this setting, they are told it stays on and that looser limits
+  on what it covers are then approved without asking too; this is shown to
+  the owner only, never in text the agent's model reads first.
   Re-enabling is a new human decision. A setting whose times cannot be read, that was set in the
   future, or whose integrity cannot be checked approves nothing.
 - **Audit log.** Every action approved this way appends one line to an

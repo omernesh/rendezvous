@@ -123,6 +123,7 @@ import {
   autoApprovedCounts,
   type AutoApproveKept,
   type AutoApproveShown,
+  autoApproveGrantNote,
   checkOwnerSecret,
   grantKeepingAutoApprove,
   hasOwnerSecret,
@@ -1842,11 +1843,12 @@ export class RdvMcpServer {
   }
 
   private announceInboundPhrase(c: Contact, phrase: string, terms: ConsentTerms, changed = false): void {
+    const autoNote = autoApproveGrantNote(this.autoNow().get(c.peer)); // the human's log only (issue #94)
     this.humanLog(
       `your assistant asks to grant your contact ${c.peer} (${fingerprint(c.peer)}, ${describeLabel(c.label)}) more rights towards you: ${describeTerms(terms)}` +
         `${changed ? ' (the contact CHANGED since its last confirm phrase, which no longer works)' : ''}. ` +
         'Your agent also tells theirs, so it can use them (with "may propose meetings", it can propose a dinner to you). ' +
-        `If you want that, tell your assistant this confirm phrase: ${phrase}  ` +
+        `${autoNote ? `${autoNote} ` : ''}If you want that, tell your assistant this confirm phrase: ${phrase}  ` +
         `(or grant it yourself: rdv contact grant ${c.peer} --tier ${terms.tier} --home "${this.home.dir}"; otherwise ignore this and nothing changes)`,
     );
   }
@@ -4120,10 +4122,11 @@ export class RdvMcpServer {
     const peer = a.agent_id;
     const find = (agent: Agent): Contact | undefined =>
       isAgentId(peer) && Object.hasOwn(agent.book.state.contacts, peer) ? agent.book.contact(peer) : undefined;
-    const contact = await this.withAgent(async (agent) => {
+    const { contact, auto } = await this.withAgent(async (agent) => {
       const c = find(agent);
       if (!c) throw new ToolError(`no active contact ${safe(peer)} (a pending request is approved with request_id, a probe answer with grant_id)`);
-      return c;
+      // Display only: the form tells the human the contact is on auto-approve (issue #94); the result never says so first.
+      return { contact: c, auto: autoApproveGrantNote(autoApproveStatus(home, subjectOf(agent)).get(peer)) };
     });
     let tier: Tier = a.tier ?? defaultTier(contact.binding);
     let mayMeet = a.may_propose_meetings ?? true;
@@ -4164,7 +4167,8 @@ export class RdvMcpServer {
         `Rendezvous: let this contact do more towards you?\n\n${describeContact(contact)}\n\n` +
           `If approved: tier "${tier}", ${meetingWords(mayMeet, limits, 'MAY propose meetings to you (dinner negotiation)')}${invokeWords(invoke, limits)}, calendar shared as free/busy slots only, up to 100 messages a day. ` +
           'Nothing else may be invoked. Your agent also tells theirs, so it can use these rights. You can change the tier and the choices below, ' +
-          'including how often they may use each capability (going over declines that request only; far over revokes the contact).',
+          'including how often they may use each capability (going over declines that request only; far over revokes the contact).' +
+          (auto ? `\n\n${auto}` : ''),
         {
           approve: { type: 'boolean', title: 'Grant this contact these rights', default: false },
           tier: { type: 'string', title: 'Tier', enum: TIERS, default: tier },
@@ -4172,7 +4176,7 @@ export class RdvMcpServer {
           ...invokeField(invoke),
           // Meetings can be ticked on here, so their limits are always offered.
           ...limitFields(limitCaps(true, invoke), limits),
-        }, undefined, bindOf({ peer: contact.peer, grantId: contact.grantId, since: contact.since, scope: contact.inboundScope ?? null, binding: contact.binding, label: contact.label ?? null, granted: contact.inboundGranted ?? null }),
+        }, undefined, bindOf({ peer: contact.peer, grantId: contact.grantId, since: contact.since, scope: contact.inboundScope ?? null, stamp: contact.grantStamp ?? 0, binding: contact.binding, label: contact.label ?? null, granted: contact.inboundGranted ?? null }),
       );
       if (form?.kind === 'no') declined(form.why, `${what} was granted nothing more; nothing changed.`, { agent_id: safe(peer) });
       if (form?.kind === 'accept') {

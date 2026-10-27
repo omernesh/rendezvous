@@ -76,6 +76,16 @@ export function subjectOfState(state: AgentState): AutoApproveSubject {
 /** The contact's grant as it binds an entry: another grant (or a widened one) is another decision. */
 export const scopeDigest = (scope: GrantScope | null | undefined): string => sha('rdv1/auto-approve-scope', scope ?? null);
 
+/**
+ * Which of our human's grant changes the contact is at (Contact.grantStamp,
+ * issue #94): an entry stores it under the MAC, so an older autoapprove.json
+ * put back after a narrowing that was later widened again matches nothing.
+ * An entry without one (set before #94) holds only while the grant was never
+ * changed since (0).
+ */
+export const grantStamp = (c: Contact): number => c.grantStamp ?? 0;
+const validStamp = (v: unknown): boolean => v === undefined || (Number.isSafeInteger(v) && (v as number) >= 0);
+
 function macOf(secretKey: Uint8Array, body: Omit<AutoApproveEntry, 'mac'>): string {
   return createHmac('sha256', secretKey).update(`rdv1/auto-approve\0${stable(body)}`).digest('hex');
 }
@@ -151,7 +161,8 @@ export function checkAutoApprove(entry: AutoApproveEntry | undefined, subject: A
   if (subject.isBlocked(peer)) return { ok: false, reason: 'blocked' };
   const c = subject.contact(peer, now);
   if (!c) return { ok: false, reason: 'revoked' };
-  if (c.inboundGranted !== true || c.grantId !== entry.grantId || c.since !== entry.since || scopeDigest(c.inboundScope) !== entry.scope) {
+  if (!validStamp(entry.stamp)) return { ok: false, reason: 'invalid' };
+  if (c.inboundGranted !== true || c.grantId !== entry.grantId || c.since !== entry.since || scopeDigest(c.inboundScope) !== entry.scope || grantStamp(c) !== (entry.stamp ?? 0)) {
     return { ok: false, reason: 'grant-changed' };
   }
   if (subject.refused(peer)) return { ok: false, reason: 'fork' };
@@ -355,7 +366,7 @@ function keepAutoApprove(home: Home, subject: AutoApproveSubject, peer: string, 
   const e = before.entry;
   const scope = scopeDigest(c.inboundScope);
   // The same grant: nothing to rebind, and the entry (which held a moment ago) is left as it is.
-  if (c.grantId === e.grantId && c.since === e.since && scope === e.scope) return { ...kept, ended: false };
+  if (c.grantId === e.grantId && c.since === e.since && scope === e.scope && grantStamp(c) === (e.stamp ?? 0)) return { ...kept, ended: false };
   if (kept.ended) return kept;
   // Still the entry checked before the grant, under the passphrase record it was set under.
   let all: Record<string, AutoApproveEntry>;
@@ -375,6 +386,7 @@ function keepAutoApprove(home: Home, subject: AutoApproveSubject, peer: string, 
     grantId: c.grantId,
     since: c.since,
     scope,
+    stamp: grantStamp(c),
     owner: e.owner,
     covers: capabilities,
   };
@@ -402,6 +414,23 @@ export function autoApproveKeptText(peer: string, k: AutoApproveKept): string {
   const list = (xs: string[]) => xs.map((u) => clean(u)).join(', ');
   if (k.ended) return `auto-approve for ${clean(peer)} is off: the new grant allows nothing it covered`;
   return `auto-approve for ${clean(peer)} still covers ${list(k.capabilities)}` + (k.uncovered.length ? `; not covered (asks you as before): ${list(k.uncovered)}` : '');
+}
+
+/**
+ * For the human only, before they approve a grant to a contact on
+ * auto-approve (the grant's approval form, its confirm phrase in the terminal
+ * and the server log; never a tool result or description, issue #94): it
+ * stays on, and the grant's limits are then all that bounds what it covers.
+ * Empty when the contact is not on it.
+ */
+export function autoApproveGrantNote(shown: AutoApproveShown | undefined): string {
+  if (!shown || shown.capabilities.length === 0) return '';
+  const caps = shown.capabilities.map((u) => clean(u)).join(', ');
+  return (
+    `AUTO-APPROVE IS ON for this contact (${caps}${shown.until ? `, until ${shown.until}` : ', until you turn it off'}). ` +
+    'It stays on after this grant for what the grant still allows: those run without asking you under the limits set here, ' +
+    'so looser limits on them are approved without asking too. Anything this grant adds is not covered and asks you as before.'
+  );
 }
 
 // --- the owner's command (commands.ts) -------------------------------------------------
@@ -497,6 +526,7 @@ export function setAutoApprove(
     grantId: contact.grantId,
     since: contact.since,
     scope: scopeDigest(contact.inboundScope),
+    stamp: grantStamp(contact),
     owner,
     covers: capabilities,
   };
@@ -514,7 +544,7 @@ export function setAutoApprove(
  * changes between the form and the write refuses it.
  */
 export function autoApproveDigest(c: Contact, capabilities: string[], until: string | null, owner: string): string {
-  return sha('rdv1/auto-approve-consent', { peer: c.peer, label: c.label ?? null, grantId: c.grantId, since: c.since, scope: scopeDigest(c.inboundScope), mode: 'all', capabilities, until, owner });
+  return sha('rdv1/auto-approve-consent', { peer: c.peer, label: c.label ?? null, grantId: c.grantId, since: c.since, scope: scopeDigest(c.inboundScope), stamp: grantStamp(c), mode: 'all', capabilities, until, owner });
 }
 
 /** Turn it off (reduce-only: no confirmation). Inside the home lock. False when it was not on. */
@@ -636,6 +666,7 @@ export function allowAlways(
     grantId: contact.grantId,
     since: contact.since,
     scope: scopeDigest(contact.inboundScope),
+    stamp: grantStamp(contact),
     owner,
     covers,
   };
