@@ -547,9 +547,9 @@ function checkLabel(label: string | undefined): string | undefined {
  * allow: one checkbox naming them all, so what the human leaves checked is
  * what is granted. None asked, no field.
  */
-function invokeField(invoke: readonly string[]): Record<string, { type: 'boolean'; title: string; default: boolean }> {
+function invokeField(invoke: readonly string[]): Record<string, { type: 'boolean'; title: string; description: string; default: boolean }> {
   if (invoke.length === 0) return {};
-  return { allow_invoke: { type: 'boolean' as const, title: `They may also invoke: ${invoke.map((u) => safe(u)).join(', ')}`, default: true } };
+  return { allow_invoke: { type: 'boolean' as const, title: 'Allow these requests', description: `They may also invoke: ${invoke.map((u) => safe(u)).join(', ')}`, default: true } };
 }
 
 /** The capabilities the human left in the form: all asked for, or none when unchecked. */
@@ -560,7 +560,8 @@ function formInvoke(content: Record<string, unknown> | undefined, invoke: string
 function labelField(label: string | undefined) {
   return {
     type: 'string' as const,
-    title: 'Local label: how your assistant finds them ("tell …"); empty for none',
+    title: 'Local label',
+    description: 'How your assistant finds them ("tell …"); empty for none',
     maxLength: LABEL_MAX,
     default: label ?? '',
   };
@@ -764,20 +765,31 @@ function grantedLimits(limits: CapabilityLimits, mayMeet: boolean, invoke: reado
  * ("3/day", blank for none) and a max-open field, prefilled with what the
  * model proposes. Shown even when it proposes none, so the human can set them.
  */
+/** A capability URI as a short form-title word: its last path segment (with the one before a bare version), at most 22 characters. */
+function shortCapName(uri: string): string {
+  const parts = safe(uri).split(/[/:]/).filter(Boolean);
+  let n = parts.pop() ?? 'capability';
+  if (/^v\d+$/.test(n) && parts.length) n = `${parts.pop()}/${n}`;
+  return n.length > 22 ? `${n.slice(0, 21)}…` : n;
+}
+
 function limitFields(caps: readonly string[], limits: CapabilityLimits): Record<string, unknown> {
   const fields: Record<string, unknown> = {};
   caps.forEach((u, i) => {
     const name = u === MEETINGS_CAPABILITY ? 'Dinner proposals' : safe(u);
+    const short = u === MEETINGS_CAPABILITY ? name : shortCapName(u);
     const l = Object.hasOwn(limits, u) ? limits[u] : {};
     fields[`limit_frequency_${i}`] = {
       type: 'string',
-      title: `${name}: at most how many per minute, hour or day (e.g. 3/day); blank for no limit of its own`,
+      title: `${short}: rate limit`,
+      description: `${name}: at most how many per minute, hour or day (e.g. 3/day); blank for no limit of its own`,
       maxLength: 32,
       default: l.max_frequency ?? '',
     };
     fields[`limit_open_${i}`] = {
       type: 'integer',
-      title: `${name}: at most how many open at once (1 to ${LIMIT_MAX_OPEN}; 4 when not set)`,
+      title: `${short}: max open`,
+      description: `${name}: at most how many open at once (1 to ${LIMIT_MAX_OPEN}; 4 when not set)`,
       minimum: 1,
       maximum: LIMIT_MAX_OPEN,
       ...(l.max_open !== undefined ? { default: l.max_open } : {}),
@@ -2879,8 +2891,8 @@ export class RdvMcpServer {
       `Rendezvous: turn auto-approve ON for this contact?\n${clean(autoApproveWarning(seen.contact, seen.capabilities, until))}\n` +
         'To turn it on, type your owner passphrase below. Only the Rendezvous server sees it: your assistant never does. Never type it into the chat.',
       {
-        approve: { type: 'boolean', title: 'Turn auto-approve on for this contact, as shown above', default: false },
-        passphrase: { type: 'string', title: 'Your owner passphrase (only the Rendezvous server sees it)', minLength: 1, maxLength: OWNER_SECRET_MAX },
+        approve: { type: 'boolean', title: 'Turn it on for this contact', description: 'Standing approval for this contact, as shown above.', default: false },
+        passphrase: { type: 'string', title: 'Your owner passphrase', description: 'Only the Rendezvous server sees it.', minLength: 1, maxLength: OWNER_SECRET_MAX },
       },
       ['approve', 'passphrase'],
     );
@@ -2965,8 +2977,8 @@ export class RdvMcpServer {
         'A forgotten passphrase cannot be recovered. Only the Rendezvous server sees what you type here: your assistant never does.',
       {
         approve: { type: 'boolean', title: 'Write this backup', default: false },
-        passphrase: { type: 'string', title: 'Backup passphrase (only the Rendezvous server sees it)', minLength: 1, maxLength: BACKUP_PASSPHRASE_MAX },
-        passphrase_again: { type: 'string', title: 'The same passphrase again', minLength: 1, maxLength: BACKUP_PASSPHRASE_MAX },
+        passphrase: { type: 'string', title: 'Backup passphrase', description: 'Only the Rendezvous server sees it.', minLength: 1, maxLength: BACKUP_PASSPHRASE_MAX },
+        passphrase_again: { type: 'string', title: 'Passphrase again', description: 'The same passphrase, once more.', minLength: 1, maxLength: BACKUP_PASSPHRASE_MAX },
       },
       ['approve', 'passphrase', 'passphrase_again'],
     );
@@ -3024,7 +3036,7 @@ export class RdvMcpServer {
         'Your contacts are told it was restored, so your conversations go on. Type the passphrase you chose for this backup; only the Rendezvous server sees it.',
       {
         approve: { type: 'boolean', title: 'Restore this agent here', default: false },
-        passphrase: { type: 'string', title: 'Backup passphrase (only the Rendezvous server sees it)', minLength: 1, maxLength: BACKUP_PASSPHRASE_MAX },
+        passphrase: { type: 'string', title: 'Backup passphrase', description: 'Only the Rendezvous server sees it.', minLength: 1, maxLength: BACKUP_PASSPHRASE_MAX },
       },
       ['approve', 'passphrase'],
     );
