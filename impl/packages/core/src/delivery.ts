@@ -23,7 +23,20 @@ export interface ReceiptTiming {
   retryAfterMs: number;
   /** Republishes per envelope; after the last one has had its wait, it is reported as not confirmed. */
   maxRetries: number;
+  /** Receipts a contact's duplicates may earn per 24 h (issue #113); fresh envelopes are acked regardless. Default `REACK_DAILY_CAP`. */
+  reackPerDay?: number;
 }
+
+/**
+ * Duplicate-triggered receipts per contact per 24 h (issue #113). A lost
+ * receipt costs the sender at most `maxRetries` (4) republishes, each of which
+ * wants one re-ack, so 48 answers a dozen lost receipts per contact per day,
+ * far more than a healthy link loses. Without the cap the `retryAfterMs / 2`
+ * window alone lets someone replaying a contact's old envelopes make us
+ * publish 2,880 receipts a day to that contact.
+ */
+export const REACK_DAILY_CAP = 48;
+export const REACK_DAY_MS = 24 * 60 * 60_000;
 
 /** 60 s, 2, 4, 8 min, then 16 min more: reported after about 31 minutes, far inside the 48 h ttl. */
 export const RECEIPT_TIMING: Readonly<ReceiptTiming> = Object.freeze({
@@ -32,6 +45,7 @@ export const RECEIPT_TIMING: Readonly<ReceiptTiming> = Object.freeze({
   ackJitterMs: 3_000,
   retryAfterMs: 60_000,
   maxRetries: 4,
+  reackPerDay: REACK_DAILY_CAP,
 });
 
 /** An envelope of ours the peer has not confirmed yet. */
@@ -65,11 +79,15 @@ export interface PeerDelivery {
   ack_sent?: { at: string; seq: number };
   /** When a duplicate last earned another receipt: at most one per `retryAfterMs / 2` (review of #112). */
   reack_at?: string;
+  /** Duplicate-triggered receipts in the current 24 h window: since when (ISO) and how many (at most `reackPerDay`, issue #113). */
+  reack_day?: { since: string; n: number };
   /**
    * The peer's receipts dated (`created`, its clock) at or before this are
    * replays from before it restored or before this contact began, and are
    * ignored (review of #112): such a receipt would vouch for envelopes the
-   * peer, as it is now, never got.
+   * peer, as it is now, never got. Never lower than our own receipt of the
+   * stamp it came from minus `MAX_CLOCK_SKEW_MS`, so a contact whose clock is
+   * far behind cannot lower it (issue #113).
    */
   ack_floor?: string;
   /** When a reconnect last republished to this peer (one per `retryAfterMs`). */
@@ -89,6 +107,7 @@ export function receiptTimingOf(t: Partial<ReceiptTiming> | undefined): ReceiptT
     ackJitterMs: pick(t?.ackJitterMs, RECEIPT_TIMING.ackJitterMs, 0),
     retryAfterMs: pick(t?.retryAfterMs, RECEIPT_TIMING.retryAfterMs, 1),
     maxRetries: Math.floor(pick(t?.maxRetries, RECEIPT_TIMING.maxRetries, 0)),
+    reackPerDay: Math.floor(pick(t?.reackPerDay, REACK_DAILY_CAP, 0)),
   };
 }
 

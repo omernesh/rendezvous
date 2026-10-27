@@ -781,3 +781,151 @@ describe('re-review of #112', () => {
     expect(r.ephemeral.filter((ev) => ev.pubkey === rx.carrierPubkey).length).toBeGreaterThan(0);
   });
 });
+
+describe('issue #113', () => {
+  /**
+   * John never confirmed Omer's request (Omer was no contact yet), so its first copy earns the receipt it never had,
+   * outside any re-ack count (review H1 above). Spend that first, and let John's re-ack window pass.
+   */
+  async function warmUp(r: TestRelay, omer: Agent, john: Agent, old: Envelope) {
+    const acks = () => between(r, john, omer).filter((e) => e.seq === 0).length;
+    const before = acks();
+    const t = new NostrTransport({ key: generateKey(), relays: [r.url], maxEventsPerSecond: 1000, burst: 1000 });
+    open.push(t);
+    await t.sendEnvelope(old, [r.url]);
+    await until(() => acks() > before);
+    await settle(250);
+    delete (john as unknown as { delivery: Record<string, PeerDelivery> }).delivery[omer.id].reack_day;
+  }
+
+  /**
+   * Omer, restored from a backup taken after m1 and before m2; John's resend of m2 is lost for now. `slow`: the
+   * contact began two hours ago, m1 and m2 went 30 minutes ago (so Omer's last receipt is that old), and the
+   * restored Omer's clock is an hour behind, so his notice says an hour ago. Everything runs on a fake clock
+   * that moves with real time; only the stamps differ.
+   */
+  async function restoredOmer(r: TestRelay, slow: boolean) {
+    const real = Date.now();
+    if (slow) vi.useFakeTimers({ toFake: ['Date'], now: real - 2 * 3_600_000, shouldAdvanceTime: true });
+    try {
+      const { agent: omer } = make([r.url]);
+      const { agent: john, pipe } = make([r.url]);
+      await contacts(omer, john);
+      if (slow) vi.setSystemTime(real - 30 * 60_000);
+      const m1 = await john.send(omer.id, { type: 'note', text: 'm1' });
+      await until(() => john.deliveryOf(omer.id, m1.seq) === 'delivered');
+      const omerBackup = structuredClone(omer.toJSON());
+      const m2 = await john.send(omer.id, { type: 'note', text: 'm2' });
+      await until(() => john.deliveryOf(omer.id, m2.seq) === 'delivered');
+      const oldAck = between(r, omer, john).filter((e) => e.seq === 0).pop()!;
+      omer.close();
+      for (let i = r.events.length - 1; i >= 0; i--) {
+        const e = JSON.parse(r.events[i].content) as Envelope;
+        if (e.from === john.id && e.seq >= m2.seq) r.events.splice(i, 1); // retention ran out for m2
+      }
+      if (slow) vi.setSystemTime(real);
+      const pipe2 = new LossyTransport(new NostrTransport({ key: omer.key, relays: [r.url], maxEventsPerSecond: 1000, burst: 1000, reconnectBaseMs: 30, retryBaseMs: 20 }));
+      const omer2 = Agent.fromJSON(restoredAgentState(omerBackup, { backupCreated: new Date().toISOString() }), () => pipe2);
+      omer2.receiptTiming = FAST;
+      open.push(omer2);
+      omer2.start();
+      await settle(300);
+      pipe.lose = true;
+      // The notice is sealed on Omer's clock and published as it is; John gets it on his own.
+      pipe2.lose = true;
+      if (slow) vi.setSystemTime(Date.now() - 3_600_000);
+      await omer2.sendRestoredNotices();
+      if (slow) vi.useRealTimers();
+      pipe2.lose = false;
+      const restored = new Promise((res) => john.once('contact-restored', res));
+      for (const e of pipe2.lost.splice(0)) await pipe2.real.sendEnvelope(e, [r.url]);
+      await restored;
+      await until(() => john.deliveryOf(omer.id, m2.seq) === 'pending');
+      return { omer2, john, pipe, oldAck, m2 };
+    } finally {
+      vi.useRealTimers();
+    }
+  }
+
+  it('a contact restoring onto a clock far behind cannot let a pre-restore receipt through (floor)', async () => {
+    const r = await relay();
+    const { omer2, john, oldAck, m2 } = await restoredOmer(r, true);
+    omer2.sendReceipts = false; // the restored Omer never confirms, so only the replay could
+    const floor = Date.parse(john.toJSON().delivery![omer2.id].ack_floor!);
+    expect(floor).toBeGreaterThan(Date.now() - 6 * 60_000); // our receipt time minus the skew, not the hour-old stamp
+    // The replay is 30 minutes old: newer than the notice says, so a floor from the notice alone let it in.
+    expect(Date.parse(oldAck.created)).toBeGreaterThan(Date.now() - 3_600_000);
+    expect(Date.parse(oldAck.created)).toBeLessThan(floor);
+    const dropped = events(john, 'dropped');
+    const attacker = new NostrTransport({ key: generateKey(), relays: [r.url], maxEventsPerSecond: 1000, burst: 1000 });
+    open.push(attacker);
+    await attacker.sendEnvelope(oldAck, [r.url]);
+    await until(() => dropped.some(([reason]) => reason === 'ack replay from before the floor'));
+    expect(john.deliveryOf(omer2.id, m2.seq)).toBe('pending');
+    // Persisted with the delivery state.
+    expect(Date.parse((john.toJSON().delivery as Record<string, PeerDelivery>)[omer2.id].ack_floor!)).toBe(floor);
+  });
+
+  it('a contact restoring with a normal clock still gets its new receipts taken (floor)', async () => {
+    const r = await relay();
+    const { omer2, john, pipe, m2 } = await restoredOmer(r, false);
+    pipe.lose = false;
+    // Omer gets m2 again from John's next retry and confirms it: his new receipt is past the floor.
+    await until(() => john.deliveryOf(omer2.id, m2.seq) === 'delivered', 15_000);
+  });
+
+  it('duplicate-triggered receipts are capped per contact per day; fresh envelopes are still confirmed (cap)', async () => {
+    const r = await relay();
+    const { agent: omer } = make([r.url]);
+    const { agent: john } = make([r.url]);
+    await contacts(omer, john);
+    await until(() => john.deliveryStatus(omer.id).waiting === 0 && omer.deliveryStatus(john.id).waiting === 0);
+    const old = between(r, omer, john).find((e) => e.seq > 0)!;
+    const acks = () => between(r, john, omer).filter((e) => e.seq === 0).length;
+    const replay = async () => {
+      const t = new NostrTransport({ key: generateKey(), relays: [r.url], maxEventsPerSecond: 1000, burst: 1000 });
+      open.push(t);
+      await t.sendEnvelope(old, [r.url]);
+    };
+    await warmUp(r, omer, john, old);
+    john.receiptTiming = { ...FAST, retryAfterMs: 2, reackPerDay: 3 }; // a 1 ms window: only the cap holds them back
+    const before = acks();
+    for (let i = 0; i < 6; i++) {
+      await replay();
+      await settle(250); // past the quiet period and the minimum interval: each re-ack would go out on its own
+    }
+    expect(acks() - before).toBe(3);
+    expect(john.toJSON().delivery?.[omer.id]?.reack_day?.n).toBe(3); // persisted, one small record per contact
+    // A fresh envelope is confirmed as always, cap or not.
+    const env = await omer.send(john.id, { type: 'note', text: 'fresh' });
+    await until(() => omer.deliveryOf(john.id, env.seq) === 'delivered');
+    expect(john.toJSON().delivery?.[omer.id]?.reack_day?.n).toBe(3);
+  });
+
+  it('the daily count starts over after 24 h, and a bad stored count does not throw (cap)', async () => {
+    const r = await relay();
+    const { agent: omer } = make([r.url]);
+    const { agent: john } = make([r.url]);
+    await contacts(omer, john);
+    await until(() => john.deliveryStatus(omer.id).waiting === 0 && omer.deliveryStatus(john.id).waiting === 0);
+    const old = between(r, omer, john).find((e) => e.seq > 0)!;
+    await warmUp(r, omer, john, old);
+    john.receiptTiming = { ...FAST, retryAfterMs: 2, reackPerDay: 1 };
+    const d = (john as unknown as { delivery: Record<string, PeerDelivery> }).delivery[omer.id];
+    d.reack_day = { since: new Date(Date.now() - 25 * 3_600_000).toISOString(), n: 1 }; // yesterday's window, spent
+    const acks = () => between(r, john, omer).filter((e) => e.seq === 0).length;
+    const before = acks();
+    const t = new NostrTransport({ key: generateKey(), relays: [r.url], maxEventsPerSecond: 1000, burst: 1000 });
+    open.push(t);
+    await t.sendEnvelope(old, [r.url]);
+    await until(() => acks() - before === 1);
+    expect(d.reack_day?.n).toBe(1);
+    expect(Date.parse(d.reack_day!.since)).toBeGreaterThan(Date.now() - 60_000);
+    d.reack_day = { since: 'garbage', n: Number.NaN } as unknown as PeerDelivery['reack_day'];
+    await settle(250);
+    const t2 = new NostrTransport({ key: generateKey(), relays: [r.url], maxEventsPerSecond: 1000, burst: 1000 });
+    open.push(t2);
+    await t2.sendEnvelope(old, [r.url]);
+    await until(() => acks() - before === 2);
+  });
+});

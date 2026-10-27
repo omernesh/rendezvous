@@ -3784,7 +3784,8 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       first seq tracked: an older one is never called delivered), `pending`
       (seq, hash, first sent, tries, last republish, `unconfirmed`,
       `flushes`), the receipt we owe (`ack_owed`, jitter included,
-      `ack_sent`), the last re-ack (`reack_at`), the replay floor (`ack_floor`) and the last
+      `ack_sent`), the last re-ack (`reack_at`) and the day's re-ack count
+      (`reack_day`: start and count), the replay floor (`ack_floor`) and the last
       reconnect flush (`flushed_at`). No due times are stored: they come from
       `RECEIPT_TIMING` (60 s doubling, 4 retries, reported after about 31
       minutes), so a host may shorten them without migrating state. Pending
@@ -3799,6 +3800,20 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       whoever re-publishes the envelope chooses; it also compared seconds
       with milliseconds. A restart that re-reads two days of events sends at
       most one receipt per contact.
+    - **Daily re-ack cap** (issue #113). The window alone let anyone replaying
+      a contact's old envelopes make us publish one receipt to that contact
+      every 30 s, 2,880 a day, for as long as they liked (no chain state, only
+      relay rate limits). Now at most `REACK_DAILY_CAP` (48) duplicate-
+      triggered receipts per contact per 24 h (`reack_day`, one `{ since, n }`
+      per contact; a new window starts when it ran out, our clock went back,
+      or the stored one is malformed). 48 because a lost receipt costs the
+      sender at most `maxRetries` (4) republishes, so it answers a dozen lost
+      receipts per contact per day. Fresh envelopes are acked whatever the
+      count, and a duplicate that arrives while a receipt is already owed
+      neither counts nor waits (the owed one covers it). `ReceiptTiming.
+      reackPerDay` overrides it (tests). A contact that loses more than a
+      dozen receipts a day sees its later messages as "not confirmed" until
+      the window ends or a fresh envelope of its is acked.
     - **Replayed receipts** (re-review H-NEW-1). A receipt has a 48 h ttl,
       so an old one can be replayed. `delivery.ack_floor` (persisted, the
       contact's clock): receipts not dated after it are dropped ("ack replay
@@ -3807,7 +3822,16 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       gone, and what we resend must not be confirmed by them) and, when a
       contact period begins, from the request's `ts` (we granted) or the
       grant envelope's `created` (it granted); a revoke, ours or theirs,
-      drops the delivery state.
+      drops the delivery state. Each of these stamps is the contact's word,
+      so the floor is never lower than our own receipt of it minus
+      `MAX_CLOCK_SKEW_MS` (5 min, `receiptFloor`, issue #113): a contact that
+      restores onto a clock an hour slow used to set the floor an hour back
+      and let its old copy's receipts from that hour through. The price: a
+      contact whose clock is more than 5 minutes slow has its new receipts
+      dropped until its clock passes the floor (its messages show "not
+      confirmed", never "failed"), and a notice or grant we read late from a
+      relay's catch-up drops the contact's receipts from before we read it;
+      the sender's retries and our re-acks then confirm it again.
     - **Republishing dates** (found fixing the flaky test). A republish
       replaces the stored addressable event (same `d`), and NIP-01 keeps the
       older of two in the same second and passes the newer to nobody, so a

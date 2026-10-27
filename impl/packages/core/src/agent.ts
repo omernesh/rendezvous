@@ -36,6 +36,8 @@ import {
   deliveryOf,
   deliverySummary,
   type PeerDelivery,
+  REACK_DAILY_CAP,
+  REACK_DAY_MS,
   RECEIPT_TIMING,
   type ReceiptTiming,
   receiptTimingOf,
@@ -51,6 +53,7 @@ import {
   type RefusedChannel,
   envelopeHash,
   isExpired,
+  MAX_CLOCK_SKEW_MS,
   openEnvelope,
   sealEnvelope,
 } from './envelope.js';
@@ -107,6 +110,16 @@ import type { MirrorOptions, MirrorReport, Transport } from './transport/transpo
 const OUTBOX_LIMIT = 64;
 /** Gap buffer bounds: per peer (OUTBOX_LIMIT envelopes) and across peers. */
 const BUFFER_PEER_LIMIT = 16;
+
+/**
+ * The floor for a contact's receipts set from a stamp of its own (`created`
+ * of a restore notice, a request's `ts`, a grant's `created`): that stamp,
+ * but never earlier than our own receipt of it minus `MAX_CLOCK_SKEW_MS`, so
+ * a contact whose clock is far behind cannot lower it (issue #113).
+ */
+function receiptFloor(stamp: string, now = Date.now()): string {
+  return new Date(Math.max(parseTimestamp(stamp) ?? Number.NEGATIVE_INFINITY, now - MAX_CLOCK_SKEW_MS)).toISOString();
+}
 /** The scope the owner grants when it doesn't pick one. */
 /** The scope the owner grants when it doesn't pick one: meetings, and no other capability (§5.3). */
 export const DEFAULT_GRANT_SCOPE: Readonly<GrantScope> = Object.freeze({
@@ -1098,7 +1111,7 @@ export class Agent extends EventEmitter<AgentEvents> {
    * clock, `since` its own request or grant) is ignored (review of #112).
    */
   private newContactPeriod(peer: string, since: string): void {
-    this.delivery[peer] = { acked: 0, pending: [], ...(parseTimestamp(since) === null ? {} : { ack_floor: since }) };
+    this.delivery[peer] = { acked: 0, pending: [], ack_floor: receiptFloor(since) };
   }
 
   /** Delivery to one contact as its owner sees it: confirmed up to, waiting, not confirmed. */
@@ -1131,7 +1144,9 @@ export class Agent extends EventEmitter<AgentEvents> {
    * which (the carrier's timestamp is the publisher's word, review of #112).
    * So it earns another receipt at most once per `retryAfterMs / 2` per peer,
    * a window that never runs out: the sender's retries are further apart,
-   * and a receipt costs no chain state, so replays cannot use up a budget.
+   * and a receipt costs no chain state. On top, at most `reackPerDay` such
+   * receipts per peer per 24 h (issue #113), so replays cannot make us
+   * publish without end; fresh envelopes are acked whatever the count.
    */
   private oweAck(env: Envelope, payload: Payload, duplicate = false): void {
     if (payload.type === ACK_TYPE || !this.sendReceipts) return;
@@ -1145,8 +1160,14 @@ export class Agent extends EventEmitter<AgentEvents> {
     if (duplicate) {
       if (env.seq > ch.inSeq) return; // not something we hold (a replay below a re-sync floor)
       if (sent && sent.seq >= env.seq) {
+        if (d.ack_owed !== undefined) return; // the receipt already owed covers it
         const last = d.reack_at === undefined ? Number.NEGATIVE_INFINITY : Date.parse(d.reack_at);
         if (now - last < this.receiptTiming.retryAfterMs / 2) return;
+        const since = d.reack_day === undefined ? Number.NaN : Date.parse(d.reack_day.since);
+        // A new 24 h window when there is none, it ran out, or our clock went back past its start.
+        const day = Number.isFinite(since) && since <= now && now - since < REACK_DAY_MS && Number.isSafeInteger(d.reack_day?.n) ? d.reack_day! : { since: new Date(now).toISOString(), n: 0 };
+        if (day.n >= (this.receiptTiming.reackPerDay ?? REACK_DAILY_CAP)) return;
+        d.reack_day = { since: day.since, n: day.n + 1 };
         d.reack_at = new Date(now).toISOString();
       }
     } else if (sent && sent.seq >= ch.inSeq) return;
@@ -1746,7 +1767,9 @@ export class Agent extends EventEmitter<AgentEvents> {
       const d = this.peerDelivery(from);
       d.acked = Math.min(d.acked, inSeq);
       // Its receipts from before this notice speak for the copy it lost: a relay replay of one must not confirm what we resend.
-      if (!(d.ack_floor !== undefined && (parseTimestamp(d.ack_floor) ?? 0) >= (created ?? 0))) d.ack_floor = env.created;
+      // Dated on its clock, but never more than the skew before we got it, so a clock far behind cannot lower it (issue #113).
+      const ackFloor = receiptFloor(env.created);
+      if (!(d.ack_floor !== undefined && (parseTimestamp(d.ack_floor) ?? 0) >= (parseTimestamp(ackFloor) ?? 0))) d.ack_floor = ackFloor;
       for (const e of resend) {
         if (!d.pending.some((p) => p.seq === e.seq)) d.pending.push({ seq: e.seq, hash: envelopeHash(e), sent: now.toISOString(), tries: 0 });
       }
