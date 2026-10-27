@@ -109,7 +109,7 @@ export function approvalPage(opts: { item: PendingApproval; csrf: string; messag
   const approveTitle = typeof p.form.properties.approve?.title === 'string' ? p.form.properties.approve.title : 'Approve';
   const fields = Object.entries(p.form.properties)
     .filter(([k]) => k !== 'approve')
-    .map(([k, f]) => field(p, k, f))
+    .map(([k, f]) => field(p, k, f) + (typeof f.description === 'string' && f.description ? `<p class="muted hint">${e(f.description)}</p>` : ''))
     .join('');
   return layout(
     'Approve?',

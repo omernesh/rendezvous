@@ -252,14 +252,14 @@ describe('rdv_grant agent_id: grant an existing contact more (issue #1)', () => 
   it('invoke by form: the form names the capabilities, and unchecking them grants none', async () => {
     const h: Human = { forms: [] };
     const { omer, john, o, j } = await connected({ omer: h, john: { forms: [] } });
-    let schema: { properties?: Record<string, { title?: string }> } | undefined;
+    let schema: { properties?: Record<string, { title?: string; description?: string }> } | undefined;
     h.inbound = (params) => {
       schema = params.requestedSchema as typeof schema;
       return { action: 'accept', content: { approve: true, tier: 'friend', allow_invoke: false } };
     };
     const granted = await ok(omer, 'rdv_grant', { agent_id: j.agent_id, invoke: [REVIEW] });
     expect(h.forms[0]).toContain(`may also invoke: ${REVIEW}`);
-    expect(schema?.properties?.allow_invoke?.title).toContain(REVIEW);
+    expect(schema?.properties?.allow_invoke?.description).toContain(REVIEW);
     expect(Object.keys(granted.scope.invoke)).not.toContain(REVIEW);
     const rev = await waitEvent(john, (e) => e.type === 'reverse_grant' && e.peer === o.agent_id, 'the reverse grant', 10_000);
     expect(rev.invoke).not.toContain(REVIEW);
@@ -406,7 +406,7 @@ describe('rdv_grant limits: per-capability limits from MCP (issue #63), enforced
   it('by form: every limit is a field the human can change or clear, and what they leave is what is granted', async () => {
     const h: Human = { forms: [] };
     const { omer, j } = await connected({ omer: h, john: { forms: [] } });
-    let schema: { properties?: Record<string, { title?: string; default?: unknown; type?: string }> } | undefined;
+    let schema: { properties?: Record<string, { title?: string; description?: string; default?: unknown; type?: string }> } | undefined;
     h.inbound = (params) => {
       schema = params.requestedSchema as typeof schema;
       return { action: 'accept', content: { approve: true, tier: 'friend', limit_frequency_0: '2/hour', limit_open_0: 3, limit_frequency_1: '' } };
@@ -417,7 +417,7 @@ describe('rdv_grant limits: per-capability limits from MCP (issue #63), enforced
     expect(schema?.properties?.limit_frequency_0?.title).toContain('Dinner proposals');
     expect(schema?.properties?.limit_open_0).toMatchObject({ type: 'integer' });
     expect(schema?.properties?.limit_frequency_1).toMatchObject({ default: '5/day' });
-    expect(schema?.properties?.limit_frequency_1?.title).toContain(REVIEW);
+    expect(schema?.properties?.limit_frequency_1?.description).toContain(REVIEW);
     // The human's answer, not the model's proposal: meetings limited, review's frequency cleared.
     expect(granted.scope.invoke[MEETINGS]).toEqual({ max_frequency: '2/hour', max_open: 3 });
     expect(granted.scope.invoke[REVIEW]).toEqual({});
