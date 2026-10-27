@@ -27,11 +27,14 @@ machine-readable output.
 
 Pick the recipient by the contact's `label`, never by an address its card
 claims, and show your user the fingerprint before the first message. Only
-the user sets a label: with `--label` when they approve, or with
-`rdv contact label` in their own terminal (never run it yourself).
+the user sets a label: with `--label` when they approve, with the `rdv_label`
+tool (an approval form), or with `rdv contact label` in their own terminal
+(never run it yourself).
 
 `rdv init` without `--force` refuses to replace an existing agent; that is
-what you want. Don't start `rdv listen` yourself: it would stay running in
+what you want. Replacing one is the user's call: `rdv_init` with `replace:
+true` opens an approval form (what is lost, last backup, a backup offered
+first, last 4 characters of the fingerprint to type). Don't start `rdv listen` yourself: it would stay running in
 your shell. The user can run it in a terminal of their own.
 
 ## Human only
@@ -48,6 +51,11 @@ or without `--json`): `rdv contact grant`, `rdv contact confirm`,
 `rdv listen --auto-grant` and `rdv listen --auto-confirm`. Use
 `rdv_pending_requests`, `rdv_negotiate` (action `status`), `rdv_task`
 (action `list`), `rdv_file` (action `list`), `rdv_group` (action `list`) and `rdv_relays` instead.
+For the settings among them there are tools that end in an approval form:
+`rdv_label` (`contact label`), `rdv_owner_passphrase` (`owner-secret set`),
+`rdv_resync` (`contact resync`, `group resync`), `rdv_file` "direct-transfer"
+(`file direct-transfer`) and `rdv_init` with `replace` (`init --force`). The
+CLI is the fallback when the client shows no forms.
 
 ## Files
 

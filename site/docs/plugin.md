@@ -49,7 +49,10 @@ What it contains:
 
   **Auto-approve and your owner passphrase** (issues #47, #44). Turning
   auto-approve on asks for a passphrase you set yourself with
-  `rdv owner-secret set`, in your own terminal. You type it either in your
+  `rdv_owner_passphrase` (ask Claude to set an owner passphrase; you type it
+  twice into an approval form, and only the Rendezvous server sees it), or
+  `rdv owner-secret set` in your own terminal. Setting one turns auto-approve off
+  for every contact. You type it either in your
   own terminal (`rdv contact auto-approve <contact> all`) or, when you ask
   Claude to turn it on, into the approval form `rdv_auto_approve` opens: the
   form shows the contact, its fingerprint, what it covers and until when,
@@ -61,8 +64,8 @@ What it contains:
   from stdin; it is never echoed or printed, and only a scrypt hash is kept
   (`owner-secret.json`, mode 600); three wrong answers lock it for a minute,
   then twice as long after each further miss. `rdv init` in a terminal
-  offers to set it, and so does `/rdv-onboarding` (it asks you to run the
-  command in your own terminal). The first passphrase is trust on first
+  offers to set it, and so does `/rdv-onboarding` (it calls
+  `rdv_owner_passphrase` and opens the form). The first passphrase is trust on first
   use: it is audited, and `rdv whoami` and `rdv_status` show when it was
   set; if that wasn't you, run `rdv owner-secret reset` in your own
   terminal (refused while locked; it turns every auto-approve off and only
@@ -111,12 +114,28 @@ type the passphrase. Your contacts are told the agent was restored, so your
 conversations go on with no resync. `rdv backup` and `rdv restore` are
 yours, in your own terminal; the hook refuses them for Claude.
 
+Other settings are chat tools too, each finished by an approval form that
+only you answer (Claude never does; there is no confirm phrase for them):
+"rename this contact" (`rdv_label`), "set or change my owner passphrase"
+(`rdv_owner_passphrase`), "take John's messages again" after a fork or
+rollback (`rdv_resync`, for a contact, a frozen group or a muted member; check
+with the person first), "allow direct transfers" (`rdv_file` "direct-transfer";
+turning it off needs no form), and "start over with a new identity"
+(`rdv_init` with `replace`: the form shows what you lose, offers a backup
+first and asks you to type the last 4 characters of the fingerprint). Or in
+your own terminal: `rdv contact label`, `rdv owner-secret set`, `rdv contact
+resync` / `rdv group resync`, `rdv file direct-transfer on|off`, `rdv init
+--force`. Still terminal-only for now: the owner passphrase reset
+(`rdv owner-secret reset`), gateway administration, and the always-on
+listener (`rdv listen`).
+
 Sending: Claude picks the recipient by its `local_label`, never by an address
 the other agent's card claims, and shows you the fingerprint before the first
 message. Only you set a label: it is part of what you approve (the form shows
 it next to the fingerprint and you can change it; a confirm phrase approves
-only the label it was shown with), or you name a contact yourself with
-`rdv contact label <agent-id> <label>` in your own terminal. A card found by
+only the label it was shown with), or you rename a contact by asking Claude
+(`rdv_label` opens a form with the current name), or in your own terminal with
+`rdv contact label <agent-id> <label>`. A card found by
 address is only a claim, so it never labels a contact.
 
 Approving a contact: Claude calls `rdv_grant`, and Claude Code shows you an

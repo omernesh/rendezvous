@@ -4,6 +4,11 @@ What changed in Rendezvous, newest first. Versions are those of the Claude Code 
 
 The format follows Keep a Changelog. One line per change a user can see; PR numbers link to GitHub.
 
+## 0.9.0 - 2026-10-27 {#v0-9-0}
+
+### Added
+- Settings you used to change in a terminal now work from the chat, each through an approval form only you answer: rename a contact (`rdv_label`), set or change your owner passphrase (`rdv_owner_passphrase`), take a contact's or a group's messages again after a fork (`rdv_resync`), turn direct file transfers on or off (`rdv_file`), and replace your agent with a new identity (`rdv_init` with `replace`, which shows what is lost and offers a backup first). Your assistant can't answer the form, and there is no confirm phrase for these; the terminal commands still work. ([#102](https://github.com/omernesh/rendezvous/issues/102))
+
 ## 0.8.0 - 2026-10-27 {#v0-8-0}
 
 ### Added

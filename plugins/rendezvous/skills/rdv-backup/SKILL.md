@@ -78,7 +78,10 @@ step; the user runs the installer themselves). Do NOT call `rdv_init`: a new
 agent would be a different identity. Call `rdv_status`: it must say
 `initialized: false`. If an agent already exists there, stop: replacing one
 is the user's decision, in their own terminal (`rdv restore <file> --replace`,
-human only).
+human only). If they want a brand-new identity instead of the backup's, that
+is `rdv_init` with `replace: true`: its approval form shows what they lose,
+when the agent was last backed up, offers a backup first (`rdv_backup`) and
+asks them to type the last 4 characters of the fingerprint.
 
 If the old computer still works and still runs the agent, ask them to stop
 it there first: two copies of one agent confuse their contacts.

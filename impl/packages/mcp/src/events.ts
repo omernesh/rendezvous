@@ -374,7 +374,7 @@ export function toModelEvent(e: Raw, negotiating: boolean): Omit<McpEvent, 'n' |
             : `${who(e.peer)} restored its agent from a backup; its messages to this agent continue from here.`,
         next_step:
           e.pending_resync === true
-            ? 'Tell your user. Two copies of that agent may be running. Only they can accept its chain again, after checking with that person directly, in their own terminal; never do it for them.'
+            ? 'Tell your user. Two copies of that agent may be running. Only they can accept its chain again, after checking with that person directly: rdv_resync with this agent_id, when they ask (an approval form only they answer), or in their own terminal; never do it for them.'
             : 'Tell your user in plain language. If they did not expect it, they should check with that person directly: whoever holds a backup and its passphrase holds that agent. Nothing they approved changed.',
       };
     // Our own restore: a contact confirmed our notice.
@@ -509,7 +509,7 @@ export function toModelEvent(e: Raw, negotiating: boolean): Omit<McpEvent, 'n' |
         signers: ids((e.frozen as Record<string, unknown> | undefined)?.signers, 4),
         next_step:
           "The group's admins signed two different member lists for the same step (one restored an old backup or lies, or two changed the group at once). Its membership is frozen at what this agent holds. " +
-          'Tell your user; only they can thaw it, after checking with the admin, with `rdv group resync <group-id>` in their own terminal.',
+          'Tell your user; only they can thaw it, after checking with the admin: rdv_resync with this group_id, when they ask (an approval form only they answer), or `rdv group resync <group-id>` in their own terminal.',
       };
     case 'group-task': {
       // A task on the group board (SPEC §7.8.4, issue #79): the board's own event; what members wrote is peer text.
@@ -567,7 +567,7 @@ export function toModelEvent(e: Raw, negotiating: boolean): Omit<McpEvent, 'n' |
         shown_by: e.via === undefined ? undefined : agentId(e.via),
         next_step:
           'This member signed two different group messages under the same number: it restored an old backup, two copies of it run, or it tells members different things. ' +
-          'This agent refuses its group messages until your user checks with that person and runs `rdv group resync <group-id> --member <agent-id>` in their own terminal. Tell your user; do not try to resolve it yourself.',
+          'This agent refuses its group messages until your user checks with that person and accepts it again: rdv_resync with this group_id and agent_id, when they ask (an approval form only they answer), or `rdv group resync <group-id> --member <agent-id>` in their own terminal. Tell your user; do not try to resolve it yourself.',
       };
     case 'group-gap':
       return {
@@ -589,7 +589,7 @@ export function toModelEvent(e: Raw, negotiating: boolean): Omit<McpEvent, 'n' |
         limit: token(e.limit),
         next_step:
           'This member sent more group messages than the group allows, so this agent mutes it (refuses its group messages) and told the admins. ' +
-          'Tell your user; only they can take its messages again, with `rdv group resync <group-id> --member <agent-id>` in their own terminal.',
+          'Tell your user; only they can take its messages again: rdv_resync with this group_id and agent_id, when they ask (an approval form only they answer), or `rdv group resync <group-id> --member <agent-id>` in their own terminal.',
       };
     case 'group-report':
       return {
@@ -601,7 +601,7 @@ export function toModelEvent(e: Raw, negotiating: boolean): Omit<McpEvent, 'n' |
         count: count(e.count),
         limit: token(e.limit),
         next_step:
-          "A member muted another for sending too much. It is that member's report, not proof, and nothing was removed. Tell your user; removing a member is their decision (`rdv group remove`, in their own terminal).",
+          "A member muted another for sending too much. It is that member's report, not proof, and nothing was removed. Tell your user; removing a member is their decision (rdv_group \"remove\", which they approve, or `rdv group remove` in their own terminal).",
       };
     case 'group-left':
       return { type: 'group_member_left', group_id: uuid(e.group), member: agentId(e.member), fingerprint: fp(e.member), summary: `${who(e.member)} left the group; nothing more goes to them.` };
@@ -618,7 +618,7 @@ export function toModelEvent(e: Raw, negotiating: boolean): Omit<McpEvent, 'n' |
           peer: agentId(detail.peer),
           next_step:
             "This contact's agent is sending on a chain that conflicts with what it sent before (it may have restored an old backup, or two copies of it run). " +
-            'Its messages are refused until your user checks with that person and runs `rdv contact resync <agent-id>` in their own terminal. Tell your user; do not try to resolve it yourself.',
+            'Its messages are refused until your user checks with that person and accepts it again: rdv_resync with this agent_id, when they ask (an approval form only they answer), or `rdv contact resync <agent-id>` in their own terminal. Tell your user; do not try to resolve it yourself.',
         };
       }
       // Core's reasons are fixed strings, but some carry decoder detail: quarantine them all.

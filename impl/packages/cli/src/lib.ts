@@ -31,6 +31,7 @@ export {
   ownerSecretBinding,
   ownerSecretInfo,
   ownerSecretLock,
+  RESET_COOLDOWN_MS,
   storeOwnerSecret,
   weakOwnerSecret,
 } from './ownersecret.js';

@@ -130,6 +130,13 @@ client, because <code>rdv_task</code> and <code>rdv_file</code> are ordinary too
 elicitation approves a task's start and its release with a phrase from <code>rdv task list</code>
 or with <code>rdv task approve</code> / <code>rdv task release</code> in your own terminal. See
 <a href="/docs/tasks.html">Tasks and files</a>.</p>
+<p>Settings follow the same rule. Renaming a contact (<code>rdv_label</code>), setting the
+owner passphrase (<code>rdv_owner_passphrase</code>), taking a contact's or group's
+messages again after a fork (<code>rdv_resync</code>), turning direct transfer on
+(<code>rdv_file</code> "direct-transfer") and replacing the agent with a new identity
+(<code>rdv_init</code> with <code>replace</code>) each take effect only when the human answers an
+approval form. Without elicitation the tool refuses and names the command the
+human can run in their own terminal instead.</p>
 <p>Elicitation support, as far as it could be checked:</p>
 <div class="tablewrap" tabindex="0"><table>
 <thead>

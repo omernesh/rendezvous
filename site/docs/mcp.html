@@ -154,7 +154,7 @@ stays for clients without forms. <code>RDV_ELICIT=off</code> turns forms off ent
 <tr>
 <td><code>rdv_init</code></td>
 <td>profile, emails[], phones[] (<code>email</code> / <code>phone</code>: one of each, kept as aliases), relays (omitted: the default public relays <code>wss://nos.lol</code>, <code>wss://relay.primal.net</code>, <code>wss://relay.nostr.net</code>, <code>wss://nostr.oxtr.dev</code>), public_pointer, calendar, window, tz</td>
-<td>agent ID, fingerprint; keeps an existing agent and its relays (re-key only with <code>rdv init --force</code>). Every address is public; at most 8</td>
+<td>agent ID, fingerprint; keeps an existing agent and its relays. With <code>replace: true</code> it replaces the agent with a new identity (the chat form of <code>rdv init --force</code>), only after the human answers an approval form: it shows what is lost (contacts, groups, grants, open work) and when the agent was last backed up, offers a backup first (<code>rdv_backup</code>), and asks them to type the last 4 characters of the fingerprint. Refused while another process (<code>rdv listen</code> or another <code>rdv-mcp</code>) receives for this agent; without a form it is refused and names the terminal command. Leaving out profile, addresses and relays keeps the old agent's (public addresses only). Not available through rdv-gateway. Every address is public; at most 8</td>
 </tr>
 <tr>
 <td><code>rdv_addresses</code></td>
@@ -207,6 +207,21 @@ stays for clients without forms. <code>RDV_ELICIT=off</code> turns forms off ent
 <td><code>off</code>: the contacts it was on for (no gate, audited <code>via: mcp</code>); <code>on</code>: the contact, what it covers and until when, only after the human typed the owner passphrase into the approval form (below). Never a passphrase or phrase</td>
 </tr>
 <tr>
+<td><code>rdv_label</code></td>
+<td>agent_id, label</td>
+<td>renames a contact (its <code>local_label</code>, what <code>rdv_send</code> "to" resolves). The approval form shows the agent ID, the fingerprint and the current label; the human may change the name, and what they leave applies. Without a form it is refused and names <code>rdv contact label &lt;agent-id&gt; &lt;label&gt;</code>. Through rdv-gateway the label is only a suggestion: the owner types the name on the page, which starts at the current label</td>
+</tr>
+<tr>
+<td><code>rdv_owner_passphrase</code></td>
+<td>—</td>
+<td>sets or changes the owner passphrase (the one <code>rdv_auto_approve</code> "on" asks for). The human types it twice into the approval form (and the current one when changing); only this server sees it, and it never reaches a tool result. Setting one turns auto-approve off for every contact. Without a form it is refused and names <code>rdv owner-secret set</code>. Not available through rdv-gateway</td>
+</tr>
+<tr>
+<td><code>rdv_resync</code></td>
+<td>agent_id and / or group_id</td>
+<td>after a fork or rollback: with agent_id, take a contact's messages again; with group_id, thaw a frozen group; with both, take a refused or muted member's group messages again. The form explains what the fork means; the human should check with the person directly first. Without a form it is refused and names <code>rdv contact resync</code> or <code>rdv group resync [--member]</code></td>
+</tr>
+<tr>
 <td><code>rdv_backup</code></td>
 <td>action <code>create</code> / <code>restore</code>; path (absolute: a new file for <code>create</code>, the backup for <code>restore</code>)</td>
 <td><code>create</code>: the file, the agent ID and fingerprint, and <code>verified_agent_id_matches</code> (read back and opened); <code>restore</code> (only into a home with no agent): the restored agent ID, fingerprint, backup time and contact count, then the agent starts and tells its contacts. The passphrase is typed only into the approval form (twice and at least 12 characters for <code>create</code>; once for <code>restore</code>, after the form shows the agent ID and fingerprint in the file); without a form it is refused, with no phrase. Not available through rdv-gateway (issue #88, NOTES 91)</td>
@@ -238,11 +253,12 @@ stays for clients without forms. <code>RDV_ELICIT=off</code> turns forms off ent
 </tr>
 <tr>
 <td><code>rdv_file</code></td>
-<td>action <code>prepare</code> / <code>list</code> / <code>fetch</code> / <code>decline-transfer</code>; path, name, mime_type, plain (prepare); task_id, file or sha256 (fetch); transfer_id</td>
-<td><code>prepare</code>: the encrypted copy for the human to upload (nothing is sent); <code>list</code>: prepared files, files peers sent (never fetched on arrival), transfer requests; <code>fetch</code>: path and metadata of a quarantined file; <code>decline-transfer</code>. There is no tool to accept a transfer or to set the direct-transfer setting</td>
+<td>action <code>prepare</code> / <code>list</code> / <code>fetch</code> / <code>decline-transfer</code> / <code>direct-transfer</code>; path, name, mime_type, plain (prepare); task_id, file or sha256 (fetch); transfer_id; direct_transfer <code>on</code> / <code>off</code> (direct-transfer)</td>
+<td><code>prepare</code>: the encrypted copy for the human to upload (nothing is sent); <code>list</code>: prepared files, files peers sent (never fetched on arrival), transfer requests; <code>fetch</code>: path and metadata of a quarantined file; <code>decline-transfer</code>; <code>direct-transfer</code>: <code>off</code> needs no approval (it only narrows), <code>on</code> opens an approval form (nothing connects on its own either way; without a form <code>on</code> is refused and names <code>rdv file direct-transfer on</code>). There is no tool to accept a transfer</td>
 </tr>
 </tbody>
 </table></div>
+<p>Each of <code>rdv_label</code>, <code>rdv_owner_passphrase</code>, <code>rdv_resync</code>, <code>rdv_file</code> "direct-transfer" (on) and <code>rdv_init</code> <code>replace</code> takes effect only when the human answers an approval form; the model never answers, and there is no confirm phrase for them. Through rdv-gateway (cloud assistants), <code>rdv_label</code>, <code>rdv_resync</code> and <code>rdv_file</code> "direct-transfer" are available under the <code>contact:request</code> scope and return an <code>approve_url</code>; <code>rdv_owner_passphrase</code> and <code>rdv_init</code> are not offered there.</p>
 <p>Resource <code>rdv://inbox</code> holds the latest 50 events; the server supports
 <code>resources/subscribe</code> and sends <code>notifications/resources/updated</code> when events
 arrive, so a client that subscribes needn't poll.</p>
@@ -352,8 +368,9 @@ and <code>rdv_file</code>:</p>
     decryption checked, saved under <code>files/incoming/&lt;task&gt;/</code> (mode 600,
     <code>.quarantine</code> after active extensions). The tool returns the path and
     metadata; short text comes back only as <code>untrusted_peer_text</code>.</li>
-<li><em>Direct transfer</em> (<code>rdv/transfer</code>) is the human's setting (<code>rdv file
-    direct-transfer</code>, default off, in the MACed <code>owner.json</code>). A request is
+<li><em>Direct transfer</em> (<code>rdv/transfer</code>) is the human's setting (<code>rdv_file</code>
+    "direct-transfer", or <code>rdv file direct-transfer on|off</code> in a terminal; default
+    off, in the MACed <code>owner.json</code>). A request is
     shown, <code>decline-transfer</code> says no, and no transfer protocol is
     implemented, so nothing connects.</li>
 </ul>
@@ -362,8 +379,8 @@ and <code>rdv_file</code>:</p>
 without a form or phrase, and a dinner that contact proposes is accepted and
 confirmed without one (a dinner our human proposes still asks them). Each
 pass is written to <code>audit.jsonl</code> (meetings as gate <code>meeting</code>). Two ways to
-turn it on, both behind the owner passphrase (<code>rdv owner-secret set</code>, in the
-human's own terminal):</p>
+turn it on, both behind the owner passphrase (set it with <code>rdv_owner_passphrase</code>, or
+<code>rdv owner-secret set</code> in a terminal):</p>
 <ul>
 <li>the terminal: <code>rdv contact auto-approve &lt;contact&gt; all [--until 7d]</code>;</li>
 <li><code>rdv_auto_approve</code> "on": an approval form shows the same warning (contact

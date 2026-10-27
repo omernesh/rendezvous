@@ -10,7 +10,9 @@ export const isScope = (s: string): s is Scope => (SCOPES as readonly string[]).
 export const SCOPE_TEXT: Record<Scope, string> = {
   read: 'status, contacts, pending requests, the inbox, task and group lists',
   send: 'messages, tasks and group posts to your contacts, as you, and fetching files a contact sent for a task you started',
-  'contact:request': 'asking people for contact and asking you to approve (only you approve, on the page); also revoking, declining and blocking, which only ever reduce access',
+  'contact:request':
+    'asking people for contact and asking you to approve (only you approve, on the page); also revoking, declining and blocking, which only ever reduce access; ' +
+    "and asking you to rename a contact, take a contact's or a group's messages again after a fork, or turn direct file transfers on (only you decide, on the page; turning them off needs no one)",
   negotiate: 'proposing dinner times (only you confirm a meeting, on the page)',
 };
 
@@ -26,6 +28,8 @@ const TABLE: Record<string, Record<string, Scope>> = {
   rdv_request_contact: { '*': 'contact:request' },
   rdv_grant: { '*': 'contact:request' },
   rdv_revoke: { '*': 'contact:request' },
+  rdv_label: { '*': 'contact:request' },
+  rdv_resync: { '*': 'contact:request' },
   rdv_auto_approve: { off: 'contact:request' },
   rdv_send: { '*': 'send' },
   rdv_negotiate: { status: 'read', propose: 'negotiate', confirm: 'negotiate', cancel: 'negotiate' },
@@ -41,7 +45,7 @@ const TABLE: Record<string, Record<string, Scope>> = {
     submit: 'send',
     'approve-release': 'send',
   },
-  rdv_file: { list: 'read', fetch: 'send', 'decline-transfer': 'send' },
+  rdv_file: { list: 'read', fetch: 'send', 'decline-transfer': 'send', 'direct-transfer': 'contact:request' },
   rdv_group: {
     list: 'read',
     board: 'read',
