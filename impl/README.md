@@ -31,15 +31,16 @@ inbound loop), so `rdv` and `rdv-mcp` share profiles.
 | `discovery` | §4.4 | `dtopic()`, `idtopic()` (the agent ID's topic, NOTES 83), address and agent-ID canonicalization, binding levels |
 | `contact` | §5 | Contact request / grant / revoke, and the contact book (policy, replay, rate limits) |
 | `envelope` | §6.4, §7 | Encrypted, signed envelopes; `seq`/`prev` ordering with gap detection |
+| `delivery` | §6.4.2 | Delivery receipts: the `rdv/ack` payload (`ackSeq`), per-contact pending and owed acks, the retry backoff (`RECEIPT_TIMING`, `retryDue`, `nextDeliveryDue`), summaries for hosts (NOTES 98) |
 | `files` | §7.7 | File references (`FilePart` + files extension): strict validation, `encryptFile`, `verifyAndDecrypt`, inline parts |
 | `filefetch` | §7.7 | `fetchFileRef`: https only, SSRF-blocked and DNS-pinned, no credentials, capped, hash-verified |
 | `group` | §7.8 | Groups v1 membership: the signed `rdv/group-state` chain (`epoch`, `prev`, admin signer; any two states at one epoch are a fork), `rdv/group-invite`, `rdv/group-join` (a group-scoped grant), and the `GroupBook` (invites, newcomer policy, approvals; at most 16 members, NOTES 86) |
 | `groupmsg` | §7.8.3, §7.8.5–§7.8.7 | Group messages: `rdv/group-msg` (a signed header committing to the body by hash), the per-sender chain (`gseq`/`gprev`) and `heads`, gaps and group resend, equivocation evidence (`rdv/group-proof`, headers only), `rdv/group-leave`, `member_rate` and the mute with its `rdv/group-report` (NOTES 87) |
 | `backup` | §6.4.1 | The encrypted identity bundle (`sealBackup`, `openBackup`, strict `parseBackup`; scrypt + AES-256-GCM, the header as associated data) and the agent state for a backup and after a restore (`backupAgentState`, `restoredAgentState`: a new epoch per channel, each owing its peer an `rdv/restored` notice; NOTES 91) |
 | `transfer` | §7.7 | `rdv/transfer` messages and their pure state machine (negotiation only, no transport) |
-| `transport/nostr` | §6.2 | Nostr relay transport (kind 30417): re-subscribes when a relay drops; publishes with retries, per-relay pacing and cooldowns, and per-relay status (`relayStatus()`); `setRelays()` moves a live transport; discovery mirrors (`mirrorRelays`, `mirrorTopics()`); `DEFAULT_RELAYS`, `DEFAULT_MIRROR_RELAYS` |
+| `transport/nostr` | §6.2 | Nostr relay transport (kind 30417): re-subscribes when a relay drops; publishes with retries, per-relay pacing and cooldowns, and per-relay status (`relayStatus()`); `setRelays()` moves a live transport; pings sockets and echo-checks the envelope subscription, re-joining a deaf one (`onReconnect()`, NOTES 95, 98); discovery mirrors (`mirrorRelays`, `mirrorTopics()`); `DEFAULT_RELAYS`, `DEFAULT_MIRROR_RELAYS` |
 | `agent` | — | Ties it together: listen, discover, request, grant, send, receive |
-| `testing/relay` | — | In-memory Nostr relay on a localhost WebSocket, for tests and local demos |
+| `testing/relay` | — | In-memory Nostr relay on a localhost WebSocket, for tests and local demos (`stall()` goes half-open, `deafen()` drops subscriptions silently) |
 
 ```ts
 import { Agent, NostrTransport } from '@rendezvous/core';

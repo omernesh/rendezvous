@@ -14,3 +14,4 @@ export * from './transfer.js';
 export * from './transport/nostr.js';
 export * from './transport/transport.js';
 export * from './groupmsg.js';
+export * from './delivery.js';

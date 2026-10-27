@@ -3731,6 +3731,100 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       current label on the page, direct transfer on the page) and the scopes
       in `auth.test.ts`.
 
+## Delivery receipts and echo checks (v0.10.0, issue #104)
+
+98. **Contacts confirm what they hold (`rdv/ack`); the sender resends what
+    they do not; an echo catches a deaf subscription** (**spec change**,
+    new §6.4.2 and a line in §7; issue #104 after the 2026-10-27 incident,
+    where a grant stored on 3 relays went unread for 6.5 hours). The test
+    vectors are unchanged: the envelope and every signed document keep their
+    format, and `rdv/ack` is a payload inside an envelope, like `rdv/resend`
+    and `rdv/restored`, which the vectors do not cover either. Choices:
+    - **Negotiated by card.** `RECEIPTS_EXTENSION` on the card
+      (`hostCardCapabilities` adds it, so `refreshHostCard` re-signs older
+      cards and `rdv/card-update` tells contacts). An older agent would emit
+      an `rdv/ack` as a `message` (and count it against `max_frequency`), so
+      receipts go only to a contact whose card lists the URI, and only such a
+      contact is waited for. Everyone else is `untracked`. Receipts are for
+      contacts only: a group co-member that is not a contact neither gets nor
+      sends them (deviation from "every channel": the issue asked never to
+      accept one from a non-contact).
+    - **No piggyback** (deviation from the issue). A field in the envelope
+      header would change the associated data and break every older
+      receiver, and A2A payloads reject unknown keys. A receipt is its own
+      envelope, sent after a 2 s quiet period, at most one per contact per
+      10 s, carrying the highest contiguous inbound `seq`. Receipts are never
+      acknowledged; they are in the chain, so a lost one is a gap the next
+      envelope reveals and `rdv/resend` fills.
+    - **Judged before ordering**, like `rdv/restored-ack`: from a contact,
+      exact keys, `seq <= outSeq`, not on a refused chain, forward only. It
+      still goes through `acceptInbound` for the chain's sake.
+    - **Sender state.** `AgentState.delivery[peer]` = `acked`, `pending`
+      (seq, hash, first sent, tries, last republish, `unconfirmed`), and the
+      receipt we owe (`ack_owed`, `ack_sent`). No due times are stored: they
+      come from `RECEIPT_TIMING` (60 s doubling, 4 retries, reported after
+      about 31 minutes), so a host may shorten them without migrating state.
+      Pending is capped like the outbox (64); an entry that falls out of it
+      can no longer be resent and is reported. Kept only for contacts.
+    - **Lost receipts.** A duplicate earns a new receipt only if its carrier
+      event is newer than our last receipt (`EnvelopeMeta.at`, passed by
+      `onEnvelopes` and `FeedTransport.feedEnvelope`): a retry, not a relay
+      replay, so a restart that re-reads two days of events sends nothing.
+      Without meta (another transport) the rule is "last receipt older than
+      half the retry time".
+    - **Reporting.** `delivery-unconfirmed` after the last retry's wait
+      ("not confirmed delivered", never "failed": the peer may be offline and
+      the relays keep the envelope 48 h); `delivery-confirmed` when a late
+      receipt covers reported ones; `delivery-resent` per republish, of which
+      the hosts show only the reconnect ones. MCP: `delivery_unconfirmed`,
+      `delivery_confirmed`, `delivery_resent` in `rdv_inbox`; `rdv_send`
+      returns `delivery` (`pending` / `untracked`) with a note; `rdv_status`
+      a per-contact `delivery` (state, counts, oldest, a summary line). The
+      server instructions (`DELIVERY_NOTE`, local and remote) say how to put
+      it. `rdv send` prints `delivery` too.
+    - **Hosts: no timers in the agent.** They build an `Agent` per item, so
+      `start({ deliveryTimer: false })`, and `handleInbound` ends every item
+      with `deliveryTick()`. The consumer's `DeliveryClock` reads
+      `nextDeliveryDue(state.delivery)` after each item and on the 30 s
+      sweep (a terminal `rdv send` writes behind its back) and runs an empty
+      item then. Every tick moves each due time past now (a failed send
+      included), so the clock cannot spin; it waits at least 250 ms anyway.
+      A library user's `start()` keeps a timer (at most 1 s).
+      `RDV_ACK_DELAY_MS` and `RDV_RECEIPT_RETRY_MS` shorten it for tests.
+    - **Reconnect.** `Transport.onReconnect` (optional) fires on the EOSE of
+      a re-joined envelope subscription, after the catch-up events were
+      handed over, so they are handled first. The agent (or the host, with
+      one coalesced reconnect item and `FeedTransport.feedReconnect`) then
+      republishes every pending envelope, reported ones included, and
+      restarts their backoff (not counted as a retry).
+    - **Echo check** in `NostrTransport` (no wire change of its own beyond
+      the self-addressed event): only on a subscription for our own ID, per
+      listening relay that is up and silent for `echoIntervalMs` (default
+      5 min; 0 off), an envelope to ourselves (`rdv/echo`, ttl 1 h) as an
+      addressable event with `d` `rdv1/echo`, so a relay stores one per
+      agent, dated past the previous one (a tie would be stored by neither
+      and never delivered). Taken (`OK true`) and not back within
+      `echoTimeoutMs` (30 s): the socket is terminated, the ordinary
+      re-join runs, and the drop's `last_error` says "echo check failed".
+      An event from our own carrier on our own `p` tag is always an echo
+      and never reaches the agent (a replay from a previous process
+      included); the agent drops one anyway ("own envelope", not logged).
+      A publish that fails says nothing about the subscription and is not
+      counted. Not tried: NIP-40 `expiration` on the echo (unsurveyed relays
+      may refuse it).
+    - **Traffic analysis.** Receipts reveal to a relay that something came
+      back after something arrived, as a reply would; batching and the
+      interval bound their rate below the messages'. No padding or jitter.
+    - **Tests.** `core/test/receipts.test.ts`: payload checks and backoff
+      (pure); round trip with no ack of an ack and persistence; a lost
+      envelope resent on the backoff; retries spent, reported, resent on
+      reconnect and confirmed late; a lost ack answered by a newer copy;
+      a forged receipt (bad signature), a stranger's, one beyond our chain
+      and a malformed one; interop with a card without receipts; the echo
+      catching a deaf relay (`TestRelay.deafen()`), skipped under traffic
+      and off at 0; an agent behind a deaf relay recovering on its own; the
+      sender's reconnect flush.
+
 ## Not implemented yet
 
 

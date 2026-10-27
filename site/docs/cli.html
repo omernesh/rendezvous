@@ -144,6 +144,11 @@ inbound loop), so <code>rdv</code> and <code>rdv-mcp</code> share profiles.</p>
 <td>Encrypted, signed envelopes; <code>seq</code>/<code>prev</code> ordering with gap detection</td>
 </tr>
 <tr>
+<td><code>delivery</code></td>
+<td>§6.4.2</td>
+<td>Delivery receipts: the <code>rdv/ack</code> payload (<code>ackSeq</code>), per-contact pending and owed acks, the retry backoff (<code>RECEIPT_TIMING</code>, <code>retryDue</code>, <code>nextDeliveryDue</code>), summaries for hosts (NOTES 98)</td>
+</tr>
+<tr>
 <td><code>files</code></td>
 <td>§7.7</td>
 <td>File references (<code>FilePart</code> + files extension): strict validation, <code>encryptFile</code>, <code>verifyAndDecrypt</code>, inline parts</td>
@@ -176,7 +181,7 @@ inbound loop), so <code>rdv</code> and <code>rdv-mcp</code> share profiles.</p>
 <tr>
 <td><code>transport/nostr</code></td>
 <td>§6.2</td>
-<td>Nostr relay transport (kind 30417): re-subscribes when a relay drops; publishes with retries, per-relay pacing and cooldowns, and per-relay status (<code>relayStatus()</code>); <code>setRelays()</code> moves a live transport; discovery mirrors (<code>mirrorRelays</code>, <code>mirrorTopics()</code>); <code>DEFAULT_RELAYS</code>, <code>DEFAULT_MIRROR_RELAYS</code></td>
+<td>Nostr relay transport (kind 30417): re-subscribes when a relay drops; publishes with retries, per-relay pacing and cooldowns, and per-relay status (<code>relayStatus()</code>); <code>setRelays()</code> moves a live transport; pings sockets and echo-checks the envelope subscription, re-joining a deaf one (<code>onReconnect()</code>, NOTES 95, 98); discovery mirrors (<code>mirrorRelays</code>, <code>mirrorTopics()</code>); <code>DEFAULT_RELAYS</code>, <code>DEFAULT_MIRROR_RELAYS</code></td>
 </tr>
 <tr>
 <td><code>agent</code></td>
@@ -186,7 +191,7 @@ inbound loop), so <code>rdv</code> and <code>rdv-mcp</code> share profiles.</p>
 <tr>
 <td><code>testing/relay</code></td>
 <td>—</td>
-<td>In-memory Nostr relay on a localhost WebSocket, for tests and local demos</td>
+<td>In-memory Nostr relay on a localhost WebSocket, for tests and local demos (<code>stall()</code> goes half-open, <code>deafen()</code> drops subscriptions silently)</td>
 </tr>
 </tbody>
 </table></div>

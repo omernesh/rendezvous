@@ -20,6 +20,7 @@ import {
   defaultTier,
   dtopic,
   type Envelope,
+  type EnvelopeMeta,
   openEnvelope,
   type Tier,
   TIERS,
@@ -30,6 +31,7 @@ import {
   verifyContactRequest,
 } from '@rendezvous/core';
 import { cardSyncText, cardUpdateText, cardUpdateView, contactRestoredText, contactRestoredView, restoredSyncText, sendRestoredNotices, syncContactCards } from './cardupdate.js';
+import { confirmedText, confirmedView, DeliveryClock, receiptTiming, resentText, resentView, unconfirmedText, unconfirmedView } from './delivery.js';
 import { appendEvents } from './events.js';
 import { LockTimeoutError, tryLongLock } from './fsutil.js';
 import { type AuditEntry, CliError, type Home, type InboxEntry } from './home.js';
@@ -169,8 +171,9 @@ export function watchRelays(home: Home, initial: RelaySets, onChange: (r: RelayS
 
 /** Passes sends through to the real transport; inbound items are fed in by hand. */
 export class FeedTransport implements Transport {
-  private envHandler?: (e: unknown) => void;
+  private envHandler?: (e: unknown, meta?: EnvelopeMeta) => void;
   private topicHandler?: (doc: unknown, topic: string) => void;
+  private reconnectHandler?: (relay: string) => void;
 
   constructor(private readonly real: Transport) {}
 
@@ -190,16 +193,24 @@ export class FeedTransport implements Transport {
   setRelays(relays: readonly string[], mirrorRelays?: readonly string[]) {
     this.real.setRelays?.(relays, mirrorRelays);
   }
-  onEnvelopes(_me: string, handler: (e: unknown) => void) {
+  onEnvelopes(_me: string, handler: (e: unknown, meta?: EnvelopeMeta) => void) {
     this.envHandler = handler;
     return () => (this.envHandler = undefined);
+  }
+  onReconnect(handler: (relay: string) => void) {
+    this.reconnectHandler = handler;
+    return () => (this.reconnectHandler = undefined);
   }
   onTopics(_topics: string[], handler: (doc: unknown, topic: string) => void) {
     this.topicHandler = handler;
     return () => (this.topicHandler = undefined);
   }
-  feedEnvelope(raw: unknown) {
-    this.envHandler?.(raw);
+  feedEnvelope(raw: unknown, meta?: EnvelopeMeta) {
+    this.envHandler?.(raw, meta);
+  }
+  /** A listening relay came back (NOTES 98): the agent republishes what contacts have not confirmed. */
+  feedReconnect(relay = '') {
+    this.reconnectHandler?.(relay);
   }
   feedTopic(doc: unknown, topic: string) {
     this.topicHandler?.(doc, topic);
@@ -296,6 +307,7 @@ async function handleLocked(
         home.writeAgentState(agent.toJSON());
       };
       agent.beforeSend = save;
+      agent.receiptTiming = receiptTiming();
       agent.on('request', (p) => {
         events.push({ obj: { event: 'request', ...requestView(p) }, human: `request ${requestText(p)}` });
         // Demo only: a human should normally decide (`rdv contact grant`).
@@ -336,6 +348,11 @@ async function handleLocked(
         events.push(ev);
       });
       agent.on('revoked', (peer) => events.push({ obj: { event: 'revoked', peer }, human: `revoked by ${clean(peer)}` }));
+      // Delivery receipts (issue #104, NOTES 98): what contacts did not confirm, resent or reported.
+      const labelOf = (peer: string) => agent.book.state.contacts[peer]?.label;
+      agent.on('delivery-resent', (r) => events.push({ obj: resentView(r, labelOf(r.peer)), human: resentText(r, labelOf(r.peer)) }));
+      agent.on('delivery-unconfirmed', (u) => events.push({ obj: unconfirmedView(u, labelOf(u.peer)), human: unconfirmedText(u, labelOf(u.peer)) }));
+      agent.on('delivery-confirmed', (c) => events.push({ obj: confirmedView(c, labelOf(c.peer)), human: confirmedText(c, labelOf(c.peer)) }));
       // Groups (SPEC §7.8, issue #77): an invite and each newcomer wait for the human (rdv group pending); nothing joins or approves here.
       agent.on('group-invite', (i) =>
         events.push({ obj: inviteView(agent, i), human: `group invite: ${describeInvite(agent, i)}\n  your decision: rdv group pending` }),
@@ -380,7 +397,8 @@ async function handleLocked(
         });
       });
       agent.on('error', (err) => events.push({ obj: { event: 'error', message: err.message }, human: `error: ${clean(err.message)}` }));
-      agent.start();
+      // No timer: this agent lives for one item. deliveryTick below, and the consumer's DeliveryClock, do its work.
+      agent.start({ deliveryTimer: false });
       feed(t);
       await agent.idle();
       for (const r of await Promise.allSettled(grants)) {
@@ -393,6 +411,9 @@ async function handleLocked(
       await routeInbound(home, opts, agent, inbox, messageEvents, sweep, events);
       await agent.idle();
       await groupTasks(home, opts, agent, groupIn, sweep, events);
+      await agent.idle();
+      // Receipts we owe, resends due on the backoff, and what is still not confirmed after the last one (NOTES 98).
+      await agent.deliveryTick();
       await agent.idle();
       // auto-approve ends with the grant it was set on (revoked, blocked, abuse, a fork) and on expiry: off now, audited (issue #25).
       const auto = sweepAutoApprove(home, subjectOf(agent));
@@ -605,10 +626,13 @@ export async function listen(home: Home, out: Output, opts: ListenOptions): Prom
   };
 
   let chain: Promise<void> = Promise.resolve();
+  // The next due receipt or resend in the saved state runs an empty item (NOTES 98).
+  const clock = new DeliveryClock(home, () => enqueue(() => {}));
   const enqueue = (feed: (t: FeedTransport) => void, sweep = false) => {
     chain = chain
       .then(async () => {
         for (const e of await handleInbound(home, real, feed, opts, sweep)) await print(e);
+        clock.check();
       })
       .catch((err: Error) => out.emit({ event: 'error', message: err.message }, `error: ${clean(err.message)}`));
   };
@@ -618,10 +642,21 @@ export async function listen(home: Home, out: Output, opts: ListenOptions): Prom
       if (!isJunk(boot.key, { doc })) enqueue((t) => t.feedTopic(doc, topic));
     });
   let topicUnsub = onTopics(topics);
+  // A listening relay is back: one reconnect item, however many relays return together.
+  let reconnectQueued = false;
   const unsubs = [
-    real.onEnvelopes(boot.id, (raw) => {
-      if (!isJunk(boot.key, { envelope: raw })) enqueue((t) => t.feedEnvelope(raw));
+    real.onEnvelopes(boot.id, (raw, meta) => {
+      if (!isJunk(boot.key, { envelope: raw })) enqueue((t) => t.feedEnvelope(raw, meta));
     }),
+    real.onReconnect?.(() => {
+      if (reconnectQueued) return;
+      reconnectQueued = true;
+      enqueue((t) => {
+        reconnectQueued = false;
+        t.feedReconnect();
+      });
+    }) ?? (() => {}),
+    () => clock.stop(),
     () => topicUnsub(),
     // Relays changed while we run (rdv relays): move the transport there, subscriptions included.
     watchRelays(home, sets, (r) => {
@@ -662,7 +697,9 @@ export async function listen(home: Home, out: Output, opts: ListenOptions): Prom
   // Negotiations (with --negotiate) and tasks (always) expire on the sweep.
   const sweeper = setInterval(() => {
     if (hasExpiring(home, { meetings: opts.negotiate !== undefined })) enqueue(() => {}, true);
+    clock.check();
   }, SWEEP_MS);
+  clock.check(); // receipts owed and resends due from before we started
   await new Promise<void>((resolve) => {
     process.once('SIGINT', resolve);
     process.once('SIGTERM', resolve);

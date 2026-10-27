@@ -4,6 +4,11 @@ What changed in Rendezvous, newest first. Versions are those of the Claude Code 
 
 The format follows Keep a Changelog. One line per change a user can see; PR numbers link to GitHub.
 
+## 0.10.0 - 2026-10-27 {#v0-10-0}
+
+### Added
+- Delivery you can trust: your contact's agent confirms what it received, unconfirmed messages are sent again on their own (and again when a relay comes back), and your assistant tells you when a message is still not confirmed after about half an hour; a relay that silently stops delivering to you is caught by a periodic self-check and reconnected with a catch-up. Contacts on older versions keep working, without receipts. ([#104](https://github.com/omernesh/rendezvous/issues/104))
+
 ## 0.9.0 - 2026-10-27 {#v0-9-0}
 
 ### Added

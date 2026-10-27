@@ -62,11 +62,23 @@ export interface MirrorReport {
   served: number;
 }
 
+/** What the carrier says about an inbound envelope (never trusted for anything but timing hints). */
+export interface EnvelopeMeta {
+  /** When this copy was published (Unix seconds; a Nostr event's `created_at`): a republish is newer than the original. */
+  at?: number;
+}
+
 export interface Transport {
   /** Deliver to the recipient; `recipientRelays` come from the peer's card. */
   sendEnvelope(e: Envelope, recipientRelays?: string[]): Promise<PublishReport | void>;
   /** Stream raw (unverified) envelopes addressed to `me`. Returns an unsubscribe. */
-  onEnvelopes(me: string, handler: (envelope: unknown) => void): () => void;
+  onEnvelopes(me: string, handler: (envelope: unknown, meta?: EnvelopeMeta) => void): () => void;
+  /**
+   * Called once a listening relay that had dropped (or failed its echo check)
+   * is back and has delivered what it stored meanwhile (EOSE): the agent then
+   * republishes what its contacts have not confirmed (NOTES 98). Optional.
+   */
+  onReconnect?(handler: (relay: string) => void): () => void;
   /** Post a signed document on a discovery topic (§4.4). */
   publishTopic(topic: string, doc: object, extraRelays?: string[], opts?: TopicPublishOptions): Promise<PublishReport | void>;
   onTopics(topics: string[], handler: (doc: unknown, topic: string) => void): () => void;

@@ -164,7 +164,7 @@ stays for clients without forms. <code>RDV_ELICIT=off</code> turns forms off ent
 <tr>
 <td><code>rdv_status</code></td>
 <td>—</td>
-<td>ID, our addresses (<code>addresses</code>, and <code>our_addresses</code> with public or private), relays, <code>relay_health</code> (per relay: <code>last_ok</code>, <code>last_error</code> with <code>kind</code> and the relay's message as <code>untrusted_peer_text</code>, <code>cooldown_until</code>), contacts (<code>local_label</code>: what your user called them; <code>unverified_claims</code>: the addresses their cards claim; <code>label_conflict</code> when two share a label), pending count, negotiation settings, approval mode</td>
+<td>ID, our addresses (<code>addresses</code>, and <code>our_addresses</code> with public or private), relays, <code>relay_health</code> (per relay: <code>last_ok</code>, <code>last_error</code> with <code>kind</code> and the relay's message as <code>untrusted_peer_text</code>, <code>cooldown_until</code>), contacts (<code>local_label</code>: what your user called them; <code>unverified_claims</code>: the addresses their cards claim; <code>label_conflict</code> when two share a label; <code>delivery</code>: delivered, pending, not_confirmed or untracked, with counts), pending count, negotiation settings, approval mode</td>
 </tr>
 <tr>
 <td><code>rdv_relays</code></td>
@@ -229,7 +229,7 @@ stays for clients without forms. <code>RDV_ELICIT=off</code> turns forms off ent
 <tr>
 <td><code>rdv_send</code></td>
 <td>agent_id or to (a <code>local_label</code>), payload <code>{type, …}</code> (not <code>a2a/*</code>, <code>rdv/*</code>)</td>
-<td>agent ID, fingerprint, envelope seq; <code>to</code> is refused when no contact, or more than one, has that label</td>
+<td>agent ID, fingerprint, envelope seq, <code>delivery</code> (<code>pending</code> until the contact's receipt comes, or <code>untracked</code> when its agent sends none); <code>to</code> is refused when no contact, or more than one, has that label</td>
 </tr>
 <tr>
 <td><code>rdv_inbox</code></td>
@@ -265,6 +265,7 @@ arrive, so a client that subscribes needn't poll.</p>
 <p>Events: <code>contact_request</code>, <code>contact_candidate</code> (an answer to our discovery
 probe, confirmed through the same human gate as a grant), <code>contact</code>, <code>message</code>, <code>revoked</code>, <code>dropped</code>, <code>error</code>,
 <code>relay_down</code> (a listening relay unreachable for 10 minutes or more), <code>relay_up</code>, <code>relays_degraded</code> (fewer than two healthy listening relays; the server never swaps relays itself),
+<code>delivery_resent</code> (a relay came back and messages a contact had not confirmed were sent again), <code>delivery_unconfirmed</code> (no receipt after every retry, about 30 minutes: "not confirmed delivered", never "failed"), <code>delivery_confirmed</code> (a late receipt for those),
 <code>contact_restored</code> (a contact restored its agent from a backup),
 <code>reverse_grant</code> (what a contact's human now lets us do: <code>may_propose_meetings</code> and <code>invoke</code>, the capability URIs),
 <code>group_task</code> (a task on a group board, SPEC §7.8.4: kind posted / claimed / assigned / released / reopened / input / status / artifact / canceled / expired; what members wrote as <code>untrusted_peer_text</code>), a <code>task</code> event with <code>group_id</code> for a task a group member gave this agent,

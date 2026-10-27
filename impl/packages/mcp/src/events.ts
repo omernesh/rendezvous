@@ -252,7 +252,11 @@ function boardNextStep(e: Raw): string | undefined {
   }
 }
 /** A non-negative safe integer, else null. */
-const count = (v: unknown): number | null => (typeof v === 'number' && Number.isSafeInteger(v) && v >= 0 ? v : null);
+/** How many envelopes a delivery event names (bounded: it is only shown). */
+const seqCount = (v: unknown): number => (Array.isArray(v) ? Math.min(v.length, 64) : 0);
+/** Our user's label for the peer, else its fingerprint. */
+const labelOr = (e: Raw): string => (typeof e.label === 'string' && e.label ? safe(e.label) : who(e.peer));
+const count = (v: unknown): number | null =>(typeof v === 'number' && Number.isSafeInteger(v) && v >= 0 ? v : null);
 
 /** Turn one inbound item into a model-facing event, or null to hide it. */
 export function toModelEvent(e: Raw, negotiating: boolean): Omit<McpEvent, 'n' | 'ts'> | null {
@@ -386,6 +390,45 @@ export function toModelEvent(e: Raw, negotiating: boolean): Omit<McpEvent, 'n' |
         lost_messages: count(e.skipped),
         summary: `${who(e.peer)} knows this agent was restored; your conversation continues.`,
       };
+    // Delivery receipts (issue #104, NOTES 98): our own bookkeeping, never peer text. The backoff's resends are routine and not shown.
+    case 'delivery-resent': {
+      if (e.reason !== 'reconnect') return null;
+      const n = seqCount(e.seqs);
+      return {
+        type: 'delivery_resent',
+        peer: agentId(e.peer),
+        fingerprint: fp(e.peer),
+        local_label: typeof e.label === 'string' ? safe(e.label) : null,
+        messages: n,
+        summary: `A relay came back, so ${n} message(s) to ${labelOr(e)} that were not confirmed yet were sent again.`,
+      };
+    }
+    case 'delivery-unconfirmed': {
+      const n = seqCount(e.seqs);
+      return {
+        type: 'delivery_unconfirmed',
+        peer: agentId(e.peer),
+        fingerprint: fp(e.peer),
+        local_label: typeof e.label === 'string' ? safe(e.label) : null,
+        messages: n,
+        first_sent: typeof e.since === 'string' ? safe(e.since) : null,
+        summary: `${n} message(s) to ${labelOr(e)} are not confirmed delivered after every retry; their agent may be offline.`,
+        next_step:
+          'Tell your user in plain words that the message is not confirmed delivered yet (not that it failed): it stays on the relays for 48 hours and is sent again when a relay comes back; a later receipt arrives as delivery_confirmed. They may want to reach the person another way if it is urgent.',
+      };
+    }
+    case 'delivery-confirmed': {
+      const n = seqCount(e.seqs);
+      return {
+        type: 'delivery_confirmed',
+        peer: agentId(e.peer),
+        fingerprint: fp(e.peer),
+        local_label: typeof e.label === 'string' ? safe(e.label) : null,
+        messages: n,
+        summary: `${labelOr(e)} confirmed ${n} message(s) that had been reported as not confirmed: they were delivered after all.`,
+        next_step: 'Tell your user, if you had told them it was not confirmed.',
+      };
+    }
     case 'card-update': {
       // A contact's newer card (NOTES 82, issue #45). Its relays and capabilities are the peer's text: strict shape, else quarantined.
       const list = (v: unknown, max: number, shape: (x: unknown) => unknown) => (Array.isArray(v) ? v.slice(0, max).map(shape) : []);

@@ -63,7 +63,7 @@ import {
   type TaskRecord,
   type TaskStep,
 } from '@rendezvous/a2a';
-import { Agent, type Contact, effectiveInvoke, fingerprint, type GroupBody, type GroupRecord, groupRecipients, GROUPS_EXTENSION, memberIds, memberOf, type Payload, type Transport } from '@rendezvous/core';
+import { Agent, type Contact, effectiveInvoke, fingerprint, type GroupBody, type GroupRecord, groupRecipients, GROUPS_EXTENSION, memberIds, memberOf, type Payload, RECEIPTS_EXTENSION, type Transport } from '@rendezvous/core';
 import type { PhraseTarget } from './consent.js';
 import { changedAttachment, describeFile, describeNote, fileSummaries, fileSummary, normalizeTaskFiles, pruneReceived, redactFilePart, rememberReceived } from './files.js';
 import { type AuditEntry, CliError, type FileNote, type GroupTaskHost, type HeldRequest, type Home, type InboxEntry, type PendingRelease, type ReleaseContent, type TaskHostState } from './home.js';
@@ -81,7 +81,7 @@ export function hostRegistry(extra: readonly Capability[] = []): CapabilityRegis
 
 /** The card's `capabilities` for a host that routes tasks/v1 to `registry` (SPEC §4.3: advertise what we do). */
 export function hostCardCapabilities(registry: CapabilityRegistry = hostRegistry()): string[] {
-  return cardCapabilities([...SUPPORTED_EXTENSIONS, TASKS_URI, FILES_URI, GROUPS_EXTENSION, ...registry.uris()]);
+  return cardCapabilities([...SUPPORTED_EXTENSIONS, TASKS_URI, FILES_URI, GROUPS_EXTENSION, RECEIPTS_EXTENSION, ...registry.uris()]);
 }
 
 export interface CardRefresh {

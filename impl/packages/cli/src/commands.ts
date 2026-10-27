@@ -1467,8 +1467,13 @@ export async function send({ home, out, values, positionals }: Ctx): Promise<voi
     throw new CliError('payload must be a JSON object with a string "type"', 2);
   }
   const peer = positionals[0];
-  const env = await withAgent(home, (agent) => agent.send(peer, payload));
-  out.emit({ event: 'sent', to: peer, seq: env.seq, type: payload.type }, `sent ${payload.type} to ${peer} (#${env.seq})`);
+  const { env, delivery } = await withAgent(home, async (agent) => {
+    const env = await agent.send(peer, payload);
+    return { env, delivery: agent.deliveryOf(peer, env.seq) };
+  });
+  // Receipts (issue #104): a contact whose agent confirms delivery is waited for; the listener resends and reports.
+  const note = delivery === 'pending' ? '; its receipt is awaited (rdv listen resends it if none comes)' : '';
+  out.emit({ event: 'sent', to: peer, seq: env.seq, type: payload.type, delivery }, `sent ${payload.type} to ${peer} (#${env.seq})${note}`);
 }
 
 export async function listenCmd({ home, out, values }: Ctx): Promise<void> {
