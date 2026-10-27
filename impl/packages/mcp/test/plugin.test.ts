@@ -902,6 +902,26 @@ describe('installing the background listener is the human’s (issue #102)', () 
     'rdv service install --dry-run && rdv service install',
     'rdv service install --dry-run; rdv service install',
     'rdv service install --dry-run --auto-grant friend',
+    // Its files, named in any command or script, read or write (re-review of PR #117).
+    'sed -i s/x/y/ ~/.rendezvous/omer/service/rdv-listen-omer.vbs',
+    'cat ~/.config/systemd/user/rdv-listen-omer.service',
+    'echo x > ~/Library/LaunchAgents/rdv-listen-omer.plist',
+    'gc C:/Users/x/.rendezvous/omer/service/rdv-listen-omer.xml | sc out.xml',
+    'cp evil.conf ~/.config/systemd/user/rdv-listen-omer.service.d/x.conf',
+    'node -e "require(\'fs\').writeFileSync(\'rdv-listen-omer.json\', \'{}\')"',
+    'python -c "open(\'rdv-listen-omer.log\',\'w\')"',
+    // Its task, unit or LaunchAgent, through the OS's own tool.
+    'schtasks /Change /TN rdv-listen-omer /TR evil.exe',
+    'schtasks /Delete /TN rdv-listen-omer /F',
+    'schtasks /Run /TN rdv-listen-omer',
+    'schtasks //End //TN rdv-listen-omer',
+    'systemctl --user edit rdv-listen-omer',
+    'systemctl --user stop rdv-listen-omer',
+    'systemctl --user disable --now rdv-listen-omer',
+    'launchctl bootout gui/501/rdv-listen-omer',
+    'launchctl kickstart -k gui/501/rdv-listen-omer',
+    // The yield file in a home.
+    'echo {} > ~/.rendezvous/omer/listener.yield',
   ];
   const allowed = [
     'rdv service status',
@@ -909,8 +929,11 @@ describe('installing the background listener is the human’s (issue #102)', () 
     'rdv service status --json',
     'rdv service install --dry-run',
     'rdv service install --dry-run --json --home ./h',
-    'systemctl --user status rdv-listen-omer.service',
+    'systemctl --user status rdv-listen-omer',
     'launchctl print gui/501/rdv-listen-omer',
+    'schtasks /Query /TN rdv-listen-omer',
+    'schtasks /Run /TN SomeOtherTask',
+    'systemctl --user stop docker',
   ];
   it.each(denied)('the guard refuses %s', (c) => expect(checkCommand(c)).toBeTruthy());
   it.each(allowed)('the guard allows %s', (c) => expect(checkCommand(c)).toBeUndefined());

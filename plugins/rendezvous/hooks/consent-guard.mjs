@@ -39,7 +39,7 @@ export const SECRET_FILES = ['agent.json', 'agent.json.bak', 'consent.json', 'au
  * grant hashes (gateway.json, gateway-oauth.json: writing one by hand mints a principal without the owner's consent):
  * refused by path when they are in a home.
  */
-export const OWNER_FILES = ['files.json', 'tasks.json', 'gateway.json', 'gateway-oauth.json'];
+export const OWNER_FILES = ['files.json', 'tasks.json', 'gateway.json', 'gateway-oauth.json', 'listener.yield'];
 /** Names distinctive enough to refuse in any folder, not only in a home: writing either one by hand is setting auto-approve. */
 const ANYWHERE_FILES = ['autoapprove.json', 'owner-secret.json', 'owner-secret.marker'];
 const SECRET_MENTION = /agent\.json|consent\.json|autoapprove\.json|owner\.json|owner-secret\.(json|marker)/i;
@@ -99,6 +99,14 @@ const isServiceFile = (p) =>
   p
     .split(/[\\/]+/)
     .some((c, i, all) => /^rdv-listen-[^\\/]*\.service\.d$/i.test(c) || (i === all.length - 1 && /^rdv-listen-[^\\/]*\.(vbs|xml|json|log|service|plist|conf)$/i.test(c)));
+/** A background listener file named in a command or a script (re-review of PR #117): refused like agent.json, read or write. */
+const SERVICE_MENTION = /rdv-listen-[^\s\\/]*\.(vbs|xml|json|log|service|plist|conf)\b|rdv-listen-[^\s\\/]*\.service\.d/i;
+const SERVICE_SHELL =
+  'That names a file of the background listener (rdv service install), or changes its task, unit or LaunchAgent. It runs at every login, so only Rendezvous touches it. ' +
+  'Use rdv_service: "status" shows it (and whether it was changed), "install" (your user approves it) puts it back, "remove" removes it.';
+const SCHTASKS_VERBS = /^\/{1,2}(change|create|delete|end|run)$/i;
+const SYSTEMCTL_VERBS = new Set(['edit', 'revert', 'set-property', 'disable', 'mask', 'enable', 'start', 'stop', 'restart', 'reload', 'daemon-reload', 'link', 'reenable', 'preset']);
+const LAUNCHCTL_VERBS = new Set(['bootout', 'bootstrap', 'unload', 'load', 'kickstart', 'enable', 'disable', 'remove', 'submit']);
 const RELAYS =
   'rdv relays add/remove/list is for the human, in their own terminal: the relays the agent listens on receive its messages, and rdv relays list shows a confirm phrase meant only for them. Use the rdv_relays tool, which asks the human for a listening-relay change.';
 const GROUP_GATE =
@@ -516,6 +524,13 @@ const staticPrefix = (w) => {
 
 function checkWords(words, ctx, depth) {
   const lw = words.map((w) => w.toLowerCase());
+  // The background listener's task, unit or LaunchAgent, changed through the OS's own tool (re-review of PR #117).
+  if (lw.some((w) => w.includes('rdv-listen-'))) {
+    const progs = words.map(progName);
+    if (progs.includes('schtasks') && words.some((w) => SCHTASKS_VERBS.test(w))) throw new Refusal(SERVICE_SHELL);
+    if (progs.includes('systemctl') && lw.some((w) => SYSTEMCTL_VERBS.has(w))) throw new Refusal(SERVICE_SHELL);
+    if (progs.includes('launchctl') && lw.some((w) => LAUNCHCTL_VERBS.has(w))) throw new Refusal(SERVICE_SHELL);
+  }
   // A quoted string that names auto-approve is a command for some other program to run (`script -c "…"`,
   // `expect -c 'spawn …'`, `pty.spawn(…)`): refused whatever else it holds (issue #47).
   if (words.some((w) => /\s/.test(w) && AUTO_APPROVE_WORD.test(flatten(w)))) throw new Refusal(AUTO_APPROVE);
@@ -687,6 +702,7 @@ function checkCode(code, ctx, depth) {
 function check(src, ctx, depth) {
   if (depth > MAX_DEPTH) throw new Refusal(NESTED);
   if (SECRET_MENTION.test(src)) throw new Refusal(SECRET_REFUSAL);
+  if (SERVICE_MENTION.test(src)) throw new Refusal(SERVICE_SHELL);
   // Auto-approve and the owner passphrase (issue #47), whatever runs them: a pseudo-terminal wrapper (`script -c`,
   // `expect -c`, `unbuffer`, `winpty`), a prefix (`stdbuf`, `timeout`, `nohup`, `env`), node-pty or Python's pty.spawn,
   // a here-string or heredoc. Any command that names `contact` and `auto-approve` anywhere, in any spelling, is

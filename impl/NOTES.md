@@ -4155,6 +4155,30 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
           launchd has no backoff beyond `ThrottleInterval`.
         - The marker is ASCII only (\uXXXX); a Hebrew and accented home
           round-trips through the live task.
+      - *Re-review.*
+        - The consent guard refuses any command or script that names a
+          service file (`rdv-listen-*.vbs|xml|json|log|service|plist|conf`
+          or a `rdv-listen-*.service.d` drop-in), whether it reads or
+          writes, the way it refuses the agent key file; status and
+          `--dry-run` already show the content.
+        - It also refuses `schtasks` /Change, /Create, /Delete, /End and
+          /Run, `systemctl` edit, revert, set-property, enable, disable,
+          mask, start, stop, restart and daemon-reload, and `launchctl`
+          bootout, bootstrap, load, unload and kickstart, whenever the
+          command names `rdv-listen-`. `listener.yield` is a protected file
+          in a home.
+        - rdv-mcp checks the service without anyone asking: at start, and
+          every 30 s on its tick, it checks the record and the file hashes,
+          with no OS command, and does nothing when no service was
+          installed. It reads back what the OS runs at most every 5
+          minutes. A change is a WARNING and a `service_tampered` event,
+          once per change.
+        - Linux: before install, `systemctl --user show -p FragmentPath`.
+          A unit of that name that systemd loads from anywhere but
+          `~/.config/systemd/user` is not ours, so install refuses, and
+          remove or rollback never disables it.
+        - The Win32_Process match is anchored: `--service <name>` followed
+          by whitespace or the end.
 
 ## Not implemented yet
 

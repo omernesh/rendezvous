@@ -285,6 +285,7 @@ export {
   spawnRunner,
   waitForService,
   checkServiceArgv,
+  quickServiceCheck,
   clearListenerYield,
   listenerYielded,
   RESTART_MAX_SECONDS,

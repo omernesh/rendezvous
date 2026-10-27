@@ -284,6 +284,7 @@ import {
   clearListenerYield,
   listenerYielded,
   setListenerYield,
+  quickServiceCheck,
 } from '@rendezvous/cli/lib';
 import { z } from 'zod';
 import {
@@ -533,8 +534,12 @@ export interface RdvMcpOptions {
    * never register a real service; `waitMs` is how long install waits for
    * the service to take listener.lock (default 10 s).
    */
-  service?: { env?: ServiceEnv; run?: ServiceRunner; waitMs?: number };
+  service?: { env?: ServiceEnv; run?: ServiceRunner; waitMs?: number; checkMs?: number };
 }
+
+/** How often rdv-mcp checks the background listener's files (no OS command), and what the OS runs (re-review of PR #117). */
+const SERVICE_QUICK_MS = 30_000;
+const SERVICE_FULL_MS = 5 * 60_000;
 
 /** How long this server leaves listener.lock free after installing the service, for the service to take it. */
 const SERVICE_YIELD_MS = 60_000;
@@ -1395,6 +1400,7 @@ export class RdvMcpServer {
     }
     this.poller = setInterval(() => void this.tick(), this.pollMs);
     this.poller.unref?.();
+    this.chain = this.chain.then(() => this.checkService(true)).catch((err) => this.humanLog(`error checking the background listener: ${(err as Error).message}`));
     // Requests that arrived while we were down (or through `rdv listen`) get phrases too.
     this.chain = this.chain.then(() => this.refreshPhrases()).catch((err) => this.humanLog(`error: ${(err as Error).message}`));
     const real = this.real;
@@ -1512,6 +1518,7 @@ export class RdvMcpServer {
   /** Follow the shared log; when attached, take over if the consumer has gone. */
   private async tick(): Promise<void> {
     await this.followIdentity();
+    await this.checkService().catch((err) => this.humanLog(`error checking the background listener: ${(err as Error).message}`));
     if (this.mode === 'attached' && this.real && !this.yielding()) {
       const lock = tryLongLock(this.home.listenerLockPath, this.role);
       if (lock.release) {
@@ -3710,12 +3717,44 @@ export class RdvMcpServer {
 
   /** A service changed outside Rendezvous: the human log and an inbox event say so, once per change. */
   private async warnTampered(s: ServiceStatus): Promise<void> {
-    const key = s.tampered ? s.tamper_reasons.join('|') : '';
+    await this.warnReasons(s.name, s.tampered ? s.tamper_reasons : []);
+  }
+
+  private async warnReasons(name: string, reasons: string[]): Promise<void> {
+    const key = reasons.join('|');
     if (key === this.tamperWarned) return;
     this.tamperWarned = key;
-    if (!s.tampered) return;
-    this.humanLog(`WARNING: the background listener ${s.name} was changed outside Rendezvous: ${s.tamper_reasons.join('; ')}. Remove it (rdv service remove) or install it again (rdv service install).`);
-    await this.publish([{ type: 'service_tampered', name: safe(s.name), reasons: s.tamper_reasons.map((r) => safe(r)), next_step: 'Tell your user their background listener was changed outside Rendezvous; rdv_service "install" (their approval) puts it back, "remove" removes it.' }]);
+    if (!reasons.length) return;
+    this.humanLog(`WARNING: the background listener ${name} was changed outside Rendezvous: ${reasons.join('; ')}. Remove it (rdv service remove) or install it again (rdv service install).`);
+    await this.publish([{ type: 'service_tampered', name: safe(name), reasons: reasons.map((r) => safe(r)), next_step: 'Tell your user their background listener was changed outside Rendezvous; rdv_service "install" (their approval) puts it back, "remove" removes it.' }]);
+  }
+
+  private serviceQuickAt = 0;
+  private serviceFullAt = 0;
+  /**
+   * The background listener checked without anyone asking (re-review of PR
+   * #117): at start and then every SERVICE_QUICK_MS, the record and its file
+   * hashes (no OS command; nothing at all when no service was installed
+   * here); what the OS runs, at most every SERVICE_FULL_MS.
+   */
+  private async checkService(force = false): Promise<void> {
+    if (this.remote || !this.home.initialized()) return;
+    const now = Date.now();
+    if (!force && now - this.serviceQuickAt < (this.serviceOpts.checkMs ?? SERVICE_QUICK_MS)) return;
+    this.serviceQuickAt = now;
+    let ctx: { env: ServiceEnv; run: ServiceRunner };
+    try {
+      ctx = this.serviceCtx();
+    } catch {
+      return; // an OS without a service manager
+    }
+    const q = quickServiceCheck(this.home, ctx.env);
+    if (!q?.installed) return;
+    if (q.reasons.length) return this.warnReasons(q.name, q.reasons);
+    // Its files are as installed again: a later change is a new one, reported again.
+    if (now - this.serviceFullAt < SERVICE_FULL_MS) return this.warnReasons(q.name, []);
+    this.serviceFullAt = now;
+    await this.warnTampered(serviceStatus(this.home, this.home.readConfig().profile, ctx.env, ctx.run));
   }
 
   /**

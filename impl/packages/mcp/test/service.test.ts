@@ -93,7 +93,7 @@ function fakeOs(dir: string) {
       if (sub === 'print') return os.held ? okr(`state = running\n\targuments = {\n${registered().split('\n').map((a) => `\t\t${a}`).join('\n')}\n\t}\n`) : { code: 113, stdout: '', stderr: 'Could not find service' };
       return okr();
     }
-    if (argv.includes('show')) return okr(`ExecStart={ path=/usr/bin/env ; argv[]=${registered()} ; ignore_errors=no ; }\nDropInPaths=\n`);
+    if (argv.includes('show')) return okr(`ExecStart={ path=/usr/bin/env ; argv[]=${registered()} ; ignore_errors=no ; }\nDropInPaths=\nFragmentPath=\n`);
     if (argv.includes('enable')) take();
     if (argv.includes('disable')) drop();
     if (argv.includes('is-active')) return okr(os.held ? 'active' : 'inactive');
@@ -282,5 +282,26 @@ describe('rdv_service', () => {
     // Removed: one of them receives again.
     await ok(first, 'rdv_service', { action: 'remove' });
     await until(async () => (await inbound(first)) === 'consumer' || (await inbound(second)) === 'consumer', 'a server to take over');
+  });
+
+  it('a changed service is flagged without anyone asking: at start, and on the tick', { timeout: 60_000 }, async () => {
+    const { s: side, os, def } = await omer({ elicit: human(yes).handler });
+    await ok(side, 'rdv_service', { action: 'install' });
+    const f = def.files[0];
+    writeFileSync(f.path, Buffer.concat([readFileSync(f.path), Buffer.from('\n')]));
+    // A server started on this home now says so at once.
+    const later = await makeSide('omer-later', side.home.dir, { service: { env: os.env, run: os.run, waitMs: 500 } });
+    sides.push(later);
+    await until(() => later.humanLog.some((l) => l.includes('WARNING: the background listener rdv-listen-omer was changed outside Rendezvous')), 'the warning at start');
+    // A running one notices on its tick (checkMs shortened for the test).
+    const ticking = await makeSide('omer-tick', side.home.dir, { service: { env: os.env, run: os.run, waitMs: 500, checkMs: 100 } });
+    sides.push(ticking);
+    await until(() => ticking.humanLog.some((l) => l.includes('WARNING')), 'its first warning');
+    await ok(side, 'rdv_service', { action: 'install' }); // put back
+    await new Promise((r) => setTimeout(r, 1500)); // a tick sees it as installed again
+    const n = ticking.humanLog.length;
+    writeFileSync(f.path, Buffer.concat([readFileSync(f.path), Buffer.from('\n\n')]));
+    await until(() => ticking.humanLog.slice(n).some((l) => l.includes('WARNING')), 'the warning on the tick');
+    expect((await waitEvent(ticking, (e) => e.type === 'service_tampered', 'the event', T)).name).toBe(NAME);
   });
 });
