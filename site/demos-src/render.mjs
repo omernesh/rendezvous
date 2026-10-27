@@ -16,7 +16,7 @@ const FPS = 25;
 const SCALE = 1.5; // 800x500 CSS px -> 1200x750 video
 const GIF = { 'contact-email': true, 'dinner': true }; // the README GIFs
 // Poster: a frame that explains the clip on its own (seconds after the title card).
-const POSTER = { 'contact-email': 15.3, 'contact-id': 4.2, 'addresses-phone': 5.0, 'incoming': 5.6, 'dinner': 10.6, 'tasks-files': 12.9, 'group-chat': 24.0, 'scoped-grants': 9.6,'auto-approve': 12.6 };
+const POSTER = { 'contact-email': 15.3, 'contact-id': 4.2, 'addresses-phone': 5.0, 'incoming': 5.6, 'dinner': 10.6, 'tasks-files': 12.9, 'group-chat': 24.0, 'scoped-grants': 9.6,'auto-approve': 11.4 };
 
 const { chromium } = await import(process.env.PW_CORE ? pathToFileURL(process.env.PW_CORE).href : 'playwright-core');
 
