@@ -1340,14 +1340,21 @@ change**, issue #104).
   lost. Anyone can re-publish an old envelope, so this is capped locally:
   at most one such receipt per contact per half retry interval, a window
   that never runs out (a receipt costs no chain state, so there is no
-  budget to exhaust). Nothing about the copy (such as the carrier event's
-  `created_at`, which its publisher chooses) is trusted for it.
+  budget to exhaust), and at most a daily number per contact (48 in the
+  reference implementation, a dozen lost receipts' worth of retries), so
+  replays cannot make an agent publish without end. Envelopes not yet
+  confirmed are acknowledged whatever the count. Nothing about the copy
+  (such as the carrier event's `created_at`, which its publisher chooses)
+  is trusted for it.
 - **Replayed receipts.** A receipt is valid for its `ttl`, so a relay or
   anyone else can replay an old one. A sender ignores a contact's receipts
   whose `created` is not later than a floor: the `created` of the contact's
   restore notice (§6.4.1), and the contact's own request or grant when a
   contact period begins (after a revoke). Both stamps come from the
-  contact's clock, as receipts do. The floor is kept with the delivery state.
+  contact's clock, as receipts do, so the floor is never lower than the
+  moment the sender got the stamp minus the clock skew an envelope may have (5 minutes, §6.4): a
+  contact restoring onto a slow clock cannot lower it. The floor is kept
+  with the delivery state.
 - **Restores.** A backup restored (§6.4.1) drops what it was waiting for:
   the outbox is not in the backup, and in the new epoch the contact's first
   receipt would otherwise cover it all. Its human is told how many messages

@@ -8,6 +8,7 @@ The format follows Keep a Changelog. One line per change a user can see; PR numb
 
 ### Fixed
 - The standing-approval demo clip on the site no longer says no tool can turn it on: it now shows the agent opening the approval form where you type your owner passphrase. ([#106](https://github.com/omernesh/rendezvous/issues/106))
+- **Security:** delivery receipts are harder to abuse: a contact that restores its agent onto a clock that runs far behind can no longer let old receipts confirm messages it never got, and someone replaying a contact's old messages can make your agent send that contact at most 48 extra receipts a day. ([#113](https://github.com/omernesh/rendezvous/issues/113))
 
 ## 0.10.1 - 2026-10-27 {#v0-10-1}
 
