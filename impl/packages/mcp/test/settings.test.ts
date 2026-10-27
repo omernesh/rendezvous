@@ -286,8 +286,21 @@ describe('rdv_init replace', () => {
     expect(form.message).toContain('Meeting window:  "weekday evenings"');
     expect(Object.keys(fields(form)).sort()).toEqual(['approve', 'fingerprint_end']);
 
+    // A call that starts the agent inside the swap (between giving up the old one and starting the new one) must not
+    // attach to our own kept lock: the swap starts the new agent itself (re-review of PR #111).
+    const srv = s.server as unknown as { stopListening: (keep?: boolean) => Promise<unknown> };
+    const stop = srv.stopListening.bind(srv);
+    srv.stopListening = async (keep?: boolean) => {
+      const held = await stop(keep);
+      if (keep) s.server.startListening();
+      return held;
+    };
     // Now the human types the right characters; the pointer the form showed (kept: yes) is what applies.
     const done = await ok(s, 'rdv_init', { replace: true, profile: 'fresh' });
+    srv.stopListening = stop;
+    expect(done.inbound).toBe('consumer');
+    await new Promise((r) => setTimeout(r, 1500));
+    expect((await ok(s, 'rdv_status')).inbound).toBe('consumer');
     expect(h.asked[1].message).toContain('Findable by address (public pointer): yes\n');
     expect(done.public_pointer).toBe(true);
     // The attached server follows the new identity: it restarts as the new agent and stays attached.
@@ -301,5 +314,16 @@ describe('rdv_init replace', () => {
     // The public address carried over to the new card.
     expect(done.addresses).toEqual([address]);
     expect((await ok(s, 'rdv_status')).agent_id).toBe(done.agent_id);
+  });
+
+  it('a kept listener lock the restart cannot use is released, never left alive (initHome failing after the reset)', async () => {
+    root = mkdtempSync(join(tmpdir(), 'rdv-settings-'));
+    const bare = await makeSide('bare', join(root, 'bare'));
+    sides.push(bare);
+    let released = 0;
+    // No agent in the home (as after a reset whose init failed): startListening cannot start, so it lets go of the lock.
+    bare.server.startListening(() => released++);
+    expect(released).toBe(1);
+    expect(bare.server.listening).toBe(false);
   });
 });
