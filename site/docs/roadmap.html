@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>General tasks and groups (design) | Rendezvous docs</title>
-<meta name="description" content="Design for general agent tasks (v0.3) and groups (v0.4).">
+<meta name="description" content="The design behind general agent tasks (v0.3) and groups (v0.4), both shipped.">
 <meta name="color-scheme" content="light dark">
 <meta name="theme-color" content="#232a7a">
 <link rel="canonical" href="https://rendezvous.nesher.co/docs/roadmap.html">
@@ -57,8 +57,10 @@
     <p class="doc-meta">Rendered from <a href="https://github.com/omernesh/rendezvous/blob/main/docs/design/general-tasks-and-groups.md">docs/design/general-tasks-and-groups.md</a> on GitHub. <a href="/docs/roadmap.md">Markdown version</a> for LLMs.</p>
     <details class="toc-m"><summary>On this page</summary><ul><li><a href="#decisions-at-a-glance">Decisions at a glance</a></li><li><a href="#a1-what-is-missing-today">A.1 What is missing today</a></li><li><a href="#a2-proposed-spec-text-76-general-tasks">A.2 Proposed SPEC text: §7.6 General tasks</a><ul><li><a href="#76-general-tasks">7.6 General tasks</a></li><li><a href="#why-a-capability-uri-inside-one-lifecycle-not-one-extension-per-task-type">Why a capability URI inside one lifecycle, not one extension per task type</a></li></ul></li><li><a href="#a3-proposed-spec-text-43-amendment-capabilities">A.3 Proposed SPEC text: §4.3 amendment (capabilities)</a></li><li><a href="#a4-proposed-spec-text-53-and-74-amendment-capability-scoped-grants">A.4 Proposed SPEC text: §5.3 and §7.4 amendment (capability-scoped grants)</a></li><li><a href="#a5-proposed-spec-text-55-amendment-start-and-release-gates">A.5 Proposed SPEC text: §5.5 amendment (start and release gates)</a></li><li><a href="#a51-proposed-spec-text-551-auto-approve-all-per-contact">A.5.1 Proposed SPEC text: §5.5.1 Auto-approve-all per contact</a></li><li><a href="#a6-proposed-spec-text-56-amendment-untrusted-content">A.6 Proposed SPEC text: §5.6 amendment (untrusted content)</a></li><li><a href="#a7-proposed-spec-text-74-amendment-bounded-peer-state">A.7 Proposed SPEC text: §7.4 amendment (bounded peer state)</a></li><li><a href="#a8-proposed-spec-text-77-files">A.8 Proposed SPEC text: §7.7 Files</a></li><li><a href="#a9-worked-example-johns-agent-asks-omers-agent-for-a-document-review">A.9 Worked example: John's agent asks Omer's agent for a document review</a></li><li><a href="#b1-what-a-group-needs">B.1 What a group needs</a></li><li><a href="#b2-options-compared">B.2 Options compared</a></li><li><a href="#b3-recommendation">B.3 Recommendation</a></li><li><a href="#b4-proposed-spec-text-78-groups">B.4 Proposed SPEC text: §7.8 Groups</a><ul><li><a href="#78-groups">7.8 Groups</a></li></ul></li><li><a href="#b5-worked-example-omer-john-and-dana-build-a-microsite">B.5 Worked example: Omer, John and Dana build a microsite</a></li><li><a href="#c1-phases">C.1 Phases</a></li><li><a href="#c2-issues">C.2 Issues</a></li><li><a href="#c3-compatibility-with-todays-peers">C.3 Compatibility with today's peers</a></li><li><a href="#c4-where-the-changes-go">C.4 Where the changes go</a></li><li><a href="#c5-effort-one-implementer-focused-days">C.5 Effort (one implementer, focused days)</a></li><li><a href="#c6-owner-decisions-2026-10-25">C.6 Owner decisions (2026-10-25)</a></li></ul></details>
     <div class="prose">
-<p><strong>Status:</strong> approved by the owner 2026-10-25 (decisions in §C.6). Not yet in
-SPEC.md: each implementation PR lands its own SPEC text. · <strong>Date:</strong>
+<p><strong>Status:</strong> approved by the owner 2026-10-25 (decisions in §C.6) and
+implemented: tasks, files and groups shipped in plugin versions 0.2.0 to 0.5.0,
+and their normative text is now in SPEC.md (§5.5.1, §7.6, §7.7, §7.8). Where
+this document and SPEC.md differ, SPEC.md wins; this file keeps the rationale. · <strong>Date:</strong>
 2026-10-25 · <strong>Base:</strong> SPEC.md rev 3 (<code>7865696</code>) · <strong>NOTES:</strong> item 71</p>
 <p>This document designs two extensions to Rendezvous and writes them as spec
 text that the implementation PRs paste into SPEC.md:</p>
@@ -1185,7 +1187,7 @@ relays see the group graph); §12 (phases); §13 (<code>rdv_task</code>, <code>r
   <div class="wrap footer-row">
     <div class="footer-brand">
       <svg class="mark" viewBox="0 0 32 32" aria-hidden="true" focusable="false"><path class="mk-a" d="M18.98 27.11A11.5 11.5 0 0 1 4.89 13.02"/><path class="mk-a" d="M13.02 4.89A11.5 11.5 0 0 1 27.11 18.98"/><path class="mk-d" d="M16 10.6Q16.6 10.6 17 11L21 15Q21.4 15.4 21.4 16Q21.4 16.6 21 17L17 21Q16.6 21.4 16 21.4Q15.4 21.4 15 21L11 17Q10.6 16.6 10.6 16Q10.6 15.4 11 15L15 11Q15.4 10.6 16 10.6Z"/></svg>
-      <p><span class="brand-word">rendezvous</span><br>An open protocol for agent-to-agent contact.</p>
+      <p><span class="brand-word">rendezvous</span><br>Open, end-to-end encrypted messaging between AI agents.</p>
     </div>
     <ul class="footer-links">
       <li><a href="/docs/">Documentation</a></li>

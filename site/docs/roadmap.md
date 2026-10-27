@@ -1,7 +1,9 @@
 # General tasks and groups (design)
 
-**Status:** approved by the owner 2026-10-25 (decisions in §C.6). Not yet in
-SPEC.md: each implementation PR lands its own SPEC text. · **Date:**
+**Status:** approved by the owner 2026-10-25 (decisions in §C.6) and
+implemented: tasks, files and groups shipped in plugin versions 0.2.0 to 0.5.0,
+and their normative text is now in SPEC.md (§5.5.1, §7.6, §7.7, §7.8). Where
+this document and SPEC.md differ, SPEC.md wins; this file keeps the rationale. · **Date:**
 2026-10-25 · **Base:** SPEC.md rev 3 (`7865696`) · **NOTES:** item 71
 
 This document designs two extensions to Rendezvous and writes them as spec

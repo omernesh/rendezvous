@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>CLI and library | Rendezvous docs</title>
-<meta name="description" content="The rdv command line, the TypeScript packages, relay behaviour, the dinner scenarios and how to develop and test.">
+<meta name="description" content="The rdv command line, the TypeScript packages, the gateway, relay behaviour, the end-to-end scenarios and how to develop and test.">
 <meta name="color-scheme" content="light dark">
 <meta name="theme-color" content="#232a7a">
 <link rel="canonical" href="https://rendezvous.nesher.co/docs/cli.html">
@@ -58,7 +58,8 @@
     <details class="toc-m"><summary>On this page</summary><ul><li><a href="#rendezvouscore">@rendezvous/core</a></li><li><a href="#rendezvousa2a">@rendezvous/a2a</a></li><li><a href="#rdv-the-cli">rdv (the CLI)</a><ul><li><a href="#tasks-and-files-an-example-user-guide-docstasksmd">Tasks and files: an example (user guide: docs/tasks.md)</a></li><li><a href="#the-dinner-scenarios-plan-53">The dinner scenarios (PLAN §5.3)</a></li><li><a href="#the-microsite-scenario-design-b5-issue-79">The microsite scenario (design B.5, issue #79)</a></li><li><a href="#the-contact-scenario-plan-45">The contact scenario (PLAN §4.5)</a></li></ul></li><li><a href="#rdv-mcp-the-mcp-server">rdv-mcp (the MCP server)</a></li><li><a href="#rdv-gateway-cloud-assistants-issue-12">rdv-gateway (cloud assistants, issue #12)</a></li><li><a href="#develop">Develop</a></li></ul></details>
     <div class="prose">
 <p>TypeScript packages for the <a href="/docs/spec.html">Rendezvous</a> agent-to-agent contact
-protocol, built toward the two-agent dinner demo in <a href="https://github.com/omernesh/rendezvous/blob/main/PLAN.md">PLAN.md</a>.
+protocol: end-to-end encrypted messages, tasks, files, groups and scheduling
+between agents. The plan, including the two-agent dinner demo, is in <a href="https://github.com/omernesh/rendezvous/blob/main/PLAN.md">PLAN.md</a>.
 <code>impl/</code> is an npm workspace:</p>
 <div class="tablewrap" tabindex="0"><table>
 <thead>
@@ -87,7 +88,7 @@ protocol, built toward the two-agent dinner demo in <a href="https://github.com/
 <tr>
 <td><code>@rendezvous/mcp</code></td>
 <td><code>packages/mcp</code></td>
-<td><code>rdv-mcp</code>, a stdio MCP server so Claude (or any MCP client) can find, contact and book dinner with other agents</td>
+<td><code>rdv-mcp</code>, a stdio MCP server so Claude (or any MCP client) can find other agents, get consent, and exchange messages, tasks, files and meeting times with them</td>
 </tr>
 <tr>
 <td><code>@rendezvous/gateway</code></td>
@@ -638,7 +639,7 @@ npm run rdv -- --help                     # or: node packages/cli/dist/src/bin.j
 </tr>
 <tr>
 <td><code>rdv contact auto-approve &lt;agent-id\|label&gt; all [--until 7d]</code> / <code>… off</code></td>
-<td>Let one trusted contact's tasks start and their results leave, and the dinners it proposes be confirmed, without asking you (SPEC §5.5.1, "dangerous mode"): needs your own terminal, shows a warning, asks for your owner passphrase (the MCP tool <code>rdv_auto_approve</code> asks for it in an approval form instead). Ends on expiry, <code>off</code>, a revoke, block or new grant, or a fork (NOTES 77, 85). Yours to run</td>
+<td>Let one trusted contact's tasks start and their results leave, and the dinners it proposes be confirmed, without asking you (SPEC §5.5.1, "dangerous mode"): needs your own terminal, shows a warning, asks for your owner passphrase (the MCP tool <code>rdv_auto_approve</code> asks for it in an approval form instead). Ends on expiry, <code>off</code>, a revoke or block, a grant change you did not make, or a fork. A grant change you make yourself leaves it on for what it already covered and still allows; additions ask until you turn it on for them (NOTES 77, 85, SPEC §5.5.1). Yours to run</td>
 </tr>
 <tr>
 <td><code>rdv owner-secret set</code></td>
@@ -756,7 +757,8 @@ so a crash after a send never reuses a <code>seq</code> (issue #4).</p>
 <h2 id="rdv-mcp-the-mcp-server">rdv-mcp (the MCP server)<a class="anchor" href="#rdv-mcp-the-mcp-server" title="Link to this section" aria-label="Link to this section">#</a></h2>
 <p>PLAN §6.1. Tools <code>rdv_init</code>, <code>rdv_status</code>, <code>rdv_addresses</code>, <code>rdv_relays</code>, <code>rdv_publish_card</code>, <code>rdv_discover</code>,
 <code>rdv_request_contact</code>, <code>rdv_pending_requests</code>, <code>rdv_grant</code>, <code>rdv_revoke</code>,
-<code>rdv_send</code>, <code>rdv_inbox</code>, <code>rdv_negotiate</code>, and the <code>rdv://inbox</code> resource
+<code>rdv_auto_approve</code>, <code>rdv_backup</code>, <code>rdv_send</code>, <code>rdv_inbox</code>, <code>rdv_negotiate</code>,
+<code>rdv_task</code>, <code>rdv_file</code>, <code>rdv_group</code>, and the <code>rdv://inbox</code> resource
 (subscribable). <code>rdv_grant</code> needs the human: an MCP elicitation form, or a
 confirm phrase shown only in their terminal. Peer text comes back only as
 <code>untrusted_peer_text</code>. Details, consent threat model and client config:
@@ -840,7 +842,7 @@ implementation departs from or fills gaps in SPEC.md.</p>
   <div class="wrap footer-row">
     <div class="footer-brand">
       <svg class="mark" viewBox="0 0 32 32" aria-hidden="true" focusable="false"><path class="mk-a" d="M18.98 27.11A11.5 11.5 0 0 1 4.89 13.02"/><path class="mk-a" d="M13.02 4.89A11.5 11.5 0 0 1 27.11 18.98"/><path class="mk-d" d="M16 10.6Q16.6 10.6 17 11L21 15Q21.4 15.4 21.4 16Q21.4 16.6 21 17L17 21Q16.6 21.4 16 21.4Q15.4 21.4 15 21L11 17Q10.6 16.6 10.6 16Q10.6 15.4 11 15L15 11Q15.4 10.6 16 10.6Z"/></svg>
-      <p><span class="brand-word">rendezvous</span><br>An open protocol for agent-to-agent contact.</p>
+      <p><span class="brand-word">rendezvous</span><br>Open, end-to-end encrypted messaging between AI agents.</p>
     </div>
     <ul class="footer-links">
       <li><a href="/docs/">Documentation</a></li>

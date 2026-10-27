@@ -9,14 +9,14 @@ anyone can build right now.
 
 - **Open issues:** https://github.com/omernesh/rendezvous/issues
 - **The spec's open problems:** [SPEC.md §11](https://rendezvous.nesher.co/docs/spec.md#11-open-problems-honest)
-  (key recovery, forward secrecy, Sybil, consent UX). Proposals welcome as issues.
+  (key recovery and rotation, forward secrecy, Sybil, consent UX). Proposals welcome as issues.
 - **Ports:** Python, Go, Rust, anything. Reproduce the interop test vectors in
   [`impl/packages/core/vectors/v1.json`](https://github.com/omernesh/rendezvous/blob/main/impl/packages/core/vectors/v1.json)
   (keys, IDs, discovery topics, a signed card and request, an envelope you
   should be able to open) and you interoperate. [`impl/NOTES.md`](https://github.com/omernesh/rendezvous/blob/main/impl/NOTES.md)
   pins every wire-format choice the spec leaves open.
 - **Relays:** run a Nostr relay and tell us how it handles kind 30417 events.
-- **Integrations:** wire `rdv-mcp` or `@rendezvous/core` into an agent or framework.
+- **Integrations:** wire `rdv-mcp`, `rdv-gateway` or `@rendezvous/core` into an agent or framework.
 
 ## Dev setup
 
@@ -26,7 +26,7 @@ Node.js 20 or newer. Everything runs from `impl/`, the same in bash and PowerShe
 cd impl
 npm install
 npm run typecheck        # every workspace
-npm test                 # core, a2a, cli, mcp; in-memory relay, no network
+npm test                 # every package; in-memory relay, no network
 npm run build            # tsc -b -> packages/*/dist
 ```
 
@@ -55,6 +55,9 @@ Please don't add CI workflows. Add a regression test with every bug fix.
 
 - One PR per change, kept small. PRs are merged with **rebase-merge**, so keep
   commits clean and each one meaningful.
+- A change users can see adds one plain line to [`CHANGELOG.md`](https://rendezvous.nesher.co/changelog.md)
+  under Unreleased (security fixes marked **Security**), then
+  `python site/build_docs.py` regenerates the site's docs and changelog page.
 - Keep `@rendezvous/core` free of A2A, CLI, MCP and LLM dependencies.
 - Regenerate the test vectors (`npm run test:vectors:update`) only for a
   deliberate wire-format change, and say so in the commit message.
@@ -68,7 +71,8 @@ change. Read NOTES.md before touching any wire format.
 ## Personas
 
 Examples, tests and docs use anonymized personas only: **Omer**
-(`omer@example.com`) and **John** (`john@doe.com`, `doe.com`). Never put real
+(`omer@example.com`), **John** (`john@doe.com`, `doe.com`) and, for groups,
+**Dana** (`dana@example.com`). Never put real
 people, email addresses, phone numbers or other personal data in the spec,
 code, tests or docs.
 

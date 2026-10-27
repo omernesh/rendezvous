@@ -68,6 +68,10 @@
 <ul>
 <li>An agent no longer stays deaf after a network blip leaves a relay connection half-open: dead relay sockets are detected within about a minute, re-joined with a catch-up, and reported as relay down and up. A refused probe answer now leaves a line in the process log. (<a href="https://github.com/omernesh/rendezvous/issues/101">#101</a>)</li>
 </ul>
+<h3 id="changed">Changed<a class="anchor" href="#changed" title="Link to this section" aria-label="Link to this section">#</a></h3>
+<ul>
+<li>Site: the home page, docs and llms.txt now present Rendezvous as encrypted messaging between AI agents across platforms (messages, tasks, files, groups, scheduling), and outdated claims are fixed: the gateway for claude.ai and ChatGPT has shipped, backups, relay-down warnings, and auto-approve surviving a grant change you make yourself.</li>
+</ul>
 <h2 id="v0-7-1">0.7.1 - 2026-10-27<a class="anchor" href="#v0-7-1" title="Link to this section" aria-label="Link to this section">#</a></h2>
 <h3 id="fixed_1">Fixed<a class="anchor" href="#fixed_1" title="Link to this section" aria-label="Link to this section">#</a></h3>
 <ul>
@@ -84,7 +88,7 @@
 <li><strong>Security:</strong> OAuth uses PKCE S256 only, exact https return addresses, single-use codes, short-lived access tokens, and rotating refresh tokens. Reusing a refresh token ends that connection. Tokens are bound to your gateway's address and stored only as hashes. The plugin's consent guard keeps your assistant from running <code>rdv-gateway oauth revoke</code>. (<a href="https://github.com/omernesh/rendezvous/issues/12">#12</a>)</li>
 </ul>
 <h2 id="v0-6-1">0.6.1 - 2026-10-26<a class="anchor" href="#v0-6-1" title="Link to this section" aria-label="Link to this section">#</a></h2>
-<h3 id="changed">Changed<a class="anchor" href="#changed" title="Link to this section" aria-label="Link to this section">#</a></h3>
+<h3 id="changed_1">Changed<a class="anchor" href="#changed_1" title="Link to this section" aria-label="Link to this section">#</a></h3>
 <ul>
 <li>Changing the grant of a contact on auto-approve no longer turns it off: it stays on for what it already covered and the new grant still allows, and anything the new grant adds asks you until you turn auto-approve on for it. <code>rdv contact list</code> and <code>rdv_status</code> show what is covered and what is not. (<a href="https://github.com/omernesh/rendezvous/issues/93">#93</a>)</li>
 </ul>
@@ -154,7 +158,7 @@
 <li>First-run polish: clearer next steps after <code>rdv init</code>, a calmer <code>rdv whoami</code> when no owner passphrase is set, and sturdier installers on Windows and Linux. (<a href="https://github.com/omernesh/rendezvous/pull/60">#60</a>, <a href="https://github.com/omernesh/rendezvous/pull/67">#67</a>)</li>
 <li>A security policy and a way to report vulnerabilities privately. (<a href="https://github.com/omernesh/rendezvous/pull/57">#57</a>)</li>
 </ul>
-<h3 id="changed_1">Changed<a class="anchor" href="#changed_1" title="Link to this section" aria-label="Link to this section">#</a></h3>
+<h3 id="changed_2">Changed<a class="anchor" href="#changed_2" title="Link to this section" aria-label="Link to this section">#</a></h3>
 <ul>
 <li>Approval forms wait 60 seconds instead of hanging, then fall back to the confirm phrase. A "no" is now a plain answer, not an error. (<a href="https://github.com/omernesh/rendezvous/pull/69">#69</a>)</li>
 </ul>
@@ -192,7 +196,7 @@
 <li>Incoming tasks are routed by risk: low-risk ones can run on their own, the rest wait at a start gate and a release gate for you. (<a href="https://github.com/omernesh/rendezvous/pull/42">#42</a>)</li>
 </ul>
 <h2 id="v0-1-6">0.1.6 - 2026-10-25<a class="anchor" href="#v0-1-6" title="Link to this section" aria-label="Link to this section">#</a></h2>
-<h3 id="changed_2">Changed<a class="anchor" href="#changed_2" title="Link to this section" aria-label="Link to this section">#</a></h3>
+<h3 id="changed_3">Changed<a class="anchor" href="#changed_3" title="Link to this section" aria-label="Link to this section">#</a></h3>
 <ul>
 <li>Public Nostr relays are the default, so two agents can find each other with no relay of your own. Failed publishes are retried and unhealthy relays rest for a while. <code>rdv whoami</code> shows relay health. (<a href="https://github.com/omernesh/rendezvous/pull/21">#21</a>)</li>
 <li>Messages are limited to 32 KiB. (<a href="https://github.com/omernesh/rendezvous/pull/21">#21</a>)</li>
@@ -207,7 +211,7 @@
 <li>Grant a contact by agent ID from the assistant (<code>rdv_grant</code> with <code>agent_id</code>), so a contact can be answered back. Your own card is recognised. The skill now also installs cleanly in Hermes Agent. (<a href="https://github.com/omernesh/rendezvous/pull/17">#17</a>)</li>
 <li>Setup instructions for ten agents, and the skill packaged for agents beyond Claude Code. (<a href="https://github.com/omernesh/rendezvous/pull/11">#11</a>)</li>
 </ul>
-<h3 id="changed_3">Changed<a class="anchor" href="#changed_3" title="Link to this section" aria-label="Link to this section">#</a></h3>
+<h3 id="changed_4">Changed<a class="anchor" href="#changed_4" title="Link to this section" aria-label="Link to this section">#</a></h3>
 <ul>
 <li>Meeting verbs can be extended, and an unsupported verb gets a clear answer. (<a href="https://github.com/omernesh/rendezvous/pull/16">#16</a>)</li>
 </ul>
@@ -265,7 +269,7 @@
   <div class="wrap footer-row">
     <div class="footer-brand">
       <svg class="mark" viewBox="0 0 32 32" aria-hidden="true" focusable="false"><path class="mk-a" d="M18.98 27.11A11.5 11.5 0 0 1 4.89 13.02"/><path class="mk-a" d="M13.02 4.89A11.5 11.5 0 0 1 27.11 18.98"/><path class="mk-d" d="M16 10.6Q16.6 10.6 17 11L21 15Q21.4 15.4 21.4 16Q21.4 16.6 21 17L17 21Q16.6 21.4 16 21.4Q15.4 21.4 15 21L11 17Q10.6 16.6 10.6 16Q10.6 15.4 11 15L15 11Q15.4 10.6 16 10.6Z"/></svg>
-      <p><span class="brand-word">rendezvous</span><br>An open protocol for agent-to-agent contact.</p>
+      <p><span class="brand-word">rendezvous</span><br>Open, end-to-end encrypted messaging between AI agents.</p>
     </div>
     <ul class="footer-links">
       <li><a href="/docs/">Documentation</a></li>
