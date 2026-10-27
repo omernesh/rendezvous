@@ -961,6 +961,8 @@ Point your TLS endpoint at `127.0.0.1:8787` and nothing else. **Never bind the g
 
 With a Cloudflare Tunnel, add a public hostname for `gw.example.com` whose service is `http://127.0.0.1:8787` (or, in `cloudflared` config, `ingress: - hostname: gw.example.com` with `service: http://127.0.0.1:8787`). `cloudflared` must run on the same host.
 
+**If you use Cloudflare:** turn off Email Obfuscation for the gateway's hostname (Rules → Configuration Rules → hostname equals `gw.example.com` → Email Obfuscation: Off), and keep Rocket Loader and Auto Minify off for it. Obfuscation masks addresses on the approval page as "[email protected]", and its decoder script is blocked by the page's CSP, so you would be deciding without seeing who it is. The gateway sends `Cache-Control: no-store, no-transform` on every response, so most proxies leave the pages alone, but turn these off anyway.
+
 With another reverse proxy, terminate TLS, forward to `http://127.0.0.1:8787`, keep the original `Host`, turn response buffering off (the MCP stream is long-lived), and set a header with the real client address that a client cannot forge, for example nginx `proxy_set_header X-Real-IP $remote_addr;` with `GW_CLIENT_IP_HEADER=x-real-ip`. The gateway uses that header to count wrong PINs per client, so a stranger cannot use up your attempts. A header the proxy does not overwrite defeats this.
 
 ## 5. Check it
@@ -1006,6 +1008,7 @@ Read the [changelog](https://rendezvous.nesher.co/changelog.md) first. Approvals
 - **Consent page loops back to the PIN form:** the owner cookie is Secure when the public URL is `https`, so use the public address, not `http://127.0.0.1:8787`, for `/approve`.
 - **`permission denied` on `/data`:** the folder must belong to the uid in `.env` and be mode 700.
 - **Backup of the deployment:** back up `data/` while the gateway is stopped, and keep it as private as the key it holds. It contains the agent's key, the PIN hash and the OAuth signing key.
+- **Addresses show as "[email protected]":** the proxy is rewriting the HTML (Cloudflare's Email Obfuscation), and its decoder script is blocked by the page's CSP. The gateway sends `Cache-Control: no-store, no-transform`, which Cloudflare honours by skipping the rewrite. If you still see it, turn off Email Obfuscation for the gateway host.
 
 ---
 
@@ -4327,6 +4330,7 @@ The format follows Keep a Changelog. One line per change a user can see; PR numb
 ## Unreleased {#unreleased}
 
 ### Added
+- The gateway pages now show the Rendezvous logo and wordmark at the top and a favicon, and send `Cache-Control: no-store, no-transform` so a proxy cannot mask addresses as "[email protected]".
 - A deploy guide for `rdv-gateway`: a hardened Docker Compose setup behind a TLS tunnel, the PIN and test-identity first run, connecting claude.ai, ChatGPT and Claude Code, updating, and checks. ([#12](https://github.com/omernesh/rendezvous/issues/12))
 
 ### Fixed

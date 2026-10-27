@@ -22,6 +22,7 @@
 // that started it. Only the owner's decisions are remembered (single use).
 import { createHash, createHmac, randomBytes } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { BRAND_HEADER } from './brand.js';
 import { escapeHtml, HttpError, mediaType, RateLimiter, randomToken, readBody, redirect, safeEqual, sendJson, sha256 } from './http.js';
 import { type ClientAuthMethod, type ClientMeta, type IssuedTokens, newGrantId, OAuthStore, OAuthStoreError } from './oauth-store.js';
 import { isScope, SCOPES, type Scope } from './scopes.js';
@@ -518,7 +519,7 @@ export class OAuthServer {
 
   private authError(res: ServerResponse, text: string, status = 400): undefined {
     // Shown here, never redirected: the return address is not trusted yet.
-    const body = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Cannot connect</title><link rel="stylesheet" href="/assets/gateway.css"></head><body><main><h1>Cannot connect this client</h1><p>${escapeHtml(text)}</p></main></body></html>`;
+    const body = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Cannot connect</title><link rel="stylesheet" href="/assets/gateway.css"></head><body>${BRAND_HEADER}<main><h1>Cannot connect this client</h1><p>${escapeHtml(text)}</p></main></body></html>`;
     res.writeHead(status, {
       'Content-Type': 'text/html; charset=utf-8',
       'Content-Length': Buffer.byteLength(body),

@@ -543,6 +543,8 @@ describe('OAuth: the consent page', () => {
     expect(c.page).toContain('&lt;script&gt;alert(1)&lt;/script&gt;');
     expect(c.page).not.toContain('<script>');
     expect(c.page).toContain('<b>client.example</b>');
+    expect(c.page).toContain('<title id="rdv-logo-title">Rendezvous</title>');
+    expect(c.page).toContain('>rendezvous</span>');
     expect(c.page).toContain('name="s_read"');
     expect(c.page).toContain('name="s_contact:request"');
     expect(c.page).not.toContain('name="s_send"');

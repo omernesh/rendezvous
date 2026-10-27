@@ -46,6 +46,7 @@ import {
 } from './http.js';
 import { OAuthServer } from './oauth.js';
 import { openApi } from './openapi.js';
+import { BRAND_CSS, FAVICON_SVG } from './brand.js';
 import { approvalPage, consentCsp, consentPage, CSS, donePage, errorPage, type Flash, listPage, PAGE_CSP, unlockPage } from './pages.js';
 import { authorizeCall, SCOPES, type Scope, toolScopes } from './scopes.js';
 import { GatewayStore } from './store.js';
@@ -304,8 +305,19 @@ export class Gateway {
       const path = url.pathname;
       if (path === '/healthz' && req.method === 'GET') return sendJson(res, 200, { ok: true });
       if (path === '/assets/gateway.css' && req.method === 'GET') {
-        res.writeHead(200, { 'Content-Type': 'text/css; charset=utf-8', 'Content-Length': Buffer.byteLength(CSS), 'Cache-Control': 'max-age=3600' });
-        return void res.end(CSS);
+        const css = CSS + BRAND_CSS;
+        res.writeHead(200, { 'Content-Type': 'text/css; charset=utf-8', 'Content-Length': Buffer.byteLength(css), 'Cache-Control': 'max-age=3600' });
+        return void res.end(css);
+      }
+      if (path === '/favicon.svg' && req.method === 'GET') {
+        res.writeHead(200, {
+          'Content-Type': 'image/svg+xml',
+          'Content-Length': Buffer.byteLength(FAVICON_SVG),
+          'Cache-Control': 'max-age=86400',
+          // The icon is a standalone document with its own style block; sandboxed, no scripts.
+          'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; sandbox",
+        });
+        return void res.end(FAVICON_SVG);
       }
       if (path === '/openapi.json' && req.method === 'GET') {
         this.openapi ??= JSON.stringify(openApi(this.server.tools, this.base));

@@ -7,6 +7,7 @@ The format follows Keep a Changelog. One line per change a user can see; PR numb
 ## Unreleased {#unreleased}
 
 ### Added
+- The gateway pages now show the Rendezvous logo and wordmark at the top and a favicon, and send `Cache-Control: no-store, no-transform` so a proxy cannot mask addresses as "[email protected]".
 - A deploy guide for `rdv-gateway`: a hardened Docker Compose setup behind a TLS tunnel, the PIN and test-identity first run, connecting claude.ai, ChatGPT and Claude Code, updating, and checks. ([#12](https://github.com/omernesh/rendezvous/issues/12))
 
 ### Fixed
