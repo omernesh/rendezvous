@@ -35,7 +35,7 @@ import {
 } from '@rendezvous/core';
 import { inAnyHome } from './files.js';
 import { tryLongLock, writeAtomic } from './fsutil.js';
-import { CliError, type Config, type Home } from './home.js';
+import { CliError, type Config, type Home, PROFILE_RE } from './home.js';
 import { markOwnerSecretRestored } from './ownersecret.js';
 
 /** The home files that travel in a bundle besides agent.json and config.json, and their mode when written back. */
@@ -178,6 +178,7 @@ function checkContents(contents: Record<string, unknown>, agentId: string): Bund
   if (
     !isObj(config) ||
     typeof config.profile !== 'string' ||
+    !PROFILE_RE.test(config.profile) ||
     !Array.isArray(config.relays) ||
     config.relays.length === 0 ||
     !config.relays.every((r) => typeof r === 'string' && /^wss?:\/\/\S+$/.test(r)) ||

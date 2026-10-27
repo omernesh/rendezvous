@@ -391,7 +391,16 @@ export class RelayPublishError extends CliError {
 /** Lines audit.jsonl keeps after compaction. */
 export const AUDIT_KEPT = 1000;
 
-const PROFILE_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/;
+/** A profile name: what --profile, rdv_init and a restored backup accept (it also names the background service). */
+export const PROFILE_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/;
+
+/** The profile name, or a usage error naming the rule (security review of PR #117: it reaches a systemd unit). */
+export function checkProfile(profile: string): string {
+  if (typeof profile !== 'string' || !PROFILE_RE.test(profile)) {
+    throw new CliError(`invalid profile name ${JSON.stringify(profile)}: letters, digits, ".", "_" and "-", starting with a letter or digit, at most 64 characters`, 2);
+  }
+  return profile;
+}
 
 export class Home {
   constructor(readonly dir: string) {}

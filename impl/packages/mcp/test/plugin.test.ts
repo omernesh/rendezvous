@@ -892,10 +892,42 @@ describe('auto-approve is the human’s (issue #25)', () => {
 });
 
 describe('installing the background listener is the human’s (issue #102)', () => {
-  const denied = ['rdv service install', 'rdv --home ./h service install', 'npx rdv service install --dry-run', 'bash -c "rdv service install"', 'echo install | xargs rdv service'];
-  const allowed = ['rdv service status', 'rdv service remove', 'rdv service status --json', 'systemctl --user status rdv-listen-omer.service', 'launchctl print gui/501/rdv-listen-omer'];
+  const denied = [
+    'rdv service install',
+    'rdv --home ./h service install',
+    'npx rdv service install',
+    'bash -c "rdv service install"',
+    'echo install | xargs rdv service',
+    // A dry run with anything after it is not a dry run.
+    'rdv service install --dry-run && rdv service install',
+    'rdv service install --dry-run; rdv service install',
+    'rdv service install --dry-run --auto-grant friend',
+  ];
+  const allowed = [
+    'rdv service status',
+    'rdv service remove',
+    'rdv service status --json',
+    'rdv service install --dry-run',
+    'rdv service install --dry-run --json --home ./h',
+    'systemctl --user status rdv-listen-omer.service',
+    'launchctl print gui/501/rdv-listen-omer',
+  ];
   it.each(denied)('the guard refuses %s', (c) => expect(checkCommand(c)).toBeTruthy());
   it.each(allowed)('the guard allows %s', (c) => expect(checkCommand(c)).toBeUndefined());
+  it('its files are never written or edited by the assistant (security review of PR #117), only read', () => {
+    for (const p of [
+      'C:/Users/x/.rendezvous/omer/service/rdv-listen-omer.vbs',
+      'C:/Users/x/.rendezvous/omer/service/rdv-listen-omer.xml',
+      'C:/Users/x/.rendezvous/omer/service/rdv-listen-omer.json',
+      '/home/u/.config/systemd/user/rdv-listen-omer.service',
+      '/home/u/.config/systemd/user/rdv-listen-omer.service.d/override.conf',
+      '/Users/u/Library/LaunchAgents/rdv-listen-omer.plist',
+    ]) {
+      for (const tool of ['Write', 'Edit', 'MultiEdit', 'NotebookEdit']) expect(checkToolInput(tool, { file_path: p }), `${tool} ${p}`).toMatch(/background listener/);
+      expect(checkToolInput('Read', { file_path: p }), p).toBeUndefined();
+    }
+    expect(checkToolInput('Write', { file_path: '/tmp/rdv-listen-notes.md' })).toBeUndefined();
+  });
 });
 
 describe('the direct-transfer setting is the human’s (issue #26)', () => {

@@ -4106,6 +4106,55 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       cases. A live run on Windows registered the task in a throwaway home
       under the scratchpad (a path with spaces), saw it take the lock with a
       scrubbed environment, and removed it.
+    - **Review of PR #117.**
+      - *Profile names* (high): a profile is now checked against PROFILE_RE
+        wherever one is set, in initHome (so `rdv init` and `rdv_init`, whose
+        zod schema checks it too) and in a restored backup's config. The
+        service refuses a profile outside it rather than cleaning it up: a
+        newline had become an `ExecStartPre=` line. The unit's Description is
+        the service name. An existing home with such a profile gets a refusal
+        that names the way out.
+      - *Changed after install* (medium): install writes
+        `<home>/service/<name>.json`, MACed with the agent key, holding the
+        definition's digest, each file's hash and what the OS should report
+        as registered. That is the task's Command and Arguments (read back
+        with `schtasks /Query /XML`, or Export-ScheduledTask as UTF-8 when
+        the path is not ASCII, since schtasks prints in the console code page
+        and loses those characters, measured), the unit's ExecStart argv and
+        DropInPaths (`systemctl --user show`), or the LaunchAgent's arguments
+        (`launchctl print`). Status tells `tampered` (a file, the record, what
+        the OS runs, a drop-in or second action, a gate flag anywhere) apart
+        from `older` (ours, unchanged, made by another version or node path).
+        A tampered service is a human-log WARNING and a `service_tampered`
+        event, once per change, and install's form says it was modified
+        outside Rendezvous. `rdv listen --service` refuses any command line
+        but exactly `listen --service <name> --home <home>` for its profile,
+        so an edited script that adds a flag starts nothing. One that drops
+        `--service` is plain `rdv listen` and still passes no gate; status
+        catches the change. The consent guard refuses Write/Edit of
+        `rdv-listen-*` files and `rdv-listen-*.service.d` drop-ins (by path),
+        and lets `rdv service install --dry-run` through when nothing follows
+        it.
+      - *`%` in Windows paths* (medium): refused, because WshShell.Run would
+        expand it.
+      - *A partial install* (medium): any failed OS command after the files
+        are written undoes it all (the remove commands, the files, the
+        record), and the error says nothing was left installed.
+      - *Low:*
+        - Windows remove and reinstall stop the listener only when
+          Win32_Process says the pid is node running `--service <name>`.
+        - Whose task it is comes only from the registered task's XML.
+        - A reinstall ends the running task first (measured: one wscript and
+          one node afterwards).
+        - Every rdv-mcp on the home reads `listener.yield`, which the
+          installing server writes, honoured for at most 2 minutes.
+        - Restarts back off: the Windows script waits 30 s, then doubles the
+          wait up to 300 s, starts over after a run of 10 minutes, and logs
+          each restart to `<home>/service/<name>.log`. systemd gets
+          `RestartSteps=4` and `RestartMaxDelaySec=300` (254 and later).
+          launchd has no backoff beyond `ThrottleInterval`.
+        - The marker is ASCII only (\uXXXX); a Hebrew and accented home
+          round-trips through the live task.
 
 ## Not implemented yet
 

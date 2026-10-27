@@ -91,6 +91,14 @@ const DIRECT_TRANSFER =
 const SERVICE =
   'rdv service install is for the human, in their own terminal: it installs a background listener that starts at every login. ' +
   'Use rdv_service "install" when your user asks: it shows them exactly what is installed in an approval form. "status" and "remove" need no approval.';
+const SERVICE_FILES =
+  'That is a file of the background listener (rdv service install): its script, task, unit, drop-in, plist or record. It runs at every login, so only Rendezvous writes it. ' +
+  'Never write or edit it; use rdv_service ("status", "install", which asks your user, or "remove").';
+/** The background listener's files (issue #102): <home>/service/rdv-listen-*, the unit and its drop-ins, the LaunchAgent. */
+const isServiceFile = (p) =>
+  p
+    .split(/[\\/]+/)
+    .some((c, i, all) => /^rdv-listen-[^\\/]*\.service\.d$/i.test(c) || (i === all.length - 1 && /^rdv-listen-[^\\/]*\.(vbs|xml|json|log|service|plist|conf)$/i.test(c)));
 const RELAYS =
   'rdv relays add/remove/list is for the human, in their own terminal: the relays the agent listens on receive its messages, and rdv relays list shows a confirm phrase meant only for them. Use the rdv_relays tool, which asks the human for a listening-relay change.';
 const GROUP_GATE =
@@ -555,6 +563,8 @@ function checkWords(words, ctx, depth) {
     for (const [cmd, subs] of HUMAN_GROUPS) {
       const named = couldBe(a, cmd, ctx.cwd);
       for (const [s, why] of Object.entries(subs)) {
+        // `rdv service install --dry-run` only prints the definition (issue #102): let it through when nothing else follows.
+        if (cmd === 'service' && s === 'install' && named && b.toLowerCase() === 'install' && dryRunOnly(words.slice(i + 2))) continue;
         if ((named || dynamic(a)) && couldBe(b, s, ctx.cwd)) throw new Refusal(why);
       }
       // `file` is also a common program (`file "$f"`): only after rdv is it a subcommand.
@@ -741,6 +751,19 @@ export function checkPath(path, opts = {}) {
 const FILE_KEYS = ['file_path', 'notebook_path', 'path', 'paths', 'directory', 'dir', 'source', 'destination', 'target', 'cwd_path', 'inline_files', 'calendar'];
 const GLOB_KEYS = ['glob', 'pattern', 'include', 'exclude'];
 
+/** `--dry-run`, and only the options a dry run may take (--json, --home x, --profile x): no second command after it. */
+function dryRunOnly(rest) {
+  let dry = false;
+  for (let k = 0; k < rest.length; k++) {
+    const w = rest[k];
+    if (w === '--dry-run') dry = true;
+    else if (w === '--json') continue;
+    else if ((w === '--home' || w === '--profile') && rest[k + 1] !== undefined && !dynamic(rest[k + 1])) k++;
+    else return false;
+  }
+  return dry;
+}
+
 /** Why this tool call is refused, or undefined. Every path-like field is checked, whatever the tool. */
 export function checkToolInput(toolName, input, cwd = process.cwd()) {
   if (!input || typeof input !== 'object') return undefined;
@@ -749,6 +772,10 @@ export function checkToolInput(toolName, input, cwd = process.cwd()) {
   const reason = checkCommand(input.command, { cwd });
   if (reason) return reason;
   const values = (v) => (Array.isArray(v) ? v : [v]).filter((x) => typeof x === 'string');
+  // Writing the background listener's files is changing what runs at every login (security review of PR #117).
+  if (/write|edit|notebook|create|move|copy|rename|delete/i.test(name)) {
+    for (const k of FILE_KEYS) for (const v of values(input[k])) if (isServiceFile(expandPath(v, cwd).path)) return SERVICE_FILES;
+  }
   for (const k of FILE_KEYS) {
     for (const v of values(input[k])) {
       const r = checkPath(v, { cwd, kind: searching ? 'search' : 'file' });

@@ -268,6 +268,7 @@ import {
   type GroupView,
   groupViewOf,
   postGroupTask,
+  PROFILE_RE,
   defaultServiceEnv,
   describeService,
   installService,
@@ -280,6 +281,9 @@ import {
   type ServiceStatus,
   spawnRunner,
   waitForService,
+  clearListenerYield,
+  listenerYielded,
+  setListenerYield,
 } from '@rendezvous/cli/lib';
 import { z } from 'zod';
 import {
@@ -1132,6 +1136,13 @@ export class RdvMcpServer {
   private readonly serviceOpts: NonNullable<RdvMcpOptions['service']>;
   /** Until then this server does not take listener.lock: it was handed to the background service (rdv_service install). */
   private yieldUntil = 0;
+  /** The last tampered-service warning given (its reasons), so one change is reported once. */
+  private tamperWarned = '';
+
+  /** listener.lock is being left to the background service: by this server, or by another one on the home (listener.yield). */
+  private yielding(): boolean {
+    return Date.now() < this.yieldUntil || listenerYielded(this.home);
+  }
 
   constructor(opts: RdvMcpOptions) {
     this.home = opts.home;
@@ -1372,7 +1383,7 @@ export class RdvMcpServer {
     // Handed to the background service (rdv_service install): attach, and leave the lock to it.
     const lock = held
       ? { release: held, owner: this.role }
-      : Date.now() < this.yieldUntil
+      : this.yielding()
         ? { owner: 'the background listener (starting)' }
         : tryLongLock(this.home.listenerLockPath, this.role);
     if (lock.release) this.consume(lock.release);
@@ -1501,7 +1512,7 @@ export class RdvMcpServer {
   /** Follow the shared log; when attached, take over if the consumer has gone. */
   private async tick(): Promise<void> {
     await this.followIdentity();
-    if (this.mode === 'attached' && this.real && Date.now() >= this.yieldUntil) {
+    if (this.mode === 'attached' && this.real && !this.yielding()) {
       const lock = tryLongLock(this.home.listenerLockPath, this.role);
       if (lock.release) {
         this.humanLog(`the previous listener stopped; now receiving for ${this.home.dir}`);
@@ -2260,7 +2271,7 @@ export class RdvMcpServer {
         'an approval form shows them what is lost, offers a backup first (rdv_backup), and asks them to type part of the fingerprint. The profile, addresses and relays you leave out are kept from the old agent (its public addresses only). ' +
         'Without a form it is refused: there is no confirm phrase for it.',
       {
-        profile: z.string().max(64).optional().describe('Label for this agent, e.g. "omer"'),
+        profile: z.string().max(64).regex(PROFILE_RE, 'letters, digits, ".", "_" and "-", starting with a letter or digit').optional().describe('Label for this agent, e.g. "omer"'),
         emails: z.array(z.string().max(320)).max(MAX_ADDRESSES).optional().describe('Email addresses this agent can be found by'),
         phones: z.array(z.string().max(32)).max(MAX_ADDRESSES).optional().describe('Phone numbers in E.164, with a leading +'),
         email: z.string().max(320).optional().describe('One email (same as emails: [email])'),
@@ -3669,7 +3680,14 @@ export class RdvMcpServer {
       platform: s.platform,
       installed: s.installed,
       ...(s.installed && !s.ours ? { installed_for_another_home: s.installed_home ?? 'unknown (not made by rdv service install)' } : {}),
-      ...(s.installed && s.ours ? { current: s.current } : {}),
+      ...(s.installed && s.ours ? { current: s.current, state: s.state } : {}),
+      ...(s.tampered
+        ? {
+            tampered: true,
+            tamper_reasons: s.tamper_reasons,
+            tamper_note: 'The installed background listener was changed outside Rendezvous. Tell your user; rdv_service "install" (their approval) puts it back as it should be, "remove" removes it.',
+          }
+        : {}),
       running: s.running,
       profile: s.profile,
       home: s.home,
@@ -3681,11 +3699,23 @@ export class RdvMcpServer {
   }
 
   /** rdv_service "status": read-only. */
-  private serviceStatusView() {
+  private async serviceStatusView() {
     const home = this.home;
     if (!home.initialized()) throw new ToolError(`no agent at ${home.dir} yet: call rdv_init first`);
     const { env, run } = this.serviceCtx();
-    return this.serviceView(serviceStatus(home, home.readConfig().profile, env, run));
+    const s = serviceStatus(home, home.readConfig().profile, env, run);
+    await this.warnTampered(s);
+    return this.serviceView(s);
+  }
+
+  /** A service changed outside Rendezvous: the human log and an inbox event say so, once per change. */
+  private async warnTampered(s: ServiceStatus): Promise<void> {
+    const key = s.tampered ? s.tamper_reasons.join('|') : '';
+    if (key === this.tamperWarned) return;
+    this.tamperWarned = key;
+    if (!s.tampered) return;
+    this.humanLog(`WARNING: the background listener ${s.name} was changed outside Rendezvous: ${s.tamper_reasons.join('; ')}. Remove it (rdv service remove) or install it again (rdv service install).`);
+    await this.publish([{ type: 'service_tampered', name: safe(s.name), reasons: s.tamper_reasons.map((r) => safe(r)), next_step: 'Tell your user their background listener was changed outside Rendezvous; rdv_service "install" (their approval) puts it back, "remove" removes it.' }]);
   }
 
   /**
@@ -3703,6 +3733,7 @@ export class RdvMcpServer {
     const profile = home.readConfig().profile;
     const d = serviceDefinition(home.dir, profile, env);
     const before = serviceStatus(home, profile, env, run);
+    await this.warnTampered(before);
     if (before.installed && !before.ours) {
       throw new ToolError(`${before.location} is already installed ${before.installed_home ? `for another home (${before.installed_home})` : 'and was not made by rdv service install'}. Nothing was changed.`);
     }
@@ -3715,22 +3746,33 @@ export class RdvMcpServer {
       'Rendezvous: keep your agent reachable while your chat app is closed?\n\n' +
         'This installs a background listener on this computer. It receives for your agent (rdv listen) from the moment you log in, also when no chat app or terminal is open:\n\n' +
         `${describeService(d, { removeHint })}\n\n` +
-        (before.installed ? 'It replaces the older definition installed now for this agent.\n\n' : '') +
+        (before.tampered
+          ? `The installed service was modified outside Rendezvous (${before.tamper_reasons.join('; ')}). This puts it back as shown above.\n\n`
+          : before.installed
+            ? 'It replaces the older definition installed now for this agent.\n\n'
+            : '') +
         'It only receives: contact requests, tasks and dinners still wait for your answer, as they do now. It never approves anything on its own (no auto-grant, no auto-confirm). ' +
         'While it runs, your assistant follows it instead of listening itself.',
       { approve: { type: 'boolean', title: 'Install the background listener', default: false } },
       ['approve'],
-      bindOf({ service: d.digest, installed: before.installed, current: before.current }),
+      bindOf({ service: d.digest, installed: before.installed, current: before.current, tampered: before.tamper_reasons }),
     );
     // Still what the form showed: the same definition, and the same thing installed.
     const now = serviceStatus(home, home.readConfig().profile, env, run);
-    if (serviceDefinition(home.dir, home.readConfig().profile, env).digest !== d.digest || now.installed !== before.installed || now.ours !== before.ours || now.current !== before.current) {
+    if (
+      serviceDefinition(home.dir, home.readConfig().profile, env).digest !== d.digest ||
+      now.installed !== before.installed ||
+      now.ours !== before.ours ||
+      now.current !== before.current ||
+      now.tamper_reasons.join('|') !== before.tamper_reasons.join('|')
+    ) {
       throw new ToolError(changedNote('the background listener or what is installed'));
     }
     // listener.lock goes to the service: attach first, so its first try takes it.
     const handedOver = this.mode === 'consumer';
     if (handedOver) {
       this.yieldUntil = Date.now() + SERVICE_YIELD_MS;
+      setListenerYield(home, SERVICE_YIELD_MS); // other rdv-mcp servers on this home leave it too
       await this.stopListening();
       this.startListening();
     }
@@ -3738,6 +3780,7 @@ export class RdvMcpServer {
       installService(home, d, run);
     } catch (err) {
       this.yieldUntil = 0; // nothing took it: this server receives again on its next tick
+      clearListenerYield(home);
       this.humanLog(`the background listener ${d.name} was NOT installed: ${(err as Error).message}`);
       throw err;
     }
@@ -3769,6 +3812,7 @@ export class RdvMcpServer {
     }
     const removed = removeService(home, serviceDefinition(home.dir, profile, env), run);
     this.yieldUntil = 0; // this server takes over on its next tick
+    clearListenerYield(home);
     if (removed) this.humanLog(`background listener ${st.name} removed`);
     return {
       removed,

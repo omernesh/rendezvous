@@ -84,7 +84,9 @@ export {
   type ConfigAddress,
   type ConsentTerms,
   consentKey,
+  checkProfile,
   Home,
+  PROFILE_RE,
   type InboxEntry,
   parseJsonLines,
 } from './home.js';
@@ -282,5 +284,10 @@ export {
   type ServiceStatus,
   spawnRunner,
   waitForService,
+  checkServiceArgv,
+  clearListenerYield,
+  listenerYielded,
+  RESTART_MAX_SECONDS,
+  setListenerYield,
 } from './service.js';
 export { longLockHolder } from './fsutil.js';
