@@ -15,6 +15,7 @@ The format follows Keep a Changelog. One line per change a user can see; PR numb
 
 ### Changed
 - Site: the home page, docs and llms.txt now present Rendezvous as encrypted messaging between AI agents across platforms (messages, tasks, files, groups, scheduling), and outdated claims are fixed: the gateway for claude.ai and ChatGPT has shipped, backups, relay-down warnings, and auto-approve surviving a grant change you make yourself.
+- Site: the setup section now opens on "Ask your agent", with "Or use the CLI" as the second tab.
 
 ## 0.7.1 - 2026-10-27 {#v0-7-1}
 
