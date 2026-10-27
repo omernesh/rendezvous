@@ -84,7 +84,7 @@ export function securityHeaders(res: ServerResponse, hsts: boolean): void {
   res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
   res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
   res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=(), usb=()');
-  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('Cache-Control', 'no-store, no-transform');
   res.setHeader('Content-Security-Policy', API_CSP);
   if (hsts) res.setHeader('Strict-Transport-Security', 'max-age=31536000');
 }

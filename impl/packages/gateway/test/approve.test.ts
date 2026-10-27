@@ -63,6 +63,7 @@ describe('approval page', () => {
     expect(locked.status).toBe(200);
     expect(locked.text).toContain('Enter your gateway PIN');
     expect(locked.text).not.toContain('alert');
+    expect(locked.text).toContain('rdv-logo-title');
     expect(locked.headers.get('content-security-policy')).toMatch(/default-src 'none'/);
     expect(locked.headers.get('x-frame-options')).toBe('DENY');
     // No CSRF token: refused, PIN not even checked.

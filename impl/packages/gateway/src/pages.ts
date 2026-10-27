@@ -7,6 +7,7 @@ import type { PendingApproval } from './approvals.js';
 import type { PendingConsent } from './oauth.js';
 import { SCOPE_TEXT } from './scopes.js';
 import { escapeHtml as e } from './http.js';
+import { BRAND_HEADER } from './brand.js';
 
 /** The page CSP: nothing but our stylesheet and same-origin forms, and never framed. */
 export const PAGE_CSP = "default-src 'none'; style-src 'self'; img-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'";
@@ -30,11 +31,11 @@ export interface Flash {
 
 function layout(title: string, body: string, csrf?: string): string {
   const lock = csrf
-    ? `<form method="post" action="/approve/lock" class="row"><input type="hidden" name="csrf" value="${e(csrf)}"><button type="submit">Lock</button></form>`
+    ? `<form method="post" action="/approve/lock" class="row"><input type="hidden" name="csrf" value="${e(csrf)}"><button type="submit">Lock (sign out)</button><span class="muted">Ends this session on this device. You'll need your PIN again next time.</span></form>`
     : '';
   return (
     `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer">` +
-    `<title>${e(title)}</title><link rel="stylesheet" href="/assets/gateway.css"></head><body><main>${body}${lock}` +
+    `<title>${e(title)}</title><link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/assets/gateway.css"></head><body>${BRAND_HEADER}<main>${body}${lock}` +
     '<footer>Rendezvous gateway. Only you approve here; your assistants can only ask. Open this page from your own bookmark or from the link your assistant gave you, and check the address: a look-alike page could ask for your PIN.</footer></main></body></html>'
   );
 }
