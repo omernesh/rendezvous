@@ -50,6 +50,12 @@ export interface TestRelay {
   /** WebSocket connections accepted so far. */
   readonly connections: number;
   faults: RelayFaults;
+  /**
+   * Go half-open: every connection open now stops reading (so it never answers
+   * a ping) and gets nothing more, and nothing closes. Connections made later
+   * work normally, like a relay that came back.
+   */
+  stall(): void;
   close(): Promise<void>;
 }
 
@@ -61,6 +67,7 @@ export async function startTestRelay(port = 0, faults: RelayFaults = {}): Promis
   const received: number[] = [];
   const subs = new Map<WebSocket, Map<string, Filter[]>>();
   let connections = 0;
+  const stalled = new Set<WebSocket>();
 
   const store = (ws: WebSocket, ev: Event) => {
     if (!verifyEvent(ev)) {
@@ -79,7 +86,7 @@ export async function startTestRelay(port = 0, faults: RelayFaults = {}): Promis
       events.push(ev);
       for (const [client, clientSubs] of subs) {
         for (const [id, filters] of clientSubs) {
-          if (filters.some((f) => matches(ev, f))) client.send(JSON.stringify(['EVENT', id, ev]));
+          if (!stalled.has(client) && filters.some((f) => matches(ev, f))) client.send(JSON.stringify(['EVENT', id, ev]));
         }
       }
     }
@@ -111,7 +118,10 @@ export async function startTestRelay(port = 0, faults: RelayFaults = {}): Promis
   wss.on('connection', (ws) => {
     connections++;
     subs.set(ws, new Map());
-    ws.on('close', () => subs.delete(ws));
+    ws.on('close', () => {
+      subs.delete(ws);
+      stalled.delete(ws);
+    });
     ws.on('message', (data) => {
       let msg: unknown[];
       try {
@@ -149,6 +159,13 @@ export async function startTestRelay(port = 0, faults: RelayFaults = {}): Promis
       return connections;
     },
     faults,
+    stall() {
+      for (const client of wss.clients) {
+        stalled.add(client);
+        // The socket stays open but is never read: no pong, no close, as when the network path dies.
+        (client as unknown as { _socket: { pause(): void } })._socket.pause();
+      }
+    },
     close: () =>
       new Promise<void>((resolve) => {
         for (const client of wss.clients) client.terminate();

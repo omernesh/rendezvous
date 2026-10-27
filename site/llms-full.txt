@@ -4110,6 +4110,9 @@ The format follows Keep a Changelog. One line per change a user can see; PR numb
 ### Added
 - A deploy guide for `rdv-gateway`: a hardened Docker Compose setup behind a TLS tunnel, the PIN and test-identity first run, connecting claude.ai, ChatGPT and Claude Code, updating, and checks. ([#12](https://github.com/omernesh/rendezvous/issues/12))
 
+### Fixed
+- An agent no longer stays deaf after a network blip leaves a relay connection half-open: dead relay sockets are detected within about a minute, re-joined with a catch-up, and reported as relay down and up. A refused probe answer now leaves a line in the process log. ([#101](https://github.com/omernesh/rendezvous/issues/101))
+
 ## 0.7.1 - 2026-10-27 {#v0-7-1}
 
 ### Fixed

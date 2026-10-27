@@ -1204,7 +1204,7 @@ export class Agent extends EventEmitter<AgentEvents> {
         }
         const sentCard = this.requestCard((payload as { request_ref?: unknown }).request_ref);
         const got = this.book.receiveGrant(payload, this.id);
-        if (!got) return this.drop('unexpected or invalid grant');
+        if (!got) return this.drop('unexpected or invalid grant', { peer: from });
         if ('candidate' in got) {
           this.emit('candidate', got.candidate);
           return;

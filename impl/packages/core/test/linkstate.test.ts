@@ -1,7 +1,7 @@
 // Listening-link state of the Nostr transport (NOTES 90): a dropped relay is
 // recorded as down_since and cleared when it returns; no network.
 import { afterEach, describe, expect, it } from 'vitest';
-import { generateKey, NostrTransport, type NostrTransportOptions, type RelayLink, type RelayStatus } from '../src/index.js';
+import { generateKey, NostrTransport, sealEnvelope, type NostrTransportOptions, type RelayLink, type RelayStatus } from '../src/index.js';
 import { startTestRelay, type TestRelay } from '../src/testing/relay.js';
 
 const open: Array<{ close(): unknown }> = [];
@@ -64,5 +64,38 @@ describe('listening link state (NOTES 90)', () => {
     const r = await relay();
     const t = transport([r.url]);
     expect('down_since' in t.relayStatus()[0]).toBe(false);
+  });
+});
+
+describe('half-open relay connection (issue #101)', () => {
+  it('detects a socket that stops answering, re-joins, and receives what is published afterwards', async () => {
+    const r = await relay();
+    const links: RelayLink[] = [];
+    const me = generateKey();
+    const rx = transport([r.url], { key: me, pingIntervalMs: 100, pingTimeoutMs: 100, onRelayLink: (l) => links.push(l) });
+    const got: string[] = [];
+    rx.onEnvelopes(me.id, (e) => got.push(e.id));
+    await until(() => links.some((l) => l.up));
+    const before = r.connections;
+
+    r.stall(); // the socket stays open and silent: no close ever reaches the listener
+    await until(() => links.filter((l) => l.up).length === 2, 4000);
+    expect(links.map((l) => l.up)).toEqual([true, false, true]);
+    expect(r.connections).toBeGreaterThan(before);
+
+    const sender = generateKey();
+    const env = sealEnvelope(sender, me.id, { type: 'note', text: 'after the stall' }, { seq: 1, prev: null });
+    await transport([r.url], { key: sender }).sendEnvelope(env);
+    await until(() => got.includes(env.id), 4000);
+  });
+
+  it('a healthy connection is not torn down by the pings', async () => {
+    const r = await relay();
+    const me = generateKey();
+    const rx = transport([r.url], { key: me, pingIntervalMs: 50, pingTimeoutMs: 100 });
+    rx.onEnvelopes(me.id, () => {});
+    await until(() => r.connections === 1);
+    await new Promise((res) => setTimeout(res, 600));
+    expect(r.connections).toBe(1);
   });
 });

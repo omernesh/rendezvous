@@ -3438,6 +3438,37 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       `__Host-` cookie). `plugin.test.ts`: the guard refuses
       `rdv-gateway oauth revoke` and the gateway's files in a home.
 
+## Half-open relay connections (issue #101)
+
+95. **A listening socket that goes silent is pinged, torn down and re-joined.**
+    (No spec change: relay transport behaviour is local.) A network blip can
+    leave the client with an `ESTABLISHED` socket whose far end is gone; no
+    close arrives, so the subscription's `onclose` (reconnect, #87 link
+    state) never ran and the agent was deaf with `listening: true`. Choices:
+    - **Ping at the pool, tune per relay.** `SimplePool` is created with
+      `enablePing`; nostr-tools hard-codes 29 s / 20 s on each relay object,
+      and its failed ping calls `ws.close()`, which waits out the close
+      handshake of a peer that is not there. `LivePool` therefore sets the
+      interval and timeout on each relay as `ensureRelay` creates it
+      (`pingIntervalMs` default 30000, `pingTimeoutMs` default 20000 in
+      `NostrTransportOptions`, so tests run in 100 ms) and replaces its
+      `pingpong` with one that `terminate()`s the socket on a missed pong.
+      Detection takes at most interval plus timeout (about 50 s), then the
+      existing reconnect runs with the usual `since` look-back from the newest
+      event seen on that relay, and `onRelayLink` reports down then up.
+    - **Test relay.** `TestRelay.stall()` pauses every open connection's
+      socket and stops sending to it, without closing; later connections
+      work. `linkstate.test.ts` asserts down, up, a new connection and an
+      envelope published after the stall arriving.
+    - **A refused grant leaves a trace, not an event.** `unexpected or invalid
+      grant` stays in `STRANGER_DROPS`: any stranger can send one at will, and
+      logging them would push real events out of `events.jsonl` and the
+      inbox. But a legitimate answer we refused (expired, wrong sender)
+      became undiagnosable. `appendEvents` now writes one cleaned line,
+      `rdv: refused a grant: ...` with the sender id, to stderr (the
+      `rdv listen` output, or the MCP client's server log), at most 20 per
+      process. Nothing reaches the model or the user-facing inbox.
+
 ## Not implemented yet
 
 

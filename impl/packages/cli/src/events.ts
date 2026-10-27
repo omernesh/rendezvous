@@ -14,6 +14,7 @@
 import { appendFileSync, existsSync, readFileSync, statSync } from 'node:fs';
 import { acquireLock, writeAtomic } from './fsutil.js';
 import { type Home, parseJsonLines } from './home.js';
+import { clean } from './output.js';
 
 /** Lines kept after compaction; the file is compacted at twice this. */
 export const EVENTS_FILE_KEPT = 1000;
@@ -67,6 +68,30 @@ export function isNoise(obj: { event: string } & Record<string, unknown>): boole
   return false;
 }
 
+const REFUSED_GRANT = 'unexpected or invalid grant';
+const TRACE_LINES_MAX = 20;
+let traced = 0;
+
+/**
+ * A grant (a probe answer, a reverse grant) that was refused is kept out of the
+ * log and the inbox on purpose: any stranger can send one, and it would push
+ * real events out (STRANGER_DROPS). But a legitimate answer refused for a
+ * reason of ours (expired, wrong sender) then leaves no trace at all (issue
+ * #101). So one stderr line, which is the process log (`rdv listen`, or the MCP
+ * client's server log), capped per process so a flood cannot fill it.
+ */
+function traceRefusedGrants(objs: Array<{ event: string } & Record<string, unknown>>): void {
+  for (const o of objs) {
+    if (o.event !== 'dropped' || !String(o.reason).startsWith(REFUSED_GRANT)) continue;
+    if (traced >= TRACE_LINES_MAX) return;
+    traced++;
+    const detail = o.detail === undefined ? '' : ` (${clean(typeof o.detail === 'string' ? o.detail : JSON.stringify(o.detail)).slice(0, 200)})`;
+    const more = traced === TRACE_LINES_MAX ? '; further ones are not logged' : '';
+    process.stderr.write(`rdv: refused a grant: ${REFUSED_GRANT}${detail}${more}
+`);
+  }
+}
+
 /** Every event in the file (a torn last line is skipped until it is complete). */
 export function readEvents(home: Home): LoggedEvent[] {
   if (!existsSync(home.eventsPath)) return [];
@@ -97,6 +122,7 @@ export async function appendEvents(
   objs: Array<{ event: string } & Record<string, unknown>>,
   extra: { negotiated?: boolean } = {},
 ): Promise<LoggedEvent[]> {
+  traceRefusedGrants(objs);
   const kept = objs.filter((o) => !isNoise(o));
   if (kept.length === 0) return [];
   home.ensureDir();

@@ -10,6 +10,7 @@ import { utf8ToBytes } from '@noble/hashes/utils';
 import type { Filter } from 'nostr-tools/filter';
 import { SimplePool, useWebSocketImplementation } from 'nostr-tools/pool';
 import { type Event, finalizeEvent, getPublicKey } from 'nostr-tools/pure';
+import { normalizeURL } from 'nostr-tools/utils';
 import WebSocket from 'ws';
 import { bytesToHex, canonicalize } from '../encoding.js';
 import type { Envelope } from '../envelope.js';
@@ -101,6 +102,10 @@ export interface NostrTransportOptions {
   lookbackSeconds?: number;
   /** First re-subscribe delay after a relay drops us; doubles up to 30 s. Default 1000. */
   reconnectBaseMs?: number;
+  /** Liveness: how often an open relay socket is pinged (ms). Default 30000. */
+  pingIntervalMs?: number;
+  /** Liveness: how long to wait for the pong before the socket is torn down and re-joined (ms). Default 20000. */
+  pingTimeoutMs?: number;
   /**
    * On re-joining a relay, fetch from the newest `created_at` seen on it minus
    * this margin (seconds), to cover clock skew and events stored while we were
@@ -263,8 +268,72 @@ export function agentTag(id: string): string {
   return bytesToHex(publicKeyFromAgentId(id));
 }
 
+/**
+ * A pool whose relay sockets are pinged, so a half-open connection (the peer
+ * vanished without a close, issue #101) is noticed. nostr-tools only exposes
+ * on/off for this, and its failed ping calls `ws.close()`, which waits for the
+ * close handshake of a peer that is not there (30 s in `ws`); so the interval
+ * and timeout are set per relay here and a failed ping `terminate()`s the
+ * socket, which closes at once and runs the subscription's `onclose`.
+ */
+class LivePool extends SimplePool {
+  constructor(
+    private readonly pingFrequencyMs: number,
+    private readonly pingTimeoutMs: number,
+  ) {
+    super({ enablePing: true });
+  }
+
+  override ensureRelay(url: string, params?: Parameters<SimplePool['ensureRelay']>[1]): ReturnType<SimplePool['ensureRelay']> {
+    const connecting = super.ensureRelay(url, params);
+    // The relay object exists as soon as ensureRelay starts; the ping timer is armed only when its socket opens.
+    const relay = this.relays.get(normalizeURL(url)) as unknown as LiveRelay | undefined;
+    if (relay && !relay.liveness) {
+      relay.liveness = true;
+      relay.pingFrequency = this.pingFrequencyMs;
+      relay.pingTimeout = this.pingTimeoutMs;
+      relay.pingpong = async () => {
+        const ws = relay.ws;
+        if (!ws || ws.readyState !== 1) return;
+        const alive = await new Promise<boolean>((resolve) => {
+          const timer = setTimeout(() => done(false), this.pingTimeoutMs);
+          const done = (ok: boolean) => {
+            clearTimeout(timer);
+            ws.off?.('pong', onPong);
+            resolve(ok);
+          };
+          const onPong = () => done(true);
+          ws.on('pong', onPong);
+          try {
+            ws.ping();
+          } catch {
+            done(false);
+          }
+        });
+        if (!alive && relay.ws === ws) ws.terminate();
+      };
+    }
+    return connecting;
+  }
+}
+
+/** The parts of nostr-tools' relay (and its `ws` socket) that LivePool reaches into. */
+interface LiveRelay {
+  liveness?: boolean;
+  pingFrequency: number;
+  pingTimeout: number;
+  pingpong: () => Promise<void>;
+  ws?: {
+    readyState: number;
+    on(event: 'pong', fn: () => void): void;
+    off?(event: 'pong', fn: () => void): void;
+    ping(): void;
+    terminate(): void;
+  };
+}
+
 export class NostrTransport implements Transport {
-  readonly pool = new SimplePool();
+  readonly pool: SimplePool;
   private readonly carrier: Uint8Array;
   readonly carrierPubkey: string;
 
@@ -284,6 +353,7 @@ export class NostrTransport implements Transport {
   private readonly subscriptions = new Set<{ joined: Map<string, () => void>; join: (relay: string) => () => void }>();
 
   constructor(private readonly opts: NostrTransportOptions) {
+    this.pool = new LivePool(opts.pingIntervalMs ?? 30_000, opts.pingTimeoutMs ?? 20_000);
     this.carrier = nostrCarrierKey(opts.key);
     this.carrierPubkey = getPublicKey(this.carrier);
     this.listen = [...new Set(opts.relays)];
