@@ -3696,9 +3696,26 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
     - **Not audited** (as in the terminal): renames, resyncs, direct transfer
       and a replacement write no audit line (the human log says each; a
       replacement starts a new audit log anyway).
-    - **Known limits.** A second rdv-mcp attached to this home while the
-      consumer replaces the agent is not detected (only our own mode is), so
-      it keeps the old agent's transport until restarted. Still terminal-only:
+    - **Security review fixes (PR #111).** The replace form shows everything
+      the step applies: "Findable by address (public pointer)" (and its value
+      now, when it changes) and any calendar, window or time zone given, so a
+      `public_pointer: true` from the model cannot make the new agent
+      findable unseen. A server whose home's card ID is no longer the one it
+      booted with (another server replaced the identity) stops and starts
+      again as the new agent, on its next tick or tool call
+      (`followIdentity`), so nothing more leaves over the old key's carrier;
+      and the replacing server keeps `listener.lock` from the old agent to
+      the new one (`stopListening(true)` hands it to `startListening`), so
+      no attached server takes over in between on the old topics. The
+      replace's own card-ID re-check runs under the home lock. The local
+      rename form states the suggested label in its text and requires the
+      field. Group names in the resync forms are JSON-quoted and marked
+      untrusted. Direct transfer "off" over an `owner.json` that fails its
+      MAC says so (`tampered`) instead of "nothing changed".
+    - **Known limits.** `initHome` takes the home lock itself, so the replace
+      is not one critical section with its re-check; a CLI writing the home
+      in that window is outside this check (the listener lock is not).
+      Still terminal-only:
       `rdv owner-secret reset`, gateway administration (PIN, tokens, OAuth
       clients), and a background listener while the chat client is closed
       (issue #102 items 6 and 7, follow-ups).

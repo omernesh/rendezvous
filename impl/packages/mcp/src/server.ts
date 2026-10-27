@@ -1310,9 +1310,10 @@ export class RdvMcpServer {
 
   /**
    * Start the agent if the home has one: consume inbound if `listener.lock`
-   * is free, else attach to the process that holds it. Idempotent.
+   * is free, else attach to the process that holds it. Idempotent. `held`:
+   * listener.lock is ours already (kept across a replaced identity).
    */
-  startListening(): void {
+  startListening(held?: () => void): void {
     if (this.real || !this.home.initialized()) return;
     const config = this.home.readConfig();
     const sets = relaySets(config);
@@ -1322,7 +1323,7 @@ export class RdvMcpServer {
     this.relayWatch = watchRelays(this.home, sets, (r) => this.moveRelays(r.relays, r.mirror), this.pollMs);
     this.boot = { id: boot.id, key: boot.key, topics: (boot.card.discovery?.addresses ?? []).map(dtopic) };
     this.home.ensureDir();
-    const lock = tryLongLock(this.home.listenerLockPath, this.role);
+    const lock = held ? { release: held, owner: this.role } : tryLongLock(this.home.listenerLockPath, this.role);
     if (lock.release) this.consume(lock.release);
     else {
       this.mode = 'attached';
@@ -1432,6 +1433,7 @@ export class RdvMcpServer {
 
   /** Follow the shared log; when attached, take over if the consumer has gone. */
   private async tick(): Promise<void> {
+    await this.followIdentity();
     if (this.mode === 'attached' && this.real) {
       const lock = tryLongLock(this.home.listenerLockPath, this.role);
       if (lock.release) {
@@ -1443,8 +1445,12 @@ export class RdvMcpServer {
     await this.syncEvents().catch((err) => this.humanLog(`error reading ${this.home.eventsPath}: ${(err as Error).message}`));
   }
 
-  /** Stop subscriptions, let in-flight items finish (they send over the transport), then close it. */
-  private async stopListening(): Promise<void> {
+  /**
+   * Stop subscriptions, let in-flight items finish (they send over the
+   * transport), then close it. `keepLock`: listener.lock is not released but
+   * handed back, for startListening (a replaced identity).
+   */
+  private async stopListening(keepLock = false): Promise<(() => void) | undefined> {
     for (const u of this.unsubs.splice(0)) u();
     this.relayWatch?.();
     this.relayWatch = undefined;
@@ -1457,9 +1463,39 @@ export class RdvMcpServer {
     await this.chain;
     this.real?.close();
     this.real = undefined;
-    this.releaseListener?.();
+    const release = this.releaseListener;
     this.releaseListener = undefined;
     this.mode = undefined;
+    if (keepLock) return release;
+    release?.();
+    return undefined;
+  }
+
+  /**
+   * The agent on disk is not the one this server started with (another
+   * server replaced the identity, rdv_init replace or rdv init --force):
+   * restart as the new one, so nothing more goes out over the old key's
+   * carrier (security review). Cheap: the card ID only.
+   */
+  private following?: Promise<void>;
+  private followIdentity(): Promise<void> {
+    // One restart at a time: a tick and a tool call may both notice.
+    this.following ??= this.restartIfReplaced().finally(() => (this.following = undefined));
+    return this.following;
+  }
+
+  private async restartIfReplaced(): Promise<void> {
+    if (!this.real || !this.boot) return;
+    let id: string | undefined;
+    try {
+      id = this.home.initialized() ? (this.home.readAgentState() as AgentState).card.id : undefined;
+    } catch {
+      return; // mid-write: the next tick looks again
+    }
+    if (id === undefined || id === this.boot.id) return;
+    this.humanLog(`the agent in ${this.home.dir} was replaced (${fingerprint(this.boot.id)} -> ${fingerprint(id)}); restarting as the new one`);
+    await this.stopListening();
+    this.startListening();
   }
 
   /** Resolves once every inbound item received so far has been handled (tests). */
@@ -1812,6 +1848,7 @@ export class RdvMcpServer {
   /** Load the agent under the lock, run `fn`, save. Sends go out over the listener's relay connections. */
   private async withAgent<T>(fn: (agent: Agent, config: Config) => Promise<T>): Promise<T> {
     if (!this.home.initialized()) throw new ToolError(`no agent at ${this.home.dir} yet: call rdv_init first`);
+    await this.followIdentity();
     this.startListening();
     const real = this.real!;
     return this.home.locked(async () => {
@@ -3418,10 +3455,12 @@ export class RdvMcpServer {
     const shown = this.remote ? seen.label : (given ?? seen.label);
     const content = await this.settingForm(
       `rdv contact label ${agentIdArg} "<label>" --home "${this.home.dir}"`,
-      `Rendezvous: rename this contact?\n\n  Agent ID:     ${agentIdArg}\n  Fingerprint:  ${fingerprint(agentIdArg)}\n  Label now:    ${seen.label ? clean(seen.label) : '(none)'}\n\n` +
-        'The label is how your assistant finds this contact: "tell <label>" goes to them. Check that the fingerprint is the person you mean, and type the name you want below.',
+      `Rendezvous: rename this contact?\n\n  Agent ID:     ${agentIdArg}\n  Fingerprint:  ${fingerprint(agentIdArg)}\n  Label now:    ${seen.label ? clean(seen.label) : '(none)'}\n` +
+        // The name the form starts with is stated, so an answer that leaves the field as it was applies only what was shown (security review).
+        (!this.remote && given !== undefined ? `  New label:    ${JSON.stringify(clean(given))} (suggested by your assistant; change it below)\n` : '') +
+        '\nThe label is how your assistant finds this contact: "tell <label>" goes to them. Check that the fingerprint is the person you mean, and type the name you want below.',
       { approve: { type: 'boolean', title: 'Rename this contact', default: false }, label: { ...labelField(shown), title: 'New label', description: 'What "tell …" will reach' } },
-      ['approve'],
+      ['approve', 'label'],
       bindOf({ peer: agentIdArg, label: seen.label ?? null }),
     );
     const label = formLabel(content, shown);
@@ -3569,7 +3608,7 @@ export class RdvMcpServer {
       if (!m.length) throw new ToolError(`this agent is not refusing or muting ${safe(agentIdArg)} in group ${safe(group)}. Nothing was changed.`);
       return { name: v.name, frozen: undefined, epoch: r.state.epoch, member: m };
     });
-    const head = `  Group:        ${group} (named "${clean(seen.name)}" by its admin: their words)\n`;
+    const head = `  Group:        ${group}\n  Named:        ${JSON.stringify(clean(seen.name))} (untrusted, written by its admin)\n`;
     if (agentIdArg === undefined) {
       await this.settingForm(
         `rdv group resync ${group} --home "${home.dir}"`,
@@ -3633,12 +3672,22 @@ export class RdvMcpServer {
     const current = () => home.readOwner(key()).direct_transfer === true;
     const set = async () =>
       home.locked(async () => {
-        const was = current();
+        const o = home.readOwner(key());
         home.writeOwner(on ? { direct_transfer: true } : {}, key());
-        return was;
+        return { was: o.direct_transfer === true, forged: o.forged === true };
       });
     if (!on) {
-      const was = await set();
+      const { was, forged } = await set();
+      if (forged) {
+        // A settings file this agent did not write (it fails its MAC) reads as off; say so instead of "nothing changed".
+        this.humanLog('owner.json did not check (changed outside Rendezvous); it is rewritten with direct transfer OFF');
+        return {
+          direct_transfer: 'off',
+          changed: true,
+          tampered: true,
+          note: "Off now. The owner settings file was not one this agent wrote (it was changed outside Rendezvous), so it was rewritten with direct transfer off. Tell your user: if they did not change it, someone with access to their account did.",
+        };
+      }
       if (was) this.humanLog('direct transfer turned OFF through your assistant: requests for one are declined');
       return { direct_transfer: 'off', changed: was, note: was ? 'Off now: requests for a direct transfer are declined. Tell your user.' : 'It was off already; nothing changed.' };
     }
@@ -3652,7 +3701,7 @@ export class RdvMcpServer {
       ['approve'],
       bindOf({ direct_transfer: false }),
     );
-    const was = await set();
+    const { was } = await set();
     if (was) throw new ToolError(changedNote('the setting'));
     this.humanLog('direct transfer turned ON through the approval form: requests for one are shown to you; nothing connects on its own');
     return { direct_transfer: 'on', changed: true, note: 'Your user turned it on in the approval form: a contact asking for a direct transfer is now shown to them (rdv_file "list"); nothing connects on its own. Tell them.' };
@@ -3722,7 +3771,14 @@ export class RdvMcpServer {
         `This cannot be undone. A new key is made, and with the old one go: ${lost.contacts} contact(s), ${lost.groups} group(s), ${lost.pending_requests} pending request(s), ${lost.open_tasks} open task(s), every grant, label and auto-approve, and the old agent's history here. ` +
         'Your contacts keep the old identity and cannot reach the new one until you connect again.\n\n' +
         `${backup ? `Last backup of this agent: ${backup}.` : 'There is NO backup of this agent made here.'} If you want one first, Decline, and ask your assistant to back up your agent (rdv_backup); then ask for the replacement again.\n\n` +
-        `The new agent: profile "${clean(next.profile)}", addresses ${[...next.emails, ...next.phones].map((x) => clean(x)).join(', ') || '(none)'}, relays ${next.relays.map((x) => clean(x)).join(', ')}.\n\n` +
+        `The new agent:\n  Profile:      ${JSON.stringify(clean(next.profile))}\n  Addresses:    ${[...next.emails, ...next.phones].map((x) => clean(x)).join(', ') || '(none)'}\n` +
+        `  Relays:       ${next.relays.map((x) => clean(x)).join(', ')}\n` +
+        // Everything the step applies is shown (security review): whether the card is findable by address, and any calendar setting.
+        `  Findable by address (public pointer): ${next.publicPointer ? 'yes' : 'no'}${next.publicPointer !== config.public_pointer ? ` (now: ${config.public_pointer ? 'yes' : 'no'})` : ''}\n` +
+        (a.calendar !== undefined ? `  Dinner calendar: ${clean(a.calendar)}\n` : '') +
+        (a.window !== undefined ? `  Meeting window:  ${JSON.stringify(clean(a.window))}\n` : '') +
+        (a.tz !== undefined ? `  Time zone:       ${clean(a.tz)}\n` : '') +
+        '\n' +
         'To replace it, type the last 4 characters of the fingerprint above.',
       {
         approve: { type: 'boolean', title: 'Replace my agent', description: 'A new identity; the old one is lost for good.', default: false },
@@ -3735,14 +3791,16 @@ export class RdvMcpServer {
     if (typeof typed !== 'string' || typed.trim().toLowerCase() !== id.slice(-4).toLowerCase()) {
       throw new ToolError('The characters typed in the form do not match the end of the fingerprint. Nothing was replaced; ask your user whether they still want it.');
     }
-    if ((home.readAgentState() as AgentState).card.id !== id) throw new ToolError(changedNote('the agent'));
+    if (await home.locked(async () => (home.readAgentState() as AgentState).card.id !== id)) throw new ToolError(changedNote('the agent'));
     await this.applySettings(a);
-    await this.stopListening();
+    // listener.lock stays ours from the old agent to the new one, so no attached server can take over in between
+    // and listen on the old key (security review); attached servers follow the new identity on their next tick.
+    const held = await this.stopListening(true);
     let r;
     try {
       r = await initHome(home, { ...next, force: true, capabilities: hostCardCapabilities(this.registry) });
     } finally {
-      this.startListening();
+      this.startListening(held);
     }
     this.humanLog(`agent ${fingerprint(id)} REPLACED through the approval form by a new identity ${r.fingerprint}`);
     return {
