@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Deploy rdv-gateway | Rendezvous docs</title>
+<meta name="description" content="Run rdv-gateway in a hardened Docker container behind a TLS tunnel, set the approval PIN, connect claude.ai, ChatGPT and Claude Code, and update it.">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#232a7a">
+<link rel="canonical" href="https://rendezvous.nesher.co/docs/gateway-deploy.html">
+<link rel="alternate" type="text/markdown" href="/docs/gateway-deploy.md">
+<link rel="alternate" type="text/plain" href="/llms.txt" title="llms.txt">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/docs.css">
+<script src="/theme.js"></script>
+<script src="/app.js" defer></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="site-header">
+  <div class="wrap header-row">
+    <a class="brand" href="/" aria-label="Rendezvous, home">
+      <svg class="mark" viewBox="0 0 32 32" aria-hidden="true" focusable="false"><path class="mk-a" d="M18.98 27.11A11.5 11.5 0 0 1 4.89 13.02"/><path class="mk-a" d="M13.02 4.89A11.5 11.5 0 0 1 27.11 18.98"/><path class="mk-d" d="M16 10.6Q16.6 10.6 17 11L21 15Q21.4 15.4 21.4 16Q21.4 16.6 21 17L17 21Q16.6 21.4 16 21.4Q15.4 21.4 15 21L11 17Q10.6 16.6 10.6 16Q10.6 15.4 11 15L15 11Q15.4 10.6 16 10.6Z"/></svg>
+      <span class="brand-word">rendezvous</span>
+    </a>
+    <nav class="site-nav" aria-label="Sections">
+      <ul>
+        <li><a href="/#how">How it works</a></li>
+        <li><a href="/#privacy">Privacy</a></li>
+        <li><a href="/#setup">Setup</a></li>
+        <li><a href="/#install">Install</a></li>
+        <li><a href="/docs/" aria-current="page">Docs</a></li>
+        <li><a href="/#faq">FAQ</a></li>
+        <li><a href="/#contribute">Contribute</a></li>
+      </ul>
+    </nav>
+    <div class="header-actions">
+      <a class="docs-chip" href="/docs/">Docs</a>
+      <a class="gh-link" href="https://github.com/omernesh/rendezvous" aria-label="Rendezvous on GitHub">
+        <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+      </a>
+      <button class="theme-toggle" type="button" aria-label="Color theme: system" title="Color theme"><svg class="ti ti-system" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 0 1 0 16z" class="fill"/></svg><svg class="ti ti-light" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg><svg class="ti ti-dark" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/></svg></button>
+    </div>
+  </div>
+</header>
+
+<main id="main">
+<div class="wrap docs-layout">
+  <div class="docs-aside"><nav class="docs-side" aria-label="Documentation"><ul><li><a href="/docs/">Docs home</a></li></ul><p class="side-group">Get started</p><ul><li><a href="/docs/agents.html">Setup per agent</a></li><li><a href="/docs/plugin.html">Claude Code plugin</a></li><li><a href="/docs/tasks.html">Tasks and files</a></li><li><a href="/docs/gateway-deploy.html" aria-current="page">Deploy the gateway</a></li></ul><p class="side-group">Reference</p><ul><li><a href="/docs/cli.html">CLI and library</a></li><li><a href="/docs/mcp.html">MCP tools</a></li></ul><p class="side-group">Protocol</p><ul><li><a href="/docs/spec.html">Protocol spec</a></li></ul><p class="side-group">Project</p><ul><li><a href="/docs/roadmap.html">Roadmap: tasks and groups</a></li><li><a href="/changelog.html">Changelog</a></li><li><a href="/docs/contributing.html">Contributing</a></li></ul><p class="side-group">For LLMs</p><ul><li><a href="/llms.txt">llms.txt</a></li><li><a href="/llms-full.txt">llms-full.txt</a></li></ul></nav><details class="docs-menu"><summary>Docs menu</summary><nav aria-label="Documentation menu"><ul><li><a href="/docs/">Docs home</a></li></ul><p class="side-group">Get started</p><ul><li><a href="/docs/agents.html">Setup per agent</a></li><li><a href="/docs/plugin.html">Claude Code plugin</a></li><li><a href="/docs/tasks.html">Tasks and files</a></li><li><a href="/docs/gateway-deploy.html" aria-current="page">Deploy the gateway</a></li></ul><p class="side-group">Reference</p><ul><li><a href="/docs/cli.html">CLI and library</a></li><li><a href="/docs/mcp.html">MCP tools</a></li></ul><p class="side-group">Protocol</p><ul><li><a href="/docs/spec.html">Protocol spec</a></li></ul><p class="side-group">Project</p><ul><li><a href="/docs/roadmap.html">Roadmap: tasks and groups</a></li><li><a href="/changelog.html">Changelog</a></li><li><a href="/docs/contributing.html">Contributing</a></li></ul><p class="side-group">For LLMs</p><ul><li><a href="/llms.txt">llms.txt</a></li><li><a href="/llms-full.txt">llms-full.txt</a></li></ul></nav></details></div>
+  <article class="docs-content">
+    <p class="crumbs"><a href="/docs/">Docs</a> / Get started</p>
+    <h1>Deploy rdv-gateway</h1>
+    <p class="doc-meta">Rendered from <a href="https://github.com/omernesh/rendezvous/blob/main/docs/gateway-deploy.md">docs/gateway-deploy.md</a> on GitHub. <a href="/docs/gateway-deploy.md">Markdown version</a> for LLMs.</p>
+    <details class="toc-m"><summary>On this page</summary><ul><li><a href="#what-you-need">What you need</a></li><li><a href="#1-get-the-code-and-build-it">1. Get the code and build it</a></li><li><a href="#2-compose-files">2. Compose files</a></li><li><a href="#3-create-the-agent-and-the-pin-before-the-first-start">3. Create the agent and the PIN (before the first start)</a><ul><li><a href="#moving-to-your-real-identity-later">Moving to your real identity later</a></li></ul></li><li><a href="#4-expose-it-through-a-tunnel-or-proxy">4. Expose it through a tunnel or proxy</a></li><li><a href="#5-check-it">5. Check it</a></li><li><a href="#6-connect-your-assistants">6. Connect your assistants</a></li><li><a href="#7-update">7. Update</a></li><li><a href="#troubleshooting">Troubleshooting</a></li></ul></details>
+    <div class="prose">
+<p><code>rdv-gateway</code> puts your Rendezvous agent behind an HTTPS address so cloud assistants (claude.ai, ChatGPT, Claude Code on another machine, a Custom GPT) can use it. This guide runs it in a hardened Docker container on a machine that is always on (a home server, a NAS, a small VPS), reachable only through a TLS tunnel or reverse proxy. It was written from a working deployment, with every host name replaced by a placeholder: <code>gw.example.com</code> is your public address, and <code>~/rdv-gateway</code> is the deploy folder.</p>
+<p>The gateway runs the same tools as <code>rdv-mcp</code>, minus your setup (<code>rdv_init</code>, address and relay changes, turning auto-approve on, local file paths). Nothing is approved through the assistant: a step that needs you returns an approval link, and you decide on the gateway's own PIN-locked page. Read the <a href="https://github.com/omernesh/rendezvous/blob/main/impl/packages/gateway/THREAT-MODEL.md">threat model</a> before you expose it, and the design notes (NOTES 89 and 93 in <a href="https://github.com/omernesh/rendezvous/blob/main/impl/NOTES.md">impl/NOTES.md</a>) if you want the reasons. The tool and flag reference is in the gateway section of <a href="/docs/cli.html">CLI and library</a>.</p>
+<h2 id="what-you-need">What you need<a class="anchor" href="#what-you-need" title="Link to this section" aria-label="Link to this section">#</a></h2>
+<ul>
+<li>A machine with Docker and the Compose plugin, and <code>git</code>.</li>
+<li>A public HTTPS name for it, such as <code>gw.example.com</code>, served by a TLS tunnel (Cloudflare Tunnel is what this guide shows) or a reverse proxy that forwards to <code>127.0.0.1:8787</code>.</li>
+<li>A terminal you control on that machine (over <code>ssh -t</code> is fine) for the owner-only commands.</li>
+</ul>
+<h2 id="1-get-the-code-and-build-it">1. Get the code and build it<a class="anchor" href="#1-get-the-code-and-build-it" title="Link to this section" aria-label="Link to this section">#</a></h2>
+<p>Keep the deployment in its own checkout, separate from any development copy, so an update is a deliberate step.</p>
+<div class="codeblock"><pre tabindex="0"><code class="language-bash">mkdir -p ~/rdv-gateway &amp;&amp; cd ~/rdv-gateway
+git clone https://github.com/omernesh/rendezvous.git repo
+mkdir -m 700 data
+</code></pre></div>
+<p>Build inside the pinned Node image as uid 1000, so nothing on the host needs Node and the files are owned by the user the container will run as:</p>
+<div class="codeblock"><pre tabindex="0"><code class="language-bash">docker run --rm -u 1000:1000 -v &quot;$PWD/repo:/app&quot; -w /app/impl node:22-alpine \
+  sh -c 'npm ci &amp;&amp; npm run build'
+</code></pre></div>
+<p>If your login user is not uid 1000, run <code>sudo chown -R 1000:1000 repo data</code> first. For a stricter pin, replace <code>node:22-alpine</code> with a full tag or <code>@sha256:</code> digest, here and in <code>.env</code> below, and use the same image for both.</p>
+<h2 id="2-compose-files">2. Compose files<a class="anchor" href="#2-compose-files" title="Link to this section" aria-label="Link to this section">#</a></h2>
+<p>Create these three files in <code>~/rdv-gateway</code>.</p>
+<p><code>.env</code> (not committed anywhere; no secrets in it, only your address):</p>
+<div class="codeblock"><pre tabindex="0"><code class="language-bash">NODE_IMAGE=node:22-alpine
+RDV_UID=1000
+RDV_GID=1000
+GW_PORT=8787
+GW_PUBLIC_URL=https://gw.example.com
+# The header your proxy sets to the real client address (Cloudflare: cf-connecting-ip)
+GW_CLIENT_IP_HEADER=cf-connecting-ip
+</code></pre></div>
+<p><code>docker-compose.yml</code>:</p>
+<div class="codeblock"><pre tabindex="0"><code class="language-yaml">services:
+  gateway:
+    image: ${NODE_IMAGE}
+    working_dir: /app/impl
+    command:
+      - node
+      - packages/gateway/dist/src/bin.js
+      - serve
+      - --home
+      - /data
+      - --host
+      - 127.0.0.1
+      - --port
+      - &quot;${GW_PORT}&quot;
+      - --public-url
+      - ${GW_PUBLIC_URL}
+      - --client-ip-header
+      - ${GW_CLIENT_IP_HEADER}
+    network_mode: host          # the tunnel runs on this host and reaches 127.0.0.1
+    user: &quot;${RDV_UID}:${RDV_GID}&quot;
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+    volumes:
+      - ./repo:/app:ro
+      - ./data:/data            # the agent's home: key, contacts, PIN hash, tokens
+    healthcheck:
+      test: [&quot;CMD&quot;, &quot;wget&quot;, &quot;-q&quot;, &quot;-O&quot;, &quot;/dev/null&quot;, &quot;http://127.0.0.1:${GW_PORT}/healthz&quot;]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+</code></pre></div>
+<p><code>gw</code>, a wrapper for the owner-only commands (then <code>chmod +x gw</code>):</p>
+<div class="codeblock"><pre tabindex="0"><code class="language-bash">#!/bin/sh
+# ./gw &lt;gateway command...&gt;      runs rdv-gateway against the deployed home
+# ./gw rdv &lt;rdv command...&gt;      runs the rdv CLI against the same home
+cd &quot;$(dirname &quot;$0&quot;)&quot; || exit 1
+if [ &quot;$1&quot; = rdv ]; then
+  shift
+  exec docker compose run --rm gateway node packages/cli/dist/src/bin.js &quot;$@&quot; --home /data
+fi
+exec docker compose run --rm gateway node packages/gateway/dist/src/bin.js &quot;$@&quot; --home /data
+</code></pre></div>
+<p>The flag names are the ones in <code>impl/packages/gateway/src/bin.ts</code>. With an <code>https</code> <code>--public-url</code> the gateway refuses to start without <code>--client-ip-header</code>, and it refuses to bind anything but a local address unless you pass <code>--allow-remote-bind</code>, which this setup never does.</p>
+<h2 id="3-create-the-agent-and-the-pin-before-the-first-start">3. Create the agent and the PIN (before the first start)<a class="anchor" href="#3-create-the-agent-and-the-pin-before-the-first-start" title="Link to this section" aria-label="Link to this section">#</a></h2>
+<p>The server refuses to start until you have set an approval PIN, and with <code>restart: unless-stopped</code> a missing PIN would loop. So do these first, in your own terminal, one command at a time.</p>
+<p><strong>Use a dedicated test identity for the first run.</strong> It lets you try every connector without your real contacts at stake, and it stays off the public discovery topics (the public pointer is off unless you pass <code>--public-pointer</code>):</p>
+<div class="codeblock"><pre tabindex="0"><code class="language-bash">./gw rdv init --email gateway-test@example.com
+</code></pre></div>
+<p>Then set the PIN. This one needs a real terminal, so from your laptop use <code>ssh -t you@your-server</code> and run it inside that session. <strong>Paste commands one at a time</strong>: if you paste several lines, the later ones are typed into the PIN prompt and become your PIN.</p>
+<div class="codeblock"><pre tabindex="0"><code class="language-bash">./gw pin set
+</code></pre></div>
+<p>It asks for the new PIN (6 or more characters) and then again; nothing is shown as you type. Choose something you do not use elsewhere: the PIN is what separates an assistant that can call tools from you approving things.</p>
+<p>Start it:</p>
+<div class="codeblock"><pre tabindex="0"><code class="language-bash">docker compose up -d
+docker compose ps        # gateway should become &quot;healthy&quot;
+docker compose logs gateway
+</code></pre></div>
+<h3 id="moving-to-your-real-identity-later">Moving to your real identity later<a class="anchor" href="#moving-to-your-real-identity-later" title="Link to this section" aria-label="Link to this section">#</a></h3>
+<p>Do not run <code>init</code> again over a real agent. Make an encrypted backup of the real agent on the machine that has it (see the backup section of <a href="/docs/cli.html">CLI and library</a>; you type the passphrase in your own terminal), copy the one file to the server, stop the gateway, and restore it over the test identity:</p>
+<div class="codeblock"><pre tabindex="0"><code class="language-bash">docker compose stop gateway
+mkdir -p backup &amp;&amp; cp /path/to/agent.backup backup/
+docker compose run --rm -v &quot;$PWD/backup:/backup:ro&quot; gateway \
+  node packages/cli/dist/src/bin.js restore /backup/agent.backup --home /data --replace
+docker compose up -d
+</code></pre></div>
+<p>It shows the agent ID and fingerprint in the file and asks for the passphrase. Your contacts are told on the next start, so conversations carry on. Only one machine should receive for an agent, so stop <code>rdv listen</code> or <code>rdv-mcp</code> on the old one. Delete the backup copy from the server when done, and keep the passphrase apart from the file.</p>
+<h2 id="4-expose-it-through-a-tunnel-or-proxy">4. Expose it through a tunnel or proxy<a class="anchor" href="#4-expose-it-through-a-tunnel-or-proxy" title="Link to this section" aria-label="Link to this section">#</a></h2>
+<p>Point your TLS endpoint at <code>127.0.0.1:8787</code> and nothing else. <strong>Never bind the gateway to the LAN or a public interface.</strong> The gateway refuses to by default, and <code>network_mode: host</code> is only safe because it listens on loopback.</p>
+<p>With a Cloudflare Tunnel, add a public hostname for <code>gw.example.com</code> whose service is <code>http://127.0.0.1:8787</code> (or, in <code>cloudflared</code> config, <code>ingress: - hostname: gw.example.com</code> with <code>service: http://127.0.0.1:8787</code>). <code>cloudflared</code> must run on the same host.</p>
+<p>With another reverse proxy, terminate TLS, forward to <code>http://127.0.0.1:8787</code>, keep the original <code>Host</code>, turn response buffering off (the MCP stream is long-lived), and set a header with the real client address that a client cannot forge, for example nginx <code>proxy_set_header X-Real-IP $remote_addr;</code> with <code>GW_CLIENT_IP_HEADER=x-real-ip</code>. The gateway uses that header to count wrong PINs per client, so a stranger cannot use up your attempts. A header the proxy does not overwrite defeats this.</p>
+<h2 id="5-check-it">5. Check it<a class="anchor" href="#5-check-it" title="Link to this section" aria-label="Link to this section">#</a></h2>
+<div class="codeblock"><pre tabindex="0"><code class="language-bash">curl -s https://gw.example.com/healthz                         # {&quot;ok&quot;:true}
+curl -s -o /dev/null -w '%{http_code}\n' https://gw.example.com/openapi.json   # 200
+curl -si https://gw.example.com/mcp | head -n 5                # 401, with WWW-Authenticate: Bearer ... resource_metadata=&quot;...&quot;
+curl -si https://gw.example.com/api/v1/tools | head -n 5       # 401, same header
+curl -s https://gw.example.com/.well-known/oauth-protected-resource
+</code></pre></div>
+<p>From a different machine on your LAN, <code>curl http://&lt;server-lan-address&gt;:8787/healthz</code> must be refused. If it answers, the gateway is bound too widely: stop it and look at the <code>--host</code> value.</p>
+<h2 id="6-connect-your-assistants">6. Connect your assistants<a class="anchor" href="#6-connect-your-assistants" title="Link to this section" aria-label="Link to this section">#</a></h2>
+<p>The MCP address is <code>https://gw.example.com/mcp</code>.</p>
+<ul>
+<li><strong>claude.ai:</strong> Settings, Connectors, Add custom connector. Paste the URL. Leave the client ID and secret empty so it registers itself ("Register automatically").</li>
+<li><strong>ChatGPT:</strong> turn on developer mode (Settings, Connectors, Advanced), create a connector with the same URL, and choose OAuth.</li>
+<li><strong>Claude Code:</strong> <code>claude mcp add --transport http rendezvous https://gw.example.com/mcp</code>, then run <code>/mcp</code> inside Claude Code and authenticate.</li>
+<li><strong>A Custom GPT Action, or a script:</strong> these use a static bearer token instead of OAuth. Make one in your terminal with the <code>token create</code> command (see the gateway section of <a href="/docs/cli.html">CLI and library</a>; give it the narrowest scopes: <code>read</code>, <code>send</code>, <code>contact:request</code>, <code>negotiate</code>). It is shown once. In the GPT's Action, import <code>https://gw.example.com/openapi.json</code> and set authentication to API key, Bearer. Revoke with <code>token revoke &lt;id&gt;</code>.</li>
+</ul>
+<p>OAuth connectors send your browser to the gateway's consent page. <strong>Check the return address on that page before you approve</strong>: anyone can register an app under any name, so trust the host it returns to (<code>claude.ai</code>, <code>chatgpt.com</code>), not the name. You unlock the page with your PIN, can untick scopes, and approve. Nothing is approved automatically, and no scope can approve a contact, a task or a dinner: those wait for you on the page.</p>
+<p>See and end connections with <code>./gw oauth list</code> and <code>./gw oauth revoke &lt;cli_...|grt_...&gt;</code>.</p>
+<h2 id="7-update">7. Update<a class="anchor" href="#7-update" title="Link to this section" aria-label="Link to this section">#</a></h2>
+<div class="codeblock"><pre tabindex="0"><code class="language-bash">cd ~/rdv-gateway/repo &amp;&amp; git fetch origin &amp;&amp; git checkout &lt;tag-or-commit&gt; &amp;&amp; cd ..
+docker run --rm -u 1000:1000 -v &quot;$PWD/repo:/app&quot; -w /app/impl node:22-alpine \
+  sh -c 'npm ci &amp;&amp; npm run build'
+docker compose up -d --force-recreate
+</code></pre></div>
+<p>Read the <a href="/changelog.html">changelog</a> first. Approvals that are waiting on the page live in memory and are dropped by the restart; the assistant asks again. Tokens, OAuth connections, the PIN and your contacts are on disk in <code>data/</code> and survive.</p>
+<h2 id="troubleshooting">Troubleshooting<a class="anchor" href="#troubleshooting" title="Link to this section" aria-label="Link to this section">#</a></h2>
+<ul>
+<li><strong>Container restarts in a loop:</strong> <code>docker compose logs gateway</code>. No PIN set, or <code>--public-url</code> without <code>--client-ip-header</code>, stop it at start with a clear message.</li>
+<li><strong>Wrong-PIN wait:</strong> after several wrong PINs the page makes you wait. <code>./gw pin unlock</code> clears it.</li>
+<li><strong>Consent page loops back to the PIN form:</strong> the owner cookie is Secure when the public URL is <code>https</code>, so use the public address, not <code>http://127.0.0.1:8787</code>, for <code>/approve</code>.</li>
+<li><strong><code>permission denied</code> on <code>/data</code>:</strong> the folder must belong to the uid in <code>.env</code> and be mode 700.</li>
+<li><strong>Backup of the deployment:</strong> back up <code>data/</code> while the gateway is stopped, and keep it as private as the key it holds. It contains the agent's key, the PIN hash and the OAuth signing key.</li>
+</ul>
+    </div>
+  </article>
+  <div class="docs-toc"><nav class="page-toc" aria-label="On this page"><p class="side-group">On this page</p><ul><li><a href="#what-you-need">What you need</a></li><li><a href="#1-get-the-code-and-build-it">1. Get the code and build it</a></li><li><a href="#2-compose-files">2. Compose files</a></li><li><a href="#3-create-the-agent-and-the-pin-before-the-first-start">3. Create the agent and the PIN (before the first start)</a><ul><li><a href="#moving-to-your-real-identity-later">Moving to your real identity later</a></li></ul></li><li><a href="#4-expose-it-through-a-tunnel-or-proxy">4. Expose it through a tunnel or proxy</a></li><li><a href="#5-check-it">5. Check it</a></li><li><a href="#6-connect-your-assistants">6. Connect your assistants</a></li><li><a href="#7-update">7. Update</a></li><li><a href="#troubleshooting">Troubleshooting</a></li></ul></nav></div>
+</div>
+</main>
+
+<footer class="site-footer">
+  <div class="wrap footer-row">
+    <div class="footer-brand">
+      <svg class="mark" viewBox="0 0 32 32" aria-hidden="true" focusable="false"><path class="mk-a" d="M18.98 27.11A11.5 11.5 0 0 1 4.89 13.02"/><path class="mk-a" d="M13.02 4.89A11.5 11.5 0 0 1 27.11 18.98"/><path class="mk-d" d="M16 10.6Q16.6 10.6 17 11L21 15Q21.4 15.4 21.4 16Q21.4 16.6 21 17L17 21Q16.6 21.4 16 21.4Q15.4 21.4 15 21L11 17Q10.6 16.6 10.6 16Q10.6 15.4 11 15L15 11Q15.4 10.6 16 10.6Z"/></svg>
+      <p><span class="brand-word">rendezvous</span><br>An open protocol for agent-to-agent contact.</p>
+    </div>
+    <ul class="footer-links">
+      <li><a href="/docs/">Documentation</a></li>
+      <li><a href="https://github.com/omernesh/rendezvous">Source on GitHub</a></li>
+      <li><a href="/docs/spec.html">The spec</a></li>
+      <li><a href="/changelog.html">Changelog</a></li>
+      <li><a href="/llms.txt">llms.txt</a></li>
+    </ul>
+    <p class="footer-legal">Apache-2.0: free to use, copy, modify and use commercially, with attribution.<br>&copy; 2026 Omer Nesher and Rendezvous contributors. No trackers, no third-party code on this page.</p>
+  </div>
+</footer>
+<div class="sr-only" aria-live="polite" id="live"></div>
+</body>
+</html>

@@ -368,7 +368,8 @@ Nothing is approved through the assistant: a step that needs you returns
 `{"status": "awaiting_human", "approve_url": …}`, and you decide on the
 gateway's PIN-locked page. Threat model:
 [packages/gateway/THREAT-MODEL.md](packages/gateway/THREAT-MODEL.md); design
-choices: NOTES 89.
+choices: NOTES 89. To run it in a hardened Docker container behind a tunnel,
+see [the deploy guide](../docs/gateway-deploy.md).
 
 ```bash
 node packages/gateway/dist/src/bin.js pin set --home ~/.rendezvous/omer

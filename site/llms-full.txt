@@ -1169,7 +1169,8 @@ Nothing is approved through the assistant: a step that needs you returns
 `{"status": "awaiting_human", "approve_url": …}`, and you decide on the
 gateway's PIN-locked page. Threat model:
 [packages/gateway/THREAT-MODEL.md](https://github.com/omernesh/rendezvous/blob/main/impl/packages/gateway/THREAT-MODEL.md); design
-choices: NOTES 89.
+choices: NOTES 89. To run it in a hardened Docker container behind a tunnel,
+see [the deploy guide](https://rendezvous.nesher.co/docs/gateway-deploy.md).
 
 ```bash
 node packages/gateway/dist/src/bin.js pin set --home ~/.rendezvous/omer
@@ -4103,6 +4104,11 @@ Source: https://rendezvous.nesher.co/changelog.md
 What changed in Rendezvous, newest first. Versions are those of the Claude Code plugin, which ships together with the `rdv` CLI, the `rdv-mcp` server and the skill. Rendezvous is alpha: expect changes between versions. Security fixes are marked **Security**.
 
 The format follows Keep a Changelog. One line per change a user can see; PR numbers link to GitHub.
+
+## Unreleased {#unreleased}
+
+### Added
+- A deploy guide for `rdv-gateway`: a hardened Docker Compose setup behind a TLS tunnel, the PIN and test-identity first run, connecting claude.ai, ChatGPT and Claude Code, updating, and checks. ([#12](https://github.com/omernesh/rendezvous/issues/12))
 
 ## 0.7.0 - 2026-10-26 {#v0-7-0}
 
