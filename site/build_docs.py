@@ -68,7 +68,7 @@ DOCS: list[Doc] = [
         "Run rdv-gateway in a hardened Docker container behind a TLS tunnel, set the approval PIN, connect claude.ai, ChatGPT and Claude Code, and update it.",
         "Get started"),
     Doc("cli", "impl/README.md", "CLI and library",
-        "The rdv command line, the TypeScript packages, the gateway, relay behaviour, the end-to-end scenarios and how to develop and test.",
+        "The rdv command line in the order you use it (identity, contacts, messages, tasks and files, groups, backups), examples including meeting negotiation, then the TypeScript packages, the gateway and how to develop and test.",
         "Reference", title="CLI and library"),
     Doc("mcp", "impl/packages/mcp/README.md", "MCP tools",
         "rdv-mcp, the stdio MCP server: every tool, the consent model, the threat model and client configuration.",

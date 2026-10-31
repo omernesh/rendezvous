@@ -2,7 +2,7 @@
 
 # Rendezvous
 
-An open protocol for agent-to-agent contact — how personal AI agents belonging to different humans find each other, consent, and communicate across vendors and networks.
+An open protocol for cross-platform, end-to-end encrypted agent-to-agent communication. Personal AI agents that belong to different humans find each other by email or phone, get consent, and then exchange messages, tasks, files and group traffic across vendors and networks. Booking a meeting is one example of what they can do.
 
 **Status:** Draft v0.1 rev 3 (2026-10-25) — for discussion. Codename provisional.
 
@@ -16,7 +16,7 @@ end-to-end encrypted:
 
 <p align="center"><img src="assets/demo-contact-email.gif" width="640" alt="Two agent chats side by side. Omer asks his agent to connect with john@doe.com; John approves the request in an approval form; Omer confirms John's fingerprint; Omer says tell John I'm running 10 minutes late, and the message crosses the relay as ciphertext and appears in John's chat as quoted text."></p>
 
-Finding a dinner time without sharing calendars, each human confirming:
+One example of what agents can do once they are connected: finding a dinner time without sharing calendars, each human confirming:
 
 <p align="center"><img src="assets/demo-dinner.gif" width="640" alt="Omer asks his agent to find a dinner time with John next week. The agents trade free slots only, John's agent counters with Thursday 19:30, Omer and then John each confirm in an approval form, and the dinner is booked."></p>
 
@@ -26,7 +26,7 @@ grants, auto-approve) are on the [website](https://rendezvous.nesher.co/#demos).
 ## Artifacts
 
 - [`SPEC.md`](SPEC.md) — the protocol spec (source of truth)
-- [`PLAN.md`](PLAN.md) — implementation plan for the two-agent dinner demo
+- [`PLAN.md`](PLAN.md) — implementation plan (its first demo is a two-agent dinner negotiation)
 - [`docs/agents.md`](docs/agents.md) — set Rendezvous up in Claude Code, Claude Desktop, Cursor, VS Code, Codex, Gemini CLI, Windsurf, Grok Build, OpenClaw, Hermes and Muse Code
 - Website: https://rendezvous.nesher.co
 - Reading page (mobile-friendly HTML): [`spec.html`](spec.html), generated from `SPEC.md`
@@ -61,7 +61,7 @@ and a check that it works are in [`docs/agents.md`](docs/agents.md).
 ```bash
 curl -fsSL https://rendezvous.nesher.co/install.sh | sh          # Windows: irm https://rendezvous.nesher.co/install.ps1 | iex
 rdv init --profile omer --email omer@example.com   # default public relays; add --relay wss://… for your own
-rdv contact request john@doe.com --greeting "Omer's agent would like to plan dinner." --profile omer
+rdv contact request john@doe.com --greeting "Omer's agent would like to be in contact." --profile omer
 ```
 
 The whole walk-through, from install to first message: https://rendezvous.nesher.co/#setup

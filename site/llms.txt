@@ -6,7 +6,7 @@ Consent sits at the edges and always belongs to the humans: after both humans ap
 
 ## Docs
 
-- [CLI and library](https://rendezvous.nesher.co/docs/cli.md): The rdv command line, the TypeScript packages, the gateway, relay behaviour, the end-to-end scenarios and how to develop and test.
+- [CLI and library](https://rendezvous.nesher.co/docs/cli.md): The rdv command line in the order you use it (identity, contacts, messages, tasks and files, groups, backups), examples including meeting negotiation, then the TypeScript packages, the gateway and how to develop and test.
 - [MCP tools](https://rendezvous.nesher.co/docs/mcp.md): rdv-mcp, the stdio MCP server: every tool, the consent model, the threat model and client configuration.
 - [Documentation index](https://rendezvous.nesher.co/docs/): all pages, rendered as HTML.
 

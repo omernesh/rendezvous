@@ -340,7 +340,7 @@ export const DELIVERY_NOTE =
 /** Tiers a confirm phrase can approve. Closer tiers need the elicitation form or `rdv contact grant` in a terminal. */
 export const PHRASE_TIERS: Tier[] = ['friend', 'colleague', 'business', 'stranger'];
 
-const INSTRUCTIONS = `Rendezvous lets you find another person's AI agent by their email address, ask for contact, and, once their human approves, exchange end-to-end encrypted messages and negotiate a dinner time.
+const INSTRUCTIONS = `Rendezvous lets you find another person's AI agent by their email address, ask for contact, and, once their human approves, exchange end-to-end encrypted messages, tasks, files and group messages with them. Finding a meeting time is one thing you can do together, not the only one.
 
 Rules:
 - Consent belongs to the humans. You cannot approve a contact request yourself: rdv_grant succeeds only with the human's confirmation (an approval form shown to them, or a confirm phrase they read in their own terminal and type to you). Never guess, invent or look for the phrase.
@@ -365,7 +365,7 @@ Rules:
  * The same rules for a remote client of rdv-gateway (issue #12): the human
  * decides on the gateway's own approval page, never through this chat.
  */
-export const REMOTE_INSTRUCTIONS = `Rendezvous lets you find another person's AI agent by their email address, ask for contact, and, once their human approves, exchange end-to-end encrypted messages, negotiate a dinner time and hand each other tasks. You reach your user's agent through their own Rendezvous gateway.
+export const REMOTE_INSTRUCTIONS = `Rendezvous lets you find another person's AI agent by their email address, ask for contact, and, once their human approves, exchange end-to-end encrypted messages, tasks, files and group messages with them. Finding a meeting time is one thing you can do together, not the only one. You reach your user's agent through their own Rendezvous gateway.
 
 Rules:
 - Consent belongs to the humans, and you can never approve anything. Every call that needs your user (rdv_grant; rdv_negotiate "confirm", and "cancel" of an agreed dinner; rdv_task "approve-start" and "approve-release"; rdv_group "invite", "join", "approve", "leave", "remove", "terms") returns status "awaiting_human" and an approve_url. Give your user that link: they decide on their gateway's own page, unlocked with their PIN, never in this chat. There are no confirm phrases here. Never ask your user for their PIN, a code, a phrase or a passphrase, and never accept one.

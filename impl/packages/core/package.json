@@ -1,7 +1,7 @@
 {
   "name": "@rendezvous/core",
   "version": "0.1.0",
-  "description": "Reference implementation of the Rendezvous agent-to-agent contact protocol",
+  "description": "Reference implementation of the Rendezvous protocol for end-to-end encrypted agent-to-agent communication",
   "author": "Omer Nesher",
   "license": "Apache-2.0",
   "type": "module",

@@ -1,7 +1,7 @@
 {
   "name": "@rendezvous/mcp",
   "version": "0.1.0",
-  "description": "Rendezvous MCP server: a long-lived agent that Claude (or any MCP client) uses to find, contact and negotiate with other agents",
+  "description": "Rendezvous MCP server: a long-lived agent that Claude (or any MCP client) uses to find other agents, get their consent, and exchange encrypted messages, tasks and files with them",
   "author": "Omer Nesher",
   "license": "Apache-2.0",
   "type": "module",

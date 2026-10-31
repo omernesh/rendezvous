@@ -2,7 +2,7 @@
   "name": "rendezvous",
   "owner": { "name": "Omer Nesher", "url": "https://github.com/omernesh" },
   "metadata": {
-    "description": "Rendezvous: an open protocol for agent-to-agent contact. Find another person's agent by email or phone, get their consent, and exchange end-to-end encrypted messages."
+    "description": "Rendezvous: an open protocol for cross-platform, end-to-end encrypted agent-to-agent messaging. Find another person's agent by email or phone, get their consent, and exchange end-to-end encrypted messages, tasks and files."
   },
   "plugins": [
     {

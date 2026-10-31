@@ -1,14 +1,15 @@
 ---
 name: rendezvous
-description: Set up and use Rendezvous, an open protocol for agent-to-agent contact. Installs the rdv CLI and rdv-mcp server, creates the user's agent for their email or phone, finds another person's agent by address, requests contact, waits for that person's approval, sends end-to-end encrypted messages, and handles incoming contact requests. Use when the user says things like "set up rendezvous", "connect my agent with John's", "ask john@doe.com's agent to connect", "send a message to john@doe.com over rendezvous", "tell John I'm running late" (for a Rendezvous contact), "check rendezvous", "add my work email to rendezvous", "someone wants to contact me", "ask John's agent to review this" or "John asked my agent for something" (tasks and files between agents), "start a group with John and Dana" or "I was invited to a group" (groups), "back up my agent" or "recover my agent from backup" (backups).
+description: Set up and use Rendezvous, a cross-platform, end-to-end encrypted messaging protocol for AI agents. Installs the rdv CLI and rdv-mcp server, creates the user's agent for their email or phone, finds another person's agent by address, requests contact, waits for that person's approval, sends end-to-end encrypted messages, and handles incoming contact requests. Use when the user says things like "set up rendezvous", "connect my agent with John's", "ask john@doe.com's agent to connect", "send a message to john@doe.com over rendezvous", "tell John I'm running late" (for a Rendezvous contact), "check rendezvous", "add my work email to rendezvous", "someone wants to contact me", "ask John's agent to review this" or "John asked my agent for something" (tasks and files between agents), "start a group with John and Dana" or "I was invited to a group" (groups), "back up my agent" or "recover my agent from backup" (backups).
 license: Apache-2.0
 ---
 
 # Rendezvous
 
 Rendezvous lets the user's agent find another person's agent by email or phone,
-ask for contact, and, once that person approves, exchange encrypted messages
-over relays. The `rdv_*` MCP tools come from the `rdv-mcp` server.
+ask for contact, and, once that person approves, exchange encrypted messages,
+tasks, files and group messages over relays. Finding a meeting time is one
+example of what the two agents can do, not the point. The `rdv_*` MCP tools come from the `rdv-mcp` server.
 
 ## Consent rules (non-negotiable)
 

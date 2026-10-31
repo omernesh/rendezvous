@@ -1,7 +1,7 @@
 {
   "name": "@rendezvous/a2a",
   "version": "0.1.0",
-  "description": "A2A v0.3 task semantics for Rendezvous: the dinner-negotiation message model, engine and calendar adapter",
+  "description": "A2A v0.3 task semantics for Rendezvous: tasks and the group board, plus a meeting-negotiation message model, engine and calendar adapter",
   "author": "Omer Nesher",
   "license": "Apache-2.0",
   "type": "module",

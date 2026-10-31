@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>CLI and library | Rendezvous docs</title>
-<meta name="description" content="The rdv command line, the TypeScript packages, the gateway, relay behaviour, the end-to-end scenarios and how to develop and test.">
+<meta name="description" content="The rdv command line in the order you use it (identity, contacts, messages, tasks and files, groups, backups), examples including meeting negotiation, then the TypeScript packages, the gateway and how to develop and test.">
 <meta name="color-scheme" content="light dark">
 <meta name="theme-color" content="#232a7a">
 <link rel="canonical" href="https://rendezvous.nesher.co/docs/cli.html">
@@ -55,12 +55,17 @@
     <p class="crumbs"><a href="/docs/">Docs</a> / Reference</p>
     <h1>CLI and library</h1>
     <p class="doc-meta">Rendered from <a href="https://github.com/omernesh/rendezvous/blob/main/impl/README.md">impl/README.md</a> on GitHub. <a href="/docs/cli.md">Markdown version</a> for LLMs.</p>
-    <details class="toc-m"><summary>On this page</summary><ul><li><a href="#rendezvouscore">@rendezvous/core</a></li><li><a href="#rendezvousa2a">@rendezvous/a2a</a></li><li><a href="#rdv-the-cli">rdv (the CLI)</a><ul><li><a href="#tasks-and-files-an-example-user-guide-docstasksmd">Tasks and files: an example (user guide: docs/tasks.md)</a></li><li><a href="#the-dinner-scenarios-plan-53">The dinner scenarios (PLAN §5.3)</a></li><li><a href="#the-microsite-scenario-design-b5-issue-79">The microsite scenario (design B.5, issue #79)</a></li><li><a href="#the-contact-scenario-plan-45">The contact scenario (PLAN §4.5)</a></li></ul></li><li><a href="#rdv-mcp-the-mcp-server">rdv-mcp (the MCP server)</a></li><li><a href="#rdv-gateway-cloud-assistants-issue-12">rdv-gateway (cloud assistants, issue #12)</a></li><li><a href="#develop">Develop</a></li></ul></details>
+    <details class="toc-m"><summary>On this page</summary><ul><li><a href="#install">Install</a></li><li><a href="#your-agents-home">Your agent's home</a></li><li><a href="#command-reference">Command reference</a><ul><li><a href="#identity-and-setup">Identity and setup</a></li><li><a href="#find-and-connect">Find and connect</a></li><li><a href="#send-and-receive-encrypted-messages">Send and receive encrypted messages</a></li><li><a href="#tasks-and-files">Tasks and files</a></li><li><a href="#groups">Groups</a></li><li><a href="#backup-and-restore">Backup and restore</a></li><li><a href="#output-and-locking">Output and locking</a></li></ul></li><li><a href="#examples">Examples</a><ul><li><a href="#example-contact-and-a-first-message-plan-45">Example: contact and a first message (PLAN §4.5)</a></li><li><a href="#example-tasks-and-files">Example: tasks and files</a></li><li><a href="#example-a-group-design-b5-issue-79">Example: a group (design B.5, issue #79)</a></li><li><a href="#example-negotiating-a-meeting-plan-53">Example: negotiating a meeting (PLAN §5.3)</a></li></ul></li><li><a href="#libraries">Libraries</a></li><li><a href="#rendezvouscore">@rendezvous/core</a></li><li><a href="#rendezvousa2a">@rendezvous/a2a</a></li><li><a href="#rdv-mcp-the-mcp-server">rdv-mcp (the MCP server)</a></li><li><a href="#rdv-gateway-cloud-assistants-issue-12">rdv-gateway (cloud assistants, issue #12)</a></li><li><a href="#develop">Develop</a></li></ul></details>
     <div class="prose">
-<p>TypeScript packages for the <a href="/docs/spec.html">Rendezvous</a> agent-to-agent contact
-protocol: end-to-end encrypted messages, tasks, files, groups and scheduling
-between agents. The plan, including the two-agent dinner demo, is in <a href="https://github.com/omernesh/rendezvous/blob/main/PLAN.md">PLAN.md</a>.
-<code>impl/</code> is an npm workspace:</p>
+<p>Rendezvous lets personal AI agents talk to each other across platforms, with
+end-to-end encryption and a human in charge of consent. Your agent finds
+another agent by an email address or phone number, asks for contact, and once
+the other person agrees the two exchange encrypted messages, tasks, files and
+group traffic over dumb relays. Booking a meeting is one thing agents can do
+this way, not the point of it. This page covers the <code>rdv</code> command line and the
+TypeScript packages behind it. The protocol itself is in the <a href="/docs/spec.html">spec</a>,
+the plan in <a href="https://github.com/omernesh/rendezvous/blob/main/PLAN.md">PLAN.md</a>.</p>
+<p><code>impl/</code> is an npm workspace:</p>
 <div class="tablewrap" tabindex="0"><table>
 <thead>
 <tr>
@@ -73,12 +78,7 @@ between agents. The plan, including the two-agent dinner demo, is in <a href="ht
 <tr>
 <td><code>@rendezvous/core</code></td>
 <td><code>packages/core</code></td>
-<td>The protocol library (keys, cards, discovery, consent, envelopes, Nostr transport)</td>
-</tr>
-<tr>
-<td><code>@rendezvous/a2a</code></td>
-<td><code>packages/a2a</code></td>
-<td>A2A task semantics: the dinner-negotiation message model, engine, calendar adapter</td>
+<td>The protocol library (keys, cards, discovery, consent, envelopes, files, groups, Nostr transport)</td>
 </tr>
 <tr>
 <td><code>@rendezvous/cli</code></td>
@@ -88,12 +88,17 @@ between agents. The plan, including the two-agent dinner demo, is in <a href="ht
 <tr>
 <td><code>@rendezvous/mcp</code></td>
 <td><code>packages/mcp</code></td>
-<td><code>rdv-mcp</code>, a stdio MCP server so Claude (or any MCP client) can find other agents, get consent, and exchange messages, tasks, files and meeting times with them</td>
+<td><code>rdv-mcp</code>, a stdio MCP server so Claude (or any MCP client) can find other agents, get consent, and exchange messages, tasks, files and group traffic with them</td>
 </tr>
 <tr>
 <td><code>@rendezvous/gateway</code></td>
 <td><code>packages/gateway</code></td>
 <td><code>rdv-gateway</code>, the same agent over MCP (Streamable HTTP) and REST + OpenAPI for cloud assistants, with approvals on the owner's own PIN-locked page and a built-in OAuth 2.1 server for ChatGPT and claude.ai connectors (issue #12)</td>
+</tr>
+<tr>
+<td><code>@rendezvous/a2a</code></td>
+<td><code>packages/a2a</code></td>
+<td>A2A task semantics: general tasks and the groups' task board, plus a meeting-negotiation model, engine and calendar adapter (one example of what agents can do)</td>
 </tr>
 </tbody>
 </table></div>
@@ -103,6 +108,527 @@ calendar generator and <code>relay-dump.mjs</code> (what the relay stores: ciphe
 runtime dependencies at all; the CLI glues the two together. The MCP server
 builds on the CLI's library entry (<code>@rendezvous/cli/lib</code>: home dir, lock,
 inbound loop), so <code>rdv</code> and <code>rdv-mcp</code> share profiles.</p>
+<h2 id="install">Install<a class="anchor" href="#install" title="Link to this section" aria-label="Link to this section">#</a></h2>
+<div class="codeblock"><pre tabindex="0"><code class="language-bash">npm install &amp;&amp; npm run build              # from impl/
+npm run rdv -- --help                     # or: node packages/cli/dist/src/bin.js --help
+</code></pre></div>
+<p><code>npx rdv …</code> also works once <code>npm install</code> has run after the first build
+(npm links the binary only when <code>dist/</code> exists).</p>
+<h2 id="your-agents-home">Your agent's home<a class="anchor" href="#your-agents-home" title="Link to this section" aria-label="Link to this section">#</a></h2>
+<p>State lives in a directory: <code>--home &lt;dir&gt;</code>, else <code>$RDV_HOME</code>, else
+<code>~/.rendezvous/&lt;profile&gt;</code> (<code>--profile</code>, default <code>default</code>).</p>
+<div class="tablewrap" tabindex="0"><table>
+<thead>
+<tr>
+<th>File</th>
+<th>Holds</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>agent.json</code></td>
+<td><code>Agent.toJSON()</code>, including the secret key (mode 600 where the OS supports it)</td>
+</tr>
+<tr>
+<td><code>config.json</code></td>
+<td>profile, relays (listening), <code>mirror_relays</code> (discovery mirrors, once changed; absent: the default set for an all-<code>wss://</code> agent, none otherwise), addresses (public ones are on the card; <code>private: true</code> ones are kept here only), policy, <code>receipts</code> (<code>false</code>: send no delivery receipts and take the receipts capability off the card at the next <code>rdv listen</code>; absent: on, NOTES 98)</td>
+</tr>
+<tr>
+<td><code>relays.json</code></td>
+<td>per-relay diagnostics and cooldowns (last OK, last error), written after each publish and read by <code>rdv whoami</code> / <code>rdv_status</code></td>
+</tr>
+<tr>
+<td><code>inbox.jsonl</code></td>
+<td>received payloads, one JSON object per line</td>
+</tr>
+<tr>
+<td><code>cards.json</code></td>
+<td>cards found by <code>rdv lookup</code> or fetched by agent ID, so <code>contact request &lt;agent-id&gt;</code> can use them</td>
+</tr>
+<tr>
+<td><code>negotiations.json</code></td>
+<td>meeting (dinner) negotiations, an example use (the a2a engine state)</td>
+</tr>
+<tr>
+<td><code>tasks.json</code></td>
+<td>general tasks (the tasks/v1 engine state) and, per task, the draft waiting for your release; per group (<code>groups</code>), its board and the tasks members gave you, with their drafts</td>
+</tr>
+<tr>
+<td><code>audit.jsonl</code></td>
+<td>each task gate passed: by the grant (<code>auto</code>, <code>notify</code>) or by you (bounded to its last 1000 lines)</td>
+</tr>
+<tr>
+<td><code>files.json</code></td>
+<td>files you prepared (their keys and nonces; mode 600), for the release view and for sending</td>
+</tr>
+<tr>
+<td><code>files/outgoing/</code>, <code>files/incoming/&lt;task&gt;/</code></td>
+<td>the encrypted copies to upload, and files fetched from peers (quarantine: mode 600, <code>.quarantine</code> after active extensions)</td>
+</tr>
+<tr>
+<td><code>autoapprove.json</code></td>
+<td>contacts on auto-approve, each entry MACed with the agent key and bound to the contact's grant (mode 600; never edit it, a hand-written file approves nothing)</td>
+</tr>
+<tr>
+<td><code>owner-secret.json</code></td>
+<td>the owner passphrase as salted scrypt, and its lockout counters (mode 600)</td>
+</tr>
+<tr>
+<td><code>owner.json</code></td>
+<td>the owner's settings (<code>direct_transfer</code>), MACed with the agent key; a hand-written file is ignored</td>
+</tr>
+<tr>
+<td><code>consent.json</code></td>
+<td>salted scrypt hashes of the confirm phrases for pending requests, probe answers and held dinners, each bound to what the human was shown (written by <code>rdv-mcp</code>; <code>contact pending</code> and <code>dinner list</code> issue and show a fresh phrase in text mode)</td>
+</tr>
+<tr>
+<td><code>holds.json</code></td>
+<td>which calendar file holds each tentative dinner hold, so <code>dinner confirm</code>/<code>cancel</code> can finalize or release it</td>
+</tr>
+<tr>
+<td><code>events.jsonl</code></td>
+<td>shared event log: what the home's listener handled, plus <code>rdv-mcp</code>'s own events; <code>rdv_inbox</code> is a view of it</td>
+</tr>
+<tr>
+<td><code>events.lock</code></td>
+<td>held while appending to <code>events.jsonl</code></td>
+</tr>
+<tr>
+<td><code>lock</code></td>
+<td>held while a command reads and writes state</td>
+</tr>
+<tr>
+<td><code>listener.lock</code></td>
+<td>held for its lifetime by the home's one inbound consumer (<code>rdv listen</code> or <code>rdv-mcp</code>)</td>
+</tr>
+<tr>
+<td><code>service/</code></td>
+<td>the background listener's Windows script and task definition (<code>rdv-listen-&lt;profile&gt;.vbs</code>, <code>.xml</code>), or its macOS error log; written by <code>rdv service install</code></td>
+</tr>
+</tbody>
+</table></div>
+<h2 id="command-reference">Command reference<a class="anchor" href="#command-reference" title="Link to this section" aria-label="Link to this section">#</a></h2>
+<p>Commands follow the order you use them: set up an identity, find and connect to others, send and receive, tasks and files, groups, backups. Negotiating a meeting is an example, last.</p>
+<h3 id="identity-and-setup">Identity and setup<a class="anchor" href="#identity-and-setup" title="Link to this section" aria-label="Link to this section">#</a></h3>
+<div class="tablewrap" tabindex="0"><table>
+<thead>
+<tr>
+<th>Command</th>
+<th>Does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>rdv init --profile omer --email omer@example.com [--email …] [--relay wss://… [--relay …]] [--phone +…] [--phone …] [--public-pointer] [--force]</code></td>
+<td>Generate key and card, write state. Repeat <code>--email</code> / <code>--phone</code> for more addresses (canonicalized, repeats dropped, at most 8). Without <code>--relay</code>: <code>DEFAULT_RELAYS</code> (below). An agent keeps the relays it was created with</td>
+</tr>
+<tr>
+<td><code>rdv whoami</code></td>
+<td>Print agent ID, fingerprint, addresses, per-relay health (<code>relay_health</code>: last OK, last error, cooldown), card JSON (never the secret key)</td>
+</tr>
+<tr>
+<td><code>rdv address list</code></td>
+<td>Our addresses, each public (on the card, answers probes; with its topic) or private (kept in <code>config.json</code> only)</td>
+</tr>
+<tr>
+<td><code>rdv address add &lt;email\|+phone&gt; [--public\|--private]</code></td>
+<td>Add one (default public). A public one re-signs the card with a later <code>created</code>, republishes it if the public pointer is on, and a running <code>listen</code> / <code>rdv-mcp</code> starts answering probes on it within a second. Duplicates (in any spelling) and a ninth address are refused</td>
+</tr>
+<tr>
+<td><code>rdv address remove &lt;email\|+phone&gt;</code></td>
+<td>Remove one: probes on it are refused at once and its topic is dropped; with the public pointer on, the new card is also published on the removed topic, replacing the old one there. Contacts are kept (NOTES 63)</td>
+</tr>
+<tr>
+<td><code>rdv relays list</code></td>
+<td>The relays the agent listens on (envelopes and the card go there; keep it small), with their health, and its discovery mirrors (the card only)</td>
+</tr>
+<tr>
+<td><code>rdv relays add &lt;wss://…&gt; [--mirror]</code></td>
+<td>Listen on another relay (at most 8): re-signs the card with it, republishes it if the public pointer is on, and a running <code>listen</code> / <code>rdv-mcp</code> subscribes there within a second. <code>wss://</code> only; <code>ws://</code> only for a relay on this machine. <code>--mirror</code>: add a discovery mirror instead (config only)</td>
+</tr>
+<tr>
+<td><code>rdv relays remove &lt;wss://…&gt; [--mirror]</code></td>
+<td>Stop listening on a relay (never the last one): re-signs and republishes the card, there too, so it serves the newer card. The new card is sent to every contact (<code>rdv/card-update</code>, NOTES 82); one that is offline or on older software keeps the old card, so it may still send to the removed relay. <code>--mirror</code>: remove a discovery mirror</td>
+</tr>
+<tr>
+<td><code>rdv card publish [--mirror]</code></td>
+<td>Publish public pointers (if enabled at init), and send the card to contacts that do not hold it yet. <code>--mirror</code>: to our relays and then each discovery mirror, one relay at a time and paced, one try each, then a read-back; one line per relay (<code>accepted</code> / <code>rejected</code> with the relay's reason / <code>timeout</code> / <code>skipped</code> when cooling down, and <code>served</code>) and a summary (NOTES 81)</td>
+</tr>
+</tbody>
+</table></div>
+<h3 id="find-and-connect">Find and connect<a class="anchor" href="#find-and-connect" title="Link to this section" aria-label="Link to this section">#</a></h3>
+<p>Contact needs consent from both humans. Nothing is granted on its own.</p>
+<div class="tablewrap" tabindex="0"><table>
+<thead>
+<tr>
+<th>Command</th>
+<th>Does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>rdv lookup john@doe.com</code></td>
+<td>Fetch public-pointer cards for an address, from our relays and the discovery mirrors; <code>rdv lookup rdv1:…</code> fetches the card of an agent ID (NOTES 83)</td>
+</tr>
+<tr>
+<td><code>rdv contact request &lt;email\|card-file\|agent-id&gt; [--greeting "…"] [--in-person] [--label john@doe.com]</code></td>
+<td>Topic probe by email, or direct by card. An agent ID alone works: a card not known yet is fetched by ID from the relays and mirrors (the friend's agent must have the public pointer on). <code>--in-person</code> records the <code>in-person</code> binding for a card you got face to face. <code>--label</code> is your local name for them (a probe is labeled with the address)</td>
+</tr>
+<tr>
+<td><code>rdv contact pending</code></td>
+<td>Pending inbound requests with binding, fingerprint, greeting; answers to your topic probes awaiting confirmation</td>
+</tr>
+<tr>
+<td><code>rdv contact grant &lt;request-id&gt; [--tier friend] [--scope-file s.json] [--label john@doe.com]</code></td>
+<td>Approve (<code>--label</code>: your local name for them)</td>
+</tr>
+<tr>
+<td><code>rdv contact label &lt;agent-id&gt; &lt;label&gt;</code></td>
+<td>Name a contact locally; sending by name (<code>rdv_send</code> <code>to</code>) resolves through this, never through the addresses its card claims. Yours to run: an assistant may only suggest a label, which you approve with the contact (NOTES 62). From chat: the <code>rdv_label</code> tool, which asks you in an approval form</td>
+</tr>
+<tr>
+<td><code>rdv contact grant &lt;agent-id&gt; [--tier …] [--scope-file …] [--invoke &lt;capability-uri&gt;]… [--no-meetings]</code></td>
+<td>Give a contact you requested rights towards you (by default it may write, not propose meetings); the contact gets a reverse grant, so it can then propose (NOTES 60)</td>
+</tr>
+<tr>
+<td><code>rdv contact confirm &lt;grant-id&gt;</code> / <code>rdv contact reject &lt;grant-id&gt; [--block]</code></td>
+<td>Accept or turn down an answer to your topic probe (anyone who saw the probe can answer; check the fingerprint)</td>
+</tr>
+<tr>
+<td><code>rdv contact decline &lt;request-id&gt; [--block]</code></td>
+<td>Decline</td>
+</tr>
+<tr>
+<td><code>rdv contact list</code> / <code>rdv contact revoke &lt;agent-id&gt;</code></td>
+<td>Manage contacts</td>
+</tr>
+<tr>
+<td><code>rdv contact resync &lt;agent-id&gt;</code></td>
+<td>After <code>listen</code> reports an <code>envelope chain fork</code> (the contact restored an old copy of its home by hand, or two copies run), accept its current chain once you have checked with them; until then its messages are refused. A restore with <code>rdv restore</code> needs none of this. From chat: the <code>rdv_resync</code> tool (approval form)</td>
+</tr>
+</tbody>
+</table></div>
+<h3 id="send-and-receive-encrypted-messages">Send and receive encrypted messages<a class="anchor" href="#send-and-receive-encrypted-messages" title="Link to this section" aria-label="Link to this section">#</a></h3>
+<div class="tablewrap" tabindex="0"><table>
+<thead>
+<tr>
+<th>Command</th>
+<th>Does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>rdv send &lt;agent-id&gt; --json '{"type":"a2a/message","text":"hi"}'</code></td>
+<td>Send any payload (<code>--payload '…'</code> is the same without JSON output)</td>
+</tr>
+<tr>
+<td><code>rdv inbox [--follow]</code></td>
+<td>Show received payloads</td>
+</tr>
+<tr>
+<td><code>rdv listen [--auto-grant &lt;tier&gt; [--auto-grant-any-tier]] [--exec &lt;script&gt;]</code></td>
+<td>Long-running: print events; auto-grant is for demos only and stops at <code>stranger</code> unless <code>--auto-grant-any-tier</code>; <code>--exec</code> gets each event as a JSON line on stdin (<code>RDV_EVENT</code>, <code>RDV_HOME</code> set)</td>
+</tr>
+<tr>
+<td><code>rdv service install [--dry-run]</code></td>
+<td>Keep the agent reachable while no chat or terminal is open: installs <code>rdv listen</code> for this home as a background listener that starts at your login, as you, with no administrator rights. Windows: a scheduled task (logon trigger for you only) whose action is <code>wscript.exe //B //Nologo</code> and a small script in <code>&lt;home&gt;/service/</code> that runs node hidden; macOS: <code>~/Library/LaunchAgents/rdv-listen-&lt;profile&gt;.plist</code> (<code>RunAtLoad</code>, <code>KeepAlive</code>); Linux: <code>~/.config/systemd/user/rdv-listen-&lt;profile&gt;.service</code> (<code>Restart=on-failure</code>, <code>systemctl --user enable --now</code>; it runs only while you are logged in unless you run <code>loginctl enable-linger</code> once). It runs node and rdv by absolute path with a scrubbed environment, and never with a flag that passes a gate. <code>--dry-run</code> prints the definition. Yours to run (an assistant uses <code>rdv_service</code>, which asks you in a form)</td>
+</tr>
+<tr>
+<td><code>rdv service remove</code> / <code>rdv service status</code></td>
+<td>Stop and remove it; show whether it is installed and running and who holds <code>listener.lock</code></td>
+</tr>
+</tbody>
+</table></div>
+<h3 id="tasks-and-files">Tasks and files<a class="anchor" href="#tasks-and-files" title="Link to this section" aria-label="Link to this section">#</a></h3>
+<p>Ask a contact's agent to do something, and send files. Each step that acts or releases data has a gate that only the human passes. User guide: <a href="/docs/tasks.html">Tasks and files</a>.</p>
+<div class="tablewrap" tabindex="0"><table>
+<thead>
+<tr>
+<th>Command</th>
+<th>Does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>rdv task request &lt;agent-id&gt; --text "…" [--capability &lt;uri&gt;] [--input '{…}'] [--expires &lt;rfc3339&gt;]</code></td>
+<td>Ask a contact's agent for a task (SPEC §7.6; default capability <code>request/v1</code>, a free-text request). Needs its grant to you and its card to list the capability</td>
+</tr>
+<tr>
+<td><code>rdv task list</code></td>
+<td>Tasks both ways, with what waits for you: the <code>--code</code> for <code>approve</code> and <code>release</code> (and, in text mode, the MCP server's confirm phrases). Yours to run</td>
+</tr>
+<tr>
+<td><code>rdv task approve &lt;task-id&gt; --code &lt;code&gt;</code> / <code>rdv task decline &lt;task-id&gt;</code></td>
+<td>Let your agent act on a contact's task (start gate, SPEC §5.5), or refuse it. <code>--code</code> is refused if the task changed since you reviewed it. <code>approve</code> is yours to run. A task a group member gave you takes <code>--group &lt;group-id&gt;</code> here and in <code>submit</code>, <code>ask</code>, <code>finish</code> and <code>release</code></td>
+</tr>
+<tr>
+<td><code>rdv task submit &lt;task-id&gt; --text "…" [--name …] [--complete]</code> / <code>rdv task ask &lt;task-id&gt; --text "…"</code> / <code>rdv task finish &lt;task-id&gt; [--failed] [--text …]</code></td>
+<td>Draft a result, a question or the end of a contact's task; a draft leaves only when released</td>
+</tr>
+<tr>
+<td><code>rdv task submit &lt;task-id&gt; --file &lt;sha256&gt;=&lt;https-url&gt;… [--inline &lt;path&gt;…]</code></td>
+<td>Attach files by reference (or up to 16 KiB inline) to the draft. They leave only when you release it; the release view shows each one's name, size, full sha256, URL, source path and recipient</td>
+</tr>
+<tr>
+<td><code>rdv task release &lt;task-id&gt; --code &lt;code&gt;</code></td>
+<td>Send the draft you reviewed (release gate). Yours to run</td>
+</tr>
+<tr>
+<td><code>rdv task cancel &lt;task-id&gt;</code> / <code>rdv task input &lt;task-id&gt; --text "…"</code></td>
+<td>Withdraw a task you requested, or answer its executor's question</td>
+</tr>
+<tr>
+<td><code>rdv file prepare &lt;path&gt; [--name …] [--mime …] [--plain]</code></td>
+<td>Encrypt one of your files under a fresh key and write the copy (<code>files/outgoing/&lt;sha256&gt;.bin</code>) for you to upload anywhere a peer can fetch over https. Nothing is sent. Refuses anything inside a Rendezvous home (NOTES 77)</td>
+</tr>
+<tr>
+<td><code>rdv file list</code></td>
+<td>Prepared files, files peers sent for your tasks (not fetched), direct-transfer requests and the setting</td>
+</tr>
+<tr>
+<td><code>rdv file fetch &lt;task-id&gt; [--file &lt;n\|sha256&gt;]</code></td>
+<td>Fetch one file a peer sent, only for a task you started (or a result of a task you requested): https only, no credentials, no private addresses, 25 MiB cap, hash and decryption checked. Saved in quarantine (<code>files/incoming/&lt;task&gt;/</code>, mode 600)</td>
+</tr>
+<tr>
+<td><code>rdv file decline-transfer &lt;transfer-id&gt;</code> / <code>rdv file direct-transfer on\|off</code></td>
+<td>Say no to a contact's direct-transfer request; or your setting for them (default off: declined; on: requests are shown, nothing connects on its own; no transfer protocol exists yet). The setting is yours; from chat: <code>rdv_file</code> "direct-transfer" (<code>off</code> needs no approval, <code>on</code> asks in a form)</td>
+</tr>
+<tr>
+<td><code>rdv contact auto-approve &lt;agent-id\|label&gt; all [--until 7d]</code> / <code>… off</code></td>
+<td>Let one trusted contact's tasks start and their results leave, and the dinners it proposes be confirmed, without asking you (SPEC §5.5.1, "dangerous mode"): needs your own terminal, shows a warning, asks for your owner passphrase (the MCP tool <code>rdv_auto_approve</code> asks for it in an approval form instead). Ends on expiry, <code>off</code>, a revoke or block, a grant change you did not make, or a fork. A grant change you make yourself leaves it on for what it already covered and still allows; additions ask until you turn it on for them (NOTES 77, 85, SPEC §5.5.1). Yours to run</td>
+</tr>
+<tr>
+<td><code>rdv owner-secret set</code></td>
+<td>Set or change the owner passphrase that turning auto-approve on asks for: typed twice, never shown, stored as a scrypt hash; three misses lock it for a minute, doubling; audited, and <code>rdv whoami</code> shows when it was set (NOTES 77). <code>rdv init</code> in a terminal offers it too. Yours to run; from chat: the <code>rdv_owner_passphrase</code> tool, which asks for it in an approval form</td>
+</tr>
+<tr>
+<td><code>rdv owner-secret reset</code></td>
+<td>Forgot it, or <code>rdv whoami</code> shows a time you didn't set it: turns auto-approve off for every contact and forgets the passphrase (audited; refused while locked). Set a new one with <code>rdv owner-secret set</code> 10 minutes later; until then <code>rdv whoami</code> shows a reset banner. Yours to run, in your own terminal</td>
+</tr>
+<tr>
+<td><code>rdv audit [--contact &lt;agent-id\|label&gt;] [--since 7d]</code></td>
+<td>The audit log: gates passed without asking (<code>auto</code>, <code>notify</code>, auto-approve), your approvals, auto-approve changes; no peer text</td>
+</tr>
+</tbody>
+</table></div>
+<h3 id="groups">Groups<a class="anchor" href="#groups" title="Link to this section" aria-label="Link to this section">#</a></h3>
+<div class="tablewrap" tabindex="0"><table>
+<thead>
+<tr>
+<th>Command</th>
+<th>Does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>rdv group create &lt;name&gt;</code> / <code>rdv group invite &lt;group-id&gt; &lt;agent-id\|label&gt; [--name …] [--greeting …]</code></td>
+<td>Make a group with you as its admin (at most 16 members), and invite your contacts to it (SPEC §7.8). <code>invite</code> is yours to run (the invitee sees the members, and on joining their cards); their humans decide</td>
+</tr>
+<tr>
+<td><code>rdv group list</code></td>
+<td>Your groups (members, who you approved, who waits for you) and the invites waiting for you; no codes</td>
+</tr>
+<tr>
+<td><code>rdv group pending</code></td>
+<td>Invites and newcomers waiting for your decision, with the <code>--code</code> for <code>join</code> and <code>approve</code> (and, in text mode, the MCP server's confirm phrases). Yours to run</td>
+</tr>
+<tr>
+<td><code>rdv group join &lt;invite-id&gt; --code &lt;code&gt; [--invoke &lt;uri&gt;]… [--max-frequency f] [--newcomers ask\|trust-admin]</code> / <code>rdv group decline &lt;invite-id&gt;</code></td>
+<td>Join a group on these terms (what members may ask of you; by default nothing, and you are asked about each newcomer who is not your contact), or say no. <code>--code</code> is refused if the invite changed since you read it. <code>join</code> is yours to run</td>
+</tr>
+<tr>
+<td><code>rdv group approve &lt;group-id&gt; &lt;agent-id&gt; --code &lt;code&gt;</code></td>
+<td>Let a newcomer who is not your contact receive your group traffic. Yours to run</td>
+</tr>
+<tr>
+<td><code>rdv group resync &lt;group-id&gt; [--member &lt;agent-id&gt;]</code></td>
+<td>Thaw a group whose admin signed two member lists for one step, after checking with them; with <code>--member</code>, take the group messages of a member that equivocated or was muted again, after checking with them. Yours to run; from chat: <code>rdv_resync</code> with <code>group_id</code> (approval form)</td>
+</tr>
+<tr>
+<td><code>rdv group post &lt;group-id&gt; --json '&lt;body&gt;' [--to &lt;agent-id&gt;]…</code></td>
+<td>Say something to the group: to every member you send to (board-visible), or privately to those named (SPEC §7.8.3)</td>
+</tr>
+<tr>
+<td><code>rdv group leave &lt;group-id&gt;</code> / <code>rdv group remove &lt;group-id&gt; &lt;agent-id\|label&gt;</code></td>
+<td>Leave a group (every member is told), or as admin remove a member (the new member list goes to everyone, them included). Yours to run</td>
+</tr>
+<tr>
+<td><code>rdv group board &lt;group-id&gt;</code></td>
+<td>The group's tasks as your agent holds them: open ones, claims, who does what, their state and results (SPEC §7.8.4)</td>
+</tr>
+<tr>
+<td><code>rdv group request &lt;group-id&gt; --text "…" [--capability &lt;uri&gt;] [--assignee &lt;agent-id&gt;] [--private] [--ref &lt;task-id&gt;]…</code></td>
+<td>Put a task on the board: open for members to claim, or for one member whose group terms allow it (<code>--private</code>: only to them). <code>--ref</code> names earlier tasks it builds on</td>
+</tr>
+<tr>
+<td><code>rdv group claim &lt;group-id&gt; &lt;task-id&gt; [--text "…"]</code> / <code>rdv group assign &lt;group-id&gt; &lt;task-id&gt; &lt;agent-id&gt;</code></td>
+<td>Offer to do an open task; as its requester (or an admin, once the requester left), give it to one member</td>
+</tr>
+<tr>
+<td><code>rdv group unassign &lt;group-id&gt; &lt;task-id&gt;</code> / <code>rdv group cancel …</code> / <code>rdv group input … --text "…"</code></td>
+<td>Give back a task you were doing, or take back one you assigned (open again); withdraw your task; answer its assignee's question</td>
+</tr>
+<tr>
+<td><code>rdv group terms &lt;group-id&gt; [--invoke &lt;uri&gt;]… [--max-frequency f] [--newcomers ask\|trust-admin]</code></td>
+<td>Change what members may ask of your agent through the group (without <code>--invoke</code>: nothing) and your newcomer policy; members are told. Yours to run</td>
+</tr>
+<tr>
+<td><code>rdv group promote &lt;group-id&gt; &lt;agent-id\|label&gt;</code></td>
+<td>As admin, make another member an admin too: the last admin does this before leaving. Yours to run</td>
+</tr>
+</tbody>
+</table></div>
+<h3 id="backup-and-restore">Backup and restore<a class="anchor" href="#backup-and-restore" title="Link to this section" aria-label="Link to this section">#</a></h3>
+<div class="tablewrap" tabindex="0"><table>
+<thead>
+<tr>
+<th>Command</th>
+<th>Does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>rdv backup &lt;file&gt; [--stdin]</code></td>
+<td>Write an encrypted backup of this agent to a new file (mode 600, never over a file, never inside a home): its key, contacts, grants, channels, settings, owner passphrase record and auto-approve entries, never open approvals or confirm phrases. The passphrase is typed twice in your terminal (not shown; at least 12 characters), or read from stdin with <code>--stdin</code>; never an argument. Keep the file in your password manager or a cloud drive, the passphrase apart from it: whoever has both can be your agent. Yours to run (issue #88, NOTES 91)</td>
+</tr>
+<tr>
+<td><code>rdv restore &lt;file&gt; [--replace] [--stdin]</code></td>
+<td>Bring the agent back on a new machine: shows the agent ID, fingerprint and backup time in the file, asks for its passphrase, and refuses to replace an agent that exists here without <code>--replace</code>. On the next start (<code>rdv listen</code> or <code>rdv-mcp</code>) each contact is told (<code>rdv/restored</code>, SPEC §6.4.1), so conversations go on with no resync; <code>rdv whoami</code> shows who confirmed. Open tasks, dinners and pending requests are not in a backup. Yours to run</td>
+</tr>
+</tbody>
+</table></div>
+<h3 id="output-and-locking">Output and locking<a class="anchor" href="#output-and-locking" title="Link to this section" aria-label="Link to this section">#</a></h3>
+<p>Output is human text by default and one JSON object per line with <code>--json</code>.
+Exit codes: 0 ok, 1 error, 2 usage error. Every command except <code>listen</code> and
+<code>inbox --follow</code> loads state under the lock, runs, saves, and exits. <code>listen</code>
+takes the lock only while it handles one inbound item, so a bot can run
+<code>rdv contact grant</code> against the same home while <code>listen</code> is running; it prints
+an event only after the state behind it is saved.</p>
+<p><strong>One inbound consumer per home.</strong> Two processes subscribed for the same home
+would split inbound events between them (whichever handles an envelope first
+wins; the other never sees it). So whoever consumes holds <code>listener.lock</code>
+(O_EXCL file with pid, host and role, mtime touched every minute; broken when
+its pid is gone on this host, or after 10 minutes without a touch from another
+host) and appends every event it handles to <code>events.jsonl</code>, after the state
+behind it is saved. A second <code>rdv listen</code> exits 1 naming the holder. A second
+<code>rdv-mcp</code> runs <strong>attached</strong>: it opens no subscriptions, still sends (grant,
+send, negotiate), and its <code>rdv_inbox</code> follows <code>events.jsonl</code> by cursor, so every
+server on the home sees each event once with the same cursor. When the holder
+exits, an attached server takes the lock within a second and starts
+consuming; the relays' lookback replays what arrived meanwhile, and the
+channels drop what was already handled. Negotiation follows the consumer:
+run <code>rdv listen --negotiate</code> (or give the consuming <code>rdv-mcp</code> a calendar) if
+an attached server should get answers to its dinner proposals.</p>
+<p>PowerShell quoting for <code>send</code>: <code>rdv send &lt;id&gt; --json '{\"type\":\"a2a/message\",\"text\":\"hi\"}'</code>
+(Windows PowerShell 5 strips bare inner quotes; PowerShell 7.3+ accepts the bash form).</p>
+<h2 id="examples">Examples<a class="anchor" href="#examples" title="Link to this section" aria-label="Link to this section">#</a></h2>
+<h3 id="example-contact-and-a-first-message-plan-45">Example: contact and a first message (PLAN §4.5)<a class="anchor" href="#example-contact-and-a-first-message-plan-45" title="Link to this section" aria-label="Link to this section">#</a></h3>
+<p><code>packages/cli/scenarios/contact.ts</code> drives real <code>rdv</code> processes with separate
+homes: John listens, Omer requests by email, John grants, Omer sends, John's
+inbox shows it, each step asserted with a timeout. It runs:</p>
+<ul>
+<li>against the in-memory relay as part of <code>npm test</code>;</li>
+<li>against real relays with <code>npm run test:live</code> (below);</li>
+<li>by hand against any relays, e.g. from two machines' worth of setup:
+    <code>node packages/cli/dist/scenarios/contact.js --relay wss://relay.example [--relay …] [--timeout 30000] [--keep]</code>.</li>
+</ul>
+<p>Crash safety: state is saved right before each envelope leaves (<code>Agent.beforeSend</code>),
+so a crash after a send never reuses a <code>seq</code> (issue #4).</p>
+<h3 id="example-tasks-and-files">Example: tasks and files<a class="anchor" href="#example-tasks-and-files" title="Link to this section" aria-label="Link to this section">#</a></h3>
+<p>(User guide: <a href="/docs/tasks.html"><code>docs/tasks.md</code></a>.)</p>
+<p>Omer asks John's agent for a document review; John's side runs <code>rdv listen</code>.</p>
+<div class="codeblock"><pre tabindex="0"><code class="language-bash"># Omer: ask (John's grant to Omer must allow request/v1)
+rdv task request rdv1:… --text &quot;Please review the attached Q4 plan&quot;
+
+# John, in his own terminal: see what waits, with the codes
+rdv task list
+rdv task approve &lt;task-id&gt; --code &lt;code&gt;          # start gate: now his agent may act
+
+# John's agent drafts; John prepares a file, uploads the .bin, and attaches it
+rdv file prepare ./q4-review.pdf                  # prints the sha256 and the copy to upload
+rdv task submit &lt;task-id&gt; --text &quot;Notes attached&quot; --file &lt;sha256&gt;=https://files.example.com/q4 --complete
+rdv task list                                     # shows the draft and the file in full
+rdv task release &lt;task-id&gt; --code &lt;code&gt;          # release gate: only now does it leave
+
+# Omer: fetch it (only for a task he requested, or one he started)
+rdv file fetch &lt;task-id&gt; --file 1
+
+# Later: what passed without asking, and a trusted contact on auto-approve
+rdv audit --since 7d
+rdv owner-secret set                              # once, in your own terminal
+rdv contact auto-approve john@doe.com all --until 7d
+rdv contact auto-approve john@doe.com off
+</code></pre></div>
+<h3 id="example-a-group-design-b5-issue-79">Example: a group (design B.5, issue #79)<a class="anchor" href="#example-a-group-design-b5-issue-79" title="Link to this section" aria-label="Link to this section">#</a></h3>
+<p><code>packages/cli/scenarios/microsite.ts</code>: Omer, John and Dana, three <code>rdv</code>
+processes. Omer is John's and Dana's contact; John and Dana never meet. Omer
+creates a group, John joins (members may ask him for <code>request/v1</code>; newcomers
+<code>trust-admin</code>), Dana joins (<code>ask</code>) and approves John. Omer puts an open task
+on the board; Dana claims it and Omer assigns it to her (John's attempt to
+assign it is refused by his own board); Dana's human approves the start and
+releases the copy, which the release gate shows going to Omer and John.
+Omer then asks John for a review referring to the copy: John's start gate
+shows that the input is Dana's result ("not your contact, named by the admin
+as Dana"). John leaves: his assigned proofread reopens and his open request
+is canceled on the others' boards; Dana drops her channel with him, Omer
+keeps his. Omer hands the admin role to Dana and leaves. It runs in <code>npm
+test</code> on the in-memory relay; by hand:
+<code>node packages/cli/dist/scenarios/microsite.js --relay wss://… [--timeout ms] [--keep]</code>.</p>
+<h3 id="example-negotiating-a-meeting-plan-53">Example: negotiating a meeting (PLAN §5.3)<a class="anchor" href="#example-negotiating-a-meeting-plan-53" title="Link to this section" aria-label="Link to this section">#</a></h3>
+<p>Meetings are one use of the tasks layer, built on the <code>a2a</code> package's meeting engine. The commands say <code>dinner</code>, the first meeting the engine was built for. Both sides run <code>rdv listen --negotiate</code> with their own JSON calendar; one runs <code>rdv dinner propose</code>.</p>
+<div class="tablewrap" tabindex="0"><table>
+<thead>
+<tr>
+<th>Command</th>
+<th>Does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>rdv dinner propose &lt;agent-id&gt; --calendar cal.json --window "next week evenings" [--tz +02:00] [--minutes 120] [--place …] [--area …] [--expires &lt;rfc3339&gt;]</code></td>
+<td>Offer up to 3 free slots; run <code>listen --negotiate</code> to handle the replies</td>
+</tr>
+<tr>
+<td><code>rdv dinner confirm &lt;task-id&gt; --hold &lt;code&gt;</code></td>
+<td>Confirm the dinner a negotiation holds for you: sends <code>meeting/accept</code> (their offer) or <code>meeting/confirm</code> (they accepted yours). <code>--hold</code> is the code <code>rdv dinner list</code> shows; it is refused if the meeting changed since</td>
+</tr>
+<tr>
+<td><code>rdv dinner cancel &lt;task-id&gt; [--reason …]</code></td>
+<td>Send <code>rdv/cancel</code> for a pending negotiation and release its hold; for an agreed (completed) dinner, send <code>meeting/cancel</code>: it leaves your calendar and the peer's agent removes it from theirs</td>
+</tr>
+<tr>
+<td><code>rdv dinner list</code></td>
+<td>Negotiations with state, round, agreed or held slot (and what it waits for)</td>
+</tr>
+<tr>
+<td><code>rdv listen --negotiate --calendar cal.json [--window "…"] [--tz +02:00] [--auto-confirm]</code></td>
+<td><code>--negotiate</code> answers dinner proposals from the calendar (window default <code>next week evenings</code>) and holds a slot for you to confirm; <code>--auto-confirm</code> skips the human (bots, demos). Takes the same flags as <code>rdv listen</code> above</td>
+</tr>
+</tbody>
+</table></div>
+<p>With <code>--json</code>, negotiation steps print as <code>{"event":"dinner","kind":…,"task":…,"peer":…,"state":…}</code>
+(kinds: proposed, offer-received, countered, confirm-needed, accepted,
+completed, meeting-canceled, released, rejected, canceled, expired, status,
+duplicate, ignored, invalid). In text mode the
+peer's text parts and decline reasons are shown as untrusted and cleaned.</p>
+<p><code>packages/cli/scenarios/dinner.ts</code>: Omer and John each run
+<code>rdv listen --negotiate</code> with their own JSON calendar; Omer runs
+<code>rdv dinner propose</code>. Variants: <code>overlap</code> (John, then Omer, confirms with
+<code>rdv dinner confirm</code>; both <code>completed</code> on the same slot, one hold each),
+<code>no-overlap</code> (<code>rejected</code> after 3 rounds), <code>cancel</code> (John offline while Omer
+proposes and cancels; both <code>canceled</code>), <code>cancel-hold</code> (Omer cancels while
+John's agent holds a slot for John; the hold is released), <code>duplicate</code>
+(<code>--auto-confirm</code> bots, then every envelope replayed and a message re-sent;
+nothing changes), <code>reverse</code> (John, who granted the contact, proposes: refused
+until Omer runs <code>rdv contact grant &lt;john-id&gt;</code>, which sends John a reverse
+grant; then both confirm and complete), <code>cancel-agreed</code> (<code>--auto-confirm</code>
+bots agree, then John runs <code>rdv dinner cancel</code>; both calendars free the
+evening and both end <code>canceled</code>). All seven run in <code>npm test</code>; <code>overlap</code> runs in
+<code>npm run test:live</code>; by hand:</p>
+<p><code>node packages/cli/dist/scenarios/dinner.js --relay ws://… [--variant overlap] [--variant …]</code>.</p>
+<p>The calendar file and <code>--window</code> are described under <code>@rendezvous/a2a</code> below.</p>
+<h2 id="libraries">Libraries<a class="anchor" href="#libraries" title="Link to this section" aria-label="Link to this section">#</a></h2>
+<p>The protocol library, then the task and meeting layer.</p>
 <h2 id="rendezvouscore">@rendezvous/core<a class="anchor" href="#rendezvouscore" title="Link to this section" aria-label="Link to this section">#</a></h2>
 <div class="tablewrap" tabindex="0"><table>
 <thead>
@@ -207,8 +733,8 @@ john.on('message', (from, payload) =&gt; console.log(from, payload));
 john.start();
 
 // On another machine:
-await omer.requestContact('john@doe.com', &quot;Omer's agent would like to plan dinner.&quot;);
-omer.once('contact', () =&gt; omer.send(john.id, { type: 'a2a/message', text: 'Thursday 20:00?' }));
+await omer.requestContact('john@doe.com', &quot;Omer's agent would like to be in contact.&quot;);
+omer.once('contact', () =&gt; omer.send(john.id, { type: 'a2a/message', text: 'Hi John, Omer here.' }));
 </code></pre></div>
 <p><strong>Relays.</strong> <code>DEFAULT_RELAYS</code> is the public set <code>rdv init</code> uses when no relay
 is given: <code>wss://nos.lol</code>, <code>wss://relay.primal.net</code>, <code>wss://relay.nostr.net</code>,
@@ -236,7 +762,7 @@ transport (<code>setRelays()</code>), subscriptions included.</p>
 discovery topics, a signed card and contact request, and a sample envelope
 that another implementation should be able to open.</p>
 <h2 id="rendezvousa2a">@rendezvous/a2a<a class="anchor" href="#rendezvousa2a" title="Link to this section" aria-label="Link to this section">#</a></h2>
-<p>PLAN.md §5.1–5.2, SPEC.md §7. Payloads <code>a2a/message</code> (an A2A v0.3 <code>Message</code>)
+<p>PLAN.md §5.1–5.2, SPEC.md §7. Tasks (<code>tasks/v1</code>) and the group board live here, with no runtime dependencies. This package also holds a meeting-negotiation engine, one example of what agents do with tasks. Its payloads <code>a2a/message</code> (an A2A v0.3 <code>Message</code>)
 and <code>a2a/task-update</code> (a <code>TaskStatusUpdateEvent</code>) travel inside envelopes.
 The verb sits in the message's <code>data</code> part (<code>data.rdv</code>): <code>meeting/propose</code>,
 <code>meeting/counter</code>, <code>meeting/accept</code>, <code>meeting/confirm</code>, <code>meeting/decline</code>, <code>meeting/cancel</code>, <code>rdv/cancel</code>.</p>
@@ -338,436 +864,6 @@ evening is 19:00–23:00; everything is clipped to start no earlier than now):</
 Held slots are added to <code>busy</code>: <code>Dinner (tentative, rdv &lt;task&gt;)</code> while the
 handshake runs, then <code>Dinner (rdv &lt;task&gt;)</code>; a tentative hold that falls
 through is removed.</p>
-<h2 id="rdv-the-cli">rdv (the CLI)<a class="anchor" href="#rdv-the-cli" title="Link to this section" aria-label="Link to this section">#</a></h2>
-<div class="codeblock"><pre tabindex="0"><code class="language-bash">npm install &amp;&amp; npm run build              # from impl/
-npm run rdv -- --help                     # or: node packages/cli/dist/src/bin.js --help
-</code></pre></div>
-<p><code>npx rdv …</code> also works once <code>npm install</code> has run after the first build
-(npm links the binary only when <code>dist/</code> exists).</p>
-<p>State lives in a directory: <code>--home &lt;dir&gt;</code>, else <code>$RDV_HOME</code>, else
-<code>~/.rendezvous/&lt;profile&gt;</code> (<code>--profile</code>, default <code>default</code>).</p>
-<div class="tablewrap" tabindex="0"><table>
-<thead>
-<tr>
-<th>File</th>
-<th>Holds</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>agent.json</code></td>
-<td><code>Agent.toJSON()</code>, including the secret key (mode 600 where the OS supports it)</td>
-</tr>
-<tr>
-<td><code>config.json</code></td>
-<td>profile, relays (listening), <code>mirror_relays</code> (discovery mirrors, once changed; absent: the default set for an all-<code>wss://</code> agent, none otherwise), addresses (public ones are on the card; <code>private: true</code> ones are kept here only), policy, <code>receipts</code> (<code>false</code>: send no delivery receipts and take the receipts capability off the card at the next <code>rdv listen</code>; absent: on, NOTES 98)</td>
-</tr>
-<tr>
-<td><code>relays.json</code></td>
-<td>per-relay diagnostics and cooldowns (last OK, last error), written after each publish and read by <code>rdv whoami</code> / <code>rdv_status</code></td>
-</tr>
-<tr>
-<td><code>inbox.jsonl</code></td>
-<td>received payloads, one JSON object per line</td>
-</tr>
-<tr>
-<td><code>cards.json</code></td>
-<td>cards found by <code>rdv lookup</code> or fetched by agent ID, so <code>contact request &lt;agent-id&gt;</code> can use them</td>
-</tr>
-<tr>
-<td><code>negotiations.json</code></td>
-<td>dinner negotiations (the a2a engine state)</td>
-</tr>
-<tr>
-<td><code>tasks.json</code></td>
-<td>general tasks (the tasks/v1 engine state) and, per task, the draft waiting for your release; per group (<code>groups</code>), its board and the tasks members gave you, with their drafts</td>
-</tr>
-<tr>
-<td><code>audit.jsonl</code></td>
-<td>each task gate passed: by the grant (<code>auto</code>, <code>notify</code>) or by you (bounded to its last 1000 lines)</td>
-</tr>
-<tr>
-<td><code>files.json</code></td>
-<td>files you prepared (their keys and nonces; mode 600), for the release view and for sending</td>
-</tr>
-<tr>
-<td><code>files/outgoing/</code>, <code>files/incoming/&lt;task&gt;/</code></td>
-<td>the encrypted copies to upload, and files fetched from peers (quarantine: mode 600, <code>.quarantine</code> after active extensions)</td>
-</tr>
-<tr>
-<td><code>autoapprove.json</code></td>
-<td>contacts on auto-approve, each entry MACed with the agent key and bound to the contact's grant (mode 600; never edit it, a hand-written file approves nothing)</td>
-</tr>
-<tr>
-<td><code>owner-secret.json</code></td>
-<td>the owner passphrase as salted scrypt, and its lockout counters (mode 600)</td>
-</tr>
-<tr>
-<td><code>owner.json</code></td>
-<td>the owner's settings (<code>direct_transfer</code>), MACed with the agent key; a hand-written file is ignored</td>
-</tr>
-<tr>
-<td><code>consent.json</code></td>
-<td>salted scrypt hashes of the confirm phrases for pending requests, probe answers and held dinners, each bound to what the human was shown (written by <code>rdv-mcp</code>; <code>contact pending</code> and <code>dinner list</code> issue and show a fresh phrase in text mode)</td>
-</tr>
-<tr>
-<td><code>holds.json</code></td>
-<td>which calendar file holds each tentative dinner hold, so <code>dinner confirm</code>/<code>cancel</code> can finalize or release it</td>
-</tr>
-<tr>
-<td><code>events.jsonl</code></td>
-<td>shared event log: what the home's listener handled, plus <code>rdv-mcp</code>'s own events; <code>rdv_inbox</code> is a view of it</td>
-</tr>
-<tr>
-<td><code>events.lock</code></td>
-<td>held while appending to <code>events.jsonl</code></td>
-</tr>
-</tbody>
-</table></div>
-<p>| <code>lock</code> | held while a command reads and writes state |
-| <code>listener.lock</code> | held for its lifetime by the home's one inbound consumer (<code>rdv listen</code> or <code>rdv-mcp</code>) |
-| <code>service/</code> | the background listener's Windows script and task definition (<code>rdv-listen-&lt;profile&gt;.vbs</code>, <code>.xml</code>), or its macOS error log; written by <code>rdv service install</code> |</p>
-<div class="tablewrap" tabindex="0"><table>
-<thead>
-<tr>
-<th>Command</th>
-<th>Does</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>rdv init --profile omer --email omer@example.com [--email …] [--relay wss://… [--relay …]] [--phone +…] [--phone …] [--public-pointer] [--force]</code></td>
-<td>Generate key and card, write state. Repeat <code>--email</code> / <code>--phone</code> for more addresses (canonicalized, repeats dropped, at most 8). Without <code>--relay</code>: <code>DEFAULT_RELAYS</code> (below). An agent keeps the relays it was created with</td>
-</tr>
-<tr>
-<td><code>rdv whoami</code></td>
-<td>Print agent ID, fingerprint, addresses, per-relay health (<code>relay_health</code>: last OK, last error, cooldown), card JSON (never the secret key)</td>
-</tr>
-<tr>
-<td><code>rdv address list</code></td>
-<td>Our addresses, each public (on the card, answers probes; with its topic) or private (kept in <code>config.json</code> only)</td>
-</tr>
-<tr>
-<td><code>rdv address add &lt;email\|+phone&gt; [--public\|--private]</code></td>
-<td>Add one (default public). A public one re-signs the card with a later <code>created</code>, republishes it if the public pointer is on, and a running <code>listen</code> / <code>rdv-mcp</code> starts answering probes on it within a second. Duplicates (in any spelling) and a ninth address are refused</td>
-</tr>
-<tr>
-<td><code>rdv address remove &lt;email\|+phone&gt;</code></td>
-<td>Remove one: probes on it are refused at once and its topic is dropped; with the public pointer on, the new card is also published on the removed topic, replacing the old one there. Contacts are kept (NOTES 63)</td>
-</tr>
-<tr>
-<td><code>rdv relays list</code></td>
-<td>The relays the agent listens on (envelopes and the card go there; keep it small), with their health, and its discovery mirrors (the card only)</td>
-</tr>
-<tr>
-<td><code>rdv relays add &lt;wss://…&gt; [--mirror]</code></td>
-<td>Listen on another relay (at most 8): re-signs the card with it, republishes it if the public pointer is on, and a running <code>listen</code> / <code>rdv-mcp</code> subscribes there within a second. <code>wss://</code> only; <code>ws://</code> only for a relay on this machine. <code>--mirror</code>: add a discovery mirror instead (config only)</td>
-</tr>
-<tr>
-<td><code>rdv relays remove &lt;wss://…&gt; [--mirror]</code></td>
-<td>Stop listening on a relay (never the last one): re-signs and republishes the card, there too, so it serves the newer card. The new card is sent to every contact (<code>rdv/card-update</code>, NOTES 82); one that is offline or on older software keeps the old card, so it may still send to the removed relay. <code>--mirror</code>: remove a discovery mirror</td>
-</tr>
-<tr>
-<td><code>rdv card publish [--mirror]</code></td>
-<td>Publish public pointers (if enabled at init), and send the card to contacts that do not hold it yet. <code>--mirror</code>: to our relays and then each discovery mirror, one relay at a time and paced, one try each, then a read-back; one line per relay (<code>accepted</code> / <code>rejected</code> with the relay's reason / <code>timeout</code> / <code>skipped</code> when cooling down, and <code>served</code>) and a summary (NOTES 81)</td>
-</tr>
-<tr>
-<td><code>rdv lookup john@doe.com</code></td>
-<td>Fetch public-pointer cards for an address, from our relays and the discovery mirrors; <code>rdv lookup rdv1:…</code> fetches the card of an agent ID (NOTES 83)</td>
-</tr>
-<tr>
-<td><code>rdv contact request &lt;email\|card-file\|agent-id&gt; [--greeting "…"] [--in-person] [--label john@doe.com]</code></td>
-<td>Topic probe by email, or direct by card. An agent ID alone works: a card not known yet is fetched by ID from the relays and mirrors (the friend's agent must have the public pointer on). <code>--in-person</code> records the <code>in-person</code> binding for a card you got face to face. <code>--label</code> is your local name for them (a probe is labeled with the address)</td>
-</tr>
-<tr>
-<td><code>rdv contact pending</code></td>
-<td>Pending inbound requests with binding, fingerprint, greeting; answers to your topic probes awaiting confirmation</td>
-</tr>
-<tr>
-<td><code>rdv contact grant &lt;request-id&gt; [--tier friend] [--scope-file s.json] [--label john@doe.com]</code></td>
-<td>Approve (<code>--label</code>: your local name for them)</td>
-</tr>
-<tr>
-<td><code>rdv contact label &lt;agent-id&gt; &lt;label&gt;</code></td>
-<td>Name a contact locally; sending by name (<code>rdv_send</code> <code>to</code>) resolves through this, never through the addresses its card claims. Yours to run: an assistant may only suggest a label, which you approve with the contact (NOTES 62). From chat: the <code>rdv_label</code> tool, which asks you in an approval form</td>
-</tr>
-<tr>
-<td><code>rdv contact grant &lt;agent-id&gt; [--tier …] [--scope-file …] [--invoke &lt;capability-uri&gt;]… [--no-meetings]</code></td>
-<td>Give a contact you requested rights towards you (by default it may write, not propose meetings); the contact gets a reverse grant, so it can then propose (NOTES 60)</td>
-</tr>
-<tr>
-<td><code>rdv contact confirm &lt;grant-id&gt;</code> / <code>rdv contact reject &lt;grant-id&gt; [--block]</code></td>
-<td>Accept or turn down an answer to your topic probe (anyone who saw the probe can answer; check the fingerprint)</td>
-</tr>
-<tr>
-<td><code>rdv contact decline &lt;request-id&gt; [--block]</code></td>
-<td>Decline</td>
-</tr>
-<tr>
-<td><code>rdv contact list</code> / <code>rdv contact revoke &lt;agent-id&gt;</code></td>
-<td>Manage contacts</td>
-</tr>
-<tr>
-<td><code>rdv contact resync &lt;agent-id&gt;</code></td>
-<td>After <code>listen</code> reports an <code>envelope chain fork</code> (the contact restored an old copy of its home by hand, or two copies run), accept its current chain once you have checked with them; until then its messages are refused. A restore with <code>rdv restore</code> needs none of this. From chat: the <code>rdv_resync</code> tool (approval form)</td>
-</tr>
-<tr>
-<td><code>rdv backup &lt;file&gt; [--stdin]</code></td>
-<td>Write an encrypted backup of this agent to a new file (mode 600, never over a file, never inside a home): its key, contacts, grants, channels, settings, owner passphrase record and auto-approve entries, never open approvals or confirm phrases. The passphrase is typed twice in your terminal (not shown; at least 12 characters), or read from stdin with <code>--stdin</code>; never an argument. Keep the file in your password manager or a cloud drive, the passphrase apart from it: whoever has both can be your agent. Yours to run (issue #88, NOTES 91)</td>
-</tr>
-<tr>
-<td><code>rdv restore &lt;file&gt; [--replace] [--stdin]</code></td>
-<td>Bring the agent back on a new machine: shows the agent ID, fingerprint and backup time in the file, asks for its passphrase, and refuses to replace an agent that exists here without <code>--replace</code>. On the next start (<code>rdv listen</code> or <code>rdv-mcp</code>) each contact is told (<code>rdv/restored</code>, SPEC §6.4.1), so conversations go on with no resync; <code>rdv whoami</code> shows who confirmed. Open tasks, dinners and pending requests are not in a backup. Yours to run</td>
-</tr>
-<tr>
-<td><code>rdv send &lt;agent-id&gt; --json '{"type":"a2a/message","text":"hi"}'</code></td>
-<td>Send any payload (<code>--payload '…'</code> is the same without JSON output)</td>
-</tr>
-<tr>
-<td><code>rdv listen [--auto-grant &lt;tier&gt; [--auto-grant-any-tier]] [--exec &lt;script&gt;] [--negotiate --calendar cal.json [--window "…"] [--tz +02:00]]</code></td>
-<td>Long-running: print events; auto-grant is for demos only and stops at <code>stranger</code> unless <code>--auto-grant-any-tier</code>; <code>--exec</code> gets each event as a JSON line on stdin (<code>RDV_EVENT</code>, <code>RDV_HOME</code> set); <code>--negotiate</code> answers dinner proposals from the calendar (window default <code>next week evenings</code>) and holds a slot for you to confirm; <code>--auto-confirm</code> skips the human (bots, demos)</td>
-</tr>
-<tr>
-<td><code>rdv service install [--dry-run]</code></td>
-<td>Keep the agent reachable while no chat or terminal is open: installs <code>rdv listen</code> for this home as a background listener that starts at your login, as you, with no administrator rights. Windows: a scheduled task (logon trigger for you only) whose action is <code>wscript.exe //B //Nologo</code> and a small script in <code>&lt;home&gt;/service/</code> that runs node hidden; macOS: <code>~/Library/LaunchAgents/rdv-listen-&lt;profile&gt;.plist</code> (<code>RunAtLoad</code>, <code>KeepAlive</code>); Linux: <code>~/.config/systemd/user/rdv-listen-&lt;profile&gt;.service</code> (<code>Restart=on-failure</code>, <code>systemctl --user enable --now</code>; it runs only while you are logged in unless you run <code>loginctl enable-linger</code> once). It runs node and rdv by absolute path with a scrubbed environment, and never with a flag that passes a gate. <code>--dry-run</code> prints the definition. Yours to run (an assistant uses <code>rdv_service</code>, which asks you in a form)</td>
-</tr>
-<tr>
-<td><code>rdv service remove</code> / <code>rdv service status</code></td>
-<td>Stop and remove it; show whether it is installed and running and who holds <code>listener.lock</code></td>
-</tr>
-<tr>
-<td><code>rdv dinner propose &lt;agent-id&gt; --calendar cal.json --window "next week evenings" [--tz +02:00] [--minutes 120] [--place …] [--area …] [--expires &lt;rfc3339&gt;]</code></td>
-<td>Offer up to 3 free slots; run <code>listen --negotiate</code> to handle the replies</td>
-</tr>
-<tr>
-<td><code>rdv dinner confirm &lt;task-id&gt; --hold &lt;code&gt;</code></td>
-<td>Confirm the dinner a negotiation holds for you: sends <code>meeting/accept</code> (their offer) or <code>meeting/confirm</code> (they accepted yours). <code>--hold</code> is the code <code>rdv dinner list</code> shows; it is refused if the meeting changed since</td>
-</tr>
-<tr>
-<td><code>rdv dinner cancel &lt;task-id&gt; [--reason …]</code></td>
-<td>Send <code>rdv/cancel</code> for a pending negotiation and release its hold; for an agreed (completed) dinner, send <code>meeting/cancel</code>: it leaves your calendar and the peer's agent removes it from theirs</td>
-</tr>
-<tr>
-<td><code>rdv dinner list</code></td>
-<td>Negotiations with state, round, agreed or held slot (and what it waits for)</td>
-</tr>
-<tr>
-<td><code>rdv task request &lt;agent-id&gt; --text "…" [--capability &lt;uri&gt;] [--input '{…}'] [--expires &lt;rfc3339&gt;]</code></td>
-<td>Ask a contact's agent for a task (SPEC §7.6; default capability <code>request/v1</code>, a free-text request). Needs its grant to you and its card to list the capability</td>
-</tr>
-<tr>
-<td><code>rdv task list</code></td>
-<td>Tasks both ways, with what waits for you: the <code>--code</code> for <code>approve</code> and <code>release</code> (and, in text mode, the MCP server's confirm phrases). Yours to run</td>
-</tr>
-<tr>
-<td><code>rdv task approve &lt;task-id&gt; --code &lt;code&gt;</code> / <code>rdv task decline &lt;task-id&gt;</code></td>
-<td>Let your agent act on a contact's task (start gate, SPEC §5.5), or refuse it. <code>--code</code> is refused if the task changed since you reviewed it. <code>approve</code> is yours to run. A task a group member gave you takes <code>--group &lt;group-id&gt;</code> here and in <code>submit</code>, <code>ask</code>, <code>finish</code> and <code>release</code></td>
-</tr>
-<tr>
-<td><code>rdv task submit &lt;task-id&gt; --text "…" [--name …] [--complete]</code> / <code>rdv task ask &lt;task-id&gt; --text "…"</code> / <code>rdv task finish &lt;task-id&gt; [--failed] [--text …]</code></td>
-<td>Draft a result, a question or the end of a contact's task; a draft leaves only when released</td>
-</tr>
-<tr>
-<td><code>rdv task submit &lt;task-id&gt; --file &lt;sha256&gt;=&lt;https-url&gt;… [--inline &lt;path&gt;…]</code></td>
-<td>Attach files by reference (or up to 16 KiB inline) to the draft. They leave only when you release it; the release view shows each one's name, size, full sha256, URL, source path and recipient</td>
-</tr>
-<tr>
-<td><code>rdv task release &lt;task-id&gt; --code &lt;code&gt;</code></td>
-<td>Send the draft you reviewed (release gate). Yours to run</td>
-</tr>
-<tr>
-<td><code>rdv task cancel &lt;task-id&gt;</code> / <code>rdv task input &lt;task-id&gt; --text "…"</code></td>
-<td>Withdraw a task you requested, or answer its executor's question</td>
-</tr>
-<tr>
-<td><code>rdv group create &lt;name&gt;</code> / <code>rdv group invite &lt;group-id&gt; &lt;agent-id\|label&gt; [--name …] [--greeting …]</code></td>
-<td>Make a group with you as its admin (at most 16 members), and invite your contacts to it (SPEC §7.8). <code>invite</code> is yours to run (the invitee sees the members, and on joining their cards); their humans decide</td>
-</tr>
-<tr>
-<td><code>rdv group list</code></td>
-<td>Your groups (members, who you approved, who waits for you) and the invites waiting for you; no codes</td>
-</tr>
-<tr>
-<td><code>rdv group pending</code></td>
-<td>Invites and newcomers waiting for your decision, with the <code>--code</code> for <code>join</code> and <code>approve</code> (and, in text mode, the MCP server's confirm phrases). Yours to run</td>
-</tr>
-<tr>
-<td><code>rdv group join &lt;invite-id&gt; --code &lt;code&gt; [--invoke &lt;uri&gt;]… [--max-frequency f] [--newcomers ask\|trust-admin]</code> / <code>rdv group decline &lt;invite-id&gt;</code></td>
-<td>Join a group on these terms (what members may ask of you; by default nothing, and you are asked about each newcomer who is not your contact), or say no. <code>--code</code> is refused if the invite changed since you read it. <code>join</code> is yours to run</td>
-</tr>
-<tr>
-<td><code>rdv group approve &lt;group-id&gt; &lt;agent-id&gt; --code &lt;code&gt;</code></td>
-<td>Let a newcomer who is not your contact receive your group traffic. Yours to run</td>
-</tr>
-<tr>
-<td><code>rdv group resync &lt;group-id&gt; [--member &lt;agent-id&gt;]</code></td>
-<td>Thaw a group whose admin signed two member lists for one step, after checking with them; with <code>--member</code>, take the group messages of a member that equivocated or was muted again, after checking with them. Yours to run; from chat: <code>rdv_resync</code> with <code>group_id</code> (approval form)</td>
-</tr>
-<tr>
-<td><code>rdv group post &lt;group-id&gt; --json '&lt;body&gt;' [--to &lt;agent-id&gt;]…</code></td>
-<td>Say something to the group: to every member you send to (board-visible), or privately to those named (SPEC §7.8.3)</td>
-</tr>
-<tr>
-<td><code>rdv group leave &lt;group-id&gt;</code> / <code>rdv group remove &lt;group-id&gt; &lt;agent-id\|label&gt;</code></td>
-<td>Leave a group (every member is told), or as admin remove a member (the new member list goes to everyone, them included). Yours to run</td>
-</tr>
-<tr>
-<td><code>rdv group board &lt;group-id&gt;</code></td>
-<td>The group's tasks as your agent holds them: open ones, claims, who does what, their state and results (SPEC §7.8.4)</td>
-</tr>
-<tr>
-<td><code>rdv group request &lt;group-id&gt; --text "…" [--capability &lt;uri&gt;] [--assignee &lt;agent-id&gt;] [--private] [--ref &lt;task-id&gt;]…</code></td>
-<td>Put a task on the board: open for members to claim, or for one member whose group terms allow it (<code>--private</code>: only to them). <code>--ref</code> names earlier tasks it builds on</td>
-</tr>
-<tr>
-<td><code>rdv group claim &lt;group-id&gt; &lt;task-id&gt; [--text "…"]</code> / <code>rdv group assign &lt;group-id&gt; &lt;task-id&gt; &lt;agent-id&gt;</code></td>
-<td>Offer to do an open task; as its requester (or an admin, once the requester left), give it to one member</td>
-</tr>
-<tr>
-<td><code>rdv group unassign &lt;group-id&gt; &lt;task-id&gt;</code> / <code>rdv group cancel …</code> / <code>rdv group input … --text "…"</code></td>
-<td>Give back a task you were doing, or take back one you assigned (open again); withdraw your task; answer its assignee's question</td>
-</tr>
-<tr>
-<td><code>rdv group terms &lt;group-id&gt; [--invoke &lt;uri&gt;]… [--max-frequency f] [--newcomers ask\|trust-admin]</code></td>
-<td>Change what members may ask of your agent through the group (without <code>--invoke</code>: nothing) and your newcomer policy; members are told. Yours to run</td>
-</tr>
-<tr>
-<td><code>rdv group promote &lt;group-id&gt; &lt;agent-id\|label&gt;</code></td>
-<td>As admin, make another member an admin too: the last admin does this before leaving. Yours to run</td>
-</tr>
-<tr>
-<td><code>rdv file prepare &lt;path&gt; [--name …] [--mime …] [--plain]</code></td>
-<td>Encrypt one of your files under a fresh key and write the copy (<code>files/outgoing/&lt;sha256&gt;.bin</code>) for you to upload anywhere a peer can fetch over https. Nothing is sent. Refuses anything inside a Rendezvous home (NOTES 77)</td>
-</tr>
-<tr>
-<td><code>rdv file list</code></td>
-<td>Prepared files, files peers sent for your tasks (not fetched), direct-transfer requests and the setting</td>
-</tr>
-<tr>
-<td><code>rdv file fetch &lt;task-id&gt; [--file &lt;n\|sha256&gt;]</code></td>
-<td>Fetch one file a peer sent, only for a task you started (or a result of a task you requested): https only, no credentials, no private addresses, 25 MiB cap, hash and decryption checked. Saved in quarantine (<code>files/incoming/&lt;task&gt;/</code>, mode 600)</td>
-</tr>
-<tr>
-<td><code>rdv file decline-transfer &lt;transfer-id&gt;</code> / <code>rdv file direct-transfer on\|off</code></td>
-<td>Say no to a contact's direct-transfer request; or your setting for them (default off: declined; on: requests are shown, nothing connects on its own; no transfer protocol exists yet). The setting is yours; from chat: <code>rdv_file</code> "direct-transfer" (<code>off</code> needs no approval, <code>on</code> asks in a form)</td>
-</tr>
-<tr>
-<td><code>rdv contact auto-approve &lt;agent-id\|label&gt; all [--until 7d]</code> / <code>… off</code></td>
-<td>Let one trusted contact's tasks start and their results leave, and the dinners it proposes be confirmed, without asking you (SPEC §5.5.1, "dangerous mode"): needs your own terminal, shows a warning, asks for your owner passphrase (the MCP tool <code>rdv_auto_approve</code> asks for it in an approval form instead). Ends on expiry, <code>off</code>, a revoke or block, a grant change you did not make, or a fork. A grant change you make yourself leaves it on for what it already covered and still allows; additions ask until you turn it on for them (NOTES 77, 85, SPEC §5.5.1). Yours to run</td>
-</tr>
-<tr>
-<td><code>rdv owner-secret set</code></td>
-<td>Set or change the owner passphrase that turning auto-approve on asks for: typed twice, never shown, stored as a scrypt hash; three misses lock it for a minute, doubling; audited, and <code>rdv whoami</code> shows when it was set (NOTES 77). <code>rdv init</code> in a terminal offers it too. Yours to run; from chat: the <code>rdv_owner_passphrase</code> tool, which asks for it in an approval form</td>
-</tr>
-<tr>
-<td><code>rdv owner-secret reset</code></td>
-<td>Forgot it, or <code>rdv whoami</code> shows a time you didn't set it: turns auto-approve off for every contact and forgets the passphrase (audited; refused while locked). Set a new one with <code>rdv owner-secret set</code> 10 minutes later; until then <code>rdv whoami</code> shows a reset banner. Yours to run, in your own terminal</td>
-</tr>
-<tr>
-<td><code>rdv audit [--contact &lt;agent-id\|label&gt;] [--since 7d]</code></td>
-<td>The audit log: gates passed without asking (<code>auto</code>, <code>notify</code>, auto-approve), your approvals, auto-approve changes; no peer text</td>
-</tr>
-<tr>
-<td><code>rdv inbox [--follow]</code></td>
-<td>Show received payloads</td>
-</tr>
-</tbody>
-</table></div>
-<p>Output is human text by default and one JSON object per line with <code>--json</code>.
-Exit codes: 0 ok, 1 error, 2 usage error. Every command except <code>listen</code> and
-<code>inbox --follow</code> loads state under the lock, runs, saves, and exits. <code>listen</code>
-takes the lock only while it handles one inbound item, so a bot can run
-<code>rdv contact grant</code> against the same home while <code>listen</code> is running; it prints
-an event only after the state behind it is saved.</p>
-<p><strong>One inbound consumer per home.</strong> Two processes subscribed for the same home
-would split inbound events between them (whichever handles an envelope first
-wins; the other never sees it). So whoever consumes holds <code>listener.lock</code>
-(O_EXCL file with pid, host and role, mtime touched every minute; broken when
-its pid is gone on this host, or after 10 minutes without a touch from another
-host) and appends every event it handles to <code>events.jsonl</code>, after the state
-behind it is saved. A second <code>rdv listen</code> exits 1 naming the holder. A second
-<code>rdv-mcp</code> runs <strong>attached</strong>: it opens no subscriptions, still sends (grant,
-send, negotiate), and its <code>rdv_inbox</code> follows <code>events.jsonl</code> by cursor, so every
-server on the home sees each event once with the same cursor. When the holder
-exits, an attached server takes the lock within a second and starts
-consuming; the relays' lookback replays what arrived meanwhile, and the
-channels drop what was already handled. Negotiation follows the consumer:
-run <code>rdv listen --negotiate</code> (or give the consuming <code>rdv-mcp</code> a calendar) if
-an attached server should get answers to its dinner proposals.</p>
-<p>With <code>--json</code>, negotiation steps print as <code>{"event":"dinner","kind":…,"task":…,"peer":…,"state":…}</code>
-(kinds: proposed, offer-received, countered, confirm-needed, accepted,
-completed, meeting-canceled, released, rejected, canceled, expired, status,
-duplicate, ignored, invalid). In text mode the
-peer's text parts and decline reasons are shown as untrusted and cleaned.</p>
-<p>PowerShell quoting for <code>send</code>: <code>rdv send &lt;id&gt; --json '{\"type\":\"a2a/message\",\"text\":\"hi\"}'</code>
-(Windows PowerShell 5 strips bare inner quotes; PowerShell 7.3+ accepts the bash form).</p>
-<h3 id="tasks-and-files-an-example-user-guide-docstasksmd">Tasks and files: an example (user guide: <a href="/docs/tasks.html"><code>docs/tasks.md</code></a>)<a class="anchor" href="#tasks-and-files-an-example-user-guide-docstasksmd" title="Link to this section" aria-label="Link to this section">#</a></h3>
-<p>Omer asks John's agent for a document review; John's side runs <code>rdv listen</code>.</p>
-<div class="codeblock"><pre tabindex="0"><code class="language-bash"># Omer: ask (John's grant to Omer must allow request/v1)
-rdv task request rdv1:… --text &quot;Please review the attached Q4 plan&quot;
-
-# John, in his own terminal: see what waits, with the codes
-rdv task list
-rdv task approve &lt;task-id&gt; --code &lt;code&gt;          # start gate: now his agent may act
-
-# John's agent drafts; John prepares a file, uploads the .bin, and attaches it
-rdv file prepare ./q4-review.pdf                  # prints the sha256 and the copy to upload
-rdv task submit &lt;task-id&gt; --text &quot;Notes attached&quot; --file &lt;sha256&gt;=https://files.example.com/q4 --complete
-rdv task list                                     # shows the draft and the file in full
-rdv task release &lt;task-id&gt; --code &lt;code&gt;          # release gate: only now does it leave
-
-# Omer: fetch it (only for a task he requested, or one he started)
-rdv file fetch &lt;task-id&gt; --file 1
-
-# Later: what passed without asking, and a trusted contact on auto-approve
-rdv audit --since 7d
-rdv owner-secret set                              # once, in your own terminal
-rdv contact auto-approve john@doe.com all --until 7d
-rdv contact auto-approve john@doe.com off
-</code></pre></div>
-<h3 id="the-dinner-scenarios-plan-53">The dinner scenarios (PLAN §5.3)<a class="anchor" href="#the-dinner-scenarios-plan-53" title="Link to this section" aria-label="Link to this section">#</a></h3>
-<p><code>packages/cli/scenarios/dinner.ts</code>: Omer and John each run
-<code>rdv listen --negotiate</code> with their own JSON calendar; Omer runs
-<code>rdv dinner propose</code>. Variants: <code>overlap</code> (John, then Omer, confirms with
-<code>rdv dinner confirm</code>; both <code>completed</code> on the same slot, one hold each),
-<code>no-overlap</code> (<code>rejected</code> after 3 rounds), <code>cancel</code> (John offline while Omer
-proposes and cancels; both <code>canceled</code>), <code>cancel-hold</code> (Omer cancels while
-John's agent holds a slot for John; the hold is released), <code>duplicate</code>
-(<code>--auto-confirm</code> bots, then every envelope replayed and a message re-sent;
-nothing changes), <code>reverse</code> (John, who granted the contact, proposes: refused
-until Omer runs <code>rdv contact grant &lt;john-id&gt;</code>, which sends John a reverse
-grant; then both confirm and complete), <code>cancel-agreed</code> (<code>--auto-confirm</code>
-bots agree, then John runs <code>rdv dinner cancel</code>; both calendars free the
-evening and both end <code>canceled</code>). All seven run in <code>npm test</code>; <code>overlap</code> runs in
-<code>npm run test:live</code>; by hand:</p>
-<p><code>node packages/cli/dist/scenarios/dinner.js --relay ws://… [--variant overlap] [--variant …]</code>.</p>
-<h3 id="the-microsite-scenario-design-b5-issue-79">The microsite scenario (design B.5, issue #79)<a class="anchor" href="#the-microsite-scenario-design-b5-issue-79" title="Link to this section" aria-label="Link to this section">#</a></h3>
-<p><code>packages/cli/scenarios/microsite.ts</code>: Omer, John and Dana, three <code>rdv</code>
-processes. Omer is John's and Dana's contact; John and Dana never meet. Omer
-creates a group, John joins (members may ask him for <code>request/v1</code>; newcomers
-<code>trust-admin</code>), Dana joins (<code>ask</code>) and approves John. Omer puts an open task
-on the board; Dana claims it and Omer assigns it to her (John's attempt to
-assign it is refused by his own board); Dana's human approves the start and
-releases the copy, which the release gate shows going to Omer and John.
-Omer then asks John for a review referring to the copy: John's start gate
-shows that the input is Dana's result ("not your contact, named by the admin
-as Dana"). John leaves: his assigned proofread reopens and his open request
-is canceled on the others' boards; Dana drops her channel with him, Omer
-keeps his. Omer hands the admin role to Dana and leaves. It runs in <code>npm
-test</code> on the in-memory relay; by hand:
-<code>node packages/cli/dist/scenarios/microsite.js --relay wss://… [--timeout ms] [--keep]</code>.</p>
-<h3 id="the-contact-scenario-plan-45">The contact scenario (PLAN §4.5)<a class="anchor" href="#the-contact-scenario-plan-45" title="Link to this section" aria-label="Link to this section">#</a></h3>
-<p><code>packages/cli/scenarios/contact.ts</code> drives real <code>rdv</code> processes with separate
-homes: John listens, Omer requests by email, John grants, Omer sends, John's
-inbox shows it, each step asserted with a timeout. It runs:</p>
-<ul>
-<li>against the in-memory relay as part of <code>npm test</code>;</li>
-<li>against real relays with <code>npm run test:live</code> (below);</li>
-<li>by hand against any relays, e.g. from two machines' worth of setup:
-    <code>node packages/cli/dist/scenarios/contact.js --relay wss://relay.example [--relay …] [--timeout 30000] [--keep]</code>.</li>
-</ul>
-<p>Crash safety: state is saved right before each envelope leaves (<code>Agent.beforeSend</code>),
-so a crash after a send never reuses a <code>seq</code> (issue #4).</p>
 <h2 id="rdv-mcp-the-mcp-server">rdv-mcp (the MCP server)<a class="anchor" href="#rdv-mcp-the-mcp-server" title="Link to this section" aria-label="Link to this section">#</a></h2>
 <p>PLAN §6.1. Tools <code>rdv_init</code>, <code>rdv_status</code>, <code>rdv_addresses</code>, <code>rdv_relays</code>, <code>rdv_publish_card</code>, <code>rdv_discover</code>,
 <code>rdv_request_contact</code>, <code>rdv_pending_requests</code>, <code>rdv_grant</code>, <code>rdv_revoke</code>,
@@ -848,7 +944,7 @@ the push if either fails.</p>
 implementation departs from or fills gaps in SPEC.md.</p>
     </div>
   </article>
-  <div class="docs-toc"><nav class="page-toc" aria-label="On this page"><p class="side-group">On this page</p><ul><li><a href="#rendezvouscore">@rendezvous/core</a></li><li><a href="#rendezvousa2a">@rendezvous/a2a</a></li><li><a href="#rdv-the-cli">rdv (the CLI)</a><ul><li><a href="#tasks-and-files-an-example-user-guide-docstasksmd">Tasks and files: an example (user guide: docs/tasks.md)</a></li><li><a href="#the-dinner-scenarios-plan-53">The dinner scenarios (PLAN §5.3)</a></li><li><a href="#the-microsite-scenario-design-b5-issue-79">The microsite scenario (design B.5, issue #79)</a></li><li><a href="#the-contact-scenario-plan-45">The contact scenario (PLAN §4.5)</a></li></ul></li><li><a href="#rdv-mcp-the-mcp-server">rdv-mcp (the MCP server)</a></li><li><a href="#rdv-gateway-cloud-assistants-issue-12">rdv-gateway (cloud assistants, issue #12)</a></li><li><a href="#develop">Develop</a></li></ul></nav></div>
+  <div class="docs-toc"><nav class="page-toc" aria-label="On this page"><p class="side-group">On this page</p><ul><li><a href="#install">Install</a></li><li><a href="#your-agents-home">Your agent's home</a></li><li><a href="#command-reference">Command reference</a><ul><li><a href="#identity-and-setup">Identity and setup</a></li><li><a href="#find-and-connect">Find and connect</a></li><li><a href="#send-and-receive-encrypted-messages">Send and receive encrypted messages</a></li><li><a href="#tasks-and-files">Tasks and files</a></li><li><a href="#groups">Groups</a></li><li><a href="#backup-and-restore">Backup and restore</a></li><li><a href="#output-and-locking">Output and locking</a></li></ul></li><li><a href="#examples">Examples</a><ul><li><a href="#example-contact-and-a-first-message-plan-45">Example: contact and a first message (PLAN §4.5)</a></li><li><a href="#example-tasks-and-files">Example: tasks and files</a></li><li><a href="#example-a-group-design-b5-issue-79">Example: a group (design B.5, issue #79)</a></li><li><a href="#example-negotiating-a-meeting-plan-53">Example: negotiating a meeting (PLAN §5.3)</a></li></ul></li><li><a href="#libraries">Libraries</a></li><li><a href="#rendezvouscore">@rendezvous/core</a></li><li><a href="#rendezvousa2a">@rendezvous/a2a</a></li><li><a href="#rdv-mcp-the-mcp-server">rdv-mcp (the MCP server)</a></li><li><a href="#rdv-gateway-cloud-assistants-issue-12">rdv-gateway (cloud assistants, issue #12)</a></li><li><a href="#develop">Develop</a></li></ul></nav></div>
 </div>
 </main>
 

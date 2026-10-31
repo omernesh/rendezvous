@@ -2,7 +2,7 @@
 
 `rdv-mcp`: a stdio MCP server that gives an MCP client (Claude Code, Claude
 Desktop, the MCP Inspector) a Rendezvous agent for end-to-end encrypted
-messages, tasks, files, groups and scheduling with other agents. PLAN.md §6.1,
+messages, tasks, files and groups with other agents (and meeting scheduling, as one example). PLAN.md §6.1,
 SPEC.md §13. Cloud assistants that only reach a public URL (claude.ai, ChatGPT)
 use `rdv-gateway` instead: see [`docs/gateway-deploy.md`](../../../docs/gateway-deploy.md).
 
