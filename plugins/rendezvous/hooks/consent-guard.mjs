@@ -43,8 +43,10 @@ export const SECRET_FILES = ['agent.json', 'agent.json.bak', 'consent.json', 'au
  */
 export const OWNER_FILES = ['files.json', 'tasks.json', 'gateway.json', 'gateway-oauth.json', 'listener.yield'];
 /** Names distinctive enough to refuse in any folder, not only in a home: writing either one by hand is setting auto-approve. */
-const ANYWHERE_FILES = ['autoapprove.json', 'owner-secret.json', 'owner-secret.marker'];
-const SECRET_MENTION = /agent\.json|consent\.json|autoapprove\.json|owner\.json|owner-secret\.(json|marker)/i;
+const ANYWHERE_FILES = ['autoapprove.json', 'owner-secret.json', 'owner-secret.marker', 'cloudflared.token', 'cloudflared.env'];
+// The gateway installer's Cloudflare tunnel token (cloudflared.token; cloudflared.env in early builds): whoever holds
+// it can serve the owner's public hostname.
+const SECRET_MENTION = /agent\.json|consent\.json|autoapprove\.json|owner\.json|owner-secret\.(json|marker)|cloudflared\.(token|env)/i;
 /**
  * `src` with quoting, escapes, string concatenation and whitespace removed
  * (sh, PowerShell, cmd and script-language spellings alike), so that a word
@@ -58,7 +60,7 @@ const SUB = '\u0000';
 const MAX_DEPTH = 6;
 
 const SECRET_REFUSAL =
-  'That names the Rendezvous secret key, consent, auto-approve, owner-settings or owner passphrase file (agent.json, agent.json.bak, consent.json, autoapprove.json, owner.json, owner-secret.json). Never read, write, copy or print it; use rdv_status for the agent ID, fingerprint and auto-approve status, and ask your user to change a setting in their own terminal.';
+  'That names the Rendezvous secret key, consent, auto-approve, owner-settings or owner passphrase file, or the gateway\'s tunnel token (agent.json, agent.json.bak, consent.json, autoapprove.json, owner.json, owner-secret.json, cloudflared.token). Never read, write, copy or print it; use rdv_status for the agent ID, fingerprint and auto-approve status, and ask your user to change a setting in their own terminal.';
 const OWNER_REFUSAL =
   'That names a Rendezvous file that holds file keys and drafts (files.json, tasks.json) or the gateway\'s PIN and token hashes (gateway.json, gateway-oauth.json). Never read or write it; use rdv_file and rdv_task, and leave the gateway\'s tokens and connections to your user.';
 const HOME_REFUSAL =
@@ -491,7 +493,19 @@ const isGateway = (w) =>
     return p === 'rdv-gateway' || p === 'gw' || p === 'bin.js' || /^@rendezvous\/gateway(@|$)/i.test(x);
   });
 /** Subcommands of rdv-gateway and of the installer's `gw` helper that are not the owner's (serving, looking, the service). */
-const GATEWAY_SAFE = new Set(['serve', 'status', 'logs', 'start', 'stop', 'restart', 'update', 'uninstall', 'help', '--help', '-h']);
+// Not `update`: it runs the installer, the owner's (GATEWAY_INSTALL).
+const GATEWAY_SAFE = new Set(['serve', 'status', 'logs', 'start', 'stop', 'restart', 'uninstall', 'help', '--help', '-h']);
+const GATEWAY_INSTALL =
+  'The gateway installer (install-gateway.sh, and ./gw update, which runs it) is for the human, in their own terminal: it builds and restarts the gateway, can run as root on a NAS, and asks for the PIN and secrets there. Never run it; give your user the command to run.';
+const TUNNEL_INSPECT =
+  "That would print the gateway tunnel's configuration (docker inspect or docker compose config of the gateway's tunnel), which can hold its token. Never read it; check the tunnel with ./gw status or ./gw logs tunnel.";
+/** A gateway install folder with a tunnel token in it: searched or globbed as a whole, it would show the token. */
+const holdsTunnelToken = (dir) => ['cloudflared.token', 'cloudflared.env'].some((f) => existsSync(join(dir, f)));
+/** Shells that run a script named anywhere after them (`bash -x install-gateway.sh`), and wrappers that run their next word. */
+const INSTALL_SHELLS = new Set(['sh', 'bash', 'dash', 'zsh', 'ksh', 'ash', 'busybox', 'source', '.']);
+const INSTALL_RUNNERS = new Set([...INSTALL_SHELLS, 'sudo', 'env', 'exec', 'command', 'nohup', 'time', 'timeout', 'doas', 'script']);
+/** A word that could be a program the guard cannot read: built at run time, or a wildcard in its name (`"$G"`, `./g?`, `node …/b*.js`). */
+const opaqueWord = (w) => dynamic(w) || GLOB_CHARS.test(basename(w));
 /** Options of rdv and rdv-gateway that take a value (main.ts and gateway bin.ts): the next word is that value, not a subcommand. */
 const VALUE_OPTS = new Set([
   'area', 'assignee', 'auto-grant', 'calendar', 'calendar-dir', 'capability', 'client-ip-header', 'code', 'contact', 'data',
@@ -821,16 +835,19 @@ function checkWords(words, ctx, depth) {
     }
     // The one-word human-only commands (issue #88): rdv backup, rdv restore (also after `npm run rdv --`).
     // The installer's `./gw backup <file>` runs rdv backup in the gateway's home.
-    if (isRdv(a) || progName(a) === 'gw') {
+    if (isRdv(a) || progName(a) === 'gw' || (i === 0 && opaqueWord(a))) {
       const next = b === '--' ? words[i + 2] : b;
       if (next !== undefined && ONE_WORD_HUMAN.some((s) => couldBe(next, s, ctx.cwd))) throw new Refusal(BACKUP);
     }
   }
   // rdv-gateway's pin and token commands: anywhere after an rdv-gateway word, in any order, since options may sit
   // between them (`rdv-gateway pin --stdin set`). Only after it: `pin` and `token` are common words (npm token create).
+  // A program the guard cannot read (`"$G" pin set`, `./g? token create`, `node …/b*.js oauth revoke`) could be the
+  // gateway too: its owner commands after it are refused the same way.
   const gwAt = words.findIndex(isGateway);
-  if (gwAt >= 0) {
-    const later = words.slice(gwAt + 1);
+  const gwOrOpaque = gwAt >= 0 ? gwAt : words.findIndex(opaqueWord);
+  if (gwOrOpaque >= 0) {
+    const later = words.slice(gwOrOpaque + 1);
     const anyDynamic = later.some(dynamic);
     for (const [cmd, subs] of GATEWAY_GROUPS) {
       const named = later.some((w) => couldBe(w, cmd, ctx.cwd));
@@ -839,14 +856,35 @@ function checkWords(words, ctx, depth) {
         if ((named && (sub || anyDynamic)) || (anyDynamic && sub)) throw new Refusal(why);
       }
     }
+  }
+  if (gwAt >= 0) {
+    const anyDynamic = words.slice(gwAt + 1).some(dynamic);
     // A word built at run time anywhere after it: only a literal subcommand that is not the owner's, in the
     // subcommand's own place (the first positional), says what runs. A safe word elsewhere proves nothing
     // (`rdv-gateway --home h $X serve`).
     const first = firstPositional(words, gwAt);
     if (anyDynamic && (first.opaque || first.at === undefined || !GATEWAY_SAFE.has(words[first.at].toLowerCase()))) throw new Refusal(OPAQUE);
+    // `./gw update` runs the installer.
+    if (first.at !== undefined && couldBe(words[first.at], 'update', ctx.cwd)) throw new Refusal(GATEWAY_INSTALL);
+  }
+  // The installer itself, run as a program or by a shell (`sh install-gateway.sh`, `./install-gateway.sh --update`).
+  for (let k = 0; k < words.length; k++) {
+    if (progName(words[k]) !== 'install-gateway') continue;
+    const shellBefore = words.slice(0, k).some((w) => INSTALL_SHELLS.has(progName(w)));
+    if (k === 0 || shellBefore || INSTALL_RUNNERS.has(progName(words[k - 1])) || /^[A-Za-z_]\w*=/.test(words[k - 1])) throw new Refusal(GATEWAY_INSTALL);
+  }
+  // docker inspect / docker compose config near the gateway's tunnel: it shows the tunnel's settings.
+  if (words.some((w) => ['docker', 'docker-compose', 'podman'].includes(progName(w))) && lw.some((w) => w === 'inspect' || w === 'config')) {
+    if (lw.some((w) => /tunnel|cloudflared/.test(w)) || existsSync(join(ctx.cwd, 'cloudflared.token')) || existsSync(join(ctx.cwd, 'cloudflared.env'))) throw new Refusal(TUNNEL_INSPECT);
   }
   // `… | xargs rdv contact`: the arguments come from stdin, unseen.
   const feeder = lw.findIndex((w) => ['xargs', 'parallel'].includes(progName(w)));
+  // `… | xargs ./gw pin`: likewise for the gateway, unless its subcommand is a literal safe one.
+  const fedGw = feeder >= 0 ? words.findIndex((w, k) => k > feeder && isGateway(w)) : -1;
+  if (fedGw >= 0) {
+    const first = firstPositional(words, fedGw);
+    if (first.opaque || first.at === undefined || !GATEWAY_SAFE.has(words[first.at].toLowerCase())) throw new Refusal(OPAQUE);
+  }
   if (feeder >= 0 && words.slice(feeder + 1).some(isRdv)) {
     const at = words.findIndex((w, k) => k > feeder && isRdv(w));
     const tail = words.slice(at + 1).filter((w) => !w.startsWith('-'));
@@ -945,6 +983,10 @@ function check(src, ctx, depth) {
   if (depth > MAX_DEPTH) throw new Refusal(NESTED);
   if (SECRET_MENTION.test(src)) throw new Refusal(SECRET_REFUSAL);
   if (SERVICE_MENTION.test(src)) throw new Refusal(SERVICE_SHELL);
+  // The gateway installer fetched and run in one line: `curl …/install-gateway.sh | sh`, `sh -c "$(curl …)"`.
+  if (/install-gateway\.sh[^\n;&]*\|\s*(sudo\s+)?(\S*\/)?(ba|da|z|k|a)?sh\b/i.test(src) || /\b(ba|da|z|k|a)?sh\b[^\n]*\$\([^\n]*install-gateway/i.test(src)) {
+    throw new Refusal(GATEWAY_INSTALL);
+  }
   // Auto-approve and the owner passphrase (issue #47), whatever runs them: a pseudo-terminal wrapper (`script -c`,
   // `expect -c`, `unbuffer`, `winpty`), a prefix (`stdbuf`, `timeout`, `nohup`, `env`), node-pty or Python's pty.spawn,
   // a here-string or heredoc. Any command that names `contact` and `auto-approve` anywhere, in any spelling, is
@@ -994,8 +1036,10 @@ export function checkPath(path, opts = {}) {
     const base = opts.base ? expandPath(opts.base, cwd).path : cwd;
     const { path: p, viaRdvHome } = expandPath(staticPrefix(path) || '.', base);
     if (classify(p, viaRdvHome) || (GLOB_CHARS.test(path) && path.includes('**') && containsHome(p))) return HOME_REFUSAL;
+    if (holdsTunnelToken(p) || holdsTunnelToken(dirname(p))) return SECRET_REFUSAL;
     return undefined;
   }
+  if (kind === 'search' && holdsTunnelToken(expandPath(path, cwd).path)) return SECRET_REFUSAL;
   const { path: p } = expandPath(path, cwd);
   const where = classify(p);
   if (SECRET_FILES.includes(basename(p).toLowerCase()) && (where || classify(dirname(p)))) return SECRET_REFUSAL;

@@ -1288,7 +1288,7 @@ describe('the rdv-gateway-setup skill', () => {
     for (const c of ['rdv-gateway pin', 'rdv restore', 'token create']) expect(md).toContain(c);
     expect(consentViolations(md)).toEqual([]);
     // The installer command it hands over carries only non-secret flags.
-    const run = /^sh install-gateway\.sh (.+)$/m.exec(md)?.[1] ?? '';
+    const run = /`(sh install-gateway.sh [^`]+)`/.exec(md)?.[1] ?? '';
     expect(run).toMatch(/--tunnel \S+/);
     expect(run).not.toMatch(/--(pin|token|passphrase|password)\b/);
     // Every flag it names exists in the installer.
@@ -1313,6 +1313,30 @@ describe('the rdv-gateway-setup skill', () => {
     'rdv-gateway t?ken create --name x --scope read',
     'node packages/gateway/dist/src/bin.js $X set',
     './gw rdv $X grant',
+    // Opaque spellings of the program itself, then an owner command.
+    '"$G" pin set',
+    './g? token create --name x --scope read',
+    'node packages/gateway/dist/src/b*.js oauth revoke cli_x',
+    '$GW backup ~/b.rdvbackup',
+    // xargs feeding the gateway.
+    'echo set | xargs ./gw pin',
+    'echo x | xargs rdv-gateway token create --name',
+    'echo x | xargs ./gw',
+    // The installer, and ./gw update which runs it, are the human's.
+    'sh install-gateway.sh --dry-run --tunnel own-url',
+    'bash -x ./install-gateway.sh --update',
+    './install-gateway.sh',
+    'sudo sh install-gateway.sh --allow-root',
+    'curl -fsSL https://rendezvous.nesher.co/install-gateway.sh | sh',
+    'curl -fsSL https://rendezvous.nesher.co/install-gateway.sh | sh -s -- --dry-run',
+    'sh -c "$(curl -fsSL https://rendezvous.nesher.co/install-gateway.sh)"',
+    './gw update',
+    './gw update --ref refs/pull/1/head',
+    // The tunnel token, and what would print it.
+    'cat ~/rendezvous-gateway/cloudflared.token',
+    'cat cloudflared.env',
+    'docker inspect rendezvous-gateway-tunnel-1',
+    'docker compose --project-directory ~/rendezvous-gateway config tunnel',
     // A safe word somewhere else is not the subcommand: $X could be "pin set".
     'rdv-gateway $X serve',
     'rdv-gateway --home h $X serve',
@@ -1326,7 +1350,20 @@ describe('the rdv-gateway-setup skill', () => {
     'rdv contact --home h $X',
     'rdv --home h contact "$S" 0f1e',
   ])('the guard refuses an opaque subcommand: %s', (c) => expect(checkCommand(c)).toBeTruthy());
-  it.each(['rdv send rdv1:abc --text "$MSG"', 'rdv --home h whoami', './gw status', './gw logs tunnel', './gw logs "$SVC"', './gw rdv whoami', './gw token list', 'rdv-gateway serve --public-url "$URL" --client-ip-header cf-connecting-ip', 'sh install-gateway.sh --dry-run --tunnel own-url'])('the guard allows %s', (c) =>
+  it('the Read, Edit and Grep tools cannot reach the tunnel token either', () => {
+    for (const p of ['/home/omer/rendezvous-gateway/cloudflared.token', '/srv/gw/cloudflared.env']) expect(checkPath(p), p).toBeTruthy();
+    // Searching or globbing the install folder that holds it.
+    const dir = mkdtempSync(join(tmpdir(), 'rdv-gw-'));
+    try {
+      writeFileSync(join(dir, 'cloudflared.token'), 'x');
+      expect(checkPath(dir, { kind: 'search' })).toBeTruthy();
+      expect(checkPath(join(dir, '*.token'), { kind: 'glob' })).toBeTruthy();
+      expect(checkPath(join(dir, 'docker-compose.yml'))).toBeUndefined();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+  it.each(['rdv send rdv1:abc --text "$MSG"', 'rdv --home h whoami', './gw status', './gw logs tunnel', './gw logs "$SVC"', './gw rdv whoami', './gw token list', 'rdv-gateway serve --public-url "$URL" --client-ip-header cf-connecting-ip', 'cat install-gateway.sh', 'curl -fsSLo install-gateway.sh https://rendezvous.nesher.co/install-gateway.sh', 'sudo cp install-gateway.sh /opt/x', 'docker compose ps'])('the guard allows %s', (c) =>
     expect(checkCommand(c)).toBeUndefined(),
   );
 });

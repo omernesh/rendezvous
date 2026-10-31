@@ -108,10 +108,13 @@ write_file() {
     printf -- '--- end of %s\n' "$1"
     return 0
   fi
-  tmp="$1.tmp.$$"
-  (umask 077 && cat >"$tmp") || die "cannot write $tmp"
-  chmod "$2" "$tmp" || die "cannot chmod $tmp"
-  mv -f "$tmp" "$1" || die "cannot move $tmp to $1"
+  # Never through a symlink someone left in place, and the temp file is a fresh one only we created.
+  [ ! -L "$1" ] || die "$1 is a symbolic link; this installer will not write through it. Remove it, then run this again"
+  [ ! -L "$(dirname "$1")" ] || die "$(dirname "$1") is a symbolic link; this installer will not write through it"
+  tmp=$(umask 077 && mktemp "$1.XXXXXX") || die "cannot create a temporary file next to $1"
+  cat >"$tmp" || { rm -f "$tmp"; die "cannot write $tmp"; }
+  chmod "$2" "$tmp" || { rm -f "$tmp"; die "cannot chmod $tmp"; }
+  mv -f "$tmp" "$1" || { rm -f "$tmp"; die "cannot move $tmp to $1"; }
 }
 
 # --- validation (pure; the tests call these) --------------------------------
@@ -124,10 +127,25 @@ valid_header() { matches '^[A-Za-z0-9-]{1,64}$' "$1"; }
 valid_port() { matches '^[0-9]{1,5}$' "$1" && [ "$1" -ge 1 ] && [ "$1" -le 65535 ]; }
 valid_email() { matches '^[A-Za-z0-9._%+-]+@[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?\.[A-Za-z]{2,}$' "$1"; }
 valid_relay() { matches '^wss://[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?(:[0-9]{1,5})?(/[A-Za-z0-9._~/-]*)?$' "$1"; }
-valid_ref() { matches '^[A-Za-z0-9._][A-Za-z0-9._/-]{0,99}$' "$1"; }
+# A branch, a tag or a commit: never a full ref (refs/pull/… is anyone's pull request), never git revision syntax.
+valid_ref() {
+  matches '^[A-Za-z0-9_][A-Za-z0-9._/-]{0,99}$' "$1" || return 1
+  case $1 in refs/* | */refs/* | pull/* | *..* | *.lock | */ | *//*) return 1 ;; esac
+}
 valid_token() { matches '^[A-Za-z0-9+/=_-]{40,4096}$' "$1"; }
 # A path we can write into compose files, unit files and shell lines without quoting surprises.
-valid_path() { matches '^/[A-Za-z0-9._/@+,:-]*$' "$1"; }
+valid_path() { matches '^/[A-Za-z0-9._/@+-]*$' "$1"; }
+
+# Folders that are never an install folder: system and shared ones, a NAS volume's own top, your home and above it.
+system_dir() {
+  case $1 in
+    / | /bin | /boot | /dev | /etc | /home | /lib | /lib64 | /media | /mnt | /opt | /proc | /root | /run | /sbin | /srv | /sys | /tmp | /usr | /usr/* | /var | /var/tmp | /var/lib | /var/log) return 0 ;;
+    /Users | /Library | /Library/* | /System | /System/* | /Applications | /private | /private/* | /Volumes) return 0 ;;
+    /volume[0-9]* | /volume[0-9]*/docker | /volume[0-9]*/homes | /volumeUSB*) case $1 in */*/*/*) return 1 ;; esac; return 0 ;;
+  esac
+  case "${HOME%/}/" in "${1%/}/"*) return 0 ;; esac
+  case $1 in /*/*) return 1 ;; *) return 0 ;; esac
+}
 
 # "~/x" and relative paths become absolute.
 abs_path() {
@@ -326,11 +344,13 @@ EOF
 
 write_env() {
   write_file "$DIR/.env" 600 <<EOF
-# Read by docker compose (the project is named after this folder). No secrets here (a tunnel token lives in cloudflared.env).
+# Read by docker compose (the project is named after this folder). No secrets here (a tunnel token lives in cloudflared.token).
 NODE_IMAGE=$NODE_IMAGE
 CLOUDFLARED_IMAGE=$CLOUDFLARED_IMAGE
 RDV_UID=$RDV_UID
 RDV_GID=$RDV_GID
+TUNNEL_UID=$(id -u)
+TUNNEL_GID=$(id -g)
 GW_PORT=$PORT
 GW_PUBLIC_URL=$PUBLIC_URL
 GW_CLIENT_IP_HEADER=$CLIENT_IP_HEADER
@@ -339,18 +359,22 @@ EOF
 
 compose_tunnel_service() {
   # shellcheck disable=SC2016  # ${GW_PORT} is for compose to fill in
+  # The token reaches cloudflared as a read-only file (--token-file), never as an environment variable, so neither
+  # docker inspect nor docker compose config shows it. The container runs as the token file's owner (you; root on a
+  # NAS, without any capability), the only user that can read it.
   case $TUNNEL in
-    cloudflare-token) cmd='["tunnel", "--no-autoupdate", "run"]'; envf='    env_file:
-      - ./cloudflared.env
+    cloudflare-token) cmd='["tunnel", "--no-autoupdate", "run", "--token-file", "/etc/cloudflared/cloudflared.token"]'; vol='    volumes:
+      - ./cloudflared.token:/etc/cloudflared/cloudflared.token:ro
 ' ;;
-    cloudflare-quick) cmd='["tunnel", "--no-autoupdate", "--url", "http://127.0.0.1:${GW_PORT}"]'; envf='' ;;
+    cloudflare-quick) cmd='["tunnel", "--no-autoupdate", "--url", "http://127.0.0.1:${GW_PORT}"]'; vol='' ;;
     *) return 0 ;;
   esac
   cat <<EOF
   tunnel:
     image: \${CLOUDFLARED_IMAGE}
     command: $cmd
-$envf    environment:
+    user: "\${TUNNEL_UID}:\${TUNNEL_GID}"
+$vol    environment:
       - HOME=/tmp
     network_mode: host
     read_only: true
@@ -360,6 +384,8 @@ $envf    environment:
       - ALL
     security_opt:
       - no-new-privileges:true
+    pids_limit: 128
+    mem_limit: 256m
     restart: unless-stopped
 EOF
 }
@@ -397,6 +423,8 @@ services:
       - ALL
     security_opt:
       - no-new-privileges:true
+    pids_limit: 256
+    mem_limit: 512m
     restart: unless-stopped
     volumes:
       - ./repo:/app:ro
@@ -494,7 +522,7 @@ gateway_args() {
 }
 tunnel_args() {
   case $TUNNEL in
-    cloudflare-token) printf 'tunnel --no-autoupdate run' ;;
+    cloudflare-token) printf 'tunnel --no-autoupdate run --token-file %s/cloudflared.token' "$DIR" ;;
     cloudflare-quick) printf 'tunnel --no-autoupdate --url http://127.0.0.1:%s' "$PORT" ;;
   esac
 }
@@ -521,8 +549,6 @@ NoNewPrivileges=yes
 WantedBy=default.target
 EOF
   if has_tunnel_service; then
-    envline=
-    [ "$TUNNEL" = cloudflare-token ] && envline="EnvironmentFile=$DIR/cloudflared.env"
     write_file "$UNIT_DIR/rdv-gateway-tunnel.service" 644 <<EOF
 # Written by install-gateway.sh ($DIR).
 [Unit]
@@ -530,11 +556,11 @@ Description=Rendezvous gateway tunnel (cloudflared)
 After=network-online.target
 
 [Service]
-$envline
 ExecStart=$CLOUDFLARED_BIN $(tunnel_args)
 StandardError=append:$DIR/logs/cloudflared.log
 Restart=on-failure
 RestartSec=5
+UMask=0077
 NoNewPrivileges=yes
 
 [Install]
@@ -557,16 +583,10 @@ write_launchd_agents() {
   # shellcheck disable=SC2046  # gateway_args is validated: no spaces inside its words
   plist co.nesher.rdv-gateway "$DIR/logs/gateway.log" "$NODE_BIN" $(gateway_args) | write_file "$AGENTS_DIR/co.nesher.rdv-gateway.plist" 644
   if has_tunnel_service; then
-    if [ "$TUNNEL" = cloudflare-token ]; then
-      # The token reaches cloudflared from the 600 env file, never from this plist.
-      # shellcheck disable=SC2016  # $0 and $1 are expanded by that sh, not here
-      plist co.nesher.rdv-gateway-tunnel "$DIR/logs/cloudflared.log" /bin/sh -c 'set -a; . "$0"; exec "$1" tunnel --no-autoupdate run' "$DIR/cloudflared.env" "$CLOUDFLARED_BIN" |
-        write_file "$AGENTS_DIR/co.nesher.rdv-gateway-tunnel.plist" 644
-    else
-      # shellcheck disable=SC2046
-      plist co.nesher.rdv-gateway-tunnel "$DIR/logs/cloudflared.log" "$CLOUDFLARED_BIN" $(tunnel_args) |
-        write_file "$AGENTS_DIR/co.nesher.rdv-gateway-tunnel.plist" 644
-    fi
+    # The token reaches cloudflared from the 600 token file (--token-file), never from this plist.
+    # shellcheck disable=SC2046
+    plist co.nesher.rdv-gateway-tunnel "$DIR/logs/cloudflared.log" "$CLOUDFLARED_BIN" $(tunnel_args) |
+      write_file "$AGENTS_DIR/co.nesher.rdv-gateway-tunnel.plist" 644
   fi
 }
 
@@ -680,6 +700,36 @@ choose_runtime() {
   done_step 2
 }
 
+# The install folder, before anything is written there: not a system or shared folder, not a folder with other
+# things in it (it is made private and its files replaced), not a symlink, and it and the folder it is in belong to
+# you (or, for the folder it is in, to root) and are not writable by others.
+check_install_dir() {
+  ! system_dir "$1" || die "$1 is a system or shared folder; choose a folder of its own, such as $HOME/rendezvous-gateway"
+  if [ -e "$1" ] || [ -L "$1" ]; then
+    [ ! -L "$1" ] || die "$1 is a symbolic link; give the real folder"
+    [ -d "$1" ] || die "$1 exists and is not a folder"
+    if [ ! -f "$1/install.conf" ] && [ -n "$(ls -A "$1" 2>/dev/null)" ]; then
+      die "$1 already has other files in it and no gateway install. Choose a new or empty folder (this one would be made private and its files replaced)"
+    fi
+    check_owned "$1"
+    others_can_write "$1" && die "$1 can be written by other users; fix its permissions (chmod 700) or choose another folder"
+  fi
+  # The nearest folder above that exists: yours or root's, and not writable by others (so not /tmp).
+  up=$(dirname "$1")
+  while [ ! -e "$up" ] && [ "$up" != / ]; do up=$(dirname "$up"); done
+  [ ! -L "$up" ] || die "$up is a symbolic link; give the real path"
+  o=$(owner_of "$up")
+  [ "$o" = "$(id -u)" ] || [ "$o" = 0 ] || die "$up belongs to uid $o; put the gateway in a folder that is yours"
+  ! others_can_write "$up" || die "$up can be written by other users (like /tmp); put the gateway in a folder that is yours"
+}
+# Is a folder writable by others (group or world)? From ls -ld, which every system has.
+others_can_write() {
+  # shellcheck disable=SC2012  # only the mode column of one path we validated is read
+  m=$(ls -ld "$1" 2>/dev/null | cut -c1-10)
+  case $m in ?????w???? | ????????w?) return 0 ;; esac
+  return 1
+}
+
 choose_dir_and_settings() {
   step 1 'choose the folder'
   if [ -z "$DIR" ]; then
@@ -688,10 +738,12 @@ choose_dir_and_settings() {
   fi
   DIR=$(abs_path "$DIR")
   valid_path "$DIR" || die "use a folder path without spaces or special characters (got: $DIR)"
+  check_install_dir "$DIR"
   load_conf
   if [ "$CONF_FOUND" = 1 ]; then
-    say "Found a gateway installed here (runtime ${C_RUNTIME:-?}, ${C_TUNNEL:-?}, ${C_PUBLIC_URL:-?})."
-    if [ "$UPDATE" != 1 ] && ask_yn --update 'Update it and keep these settings?' y; then UPDATE=1; fi
+    say "Found a gateway installed here (runtime ${C_RUNTIME:-?}, ${C_TUNNEL:-?}, ${C_PUBLIC_URL:-?}, code: ${REF:-${C_REF:-main}})."
+    if [ "$UPDATE" != 1 ] && ask_yn --update "Update it to ${REF:-${C_REF:-main}} and keep these settings?" y; then UPDATE=1; fi
+    [ "$UPDATE" != 1 ] || say "Updating to ${REF:-${C_REF:-main}}."
     # Saved answers are the defaults; flags given now win.
     [ -n "$RUNTIME" ] || [ "$UPDATE" != 1 ] || RUNTIME=${C_RUNTIME:-}
     [ -n "$REF" ] || REF=${C_REF:-}
@@ -757,9 +809,18 @@ choose_public_address() {
         PUBLIC_URL=$ANSWER
       fi
       if [ -z "$CLIENT_IP_HEADER" ]; then
+        # No default: a header the proxy does not set is one a client can forge.
+        say 'The gateway counts wrong PINs per client, by a header your proxy sets to the real client address. It must be one the proxy always overwrites or appends to (the gateway reads its last value), never one a client sends unchanged:'
         # shellcheck disable=SC2016  # nginx's variable, shown as is
-        say 'The gateway counts wrong PINs per client, using a header your proxy sets to the real client address and a client cannot forge (nginx: proxy_set_header X-Real-IP $remote_addr).'
-        ask --client-ip-header 'That header' x-real-ip
+        say '  nginx    x-real-ip, with: proxy_set_header X-Real-IP $remote_addr;'
+        say '  Caddy    x-forwarded-for (reverse_proxy sets it; the last value is the client)'
+        say '  Traefik  x-forwarded-for (appended; the last value is the client)'
+        say '  HAProxy  x-forwarded-for, with: option forwardfor'
+        while :; do
+          ask --client-ip-header 'Which header does your proxy set' ''
+          valid_header "$ANSWER" && break
+          say "That is not a header name: $ANSWER"
+        done
         CLIENT_IP_HEADER=$ANSWER
       fi
       ;;
@@ -781,24 +842,35 @@ choose_public_address() {
   valid_header "$CLIENT_IP_HEADER" || die "--client-ip-header is a header name (got: $CLIENT_IP_HEADER)"
 
   if [ "$TUNNEL" = cloudflare-token ]; then
-    if [ -f "$DIR/cloudflared.env" ] && { [ "$UPDATE" = 1 ] || ask_yn --update 'A tunnel token is saved here. Keep it?' y; }; then
+    if [ -f "$DIR/cloudflared.token" ] && { [ "$UPDATE" = 1 ] || ask_yn --update 'A tunnel token is saved here. Keep it?' y; }; then
       say 'Keeping the saved tunnel token.'
     elif [ "$DRY_RUN" = 1 ]; then
-      say "Would ask for the tunnel token here (never shown) and save it to $DIR/cloudflared.env (mode 600)."
+      say "Would ask for the tunnel token here (never shown) and save it to $DIR/cloudflared.token (mode 600)."
     else
       say 'Paste the tunnel token: in the dashboard it is the long string after --token in the install command.'
       read_secret 'Tunnel token'
       valid_token "$SECRET" || die 'that does not look like a tunnel token (one long string of letters, digits and -_+/=); nothing saved'
-      mkdir -p "$DIR" && chmod 700 "$DIR"
-      printf 'TUNNEL_TOKEN=%s\n' "$SECRET" | write_file "$DIR/cloudflared.env" 600
+      # The folder was checked in step 1 (yours, private, no symlinks); write_file makes a fresh temp file there.
+      (umask 077 && mkdir -p "$DIR") && chmod 700 "$DIR"
+      printf '%s\n' "$SECRET" | write_file "$DIR/cloudflared.token" 600
       SECRET=
-      say "Saved to $DIR/cloudflared.env (mode 600)."
+      say "Saved to $DIR/cloudflared.token (mode 600)."
     fi
   fi
   shown=$PUBLIC_URL
   [ -n "$shown" ] || shown='known once the quick tunnel starts'
   say "Public address: $shown; client address header: $CLIENT_IP_HEADER"
   done_step 3
+}
+
+# The commit for a branch, a tag, or a commit that one of them contains; fails for anything else.
+resolve_ref() {
+  if c=$(git -C "$DIR/repo" rev-parse --verify --quiet "refs/remotes/origin/$1^{commit}"); then printf '%s' "$c"; return 0; fi
+  if c=$(git -C "$DIR/repo" rev-parse --verify --quiet "refs/tags/$1^{commit}"); then printf '%s' "$c"; return 0; fi
+  matches '^[0-9a-f]{7,40}$' "$1" || return 1
+  c=$(git -C "$DIR/repo" rev-parse --verify --quiet "$1^{commit}") || return 1
+  [ -n "$(git -C "$DIR/repo" branch -r --contains "$c" 2>/dev/null)$(git -C "$DIR/repo" tag --contains "$c" 2>/dev/null)" ] || return 1
+  printf '%s' "$c"
 }
 
 # Who owns a file (GNU, busybox and BSD stat).
@@ -829,9 +901,15 @@ fetch_and_build() {
   else
     run git clone --quiet "$REPO" "$DIR/repo"
   fi
-  run git -C "$DIR/repo" fetch --quiet origin "$REF"
-  run git -C "$DIR/repo" checkout --quiet --detach FETCH_HEAD
-  [ "$DRY_RUN" = 1 ] || say "Code: $(git -C "$DIR/repo" log -1 --format='%h %s')"
+  # Only the published branches and tags, so a commit reachable from neither (a pull request's) is not there to use.
+  run git -C "$DIR/repo" fetch --quiet --prune --tags origin '+refs/heads/*:refs/remotes/origin/*'
+  if [ "$DRY_RUN" = 1 ]; then
+    show_cmd git -C "$DIR/repo" checkout --quiet --detach "<$REF: a branch, tag or commit on one of them>"
+  else
+    commit=$(resolve_ref "$REF") || die "$REF is not a branch, a tag, or a commit on one of them in $REPO"
+    git -C "$DIR/repo" checkout --quiet --detach "$commit" || die "git checkout $commit failed"
+    say "Code: $REF at $(git -C "$DIR/repo" log -1 --format='%h %s')"
+  fi
   # ./gw update runs this copy, outside repo/: yours like the rest, never the gateway user's.
   run cp "$DIR/repo/site/install-gateway.sh" "$DIR/install-gateway.sh"
   run chmod 755 "$DIR/install-gateway.sh"

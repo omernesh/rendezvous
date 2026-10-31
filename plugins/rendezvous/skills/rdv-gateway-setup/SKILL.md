@@ -147,16 +147,13 @@ Why: the installer builds and starts everything, and asks the user for the
 secrets in their own terminal.
 
 Build the command from the answers, every one as a flag, and show it as
-two lines: the first downloads the installer, the second runs it. For
-example:
+two lines, for the user to run in their own terminal on that machine (never
+run them yourself; the consent guard refuses it): the first downloads the
+installer, `curl -fsSLo install-gateway.sh https://rendezvous.nesher.co/install-gateway.sh`,
+and the second runs it with the answers, for example
+`sh install-gateway.sh --dir ~/rendezvous-gateway --runtime docker --tunnel cloudflare-token --public-url https://gw.example.com --agent new --email omer@example.com`.
 
-```sh
-curl -fsSLo install-gateway.sh https://rendezvous.nesher.co/install-gateway.sh
-sh install-gateway.sh --dir ~/rendezvous-gateway --runtime docker --tunnel cloudflare-token --public-url https://gw.example.com --agent new --email omer@example.com
-```
-
-Tell the user to run both in their own terminal on that machine (for
-another machine, inside `ssh -t user@host`). Not with Claude Code's `!`
+For another machine, they run them inside `ssh -t user@host`. Not with Claude Code's `!`
 prefix: it gives the installer no terminal to ask the PIN in. Say what it
 will ask them, in order: the tunnel token (Cloudflare Tunnel only), the
 backup passphrase (restore only), and the approval PIN twice: 6 or more

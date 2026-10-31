@@ -2,7 +2,8 @@
 // --dry-run that must change nothing and touch no network. Needs a POSIX `sh`
 // (Git for Windows ships one); skipped without it.
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DEFAULT_RELAYS } from '@rendezvous/core';
 import { describe, expect, it } from 'vitest';
@@ -112,6 +113,23 @@ describe.skipIf(noSh !== null)('install-gateway.sh: helpers', () => {
     ['valid_ref', 'main', true],
     ['valid_ref', 'v1.2.0', true],
     ['valid_ref', '--upload-pack=x', false],
+    ['valid_ref', 'feat/gateway-installer', true],
+    ['valid_ref', 'refs/pull/1/head', false],
+    ['valid_ref', 'pull/1/head', false],
+    ['valid_ref', 'refs/heads/main', false],
+    ['valid_ref', 'main..evil', false],
+    ['valid_ref', '0123abc', true],
+    ['valid_path', '/srv/gw:/etc', false],
+    ['valid_path', '/srv/a,b', false],
+    ['system_dir', '/', true],
+    ['system_dir', '/tmp', true],
+    ['system_dir', '/home', true],
+    ['system_dir', '/usr/local/gw', true],
+    ['system_dir', '/volume1', true],
+    ['system_dir', '/volume1/docker', true],
+    ['system_dir', '/gw', true],
+    ['system_dir', '/volume1/docker/rendezvous-gateway', false],
+    ['system_dir', '/srv/rendezvous-gateway', false],
     ['valid_path', '/home/omer/rendezvous-gateway', true],
     ['valid_path', '/home/omer/my gateway', false],
     ['valid_path', '/home/omer/$(x)', false],
@@ -137,6 +155,43 @@ describe.skipIf(noSh !== null)('install-gateway.sh: helpers', () => {
     expect(lib('header_for cloudflare-quick').out).toBe('cf-connecting-ip');
     expect(lib('header_for tailscale').out).toBe('x-forwarded-for');
     expect(lib('header_for own-url').out).toBe('');
+  });
+
+  it('never takes your home, or anything above it, as the install folder', () => {
+    expect(lib('HOME=/home/omer; if system_dir /home/omer; then echo yes; fi; if system_dir /home/omer/; then echo yes; fi; if system_dir /home/omer/gw; then echo no; fi').out).toBe('yes\nyes');
+  });
+
+  it('refuses a folder with other files in it, a symlinked folder, and writing through a symlink', () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'rdv-gw-dir-'));
+    // sh's own spelling of the path (Git for Windows: /c/Users/...).
+    const t = process.platform === 'win32' ? spawnSync('cygpath', ['-u', tmp], { encoding: 'utf8' }).stdout.trim() : tmp;
+    try {
+      mkdirSync(join(tmp, 'busy'));
+      writeFileSync(join(tmp, 'busy', 'notes.txt'), 'x');
+      mkdirSync(join(tmp, 'empty'));
+      mkdirSync(join(tmp, 'old'));
+      writeFileSync(join(tmp, 'old', 'install.conf'), 'RUNTIME=docker\n');
+      writeFileSync(join(tmp, 'old', 'other.txt'), 'x');
+      // The dirs exist only from node's point of view on Windows; the checks run in sh on the same paths.
+      const run = (d: string) => lib(`HOME=/home/nobody; check_install_dir "${t}/${d}" 2>&1; echo ok`).out;
+      expect(run('busy')).toMatch(/already has other files in it and no gateway install/);
+      expect(run('busy')).not.toMatch(/ok$/);
+      expect(run('empty')).toMatch(/ok$/);
+      expect(run('old')).toMatch(/ok$/);
+      expect(run('new/sub')).toMatch(/ok$/);
+      // write_file never follows a symlink left at the target.
+      const link = lib(`cd "${t}/empty" && ln -s ../busy/notes.txt target 2>/dev/null && [ -L target ] && { DRY_RUN=0; printf 'x' | write_file "${t}/empty/target" 600 2>&1; echo reached; } || echo nolink`).out;
+      if (link !== 'nolink') {
+        expect(link).toMatch(/symbolic link/);
+        expect(link).not.toContain('reached');
+        expect(readFileSync(join(tmp, 'busy', 'notes.txt'), 'utf8')).toBe('x');
+      }
+      // A fresh write: the file and no temp left behind.
+      expect(lib(`DRY_RUN=0; printf 'hello' | write_file "${t}/empty/out" 600; cat "${t}/empty/out"; ls "${t}/empty"`).out).toMatch(/^hello/);
+      expect(readdirSync(join(tmp, 'empty')).filter((f) => f.startsWith('out.'))).toEqual([]);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
   });
 
   it('refuses to build or run code another user owns (./gw update would run it)', () => {
@@ -174,7 +229,7 @@ describe.concurrent.skipIf(noSh !== null)('install-gateway.sh: --dry-run', () =>
     expect(r.status, r.out).toBe(0);
     for (let n = 1; n <= 7; n++) expect(r.out).toContain(`Step ${n} of 7 done.`);
     const compose = /--- would write \S+docker-compose\.yml[^\n]*\n([\s\S]*?)--- end of/.exec(r.out)?.[1] ?? '';
-    for (const s of ['read_only: true', '- ALL', 'no-new-privileges:true', '- 127.0.0.1', '/healthz', './repo:/app:ro', 'user: "${RDV_UID}:${RDV_GID}"', 'env_file:', './cloudflared.env']) {
+    for (const s of ['read_only: true', '- ALL', 'no-new-privileges:true', '- 127.0.0.1', '/healthz', './repo:/app:ro', 'user: "${RDV_UID}:${RDV_GID}"', '--token-file', './cloudflared.token:/etc/cloudflared/cloudflared.token:ro', 'user: "${TUNNEL_UID}:${TUNNEL_GID}"', 'pids_limit: 256', 'mem_limit: 512m', 'pids_limit: 128']) {
       expect(compose, s).toContain(s);
     }
     expect(compose).not.toMatch(/allow-remote-bind|0\.0\.0\.0|ports:/);
@@ -216,7 +271,7 @@ describe.concurrent.skipIf(noSh !== null)('install-gateway.sh: --dry-run', () =>
 
   it('as root (NAS): builds as root, chowns only data/ to the sudo user, and ./gw update runs the copy outside repo/', async () => {
     const root = await new Promise<{ status: number | null; out: string }>((resolve) => {
-      const script = `id() { case "$1" in -u) echo 0 ;; -g) echo 0 ;; *) command id "$@" ;; esac; }; RDV_GW_SOURCE_ONLY=1 . "${SH_PATH}"; main "$@"`;
+      const script = `id() { case "$1" in -u) echo 0 ;; -g) echo 0 ;; *) command id "$@" ;; esac; }; RDV_GW_SOURCE_ONLY=1 . "${SH_PATH}"; owner_of() { echo 0; }; main "$@"`;
       const child = spawn('sh', ['-c', script, 'sh', ...BASE, '--allow-root', '--tunnel', 'own-url', '--public-url', 'https://gw.example.com', '--client-ip-header', 'x-real-ip'], {
         env: { ...env, SUDO_UID: '1001', SUDO_GID: '1001' },
         stdio: ['ignore', 'pipe', 'pipe'],
@@ -259,6 +314,24 @@ describe.concurrent.skipIf(noSh !== null)('install-gateway.sh: --dry-run', () =>
     const r = await install(['--dry-run', '--dir', DIR, '--runtime', 'docker', '--tunnel', 'own-url']);
     expect(r.status).toBe(1);
     expect(r.out).toMatch(/no terminal to ask .*pass --public-url/);
+  });
+
+  it('refuses a pull request ref, and takes no default for the own proxy client-IP header', async () => {
+    let r = await install([...BASE, '--ref', 'refs/pull/7/head', '--tunnel', 'own-url', '--public-url', 'https://gw.example.com', '--client-ip-header', 'x-real-ip']);
+    expect(r.status).toBe(1);
+    expect(r.out).toMatch(/--ref is a branch, tag or commit/);
+    r = await install([...BASE, '--tunnel', 'own-url', '--public-url', 'https://gw.example.com']);
+    expect(r.status).toBe(1);
+    expect(r.out).toMatch(/nginx +x-real-ip/);
+    expect(r.out).toMatch(/no terminal to ask .*pass --client-ip-header/);
+  });
+
+  it('refuses a system folder as the install folder', async () => {
+    for (const d of ['/', '/tmp', '/usr/local', '/volume1/docker']) {
+      const r = await install(['--dry-run', '--dir', d, '--runtime', 'docker', '--tunnel', 'own-url']);
+      expect(r.status, d).toBe(1);
+      expect(r.out, d).toMatch(/system or shared folder/);
+    }
   });
 
   it('--update needs an existing install', async () => {
