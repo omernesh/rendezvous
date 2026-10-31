@@ -1406,7 +1406,9 @@ export class Agent extends EventEmitter<AgentEvents> {
   private async deliver(peer: string, payload: { type: string }, relays: string[], send?: (env: Envelope) => Promise<unknown>): Promise<Envelope> {
     // After a restore, the first envelope to each peer is our notice (NOTES 91), whatever we send.
     const notice = payload.type === RESTORED_TYPE;
-    if (!notice && (this.channels.state[peer]?.restoreNotice === 'due' || this.restoreNoticeStale(peer))) await this.deliver(peer, this.restoredNotice(peer), relays);
+    // The notice goes the same way as what it precedes: through `send` when given (an invite's guarded, per-call
+    // connections; never the transport to relays someone else named, review of PR #120).
+    if (!notice && (this.channels.state[peer]?.restoreNotice === 'due' || this.restoreNoticeStale(peer))) await this.deliver(peer, this.restoredNotice(peer), relays, send);
     const { seq, prev } = this.channels.nextOutbound(peer);
     const env = sealEnvelope(this.key, peer, payload, { seq, prev });
     this.channels.commitOutbound(peer, env);

@@ -4347,8 +4347,13 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       Tailscale `wss://relay.<tailnet>.ts.net` resolving to 100.x) would
       have broken every later reconnect to it until a restart (third
       review, MED). Our own relay connections, their pool, cooldowns and
-      status are now never used or changed by an invite. An IP literal
-      never resolves and was checked above. The test hook is an exact-URL list for the literal
+      status are now never used or changed by an invite. The restore
+      notice a restored agent owes a peer before anything else (NOTES 91)
+      goes the same way as the request it precedes (`deliver` passes its
+      sender on; automated review). Audited: every other send (grants,
+      revokes, card updates, resends, receipts, groups) goes to relays from
+      a verified card (`relaysOf(card)`) or our own, never to relays from a
+      link. An IP literal never resolves and was checked above. The test hook is an exact-URL list for the literal
       check only: `unsafeAllowRelays` in core, the `unsafeInviteRelays`
       option for rdv-mcp, and `RDV_TEST_UNSAFE_INVITE_RELAYS` for `rdv`
       processes, which is honoured only under `NODE_ENV=test` (vitest sets
