@@ -190,7 +190,7 @@ export async function openBackup(input: unknown, passphrase: string): Promise<{ 
 export const BACKUP_PASSPHRASE_MIN = 12;
 /** The passphrase rules in plain words, shown BEFORE the user types one (forms, CLI intro). Keep in step with backupPassphraseProblem. */
 export const BACKUP_PASSPHRASE_RULES =
-  `At least ${BACKUP_PASSPHRASE_MIN} characters, at least 6 different ones, no spaces at the start or end, and no common words or runs such as password, qwerty, 1234, abcd, backup or the same character three times. ` +
+  `At least ${BACKUP_PASSPHRASE_MIN} characters, at least 6 different ones, no spaces at the start or end, and no common words or runs such as password, qwerty, 1234, abcd, backup or the same character three times. If you use only lowercase letters, make it at least 14 characters. ` +
   'Four or more random words work well: use your own, in the pattern of lamp-orbit-cedar-whisk (that example itself is refused).';
 export function backupPassphraseProblem(p: string): string | undefined {
   if (typeof p !== 'string') return 'a passphrase';
