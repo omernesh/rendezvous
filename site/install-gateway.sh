@@ -412,6 +412,9 @@ EOF
 }
 
 write_ctl() {
+  # As root (a NAS), ./gw update runs as root again, for the same gateway user.
+  ROOT_FLAGS=''
+  [ "$(id -u)" != 0 ] || ROOT_FLAGS="--allow-root --uid $RDV_UID "
   if [ "$RUNTIME" = docker ]; then
     write_file "$DIR/gw" 755 <<EOF
 #!/bin/sh
@@ -434,7 +437,7 @@ case \$cmd in
   start) compose up -d ;;
   stop) compose stop ;;
   restart) compose restart ;;
-  update) exec sh "\$DIR/install-gateway.sh" --dir "\$DIR" --update "\$@" ;;
+  update) exec sh "\$DIR/install-gateway.sh" --dir "\$DIR" --update $ROOT_FLAGS"\$@" ;;
   rdv) exec compose run --rm --no-deps gateway node packages/cli/dist/src/bin.js "\$@" --home /data ;;
   pin | token | oauth) exec compose run --rm --no-deps gateway node packages/gateway/dist/src/bin.js "\$cmd" "\$@" --home /data ;;
   backup)
