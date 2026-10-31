@@ -23,7 +23,15 @@ export function safeConsoleLine(args: unknown[]): string {
 
 /** Route console.log/info/debug/warn/error/trace/dir to `write` (default: stderr), one safe line per call. */
 export function installSafeConsole(write: (line: string) => void = (l) => void process.stderr.write(l)): void {
-  const out = (...args: unknown[]) => write(`${safeConsoleLine(args)}\n`);
+  // A closed stderr (EPIPE) must not crash the process: the global console swallowed stream errors, so do we.
+  process.stderr.on('error', () => {});
+  const out = (...args: unknown[]) => {
+    try {
+      write(`${safeConsoleLine(args)}\n`);
+    } catch {
+      // stderr gone: drop the line
+    }
+  };
   for (const m of ['log', 'info', 'debug', 'warn', 'error', 'trace', 'dir'] as const) {
     (console as unknown as Record<string, unknown>)[m] = out;
   }
