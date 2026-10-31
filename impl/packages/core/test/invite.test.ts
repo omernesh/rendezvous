@@ -24,6 +24,7 @@ import {
   inviteUrl,
   isInviteSecret,
   newInviteSecret,
+  openEnvelope,
   NostrTransport,
   parseInvite,
   type PendingRequest,
@@ -458,6 +459,46 @@ describe('invite relays (L4, review of PR #120)', () => {
     expect(() => parseInvite(url)).toThrow(/not a usable invite link/);
     expect(parseInvite(url, { unsafeAllowRelays: ['ws://127.0.0.1:4000'] }).relays).toEqual(['ws://127.0.0.1:4000']);
     expect(() => parseInvite(inviteUrl(inv({ relays: ['wss://relay.example.com', 'wss://192.168.0.2'] })))).toThrow(/192\.168\.0\.2/);
+  });
+});
+
+describe('every envelope to an invite\'s relays goes through the guarded per-call sender (review of PR #120)', () => {
+  it('a restored agent accepting an invite sends its restore notice and the request only through sendEnvelopeIsolated', async () => {
+    const plain: Array<{ relays?: string[] }> = [];
+    const isolated: Array<{ env: unknown; relays: string[] }> = [];
+    const fake = () => ({
+      async sendEnvelope(_e: unknown, relays?: string[]) {
+        plain.push({ relays });
+      },
+      async sendEnvelopeIsolated(env: unknown, relays: string[]) {
+        isolated.push({ env, relays });
+      },
+      onEnvelopes: () => () => {},
+      async publishTopic() {},
+      onTopics: () => () => {},
+      fetchTopic: async () => [],
+      close() {},
+    });
+    const omer = generateKey();
+    const relays = ['wss://relay.example.com'];
+    const link = (): Parameters<Agent['acceptInvite']>[0] => ({ agentId: omer.id, relays, secret: newInviteSecret(), expires: new Date(Date.now() + 86_400_000).toISOString() });
+    const first = Agent.create(fake as never, { rendezvous: [{ type: 'nostr', relay: 'wss://own.example.com', pref: 1 }] });
+    // A first invite from Omer: Dana's agent now has a channel to him (it was never answered).
+    await first.acceptInvite(link(), 'hi');
+    first.close();
+    // Dana restores from a backup: her channel to Omer owes him a restore notice first.
+    const dana = Agent.fromJSON(restoredAgentState(first.toJSON(), { backupCreated: new Date().toISOString() }), fake as never);
+    plain.length = 0;
+    isolated.length = 0;
+    await dana.acceptInvite(link(), 'hi again');
+    expect(plain).toEqual([]); // nothing through the transport to anyone's relays
+    const types = isolated.map((x) => {
+      const o = openEnvelope(omer, x.env);
+      return o.ok ? o.payload.type : 'unreadable';
+    });
+    expect(types).toEqual(['rdv/restored', 'rdv/contact-request']);
+    expect(isolated.every((x) => x.relays === relays)).toBe(true);
+    dana.close();
   });
 });
 
