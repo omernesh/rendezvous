@@ -4412,6 +4412,41 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       `rdv_accept_invite` reuse pending, list and revoke, decline, no form,
       bad, own and expired links). Plugin: the guard cases and both skills.
 
+102. **Relay text never reaches stdout** (review of PR #120, round 4;
+    pre-existing, reachable through any relay a card or an invite link
+    names). nostr-tools' default `onnotice` is `console.debug("NOTICE from
+    <url>: <msg>")`, and Node's `console.debug` writes to stdout. In rdv-mcp
+    stdout is the JSON-RPC channel: a NOTICE whose text held a newline and a
+    JSON-RPC line became a message the client accepted (a forged tool result,
+    or a forged elicitation that bypasses `untrusted_peer_text`); in `rdv …
+    --json` it landed in the output and, unescaped, on the terminal.
+    - **Dropped at the source.** Both pools (the main `LivePool` and the
+      per-call pool of `sendEnvelopeIsolated`) are a `QuietPool`, which sets
+      each relay's `onnotice` to a no-op as soon as `ensureRelay` creates it,
+      before it connects. NOTICE text is never shown anywhere (it is
+      advisory, and the relay's to write).
+    - **Defence in depth.** `@rendezvous/core/safe-console` is the first
+      import of `rdv`, `rdv-mcp` and `rdv-gateway`: every `console` method
+      then writes to stderr, one line per call, with control, format and
+      bidi characters replaced and at most 500 characters. The other
+      `console.*` paths in nostr-tools (`console.warn` with a relay's event
+      when a message fails to process, a subscription without `onevent`,
+      a failed auth) already went to stderr; now they are one safe line too.
+    - **Other relay text.** `CLOSED` and `OK` reasons reach us as data
+      (errors, `relays.json` diagnostics), never through `console`; the
+      CLI's output and the MCP results pass them through `clean`/`safe` as
+      before. No other nostr-tools default prints.
+    - The per-call sockets of `sendEnvelopeIsolated` also take
+      `maxPayload: 1 MiB`.
+    - **Tests.** MCP `notice.test.ts`: a real rdv-mcp process listens on a
+      relay that sends a NOTICE holding forged JSON-RPC lines (a tool
+      result, an elicitation, an ANSI escape) on connect and after every
+      message; every stdout line is one of the server's answers, none
+      forged, and stderr has none of it. It fails with either fix removed
+      (checked). Also the safe console line, and that `site/invite.js`
+      parses: its regexes held raw U+2028/U+2029 characters, a syntax error
+      in browsers, now `\u` escapes.
+
 ## Not implemented yet
 
 

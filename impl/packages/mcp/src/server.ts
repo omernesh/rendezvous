@@ -1213,7 +1213,7 @@ export class RdvMcpServer {
     this.fileFetch = opts.fileFetch ?? {};
     this.registry = hostRegistry(opts.capabilities ?? []);
     this.unsafeInviteRelays = opts.unsafeInviteRelays ?? [];
-    this.calendarDirs = [opts.home.dir,...(opts.calendar ? [dirname(resolve(opts.calendar))] : []), ...(opts.calendarDirs ?? [])].map((d) =>
+    this.calendarDirs = [opts.home.dir, ...(opts.calendar ? [dirname(resolve(opts.calendar))] : []), ...(opts.calendarDirs ?? [])].map((d) =>
       resolve(d),
     );
     this.settings = {

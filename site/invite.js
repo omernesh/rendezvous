@@ -19,7 +19,7 @@
       if (typeof p.s !== 'string' || !/^[A-Za-z0-9_-]{22}$/.test(p.s)) return null;
       if (typeof p.e !== 'number' || !isFinite(p.e) || p.e <= 0) return null;
       if (!Array.isArray(p.r) || p.r.length === 0) return null;
-      var name = typeof p.n === 'string' && p.n.length <= 64 && !/[\u0000-\u001f\u007f-\u009f؜‎‏  ‪-‮⁦-⁩]/.test(p.n) ? p.n.trim() : '';
+      var name = typeof p.n === 'string' && p.n.length <= 64 && !/[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069]/.test(p.n) ? p.n.trim() : '';
       return { agent: p.a, expires: new Date(p.e * 1000), name: name };
     } catch (e) {
       return null;

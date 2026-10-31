@@ -16,3 +16,4 @@ export * from './transport/transport.js';
 export * from './groupmsg.js';
 export * from './delivery.js';
 export * from './invite.js';
+export * from './safeconsole.js';

@@ -85,7 +85,7 @@ describe('invite payload', () => {
     expect(() => parseInvite(encodeRaw({ ...base, s: `${i.secret.slice(0, 21)}B` }))).toThrow(/secret/); // stray low bits
     expect(() => parseInvite(encodeRaw({ ...base, e: 1.5 }))).toThrow(/expiry/);
     expect(() => parseInvite(encodeRaw({ ...base, e: '2026' }))).toThrow(/expiry/);
-    expect(() => parseInvite(encodeRaw({ ...base, n: 'Omer‮' }))).toThrow(/name/);
+    expect(() => parseInvite(encodeRaw({ ...base, n: 'Omer\u202e' }))).toThrow(/name/);
     expect(() => parseInvite(encodeRaw({ ...base, n: ' Omer' }))).toThrow(/name/);
     expect(() => parseInvite(encodeRaw({ ...base, n: 'x'.repeat(65) }))).toThrow(/name/);
     // The same fields, not in canonical form (whitespace, key order): one link per invite.

@@ -13,6 +13,8 @@
 //
 // Every command here is the owner's, in their own terminal: an assistant
 // never runs them. Home resolution is the same as rdv and rdv-mcp.
+// First: stdout carries the command's output, never a dependency's console text (review of PR #120).
+import '@rendezvous/core/safe-console';
 import { parseArgs } from 'node:util';
 import { Home } from '@rendezvous/cli/lib';
 import { DEFAULT_PORT, Gateway } from './gateway.js';
