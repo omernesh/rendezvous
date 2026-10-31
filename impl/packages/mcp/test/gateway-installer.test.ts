@@ -233,7 +233,7 @@ describe.concurrent.skipIf(noSh !== null)('install-gateway.sh: --dry-run', () =>
     expect(root.out).toContain('RDV_UID=1001');
     expect(root.out).not.toContain('safe.directory');
     expect(root.out).toContain(`$ cp ${DIR}/repo/site/install-gateway.sh ${DIR}/install-gateway.sh`);
-    expect(root.out).toContain('update) exec sh "$DIR/install-gateway.sh" --dir "$DIR" --update');
+    expect(root.out).toContain('update) exec sh "$DIR/install-gateway.sh" --dir "$DIR" --update --allow-root --uid 1001 "$@"');
     // Without --allow-root it refuses.
     expect(src).toMatch(/do not run this as root/);
   });
