@@ -1,5 +1,6 @@
 // A transport is a dumb pipe (§3.4): it moves opaque envelopes and discovery
 // documents, and is never trusted with anything it carries.
+import type { LookupFunction } from 'node:net';
 import type { Envelope } from '../envelope.js';
 
 export interface TopicPublishOptions {
@@ -65,6 +66,13 @@ export interface MirrorReport {
 export interface Transport {
   /** Deliver to the recipient; `recipientRelays` come from the peer's card. */
   sendEnvelope(e: Envelope, recipientRelays?: string[]): Promise<PublishReport | void>;
+  /**
+   * Deliver to `relays` only, over connections of its own that resolve every
+   * host through `opts.lookup`, closed afterwards; our own relay connections
+   * are never used or changed. For relays someone else named (an invite
+   * link, NOTES 101). Optional: without it an invite cannot be accepted.
+   */
+  sendEnvelopeIsolated?(e: Envelope, relays: string[], opts: { lookup: LookupFunction }): Promise<PublishReport | void>;
   /** Stream raw (unverified) envelopes addressed to `me`. Returns an unsubscribe. */
   onEnvelopes(me: string, handler: (envelope: unknown) => void): () => void;
   /**

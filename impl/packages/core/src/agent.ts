@@ -28,8 +28,8 @@ import {
   verifyContactRequest,
 } from './contact.js';
 import { checkInviteRelays, type Invite, INVITE_RELAYS_MAX, INVITE_TTL_MS, inviteExpired, inviteUrl } from './invite.js';
+import type { LookupFunction } from 'node:net';
 import { guardedLookup, type Resolver } from './filefetch.js';
-import { guardRelayLookup } from './transport/nostr.js';
 import {
   ACK_TYPE,
   ackDue,
@@ -789,17 +789,27 @@ export class Agent extends EventEmitter<AgentEvents> {
    * waits there like any request. The grant makes the contact (`contact`
    * event), as for any request sent to a card.
    */
-  async acceptInvite(invite: Invite, greeting: string, now = new Date(), opts: { unsafeAllowRelays?: readonly string[]; resolve?: Resolver } = {}): Promise<ContactRequest> {
+  async acceptInvite(
+    invite: Invite,
+    greeting: string,
+    now = new Date(),
+    /** `resolve` and `lookup` are TEST ONLY: a stub resolver, or the whole lookup the invite's connections use. */
+    opts: { unsafeAllowRelays?: readonly string[]; resolve?: Resolver; lookup?: LookupFunction } = {},
+  ): Promise<ContactRequest> {
     if (invite.agentId === this.id) throw new Error('that invite is your own');
     // Checked again here, whoever parsed the link: its relays are dialled at once (review of PR #120).
     checkInviteRelays(invite, opts.unsafeAllowRelays);
-    // And their names resolve only to public addresses, pinned, when the socket opens (an IP literal never resolves).
-    for (const r of invite.relays) guardRelayLookup(r, guardedLookup({ resolve: opts.resolve }));
     if (inviteExpired(invite, now)) throw new Error(`that invite expired on ${invite.expires}: ask for a new one`);
     if (this.book.contact(invite.agentId, now)) throw new Error('that agent is already a contact');
+    const isolated = this.transport.sendEnvelopeIsolated?.bind(this.transport);
+    if (!isolated) throw new Error('this transport cannot send to an invite link\'s relays');
     const req = createContactRequest(this.key, this.card, { toHint: invite.agentId, greeting, invite: invite.secret, now });
     this.book.trackOutstanding(req, 'claimed', invite.agentId);
-    await this.deliver(invite.agentId, req, invite.relays);
+    // Only after every check, and only for this send: connections of its own to the link's relays, whose names
+    // resolve only to public addresses (pinned), closed afterwards. Our own relay connections are never used or
+    // changed, even when the link names one of our relays (re-review of PR #120).
+    const lookup = opts.lookup ?? guardedLookup({ resolve: opts.resolve });
+    await this.deliver(invite.agentId, req, invite.relays, (env) => isolated(env, invite.relays, { lookup }));
     return req;
   }
 
@@ -1393,7 +1403,7 @@ export class Agent extends EventEmitter<AgentEvents> {
     return this.book.state.outstanding[requestRef].card_created;
   }
 
-  private async deliver(peer: string, payload: { type: string }, relays: string[]): Promise<Envelope> {
+  private async deliver(peer: string, payload: { type: string }, relays: string[], send?: (env: Envelope) => Promise<unknown>): Promise<Envelope> {
     // After a restore, the first envelope to each peer is our notice (NOTES 91), whatever we send.
     const notice = payload.type === RESTORED_TYPE;
     if (!notice && (this.channels.state[peer]?.restoreNotice === 'due' || this.restoreNoticeStale(peer))) await this.deliver(peer, this.restoredNotice(peer), relays);
@@ -1406,7 +1416,8 @@ export class Agent extends EventEmitter<AgentEvents> {
     if (box.length > OUTBOX_LIMIT) box.splice(0, box.length - OUTBOX_LIMIT);
     if (this.tracksDelivery(peer)) this.trackPending(peer, env);
     await this.beforeSend?.(this);
-    await this.transport.sendEnvelope(env, relays);
+    if (send) await send(env);
+    else await this.transport.sendEnvelope(env, relays);
     return env;
   }
 

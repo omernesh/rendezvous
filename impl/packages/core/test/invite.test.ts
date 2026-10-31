@@ -8,8 +8,6 @@ import {
   canonicalize,
   checkInviteRelays,
   guardedLookup,
-  guardRelayLookup,
-  isRelayGuarded,
   ContactBook,
   dtopic,
   inviteRelayProblem,
@@ -365,24 +363,7 @@ describe('invite relay names resolve only to public addresses (re-review of PR #
   /** A stub resolver: the name answers 127.0.0.1, like 127.0.0.1.nip.io or a rebinding domain. */
   const toLoopback = async () => [{ address: '127.0.0.1', family: 4 }];
 
-  it('a guarded name that answers a private address is refused; the same lookup allowing it connects (the hook is used)', async () => {
-    const k = generateKey();
-    const blocked = `ws://rebind-a.example:${port(relay.url)}`;
-    guardRelayLookup(blocked, guardedLookup({ resolve: toLoopback }));
-    expect(isRelayGuarded(blocked)).toBe(true);
-    const t1 = new NostrTransport({ key: k, relays: [blocked] });
-    await expect(t1.publishTopic('aaaaaaaaaaaaaaaaaaaaaaaaaa', { hello: 1 })).rejects.toThrow();
-    t1.close();
-    const allowed = `ws://rebind-b.example:${port(relay.url)}`;
-    guardRelayLookup(allowed, guardedLookup({ resolve: toLoopback, allowed: () => true }));
-    const t2 = new NostrTransport({ key: k, relays: [allowed] });
-    const report = await t2.publishTopic('aaaaaaaaaaaaaaaaaaaaaaaaaa', { hello: 2 });
-    expect(report?.accepted.length).toBe(1);
-    t2.close();
-  });
-
-  it('acceptInvite guards the link\'s relays: a name resolving to loopback never reaches the inviter', async () => {
-    const mk = (url: string, email?: string) => {
+  const mk = (url: string, email?: string) => {
       const a = Agent.create((key: AgentKey) => new NostrTransport({ key, relays: [url] }), {
         rendezvous: [{ type: 'nostr', relay: url, pref: 1 }],
         ...(email ? { discovery: { addresses: [{ type: 'email', value: email }], public_pointer: false } } : {}),
@@ -392,20 +373,46 @@ describe('invite relay names resolve only to public addresses (re-review of PR #
       agents.push(a);
       return a;
     };
+
+  it('a link\'s relay name that resolves to loopback never reaches the inviter; the same name, unguarded, would', async () => {
     const omer = mk(relay.url, 'omer@example.com');
-    const made = omer.createInvite({ tier: 'friend' });
-    // The link names Omer's relay by a host name that resolves to 127.0.0.1; Dana listens elsewhere.
+    // The link names Omer's (listening) relay by a host name that resolves to 127.0.0.1; Dana listens elsewhere.
     const evil = `ws://loop.example:${port(relay.url)}`;
-    const link = { ...parseInvite(made.url, { unsafeAllowRelays: [relay.url] }), relays: [evil] };
+    const linkFor = () => ({ ...parseInvite(omer.createInvite({ tier: 'friend' }).url, { unsafeAllowRelays: [relay.url] }), relays: [evil] });
     const dana = mk(other.url);
+    // Control: with a lookup that lets 127.0.0.1 through, the name reaches Omer's relay and the invite is redeemed.
+    const redeemed = new Promise((r) => omer.once('invite-redeemed', r));
+    await dana.acceptInvite(linkFor(), 'hi', new Date(), { unsafeAllowRelays: [evil], lookup: guardedLookup({ resolve: toLoopback, allowed: () => true }) });
+    await redeemed;
+    // The real guard (only the resolver stubbed): refused at connect, nothing reaches Omer.
+    const eve = mk(other.url);
     let got = false;
     omer.on('request', () => (got = true));
     omer.on('invite-redeemed', () => (got = true));
-    await dana.acceptInvite(link, 'hi', new Date(), { unsafeAllowRelays: [evil], resolve: toLoopback });
-    expect(isRelayGuarded(evil)).toBe(true);
-    await new Promise((r) => setTimeout(r, 1500));
+    await expect(eve.acceptInvite(linkFor(), 'hi', new Date(), { unsafeAllowRelays: [evil], resolve: toLoopback })).rejects.toThrow(/private or reserved|no relay accepted/);
+    await new Promise((r) => setTimeout(r, 1000));
     expect(got).toBe(false);
-    expect(omer.contacts()).toEqual([]);
+    expect(omer.contacts().map((c) => c.peer)).toEqual([dana.id]);
+  });
+
+  it('a crafted invite naming our own relay changes nothing about our connection or later ones', async () => {
+    // Dana's own relay by name (the system resolves localhost; a guard would refuse its loopback answer).
+    const own = `ws://localhost:${port(other.url)}`;
+    const dana = mk(own);
+    const omer = mk(relay.url, 'omer@example.com');
+    const crafted = { agentId: generateKey().id, relays: [own], secret: newInviteSecret(), name: 'x' };
+    // Expired: refused before anything happens.
+    await expect(dana.acceptInvite({ ...crafted, expires: new Date(Date.now() - 1000).toISOString() }, 'hi', new Date(), { unsafeAllowRelays: [own], resolve: toLoopback })).rejects.toThrow(/expired/);
+    // Valid: its own connection to our relay's name is refused (loopback), and that is all it does.
+    await expect(dana.acceptInvite({ ...crafted, expires: new Date(Date.now() + 86_400_000).toISOString() }, 'hi', new Date(), { unsafeAllowRelays: [own], resolve: toLoopback })).rejects.toThrow();
+    // A new connection to our relay (what a reconnect opens) still works ...
+    const fresh = new NostrTransport({ key: generateKey(), relays: [own] });
+    expect((await fresh.publishTopic('aaaaaaaaaaaaaaaaaaaaaaaaaa', { still: 'fine' }))?.accepted).toEqual([own]);
+    fresh.close();
+    // ... and Dana still receives on it: Omer's grant for a real invite comes back to her own relay.
+    const contact = new Promise<{ peer: string }>((r) => dana.once('contact', r));
+    await dana.acceptInvite(parseInvite(omer.createInvite({ tier: 'friend' }).url, { unsafeAllowRelays: [relay.url] }), 'hi', new Date(), { unsafeAllowRelays: [relay.url] });
+    expect((await contact).peer).toBe(omer.id);
   });
 });
 

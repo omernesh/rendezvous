@@ -90,46 +90,19 @@ export const MAX_EVENT_CONTENT = 128 * 1024;
 // nostr-tools still sees errors through `onerror` while it is attached.
 class QuietWebSocket extends WebSocket {
   constructor(...args: ConstructorParameters<typeof WebSocket>) {
-    const [address, protocols, options] = args;
-    const lookup = guardedRelays.get(relayKey(String(address)));
-    if (lookup) {
-      // A relay someone else named (an invite's): its name resolves only to public addresses, pinned (review of PR #120).
-      const opts = (protocols && typeof protocols === 'object' && !Array.isArray(protocols) ? protocols : options) ?? {};
-      super(address, Array.isArray(protocols) || typeof protocols === 'string' ? protocols : [], { ...(opts as object), lookup } as never);
-    } else super(...args);
+    super(...args);
     this.on('error', () => {});
   }
 }
 useWebSocketImplementation(QuietWebSocket);
 
-/** Relays someone else named, by normalized URL: every new socket to one resolves through its lookup. */
-const guardedRelays = new Map<string, LookupFunction>();
-const GUARDED_MAX = 256;
-const relayKey = (url: string): string => {
-  try {
-    return normalizeURL(url);
-  } catch {
-    return url;
-  }
-};
-
-/**
- * From now on, every socket this process opens to `url` resolves its host
- * through `lookup` (guardedLookup: no private, loopback or other blocked
- * answer, pinned). For relays from an invite link (NOTES 101), which the
- * literal check alone can't cover: `127.0.0.1.nip.io` or a rebinding name.
- * A socket already open to it is not affected.
- */
-export function guardRelayLookup(url: string, lookup: LookupFunction): void {
-  const k = relayKey(url);
-  guardedRelays.delete(k);
-  guardedRelays.set(k, lookup);
-  while (guardedRelays.size > GUARDED_MAX) guardedRelays.delete(guardedRelays.keys().next().value as string);
-}
-
-/** Whether new sockets to `url` resolve through a guard (guardRelayLookup). */
-export function isRelayGuarded(url: string): boolean {
-  return guardedRelays.has(relayKey(url));
+/** A QuietWebSocket whose every connection resolves its host through `lookup` (sendEnvelopeIsolated). */
+function lookupWebSocket(lookup: LookupFunction): typeof WebSocket {
+  return class extends QuietWebSocket {
+    constructor(address: string | URL, protocols?: string | string[]) {
+      super(address, Array.isArray(protocols) || typeof protocols === 'string' ? protocols : [], { lookup } as never);
+    }
+  } as unknown as typeof WebSocket;
 }
 
 export interface NostrTransportOptions {
@@ -840,6 +813,58 @@ export class NostrTransport implements Transport {
       this.carrier,
     );
     return this.publish(event, recipientRelays);
+  }
+
+  /**
+   * Publish an envelope to `relays` only, over connections of its own that
+   * resolve every host through `opts.lookup` and are closed afterwards
+   * (review of PR #120). For relays someone else named (an invite link,
+   * NOTES 101): the pool our own relays use, its sockets, cooldowns and
+   * status are never touched, so a link naming one of our relays changes
+   * nothing about our connection to it. No retries; throws
+   * NoRelayAcceptedError when none took it.
+   */
+  async sendEnvelopeIsolated(e: Envelope, relays: string[], opts: { lookup: LookupFunction; connectMs?: number; okMs?: number }): Promise<PublishReport> {
+    const event = finalizeEvent(
+      { kind: ENVELOPE_KIND, created_at: Math.floor(Date.now() / 1000), tags: [['p', agentTag(e.to)], ['d', envelopeHash(e)]], content: JSON.stringify(e) },
+      this.carrier,
+    );
+    const targets = [...new Set(relays)];
+    const pool = new SimplePool({ websocketImplementation: lookupWebSocket(opts.lookup), enablePing: false, enableReconnect: false } as never);
+    const report: PublishReport = { accepted: [], rejected: [], skipped: [] };
+    try {
+      await Promise.all(
+        targets.map(async (url) => {
+          let relay: Awaited<ReturnType<SimplePool['ensureRelay']>>;
+          try {
+            relay = await pool.ensureRelay(url, { connectionTimeout: opts.connectMs ?? this.opts.connectTimeoutMs ?? 3000 });
+          } catch (err) {
+            report.rejected.push({ url, kind: 'connection', message: `connection failure: ${errorText(err)}` });
+            return;
+          }
+          try {
+            relay.publishTimeout = opts.okMs ?? this.opts.publishTimeoutMs ?? 4400;
+            await relay.publish(event);
+            report.accepted.push(url);
+          } catch (err) {
+            const c = classifyRelayError(err);
+            if (c.duplicate) report.accepted.push(url);
+            else report.rejected.push({ url, kind: c.kind, message: c.message });
+          }
+        }),
+      );
+    } finally {
+      try {
+        pool.close(targets);
+        (pool as unknown as { destroy?: () => void }).destroy?.();
+      } catch {
+        // closing a failed connection: nothing to do
+      }
+    }
+    if (report.accepted.length === 0) {
+      throw new NoRelayAcceptedError(`no relay accepted the event: ${report.rejected.map((r) => `${r.url}: ${r.kind}: ${r.message}`).join('; ')}`, report);
+    }
+    return report;
   }
 
   onEnvelopes(me: string, handler: (envelope: unknown) => void): () => void {
