@@ -1313,8 +1313,20 @@ describe('the rdv-gateway-setup skill', () => {
     'rdv-gateway t?ken create --name x --scope read',
     'node packages/gateway/dist/src/bin.js $X set',
     './gw rdv $X grant',
+    // A safe word somewhere else is not the subcommand: $X could be "pin set".
+    'rdv-gateway $X serve',
+    'rdv-gateway --home h $X serve',
+    'rdv-gateway --home "$H" serve',
+    'gw "$(echo pin)" status',
+    './gw --home h $X logs',
+    // rdv has the same shape: options first, then a subcommand built at run time.
+    'rdv --home h $X',
+    'rdv --profile omer "$(echo contact)" grant 0f1e',
+    'rdv --home h p?n',
+    'rdv contact --home h $X',
+    'rdv --home h contact "$S" 0f1e',
   ])('the guard refuses an opaque subcommand: %s', (c) => expect(checkCommand(c)).toBeTruthy());
-  it.each(['./gw status', './gw logs tunnel', './gw logs "$SVC"', './gw rdv whoami', './gw token list', 'rdv-gateway serve --public-url "$URL" --client-ip-header cf-connecting-ip', 'sh install-gateway.sh --dry-run --tunnel own-url'])('the guard allows %s', (c) =>
+  it.each(['rdv send rdv1:abc --text "$MSG"', 'rdv --home h whoami', './gw status', './gw logs tunnel', './gw logs "$SVC"', './gw rdv whoami', './gw token list', 'rdv-gateway serve --public-url "$URL" --client-ip-header cf-connecting-ip', 'sh install-gateway.sh --dry-run --tunnel own-url'])('the guard allows %s', (c) =>
     expect(checkCommand(c)).toBeUndefined(),
   );
 });
