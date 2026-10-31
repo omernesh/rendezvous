@@ -34,10 +34,12 @@ export class Approvals {
   /** Record an ask (the same call asked again reuses its entry) and return its approval page URL. */
   ask(a: ApprovalAsk, askedBy?: string): string {
     this.sweep();
-    const key = callKey(a.tool, a.args);
+    // Keyed by who asked too (re-review of PR #120): another token asking the same call gets its own entry, so it can
+    // never take over one (its "Asked by", or a result held for the asker, such as an invite link).
+    const key = callKey(a.tool, a.args, a.principal);
     for (const p of this.byId.values()) {
-      if (callKey(p.tool, p.args) === key) {
-        Object.assign(p, { form: a.form, suggestions: a.suggestions, principal: a.principal, askedBy, changed: false });
+      if (callKey(p.tool, p.args, p.principal) === key) {
+        Object.assign(p, { form: a.form, suggestions: a.suggestions, askedBy, changed: false });
         return this.urlFor(p.id);
       }
     }
@@ -79,7 +81,8 @@ export class Approvals {
   }
 }
 
-const callKey = (tool: string, args: Record<string, unknown>) => sha256(`${tool}\u0000${JSON.stringify(args)}`);
+const callKey = (tool: string, args: Record<string, unknown>, principal: string | undefined) =>
+  sha256(`${tool}\u0000${principal ?? ''}\u0000${JSON.stringify(args)}`);
 
 export class FormInputError extends Error {}
 

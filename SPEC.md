@@ -640,7 +640,8 @@ without padding of the canonical JSON (§4.6) of:
   `wss://` to a public host: no `ws://`, no credentials, no loopback,
   private, link-local or other special-use address literal (the list of
   §7.7), no `localhost` or local-only names (`.local`, `.internal` and the
-  like). It checks again where it sends.
+  like). It checks again where it sends, and resolves the relays' names
+  only to such addresses, pinning the connection to the checked answer.
 
 **Making one.** Only the owner makes an invite, through one of the
 approvals of §5.5 (the reference: `rdv invite create` in their terminal, or

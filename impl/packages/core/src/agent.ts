@@ -28,6 +28,8 @@ import {
   verifyContactRequest,
 } from './contact.js';
 import { checkInviteRelays, type Invite, INVITE_RELAYS_MAX, INVITE_TTL_MS, inviteExpired, inviteUrl } from './invite.js';
+import { guardedLookup, type Resolver } from './filefetch.js';
+import { guardRelayLookup } from './transport/nostr.js';
 import {
   ACK_TYPE,
   ackDue,
@@ -787,10 +789,12 @@ export class Agent extends EventEmitter<AgentEvents> {
    * waits there like any request. The grant makes the contact (`contact`
    * event), as for any request sent to a card.
    */
-  async acceptInvite(invite: Invite, greeting: string, now = new Date(), opts: { unsafeAllowRelays?: readonly string[] } = {}): Promise<ContactRequest> {
+  async acceptInvite(invite: Invite, greeting: string, now = new Date(), opts: { unsafeAllowRelays?: readonly string[]; resolve?: Resolver } = {}): Promise<ContactRequest> {
     if (invite.agentId === this.id) throw new Error('that invite is your own');
     // Checked again here, whoever parsed the link: its relays are dialled at once (review of PR #120).
     checkInviteRelays(invite, opts.unsafeAllowRelays);
+    // And their names resolve only to public addresses, pinned, when the socket opens (an IP literal never resolves).
+    for (const r of invite.relays) guardRelayLookup(r, guardedLookup({ resolve: opts.resolve }));
     if (inviteExpired(invite, now)) throw new Error(`that invite expired on ${invite.expires}: ask for a new one`);
     if (this.book.contact(invite.agentId, now)) throw new Error('that agent is already a contact');
     const req = createContactRequest(this.key, this.card, { toHint: invite.agentId, greeting, invite: invite.secret, now });

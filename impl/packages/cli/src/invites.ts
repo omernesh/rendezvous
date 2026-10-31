@@ -23,10 +23,13 @@ import { clean } from './output.js';
  * `wss://` hosts (the in-memory test relay is `ws://127.0.0.1:…`), from
  * `RDV_TEST_UNSAFE_INVITE_RELAYS` (comma-separated exact URLs). Never set it
  * otherwise: an invite's relays are someone else's text (review of PR #120).
+ * Honoured only when `NODE_ENV` is `test` (vitest sets it, and the `rdv`
+ * processes the tests spawn inherit it), so a stray variable in a real
+ * environment opens nothing (re-review of PR #120).
  */
-export function unsafeInviteRelays(extra: readonly string[] = []): string[] {
-  const env = (process.env.RDV_TEST_UNSAFE_INVITE_RELAYS ?? '').split(',').map((s) => s.trim()).filter(Boolean);
-  return [...env, ...extra];
+export function unsafeInviteRelays(extra: readonly string[] = [], env: NodeJS.ProcessEnv = process.env): string[] {
+  const listed = env.NODE_ENV === 'test' ? (env.RDV_TEST_UNSAFE_INVITE_RELAYS ?? '').split(',').map((s) => s.trim()).filter(Boolean) : [];
+  return [...listed, ...extra];
 }
 
 /** How long an invite lasts: a duration (12h, 7d, 2w) or an RFC 3339 time, at most 30 days. Default 7 days. */

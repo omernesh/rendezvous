@@ -4333,13 +4333,32 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       fc00::/7, link-local, and the rest of §7.7's list, IPv4-mapped forms
       included), numeric or hex host lookalikes, single-label hosts and
       `localhost`, `.local`, `.internal`, `.lan`, `.home`, `.corp`,
-      `.home.arpa` names. Names are not resolved: a public name that
-      resolves to a private address is not caught (the connection is a
-      WebSocket to a relay, not an HTTP fetch of attacker-chosen content).
-      The test hook is an exact-URL list: `unsafeAllowRelays` in core,
-      `RDV_TEST_UNSAFE_INVITE_RELAYS` for `rdv` processes, the
-      `unsafeInviteRelays` option for rdv-mcp; none is set in real use. The
-      inviter's side is not checked: its own relays are its owner's choice.
+      `.home.arpa` names. Names are resolved safely too (re-review):
+      `acceptInvite` registers each of the link's relays with
+      `guardRelayLookup`, and every new socket this process opens to that
+      URL resolves through `guardedLookup` (filefetch's pinned lookup:
+      every answer must pass `isBlockedAddress`, and the connection is
+      pinned to the checked answer), so `127.0.0.1.nip.io` or a rebinding
+      name fails at connect. A socket already open to the same URL (our
+      own relay) is not affected; an IP literal never resolves and was
+      checked above. The test hook is an exact-URL list for the literal
+      check only: `unsafeAllowRelays` in core, the `unsafeInviteRelays`
+      option for rdv-mcp, and `RDV_TEST_UNSAFE_INVITE_RELAYS` for `rdv`
+      processes, which is honoured only under `NODE_ENV=test` (vitest sets
+      it; the processes it spawns inherit it). The inviter's side is not
+      checked: its own relays are its owner's choice.
+    - **One approval per asker** (re-review). The gateway's pending
+      approvals were merged by tool and arguments, and a merge rewrote the
+      principal: a second token asking the same `rdv_invite` "create" became
+      the asker and would have taken the held link. The key now includes the
+      principal, so another token's identical ask is its own entry (and its
+      own "Asked by"); only the same token's repeat reuses one. This covers
+      every tool, not only invites.
+    - **Pasteable lines** (re-review). `rdv_backup` names `rdv backup` /
+      `rdv restore` with the model's path only when the path is plainly safe
+      inside double quotes in sh, PowerShell and cmd (letters, digits,
+      space, `_ . - / \ : ~ +`); otherwise `"<backup file>"`. A blank "days"
+      field on the gateway's page (null) keeps the days the form showed.
     - **Suggestions through the gateway** (L5). As for `rdv_grant` there,
       the model's tier, name, label and capabilities are shown beside the
       fields; the page starts at `friend`, the profile name, no label and

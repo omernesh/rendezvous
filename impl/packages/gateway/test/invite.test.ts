@@ -83,4 +83,38 @@ describe('rdv_invite through the gateway', () => {
     const again = await api(g.base, asker, 'rdv_invite', { action: 'link', approval_id: ev.approval_id });
     expect(JSON.stringify(again.body)).toMatch(/nothing is held/);
   });
+
+  it('another token asking the same call gets its own approval and never takes the first one\'s link; a blank days field is the default', { timeout: 60_000 }, async () => {
+    root = mkdtempSync(join(tmpdir(), 'rdv-gw-invite-'));
+    const g = await startGateway(join(root, 'omer'), { relays: [relay.url], email: `omer.${process.pid}.${Date.now()}@example.com` });
+    gws.push(g);
+    const a = await g.token(['read', 'contact:request'], 'first');
+    const b = await g.token(['read', 'contact:request'], 'second');
+    const args = { action: 'create', label: 'Dana' };
+    const urlA = (await api(g.base, a, 'rdv_invite', args)).body.result.approve_url as string;
+    // The same call from another token: its own entry, not a rebinding of the first one.
+    const urlB = (await api(g.base, b, 'rdv_invite', args)).body.result.approve_url as string;
+    expect(urlB).not.toBe(urlA);
+    // A asking again reuses its own.
+    expect((await api(g.base, a, 'rdv_invite', args)).body.result.approve_url).toBe(urlA);
+
+    const br = new Browser(g.base);
+    const path = new URL(urlA).pathname;
+    await br.unlock(path);
+    const page = await br.get(urlA);
+    expect(page.text).toContain('first'); // asked by the first token
+    expect(page.text).not.toMatch(/Asked by[^<]*second/);
+    const done = await br.post(path, { csrf: hidden(page.text, 'csrf'), digest: hidden(page.text, 'digest'), decision: 'approve', f_tier: 'friend', f_expires_days: '', f_name: 'Omer', f_label: 'Dana' });
+    expect(done.status).toBe(200);
+    const link = /<pre class="msg">(https:\/\/rendezvous\.nesher\.co\/i#[A-Za-z0-9_-]+)<\/pre>/.exec(done.text)?.[1];
+    expect(link).toBeTruthy();
+
+    const ev = await waitApi(g.base, a, (e) => e.type === 'approval' && e.tool === 'rdv_invite', 'the approval event');
+    // Blank days: the form's 7, not an error.
+    expect(Date.parse(ev.result.expires) - Date.now()).toBeGreaterThan(7 * 86_400_000 - 120_000);
+    expect(JSON.stringify((await api(g.base, b, 'rdv_invite', { action: 'link', approval_id: ev.approval_id })).body)).toMatch(/nothing is held/);
+    expect((await api(g.base, a, 'rdv_invite', { action: 'link', approval_id: ev.approval_id })).body.result.url).toBe(link);
+    // B's own ask still waits for the owner, on its own page.
+    expect((await br.get(urlB)).status).toBe(200);
+  });
 });

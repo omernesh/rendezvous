@@ -7,6 +7,9 @@ import {
   type AgentKey,
   canonicalize,
   checkInviteRelays,
+  guardedLookup,
+  guardRelayLookup,
+  isRelayGuarded,
   ContactBook,
   dtopic,
   inviteRelayProblem,
@@ -342,6 +345,67 @@ describe('invite links over a relay', () => {
     await expect(dana.acceptInvite(link, 'hi')).rejects.toThrow(/not a usable invite link.*wss:\/\//);
     expect(() => parseInvite(omer.createInvite({ tier: 'friend' }).url)).toThrow(/not a usable invite link/);
     expect(dana.book.state.outstanding).toEqual({}); // nothing was sent or tracked
+  });
+});
+
+describe('invite relay names resolve only to public addresses (re-review of PR #120)', () => {
+  let relay: TestRelay;
+  let other: TestRelay;
+  const agents: Agent[] = [];
+  beforeEach(async () => {
+    relay = await startTestRelay();
+    other = await startTestRelay();
+  });
+  afterEach(async () => {
+    for (const a of agents.splice(0)) a.close();
+    await relay.close();
+    await other.close();
+  });
+  const port = (u: string) => new URL(u).port;
+  /** A stub resolver: the name answers 127.0.0.1, like 127.0.0.1.nip.io or a rebinding domain. */
+  const toLoopback = async () => [{ address: '127.0.0.1', family: 4 }];
+
+  it('a guarded name that answers a private address is refused; the same lookup allowing it connects (the hook is used)', async () => {
+    const k = generateKey();
+    const blocked = `ws://rebind-a.example:${port(relay.url)}`;
+    guardRelayLookup(blocked, guardedLookup({ resolve: toLoopback }));
+    expect(isRelayGuarded(blocked)).toBe(true);
+    const t1 = new NostrTransport({ key: k, relays: [blocked] });
+    await expect(t1.publishTopic('aaaaaaaaaaaaaaaaaaaaaaaaaa', { hello: 1 })).rejects.toThrow();
+    t1.close();
+    const allowed = `ws://rebind-b.example:${port(relay.url)}`;
+    guardRelayLookup(allowed, guardedLookup({ resolve: toLoopback, allowed: () => true }));
+    const t2 = new NostrTransport({ key: k, relays: [allowed] });
+    const report = await t2.publishTopic('aaaaaaaaaaaaaaaaaaaaaaaaaa', { hello: 2 });
+    expect(report?.accepted.length).toBe(1);
+    t2.close();
+  });
+
+  it('acceptInvite guards the link\'s relays: a name resolving to loopback never reaches the inviter', async () => {
+    const mk = (url: string, email?: string) => {
+      const a = Agent.create((key: AgentKey) => new NostrTransport({ key, relays: [url] }), {
+        rendezvous: [{ type: 'nostr', relay: url, pref: 1 }],
+        ...(email ? { discovery: { addresses: [{ type: 'email', value: email }], public_pointer: false } } : {}),
+      });
+      a.on('error', () => {});
+      a.start();
+      agents.push(a);
+      return a;
+    };
+    const omer = mk(relay.url, 'omer@example.com');
+    const made = omer.createInvite({ tier: 'friend' });
+    // The link names Omer's relay by a host name that resolves to 127.0.0.1; Dana listens elsewhere.
+    const evil = `ws://loop.example:${port(relay.url)}`;
+    const link = { ...parseInvite(made.url, { unsafeAllowRelays: [relay.url] }), relays: [evil] };
+    const dana = mk(other.url);
+    let got = false;
+    omer.on('request', () => (got = true));
+    omer.on('invite-redeemed', () => (got = true));
+    await dana.acceptInvite(link, 'hi', new Date(), { unsafeAllowRelays: [evil], resolve: toLoopback });
+    expect(isRelayGuarded(evil)).toBe(true);
+    await new Promise((r) => setTimeout(r, 1500));
+    expect(got).toBe(false);
+    expect(omer.contacts()).toEqual([]);
   });
 });
 

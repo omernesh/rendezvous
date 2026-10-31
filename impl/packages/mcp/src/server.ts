@@ -680,6 +680,16 @@ export const ALWAYS_ALLOW_FIELD = 'always_allow';
 /** Every approval form says how to approve: `approve` starts unticked, and Accept alone approves nothing. */
 export const TICK_NOTE = 'To approve, tick the box below first, then Accept. Accept with the box unticked approves nothing; Decline says no.';
 
+/**
+ * A path the model chose, for a command line the owner may paste into a
+ * shell: itself only when every character is plainly safe inside double
+ * quotes in sh, PowerShell and cmd (letters, digits, space and `_ . - / \ : ~ +`),
+ * else the placeholder (re-review of PR #120: `$(…)` survives clean()).
+ */
+export function pastePath(path: string, placeholder: string): string {
+  return /^[\p{L}\p{N} _.\-/\\:~+]{1,512}$/u.test(path) ? path : placeholder;
+}
+
 /** Throws the result for a no in a form: never an error, never an approval. */
 function declined(why: 'declined' | 'unchecked', outcome: string, extra: Record<string, unknown> = {}): never {
   throw new Declined({
@@ -3587,7 +3597,7 @@ export class RdvMcpServer {
     const home = this.home;
     if (!home.initialized()) throw new ToolError('there is no agent here to back up yet');
     const file = this.backupPath(pathArg);
-    const terminal = `rdv backup "${file}" --home "${home.dir}"`;
+    const terminal = `rdv backup "${pastePath(file, '<backup file>')}" --home "${home.dir}"`;
     // Before the form: never over a file (writing checks again, O_EXCL).
     if (existsSync(file)) throw new ToolError(`${file} already exists: a backup never replaces a file. Ask your user for a new file name.`);
     this.backupNeedsForm('create', terminal);
@@ -3645,10 +3655,10 @@ export class RdvMcpServer {
   private async backupRestore(pathArg: string) {
     const home = this.home;
     const file = this.backupPath(pathArg);
-    const terminal = `rdv restore "${file}" --home "${home.dir}"`;
+    const terminal = `rdv restore "${pastePath(file, '<backup file>')}" --home "${home.dir}"`;
     if (home.initialized()) {
       throw new ToolError(
-        `an agent already exists here (${home.dir}). Restoring would replace it and its key for good, which only your user can do, in their own terminal: rdv restore "${file}" --replace --home "${home.dir}". Nothing was changed.`,
+        `an agent already exists here (${home.dir}). Restoring would replace it and its key for good, which only your user can do, in their own terminal: rdv restore "${pastePath(file, '<backup file>')}" --replace --home "${home.dir}". Nothing was changed.`,
       );
     }
     this.backupNeedsForm('restore', terminal);
@@ -4384,7 +4394,8 @@ export class RdvMcpServer {
     if (typeof content.may_propose_meetings === 'boolean') mayMeet = content.may_propose_meetings;
     // Remote: capabilities only if the owner ticked the box on the page (it starts unticked).
     invoke = remote && content.allow_invoke !== true ? [] : formInvoke(content, invoke);
-    if (content.expires_days !== undefined) {
+    // A field left blank on the gateway's page comes back null: the days the form showed (re-review of PR #120).
+    if (content.expires_days !== undefined && content.expires_days !== null && content.expires_days !== '') {
       if (!Number.isSafeInteger(content.expires_days) || (content.expires_days as number) < 1 || (content.expires_days as number) > 30) {
         throw new ToolError('the days your user entered are not a whole number from 1 to 30. Nothing was made; ask them again.');
       }

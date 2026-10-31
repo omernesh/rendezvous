@@ -76,7 +76,8 @@ describe('rdv-mcp: two Claude sessions book dinner (in-memory relay)', () => {
       relays: [relay.url],
       root,
       tag: randomBytes(3).toString('hex'),
-      timeoutMs: 15_000,
+      // Deadlines, not delays: generous so a loaded full run (it spawns several `rdv` processes) does not time out.
+      timeoutMs: 45_000,
       approve: async (j, requestId) => {
         // The pending list shows who is asking, with the greeting quarantined.
         const pending = await j.call('rdv_pending_requests');
@@ -204,7 +205,7 @@ describe('rdv-mcp: two Claude sessions book dinner (in-memory relay)', () => {
     expect(canceled.state).toBe('canceled');
     expect(held('john')).toEqual([]);
     expect(john.home.readConsent()[`cancel:${r.taskId}`]).toBeUndefined(); // single use
-    const told = await waitEvent(omer, (e) => e.type === 'dinner' && e.task_id === r.taskId && e.kind === 'meeting-canceled', 'meeting-canceled (omer)', 15_000);
+    const told = await waitEvent(omer, (e) => e.type === 'dinner' && e.task_id === r.taskId && e.kind === 'meeting-canceled', 'meeting-canceled (omer)', 45_000);
     expect(told.summary).toContain('is off');
     expect(told.next_step).toContain('Tell your user');
     expect(told.reason).toEqual({ untrusted_peer_text: 'sick' });
@@ -220,7 +221,7 @@ describe('rdv-mcp: two Claude sessions book dinner (in-memory relay)', () => {
     await expectNoPhraseLeak(john, phrases);
     await expectNoPhraseLeak(omer, phrases);
     expect(omer.updates).toBeGreaterThan(0); // resource subscription notified
-  });
+  }, 240_000);
 
   it('elicitation path: the human approves in a form; declining grants nothing', async () => {
     const asked: string[] = [];
