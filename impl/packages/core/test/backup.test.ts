@@ -8,6 +8,8 @@ import {
   backupAgentState,
   BackupError,
   backupPassphraseProblem,
+  BACKUP_PASSPHRASE_RULES,
+  BACKUP_PASSPHRASE_MIN,
   NostrTransport,
   openBackup,
   parseBackup,
@@ -101,6 +103,8 @@ describe('backup bundle format', () => {
     expect(backupPassphraseProblem('Password123!')).toMatch(/common words/);
     expect(backupPassphraseProblem('Qwerty-Zebra-9')).toMatch(/common words/);
     expect(backupPassphraseProblem(PASS)).toBeUndefined();
+    expect(BACKUP_PASSPHRASE_RULES).toContain(`${BACKUP_PASSPHRASE_MIN} characters`);
+    expect(backupPassphraseProblem('lamp-orbit-cedar-whisk')).toBeUndefined(); // the example in the rules
   });
 
   it('keeps no open approvals, outbox or buffer in the bundle, and a restore owes every channel a notice at a new epoch', () => {

@@ -188,6 +188,10 @@ export async function openBackup(input: unknown, passphrase: string): Promise<{ 
 
 /** Minimum strength for a backup passphrase: the file may end up in cloud storage. Why it is too weak, or undefined. */
 export const BACKUP_PASSPHRASE_MIN = 12;
+/** The passphrase rules in plain words, shown BEFORE the user types one (forms, CLI intro). Keep in step with backupPassphraseProblem. */
+export const BACKUP_PASSPHRASE_RULES =
+  `At least ${BACKUP_PASSPHRASE_MIN} characters, at least 6 different ones, no spaces at the start or end, and no common words or runs such as password, qwerty, 1234, abcd, backup or the same character three times. ` +
+  'Four or more random words, like lamp-orbit-cedar-whisk, work well.';
 export function backupPassphraseProblem(p: string): string | undefined {
   if (typeof p !== 'string') return 'a passphrase';
   const chars = [...p.normalize('NFC')];

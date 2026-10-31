@@ -96,6 +96,7 @@ import {
   type Transport,
   BACKUP_PASSPHRASE_MAX,
   backupPassphraseProblem,
+  BACKUP_PASSPHRASE_RULES,
   openBackup,
   refusedMembers,
   deliverySummary,
@@ -3436,11 +3437,12 @@ export class RdvMcpServer {
     const form = await this.askForm(
       `Rendezvous: back up your agent?\n\n  Agent ID:     ${id}\n  Fingerprint:  ${fingerprint(id)}\n  File:         ${clean(file)}\n\n` +
         "The backup holds your agent's key, contacts, grants and settings, encrypted under the passphrase you choose below. " +
-        'Anyone with the file AND the passphrase can be your agent, so choose a strong one (at least 12 characters; four or more random words work well), keep it apart from the file, and never type it into the chat. ' +
+        'Anyone with the file AND the passphrase can be your agent, so choose a strong one, keep it apart from the file, and never type it into the chat. ' +
+        `Passphrase rules: ${BACKUP_PASSPHRASE_RULES}\n\n` +
         'A forgotten passphrase cannot be recovered. Only the Rendezvous server sees what you type here: your assistant never does.',
       {
         approve: { type: 'boolean', title: 'Write this backup', default: false },
-        passphrase: { type: 'string', title: 'Backup passphrase', description: 'Only the Rendezvous server sees it.', minLength: 1, maxLength: BACKUP_PASSPHRASE_MAX },
+        passphrase: { type: 'string', title: 'Backup passphrase', description: `${BACKUP_PASSPHRASE_RULES} Only the Rendezvous server sees it.`, minLength: 1, maxLength: BACKUP_PASSPHRASE_MAX },
         passphrase_again: { type: 'string', title: 'Passphrase again', description: 'The same passphrase, once more.', minLength: 1, maxLength: BACKUP_PASSPHRASE_MAX },
       },
       ['approve', 'passphrase', 'passphrase_again'],

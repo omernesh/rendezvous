@@ -8,6 +8,7 @@ import {
   type AddressCard,
   Agent,
   backupPassphraseProblem,
+  BACKUP_PASSPHRASE_RULES,
   isDocId,
   b64decode,
   canonAgentId,
@@ -1404,8 +1405,10 @@ export async function backupCmd(ctx: Ctx): Promise<void> {
 const BACKUP_INTRO = [
   '',
   'Back up this agent: its key, contacts, grants and settings, encrypted under a passphrase you choose.',
-  'Anyone with the file and the passphrase can be your agent, so pick a strong one (four or more random',
-  "words), never give it to an assistant, and keep it apart from the file. A forgotten passphrase can't be recovered.",
+  'Anyone with the file and the passphrase can be your agent, so pick a strong one,',
+  "never give it to an assistant, and keep it apart from the file. A forgotten passphrase can't be recovered.",
+  '',
+  `Passphrase rules: ${BACKUP_PASSPHRASE_RULES}`,
   '',
 ].join('\n');
 
