@@ -104,7 +104,10 @@ describe('backup bundle format', () => {
     expect(backupPassphraseProblem('Qwerty-Zebra-9')).toMatch(/common words/);
     expect(backupPassphraseProblem(PASS)).toBeUndefined();
     expect(BACKUP_PASSPHRASE_RULES).toContain(`${BACKUP_PASSPHRASE_MIN} characters`);
-    expect(backupPassphraseProblem('lamp-orbit-cedar-whisk')).toBeUndefined(); // the example in the rules
+    expect(backupPassphraseProblem('lamp-orbit-cedar-whisk')).toMatch(/example/); // the published example is refused
+    expect(backupPassphraseProblem('plum-orbit-cedar-whisk-ember')).toBeUndefined(); // the pattern with other words
+    expect(backupPassphraseProblem('Lamp Orbit Cedar Whisk')).toMatch(/example/);
+    expect(backupPassphraseProblem('lamp-orbit-cedar-whisk-ember')).toMatch(/example/); // padded copies too
   });
 
   it('keeps no open approvals, outbox or buffer in the bundle, and a restore owes every channel a notice at a new epoch', () => {

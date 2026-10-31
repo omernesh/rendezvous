@@ -191,7 +191,7 @@ export const BACKUP_PASSPHRASE_MIN = 12;
 /** The passphrase rules in plain words, shown BEFORE the user types one (forms, CLI intro). Keep in step with backupPassphraseProblem. */
 export const BACKUP_PASSPHRASE_RULES =
   `At least ${BACKUP_PASSPHRASE_MIN} characters, at least 6 different ones, no spaces at the start or end, and no common words or runs such as password, qwerty, 1234, abcd, backup or the same character three times. ` +
-  'Four or more random words, like lamp-orbit-cedar-whisk, work well.';
+  'Four or more random words work well: use your own, in the pattern of lamp-orbit-cedar-whisk (that example itself is refused).';
 export function backupPassphraseProblem(p: string): string | undefined {
   if (typeof p !== 'string') return 'a passphrase';
   const chars = [...p.normalize('NFC')];
@@ -208,6 +208,8 @@ export function backupPassphraseProblem(p: string): string | undefined {
   if (chars.length * Math.log2(Math.max(pool, 2)) < 64) return 'more length or more kinds of characters (it must resist offline guessing)';
   // The estimate above trusts the characters to be random; a short one built on a common word or run is not (security review).
   if (chars.length < 20 && COMMON.test(p.replace(/[\s_.-]+/g, ''))) return 'no common words or runs like "password", "qwerty" or "1234" (four or more random words work well)';
+  // The example the rules text shows: people copy it verbatim, whatever the length.
+  if (/lamporbitcedarwhisk/i.test(p.replace(/[\s_.-]+/g, ''))) return 'your own words: the example in the rules is refused (use a different set of four or more random words)';
   return undefined;
 }
 
