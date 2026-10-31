@@ -1300,7 +1300,21 @@ describe('the rdv-gateway-setup skill', () => {
     'the guard refuses the installer helper: %s',
     (c) => expect(checkCommand(c)).toBeTruthy(),
   );
-  it.each(['./gw status', './gw logs tunnel', './gw rdv whoami', './gw token list', 'sh install-gateway.sh --dry-run --tunnel own-url'])('the guard allows %s', (c) =>
+  // A subcommand the guard cannot read (built at run time, or a wildcard) could be any of the owner's.
+  it.each([
+    './gw $X',
+    './gw "$(echo pin)" set',
+    './gw p?n set',
+    './gw * set',
+    './gw --home h $X',
+    'gw `echo token` create',
+    'rdv-gateway "$(echo pin)" set',
+    'rdv-gateway $CMD',
+    'rdv-gateway t?ken create --name x --scope read',
+    'node packages/gateway/dist/src/bin.js $X set',
+    './gw rdv $X grant',
+  ])('the guard refuses an opaque subcommand: %s', (c) => expect(checkCommand(c)).toBeTruthy());
+  it.each(['./gw status', './gw logs tunnel', './gw logs "$SVC"', './gw rdv whoami', './gw token list', 'rdv-gateway serve --public-url "$URL" --client-ip-header cf-connecting-ip', 'sh install-gateway.sh --dry-run --tunnel own-url'])('the guard allows %s', (c) =>
     expect(checkCommand(c)).toBeUndefined(),
   );
 });

@@ -490,6 +490,8 @@ const isGateway = (w) =>
     const p = progName(x);
     return p === 'rdv-gateway' || p === 'gw' || p === 'bin.js' || /^@rendezvous\/gateway(@|$)/i.test(x);
   });
+/** Subcommands of rdv-gateway and of the installer's `gw` helper that are not the owner's (serving, looking, the service). */
+const GATEWAY_SAFE = new Set(['serve', 'status', 'logs', 'start', 'stop', 'restart', 'update', 'uninstall', 'help', '--help', '-h']);
 /** rdv commands of one word that are the human's (issue #88): the backup holds the key, the restore replaces the agent. */
 const ONE_WORD_HUMAN = ['backup', 'restore'];
 /** Every command group with human-only subcommands. The subcommand loop and the `xargs` tail check both read this, so a new group is covered in both. */
@@ -772,8 +774,9 @@ function checkWords(words, ctx, depth) {
         throw new Refusal(OPAQUE);
       }
     }
-    // rdv's next word must be a literal: not built at run time, and no wildcard the shell could expand into a subcommand.
-    if (isRdv(a) && (dynamic(b) || GLOB_CHARS.test(b))) throw new Refusal(OPAQUE);
+    // rdv's (and rdv-gateway's, and the installer's `gw`'s) next word must be a literal: not built at run time, and no
+    // wildcard the shell could expand into a subcommand.
+    if ((isRdv(a) || isGateway(a)) && (dynamic(b) || GLOB_CHARS.test(b))) throw new Refusal(OPAQUE);
     // The one-word human-only commands (issue #88): rdv backup, rdv restore (also after `npm run rdv --`).
     // The installer's `./gw backup <file>` runs rdv backup in the gateway's home.
     if (isRdv(a) || progName(a) === 'gw') {
@@ -794,6 +797,9 @@ function checkWords(words, ctx, depth) {
         if ((named && (sub || anyDynamic)) || (anyDynamic && sub)) throw new Refusal(why);
       }
     }
+    // A word built at run time anywhere after it (`gw --home h "$X"`), and no literal subcommand that is not the
+    // owner's to say what runs: it could be any of them.
+    if (anyDynamic && !later.some((w) => !dynamic(w) && GATEWAY_SAFE.has(w.toLowerCase()))) throw new Refusal(OPAQUE);
   }
   // `… | xargs rdv contact`: the arguments come from stdin, unseen.
   const feeder = lw.findIndex((w) => ['xargs', 'parallel'].includes(progName(w)));
