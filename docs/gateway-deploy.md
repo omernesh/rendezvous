@@ -4,13 +4,39 @@
 
 The gateway runs the same tools as `rdv-mcp`, minus your setup (`rdv_init`, address and relay changes, turning auto-approve on, local file paths). Nothing is approved through the assistant: a step that needs you returns an approval link, and you decide on the gateway's own PIN-locked page. Read the [threat model](../impl/packages/gateway/THREAT-MODEL.md) before you expose it, and the design notes (NOTES 89 and 93 in [impl/NOTES.md](../impl/NOTES.md)) if you want the reasons. The tool and flag reference is in the gateway section of [CLI and library](../impl/README.md).
 
-## What you need
+## Install with one command
+
+On the machine that will run it (Linux, a NAS, or macOS), in your own terminal (over `ssh -t` is fine):
+
+```bash
+curl -fsSL https://rendezvous.nesher.co/install-gateway.sh | sh
+```
+
+It asks one question at a time, with the default in brackets (press Enter to take it), and does everything in the steps below:
+
+1. **Folder**: where it lives (default `~/rendezvous-gateway`: the code in `repo/`, your agent in `data/`).
+2. **Runtime**: Docker Compose in the hardened container shown below (preferred), or Node.js 20+ as a service of your user (systemd on Linux, launchd on macOS). It says exactly what is missing if neither is ready.
+3. **Public address**: a Cloudflare Tunnel on your own domain (you paste the tunnel token from the Cloudflare dashboard; it is saved in `cloudflared.env`, mode 600, and never shown), a Cloudflare quick tunnel to try it out (a random `trycloudflare.com` address that changes on every restart), your own reverse proxy, or Tailscale Funnel. The gateway itself only ever listens on `127.0.0.1`.
+4. **Build**: clones the repository and builds it in the pinned Node image (`node:22-alpine` by digest), as your user.
+5. **Agent**: a new one (email, relays: `wss://relay.nesher.co` plus the default public relays, and whether it is findable by email), or a restore from your `.rdvbackup` file. For a restore, `rdv restore` shows the agent ID and fingerprint and asks for the passphrase itself.
+6. **PIN**: runs `rdv-gateway pin set`, which asks for the approval PIN twice, with nothing shown.
+7. **Start**: starts it, waits for `/healthz` locally and on the public address, and prints the MCP address with the steps for claude.ai, ChatGPT and Claude Code, and the `token create` command for clients that need a token (it never makes one for you).
+
+It writes `./gw` in the folder for everything after that: `./gw status`, `./gw logs` (`./gw logs tunnel`), `./gw stop` / `./gw start`, `./gw update` (pull, rebuild, restart, keeping your answers), `./gw backup <file>`, `./gw rdv <command>`, `./gw pin set`, `./gw token create ...`, `./gw oauth list`, and `./gw uninstall` (stops and removes the service; your agent stays in `data/` until you delete it). Running the installer again also updates.
+
+Every answer that is not a secret is also a flag, for a scripted install or one your assistant prepares (the `rdv-gateway-setup` skill of the Claude Code plugin does that): `--dir`, `--runtime docker|node`, `--ref`, `--port`, `--agent new|restore`, `--email` (repeat), `--relay` (repeat), `--public-pointer`, `--backup`, `--tunnel cloudflare-token|cloudflare-quick|own-url|tailscale`, `--public-url`, `--client-ip-header`, `--yes` and `--dry-run` (shows every command and file, changes nothing). See `sh install-gateway.sh --help`. The PIN, a backup passphrase and a tunnel token are never flags. It refuses to run as root; on a NAS where only root can use Docker, run it with `sudo` and `--allow-root` (the gateway still runs as uid 1000 in the locked-down container). Windows: run it inside WSL 2.
+
+With Cloudflare, turn off Email Obfuscation for the gateway's hostname (see step 4 below). The rest of this page is the same setup by hand, and what the installer writes.
+
+## By hand
+
+### What you need
 
 - A machine with Docker and the Compose plugin, and `git`.
 - A public HTTPS name for it, such as `gw.example.com`, served by a TLS tunnel (Cloudflare Tunnel is what this guide shows) or a reverse proxy that forwards to `127.0.0.1:8787`.
 - A terminal you control on that machine (over `ssh -t` is fine) for the owner-only commands.
 
-## 1. Get the code and build it
+### 1. Get the code and build it
 
 Keep the deployment in its own checkout, separate from any development copy, so an update is a deliberate step.
 
@@ -29,7 +55,7 @@ docker run --rm -u 1000:1000 -v "$PWD/repo:/app" -w /app/impl node:22-alpine \
 
 If your login user is not uid 1000, run `sudo chown -R 1000:1000 repo data` first. For a stricter pin, replace `node:22-alpine` with a full tag or `@sha256:` digest, here and in `.env` below, and use the same image for both.
 
-## 2. Compose files
+### 2. Compose files
 
 Create these three files in `~/rdv-gateway`.
 
@@ -102,7 +128,7 @@ exec docker compose run --rm gateway node packages/gateway/dist/src/bin.js "$@" 
 
 The flag names are the ones in `impl/packages/gateway/src/bin.ts`. With an `https` `--public-url` the gateway refuses to start without `--client-ip-header`, and it refuses to bind anything but a local address unless you pass `--allow-remote-bind`, which this setup never does.
 
-## 3. Create the agent and the PIN (before the first start)
+### 3. Create the agent and the PIN (before the first start)
 
 The server refuses to start until you have set an approval PIN, and with `restart: unless-stopped` a missing PIN would loop. So do these first, in your own terminal, one command at a time.
 
@@ -128,7 +154,7 @@ docker compose ps        # gateway should become "healthy"
 docker compose logs gateway
 ```
 
-### Moving to your real identity later
+#### Moving to your real identity later
 
 Do not run `init` again over a real agent. Make an encrypted backup of the real agent on the machine that has it (see the backup section of [CLI and library](../impl/README.md); you type the passphrase in your own terminal), copy the one file to the server, stop the gateway, and restore it over the test identity:
 
@@ -142,7 +168,7 @@ docker compose up -d
 
 It shows the agent ID and fingerprint in the file and asks for the passphrase. Your contacts are told on the next start, so conversations carry on. Only one machine should receive for an agent, so stop `rdv listen` or `rdv-mcp` on the old one. Delete the backup copy from the server when done, and keep the passphrase apart from the file.
 
-## 4. Expose it through a tunnel or proxy
+### 4. Expose it through a tunnel or proxy
 
 Point your TLS endpoint at `127.0.0.1:8787` and nothing else. **Never bind the gateway to the LAN or a public interface.** The gateway refuses to by default, and `network_mode: host` is only safe because it listens on loopback.
 
@@ -152,7 +178,7 @@ With a Cloudflare Tunnel, add a public hostname for `gw.example.com` whose servi
 
 With another reverse proxy, terminate TLS, forward to `http://127.0.0.1:8787`, keep the original `Host`, turn response buffering off (the MCP stream is long-lived), and set a header with the real client address that a client cannot forge, for example nginx `proxy_set_header X-Real-IP $remote_addr;` with `GW_CLIENT_IP_HEADER=x-real-ip`. The gateway uses that header to count wrong PINs per client, so a stranger cannot use up your attempts. A header the proxy does not overwrite defeats this.
 
-## 5. Check it
+### 5. Check it
 
 ```bash
 curl -s https://gw.example.com/healthz                         # {"ok":true}
@@ -164,7 +190,7 @@ curl -s https://gw.example.com/.well-known/oauth-protected-resource
 
 From a different machine on your LAN, `curl http://<server-lan-address>:8787/healthz` must be refused. If it answers, the gateway is bound too widely: stop it and look at the `--host` value.
 
-## 6. Connect your assistants
+### 6. Connect your assistants
 
 The MCP address is `https://gw.example.com/mcp`.
 
@@ -177,7 +203,7 @@ OAuth connectors send your browser to the gateway's consent page. **Check the re
 
 See and end connections with `./gw oauth list` and `./gw oauth revoke <cli_...|grt_...>`.
 
-## Several agents on one gateway
+### Several agents on one gateway
 
 One gateway can serve several agents: yours and a second one for another assistant, or a family's. `data/` becomes the gateway's root: the PIN, tokens and OAuth state stay there, and each further agent is a normal home in `data/agents/<name>/`. Your existing agent in `data/` keeps working as it is. Every token and every OAuth connection reaches exactly one agent and nothing of the others. One PIN unlocks the approval page for all of them, and every approval says which agent it is for (name and fingerprint), so only put agents on one gateway that you would trust to one machine.
 
@@ -194,7 +220,9 @@ Each agent has its own MCP address, `https://gw.example.com/a/kids/mcp` (REST un
 
 `./gw agent remove kids` moves the agent to `data/agents/.removed/`, key and all (delete it yourself once you have a backup); it refuses while the gateway runs or while tokens or connections still reach it (`--force` revokes them). To have your first agent in `data/agents/` too, stop the gateway and run `./gw agent migrate`: it copies, checks the copy, and keeps the originals in `data/.premigrate-<time>/`. Migrating is optional.
 
-## 7. Update
+With the one-command install, the same commands run through its `./gw` helper (`./gw agent add kids new --email kids@example.com`, `./gw agent list`, `./gw token create --agent kids …`, in your own terminal), then `./gw restart`. The installer prints each agent's MCP address at the end.
+
+### 7. Update
 
 ```bash
 cd ~/rdv-gateway/repo && git fetch origin && git checkout <tag-or-commit> && cd ..

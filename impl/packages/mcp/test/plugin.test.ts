@@ -1248,6 +1248,63 @@ describe('backup and restore are the human’s (issue #88)', () => {
   });
 });
 
+describe('the rdv-gateway-setup skill', () => {
+  const md = readFileSync(join(SKILLS, 'rdv-gateway-setup', 'SKILL.md'), 'utf8').replace(/\r\n/g, '\n');
+  const fm = /^---\n([\s\S]*?)\n---\n/.exec(md)?.[1] ?? '';
+  const description = /^description: (.+)$/m.exec(fm)?.[1] ?? '';
+
+  it('is a plugin skill that triggers on gateway setup requests', () => {
+    expect(/^name: (.+)$/m.exec(fm)?.[1]).toBe('rdv-gateway-setup');
+    expect(description.length).toBeGreaterThan(50);
+    expect(description.length).toBeLessThanOrEqual(1024);
+    for (const t of ['set up my gateway', 'deploy the rendezvous gateway', 'connect claude.ai to my agent', 'connect chatgpt to my agent']) {
+      expect(description, t).toContain(t);
+    }
+    expect(description).toMatch(/one question at a time/);
+    expect(fm).not.toMatch(/^disable-model-invocation:\s*true/m);
+    // The rendezvous skill and the plugin README hand off to it.
+    expect(readFileSync(join(SKILL_DIR, 'SKILL.md'), 'utf8')).toContain('`rdv-gateway-setup`');
+    expect(readFileSync(join(PLUGIN, 'README.md'), 'utf8')).toContain('skills/rdv-gateway-setup/SKILL.md');
+  });
+
+  it('asks one question per turn and verifies every step', () => {
+    expect(md).toMatch(/\*\*Ask ONE question per turn\.\*\*/);
+    expect(md).toMatch(/Never put two questions in one message/);
+    expect(md).toContain('AskUserQuestion');
+    const steps = [...md.matchAll(/^## Step (\d+) of (\d+):/gm)];
+    expect(steps.map((m) => Number(m[1]))).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+    for (const m of steps) expect(m[2]).toBe('8');
+    expect(md).toMatch(/"Step N of 8 done\."/);
+    expect(md).toMatch(/A verification, with its visible result/);
+    expect(md).toMatch(/\*\*Resume\.\*\*/);
+    expect(md).toMatch(/"Add another email\?" as a question of its\s+own/);
+  });
+
+  it("keeps every secret out of the chat and the owner commands in the user's own terminal", () => {
+    expect(md).toContain('${CLAUDE_PLUGIN_ROOT}/skills/rendezvous/SKILL.md');
+    expect(md).toMatch(/\*\*Secrets never pass through the chat\.\*\*/);
+    expect(md.replace(/\s+/g, ' ')).toMatch(/Never ask for them, never accept them/);
+    expect(md).toMatch(/Never download or run the installer yourself/);
+    for (const c of ['rdv-gateway pin', 'rdv restore', 'token create']) expect(md).toContain(c);
+    expect(consentViolations(md)).toEqual([]);
+    // The installer command it hands over carries only non-secret flags.
+    const run = /^sh install-gateway\.sh (.+)$/m.exec(md)?.[1] ?? '';
+    expect(run).toMatch(/--tunnel \S+/);
+    expect(run).not.toMatch(/--(pin|token|passphrase|password)\b/);
+    // Every flag it names exists in the installer.
+    const installer = readFileSync(join(REPO, 'site', 'install-gateway.sh'), 'utf8');
+    for (const f of new Set([...md.matchAll(/`(--[a-z-]+)/g)].map((m) => m[1]))) expect(installer, f).toContain(`  ${f}`);
+  });
+
+  it.each(['./gw pin set', './gw token create --name x --scope read', '~/rendezvous-gateway/gw token revoke tok_1', './gw oauth revoke cli_x', './gw backup ~/b.rdvbackup', './gw rdv contact grant 0f1e'])(
+    'the guard refuses the installer helper: %s',
+    (c) => expect(checkCommand(c)).toBeTruthy(),
+  );
+  it.each(['./gw status', './gw logs tunnel', './gw rdv whoami', './gw token list', 'sh install-gateway.sh --dry-run --tunnel own-url'])('the guard allows %s', (c) =>
+    expect(checkCommand(c)).toBeUndefined(),
+  );
+});
+
 describe('xargs cannot feed any human-only command group (issue #58)', () => {
   it.each(['contact', 'dinner', 'task', 'file', 'owner-secret', 'relays', 'group'])('echo x | xargs rdv %s is refused', (g) => {
     expect(checkCommand(`echo x | xargs rdv ${g}`)).toBeTruthy();

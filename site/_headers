@@ -22,6 +22,10 @@
   ! Content-Type
   Content-Type: text/plain; charset=utf-8
 
+/install-gateway.sh
+  ! Content-Type
+  Content-Type: text/plain; charset=utf-8
+
 # llms.txt, robots.txt and the markdown twins of the docs: text, never rendered as a page.
 /*.txt
   ! Content-Type

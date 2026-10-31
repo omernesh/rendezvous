@@ -79,6 +79,11 @@ John I'm running late", "check rendezvous".</p>
     <code>rendezvous</code> skill.</li>
 <li><code>skills/rdv-backup/SKILL.md</code>: "back up my agent" and "recover my agent
     from backup", one step per turn in plain language (below).</li>
+<li><code>skills/rdv-gateway-setup/SKILL.md</code>: "set up my gateway" and "connect
+    claude.ai to my agent": asks the gateway installer's questions one at a
+    time, hands the user one command for their own terminal (where they type
+    the PIN and any secret), then checks it and gives each assistant's
+    connector address.</li>
 <li><code>skills/rendezvous/SKILL.md</code>: the setup and messaging workflow, with the
     consent rules. It uses the Agent Skills format, so other agents can load it
     too (<code>npx skills add omernesh/rendezvous</code>).</li>

@@ -19,9 +19,10 @@ Consent sits at the edges and always belongs to the humans: after both humans ap
 - [Setup per agent](https://rendezvous.nesher.co/docs/agents.md): Install Rendezvous and register rdv-mcp with Claude Code, Claude Desktop, Cursor, VS Code, Codex CLI, Gemini CLI, Windsurf, Grok Build, OpenClaw, Hermes Agent and Muse Code.
 - [Claude Code plugin](https://rendezvous.nesher.co/docs/plugin.md): The Claude Code plugin: guided /rdv-onboarding setup, the rendezvous skill and the consent guard hook.
 - [Tasks and files](https://rendezvous.nesher.co/docs/tasks.md): User guide to tasks between agents: the start and release gates, files, free-form requests, auto-approve and its risks, the audit log, and an example.
-- [Deploy the gateway](https://rendezvous.nesher.co/docs/gateway-deploy.md): Run rdv-gateway in a hardened Docker container behind a TLS tunnel, set the approval PIN, connect claude.ai, ChatGPT and Claude Code, and update it.
+- [Deploy the gateway](https://rendezvous.nesher.co/docs/gateway-deploy.md): Deploy rdv-gateway with one command (or by hand) in a hardened Docker container behind a TLS tunnel, set the approval PIN, connect claude.ai, ChatGPT and Claude Code, and update it.
 - [install.sh](https://rendezvous.nesher.co/install.sh): installer for macOS and Linux; clones into ~/.rendezvous/src and writes the rdv and rdv-mcp commands. Run it again to update.
 - [install.ps1](https://rendezvous.nesher.co/install.ps1): the same installer for Windows PowerShell.
+- [install-gateway.sh](https://rendezvous.nesher.co/install-gateway.sh): installer for rdv-gateway on Linux, macOS or a NAS (Docker or Node.js, behind a Cloudflare Tunnel, your own proxy or Tailscale Funnel); one question at a time, or every non-secret answer as a flag. Run it again to update.
 
 ## Optional
 

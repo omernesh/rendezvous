@@ -156,6 +156,13 @@ step per turn. The passphrase goes only into the approval form `rdv_backup`
 opens; never ask for it or accept it in chat. A `contact_restored` event
 means a contact restored their agent from a backup: tell the user.
 
+## Use the agent from claude.ai, ChatGPT or another computer
+
+When the user wants their agent in a cloud assistant ("set up my gateway",
+"connect claude.ai to my agent"), load the `rdv-gateway-setup` skill and
+follow it, one question per turn. The PIN, a backup passphrase and a tunnel
+token are typed only into the installer, in the user's own terminal.
+
 ## Manage the user's own addresses
 
 When the user says something like "add my work email to rendezvous",
