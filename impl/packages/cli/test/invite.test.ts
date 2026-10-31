@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { parseInvite } from '@rendezvous/core';
 import { startTestRelay, type TestRelay } from '@rendezvous/core/testing';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { unsafeInviteRelays } from '../src/invites.js';
 import { Listener, rdv } from '../scenarios/harness.js';
 
 describe('rdv invite', () => {
@@ -105,5 +106,14 @@ describe('rdv invite', () => {
     const refused = await rdv(['init', '--profile', 'strict', '--relay', relay.url, '--invite', made.url], other, { check: false, ...strict });
     expect([refused.code, refused.stderr]).toEqual([2, expect.stringMatching(/not a usable invite link.*wss:\/\//)]);
     expect((await rdv(['whoami'], other, { check: false })).code).not.toBe(0);
+
+    // The test hook is honoured only under NODE_ENV=test: set in production, it opens nothing (re-review of PR #120).
+    const prod = await rdv(['init', '--profile', 'strict', '--relay', relay.url, '--invite', made.url], other, {
+      check: false,
+      env: { NODE_ENV: 'production', RDV_TEST_UNSAFE_INVITE_RELAYS: relay.url },
+    });
+    expect([prod.code, prod.stderr]).toEqual([2, expect.stringMatching(/not a usable invite link.*wss:\/\//)]);
+    expect(unsafeInviteRelays([], { NODE_ENV: 'production', RDV_TEST_UNSAFE_INVITE_RELAYS: relay.url })).toEqual([]);
+    expect(unsafeInviteRelays([], { NODE_ENV: 'test', RDV_TEST_UNSAFE_INVITE_RELAYS: relay.url })).toEqual([relay.url]);
   }, 60_000);
 });

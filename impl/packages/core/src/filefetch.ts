@@ -184,6 +184,17 @@ function pinnedLookup(allowed: (ip: string) => boolean, resolve: Resolver): Look
   }) as unknown as LookupFunction;
 }
 
+/**
+ * A `lookup` for a socket to a host someone else named (an invite's relay,
+ * NOTES 101): it resolves the name, refuses if any answer is a blocked
+ * address (isBlockedAddress, or what `allowed` refuses), and pins the
+ * connection to one checked answer, so a rebinding name can't switch after
+ * the check. `resolve` replaces the system resolver (tests).
+ */
+export function guardedLookup(opts: { resolve?: Resolver; allowed?: (ip: string) => boolean } = {}): LookupFunction {
+  return pinnedLookup(opts.allowed ?? ((ip) => !isBlockedAddress(ip)), opts.resolve ?? systemResolver);
+}
+
 /** Resolves a host name to every address it has. */
 export type Resolver = (hostname: string) => Promise<LookupAddress[]>;
 

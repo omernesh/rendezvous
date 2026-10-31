@@ -168,5 +168,17 @@ describe('invite links from the chat', () => {
     expect(r.text).toContain('--invoke <capability-uri>');
     expect(r.text).not.toMatch(/touch pwned|`id`|x;rm/);
     expect(plain.humanLog.join('\n')).not.toMatch(/touch pwned|`id`|x;rm/);
+
+    // The same for the backup and restore lines (re-review of PR #120): a model-chosen path with shell syntax is a placeholder.
+    const evil = join(root, 'b$(touch pwned).rdvbackup');
+    for (const action of ['create', 'restore'] as const) {
+      const b = await plain.call('rdv_backup', { action, path: evil });
+      expect(b.isError).toBe(true);
+      expect(b.text).toContain(`rdv ${action === 'create' ? 'backup' : 'restore'} "<backup file>"`);
+      expect(b.text).not.toContain('touch pwned');
+    }
+    expect(plain.humanLog.join('\n')).not.toContain('touch pwned');
+    const fine = join(root, 'my backup.rdvbackup');
+    expect((await plain.call('rdv_backup', { action: 'create', path: fine })).text).toContain(`rdv backup "${fine}"`);
   }, 30_000);
 });

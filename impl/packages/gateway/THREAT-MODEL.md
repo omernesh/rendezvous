@@ -218,7 +218,10 @@ owner, escaped, on the page that approved it, and held in memory for 24 hours
 for the principal that asked, which takes it once with `rdv_invite` "link"
 and the `approval_id` (scope `contact:request`, and the principal must be the
 one that asked; another token, or a second try, gets nothing). A restart
-drops what is held; the owner still has the page. The model's tier, name,
+drops what is held; the owner still has the page. Pending approvals are
+keyed by the asking principal as well as the call, so another token asking
+the same call gets its own entry and can never take over one (its "Asked
+by", or what is held for its asker). The model's tier, name,
 label and capabilities for an invite are suggestions beside the fields; the
 page starts at `friend`, the profile name, no label and the capabilities
 unticked.

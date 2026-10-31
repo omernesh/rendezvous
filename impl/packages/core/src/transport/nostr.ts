@@ -11,6 +11,7 @@ import type { Filter } from 'nostr-tools/filter';
 import { SimplePool, useWebSocketImplementation } from 'nostr-tools/pool';
 import { type Event, finalizeEvent, getPublicKey } from 'nostr-tools/pure';
 import { normalizeURL } from 'nostr-tools/utils';
+import type { LookupFunction } from 'node:net';
 import WebSocket from 'ws';
 import { bytesToHex, canonicalize } from '../encoding.js';
 import type { Envelope } from '../envelope.js';
@@ -89,11 +90,47 @@ export const MAX_EVENT_CONTENT = 128 * 1024;
 // nostr-tools still sees errors through `onerror` while it is attached.
 class QuietWebSocket extends WebSocket {
   constructor(...args: ConstructorParameters<typeof WebSocket>) {
-    super(...args);
+    const [address, protocols, options] = args;
+    const lookup = guardedRelays.get(relayKey(String(address)));
+    if (lookup) {
+      // A relay someone else named (an invite's): its name resolves only to public addresses, pinned (review of PR #120).
+      const opts = (protocols && typeof protocols === 'object' && !Array.isArray(protocols) ? protocols : options) ?? {};
+      super(address, Array.isArray(protocols) || typeof protocols === 'string' ? protocols : [], { ...(opts as object), lookup } as never);
+    } else super(...args);
     this.on('error', () => {});
   }
 }
 useWebSocketImplementation(QuietWebSocket);
+
+/** Relays someone else named, by normalized URL: every new socket to one resolves through its lookup. */
+const guardedRelays = new Map<string, LookupFunction>();
+const GUARDED_MAX = 256;
+const relayKey = (url: string): string => {
+  try {
+    return normalizeURL(url);
+  } catch {
+    return url;
+  }
+};
+
+/**
+ * From now on, every socket this process opens to `url` resolves its host
+ * through `lookup` (guardedLookup: no private, loopback or other blocked
+ * answer, pinned). For relays from an invite link (NOTES 101), which the
+ * literal check alone can't cover: `127.0.0.1.nip.io` or a rebinding name.
+ * A socket already open to it is not affected.
+ */
+export function guardRelayLookup(url: string, lookup: LookupFunction): void {
+  const k = relayKey(url);
+  guardedRelays.delete(k);
+  guardedRelays.set(k, lookup);
+  while (guardedRelays.size > GUARDED_MAX) guardedRelays.delete(guardedRelays.keys().next().value as string);
+}
+
+/** Whether new sockets to `url` resolve through a guard (guardRelayLookup). */
+export function isRelayGuarded(url: string): boolean {
+  return guardedRelays.has(relayKey(url));
+}
 
 export interface NostrTransportOptions {
   key: AgentKey;
