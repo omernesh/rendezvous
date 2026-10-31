@@ -32,7 +32,7 @@ args = []
 
 Options go in `args`: `--profile <name>` or `--home <dir>` (default
 `~/.rendezvous/default`), `--calendar cal.json --window "next week evenings" --tz +02:00`
-for dinner negotiation. After editing the config, restart the client or
+for meeting negotiation (optional). After editing the config, restart the client or
 reconnect the server. Full reference: `impl/packages/mcp/README.md` in the
 repository.
 

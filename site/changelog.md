@@ -6,6 +6,9 @@ The format follows Keep a Changelog. One line per change a user can see; PR numb
 
 ## Unreleased
 
+### Changed
+- The docs, site, plugin and MCP server text now describe Rendezvous as cross-platform secure agent-to-agent messaging, with meeting scheduling as one example. The CLI reference follows the order you use it (identity, contacts, messages, tasks and files, groups, backups), and the FAQ shows the current version.
+
 ### Fixed
 - The backup form and `rdv backup` now tell you the passphrase rules up front (length, variety, no common words) instead of only after you submit.
 
