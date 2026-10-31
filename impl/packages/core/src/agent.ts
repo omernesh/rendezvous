@@ -27,7 +27,7 @@ import {
   MEETING_CAPABILITIES,
   verifyContactRequest,
 } from './contact.js';
-import { type Invite, INVITE_RELAYS_MAX, INVITE_TTL_MS, inviteExpired, inviteUrl } from './invite.js';
+import { checkInviteRelays, type Invite, INVITE_RELAYS_MAX, INVITE_TTL_MS, inviteExpired, inviteUrl } from './invite.js';
 import {
   ACK_TYPE,
   ackDue,
@@ -265,6 +265,8 @@ export interface AgentEvents {
   request: [PendingRequest];
   /** A contact request carried the secret of an open invite of ours: granted on the invite's terms, and the invite is used up. */
   'invite-redeemed': [InviteRedeemed];
+  /** A request carrying the secret of an open invite of ours came on a public topic: the invite was revoked (anyone may have read it). */
+  'invite-exposed': [{ invite: InviteView; from: string }];
   /** A grant answering one of our topic probes, waiting for our human (confirmCandidate / rejectCandidate). */
   candidate: [GrantCandidate];
   /** Answers to one of our probes were dropped (too many). Emitted on the first drop per probe; see probeOverflows(). */
@@ -785,8 +787,10 @@ export class Agent extends EventEmitter<AgentEvents> {
    * waits there like any request. The grant makes the contact (`contact`
    * event), as for any request sent to a card.
    */
-  async acceptInvite(invite: Invite, greeting: string, now = new Date()): Promise<ContactRequest> {
+  async acceptInvite(invite: Invite, greeting: string, now = new Date(), opts: { unsafeAllowRelays?: readonly string[] } = {}): Promise<ContactRequest> {
     if (invite.agentId === this.id) throw new Error('that invite is your own');
+    // Checked again here, whoever parsed the link: its relays are dialled at once (review of PR #120).
+    checkInviteRelays(invite, opts.unsafeAllowRelays);
     if (inviteExpired(invite, now)) throw new Error(`that invite expired on ${invite.expires}: ask for a new one`);
     if (this.book.contact(invite.agentId, now)) throw new Error('that agent is already a contact');
     const req = createContactRequest(this.key, this.card, { toHint: invite.agentId, greeting, invite: invite.secret, now });
@@ -1428,6 +1432,9 @@ export class Agent extends EventEmitter<AgentEvents> {
     // re-posted on our topic, is not a probe for us.
     const ours = this.topics();
     if (!ours.includes(topic) || topicForHint(doc.to_hint) !== topic) return this.drop('topic doc is not a probe for this topic');
+    // An invite secret on a public topic is spent: revoke that invite and tell the owner (it is never redeemed here).
+    const exposed = this.book.exposeInvite(doc);
+    if (exposed) this.emit('invite-exposed', { invite: exposed, from: doc.from });
     await this.handleContactRequest(doc, 'claimed', 'topic');
   }
 

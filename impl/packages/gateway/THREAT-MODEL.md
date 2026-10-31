@@ -208,6 +208,21 @@ client (60 a minute). The legacy SSE transport (`/sse`, posts to `/messages`)
 uses the same bearer check, and a session belongs to the principal that
 opened it.
 
+**What an approved step makes for its asker stays with its asker** (NOTES
+101, review of PR #120). Every token reads the same `rdv_inbox`, because the
+`approval` events live in the home's shared `events.jsonl`. An approved
+`rdv_invite` "create" makes a bearer link (whoever redeems it first becomes
+a contact), so its `url` and `share_text` are never in that event: the event
+carries the rest and says the link is held. The link is shown once to the
+owner, escaped, on the page that approved it, and held in memory for 24 hours
+for the principal that asked, which takes it once with `rdv_invite` "link"
+and the `approval_id` (scope `contact:request`, and the principal must be the
+one that asked; another token, or a second try, gets nothing). A restart
+drops what is held; the owner still has the page. The model's tier, name,
+label and capabilities for an invite are suggestions beside the fields; the
+page starts at `friend`, the profile name, no label and the capabilities
+unticked.
+
 ## Known limits and open risks
 
 - The PIN backoff trades guessing against lock-out. Without

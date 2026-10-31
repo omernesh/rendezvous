@@ -40,9 +40,10 @@ function human(...answers: Array<Record<string, unknown> | 'decline'>): { handle
   };
 }
 
-async function side(name: string, opts: { elicit?: ElicitHandler } = {}, init = true) {
+async function side(name: string, opts: { elicit?: ElicitHandler; formWaitMs?: number; strict?: boolean } = {}, init = true) {
   root ??= mkdtempSync(join(tmpdir(), 'rdv-invite-mcp-'));
-  const s = await makeSide(name, join(root, name), opts);
+  // The test relay is ws://127.0.0.1: allowed only through the test option (review of PR #120); `strict` leaves it out.
+  const s = await makeSide(name, join(root, name), { ...opts, ...(opts.strict ? {} : { unsafeInviteRelays: [relay.url] }) });
   sides.push(s);
   if (init) await ok(s, 'rdv_init', { profile: name, email: `${name}+${randomBytes(3).toString('hex')}@example.com`, relays: [relay.url] });
   return s;
@@ -64,7 +65,7 @@ describe('invite links from the chat', () => {
     expect(Date.parse(made.expires) - Date.now()).toBeGreaterThan(3 * 86_400_000 - 60_000);
     expect(Date.parse(made.expires) - Date.now()).toBeLessThan(3 * 86_400_000 + 60_000);
     expect(made.share_text).toContain(made.url);
-    const link = parseInvite(made.url);
+    const link = parseInvite(made.url, { unsafeAllowRelays: [relay.url] });
     expect(readFileSync(join(omer.home.dir, 'agent.json'), 'utf8')).not.toContain(link.secret);
     const omerId = (await ok(omer, 'rdv_status')).agent_id as string;
 
@@ -122,11 +123,50 @@ describe('invite links from the chat', () => {
 
     const bad = await plain.call('rdv_accept_invite', { invite: 'https://rendezvous.nesher.co/i#nope' });
     expect([bad.isError, bad.text]).toEqual([true, expect.stringContaining('not an invite')]);
-    const expired = inviteUrl({ ...parseInvite(made.url), secret: newInviteSecret(), expires: new Date(Date.now() - 1000).toISOString() });
+    const expired = inviteUrl({ ...parseInvite(made.url, { unsafeAllowRelays: [relay.url] }), secret: newInviteSecret(), expires: new Date(Date.now() - 1000).toISOString() });
     expect((await plain.call('rdv_accept_invite', { invite: expired })).text).toContain('expired');
     // rdv_init with a bad link makes nothing.
     const fresh = await side('fresh', {}, false);
     expect((await fresh.call('rdv_init', { profile: 'fresh', relays: [relay.url], invite: 'nope' })).isError).toBe(true);
     expect(fresh.home.initialized()).toBe(false);
+
+    // L4: without the test option, a link naming a ws:// (or local) relay is refused and nothing is made.
+    const strict = await side('strict', { strict: true }, false);
+    const strictInit = await strict.call('rdv_init', { profile: 'strict', relays: [relay.url], invite: made.url });
+    expect([strictInit.isError, strictInit.text]).toEqual([true, expect.stringMatching(/not a usable invite link.*wss:\/\//)]);
+    expect(strict.home.initialized()).toBe(false);
   }, 90_000);
+
+  it('M1: approved after the call returned, the link is kept out of events.jsonl and handed to the asking client once', async () => {
+    root = mkdtempSync(join(tmpdir(), 'rdv-invite-mcp-'));
+    const h = human({});
+    const omer = await side('omer', { elicit: h.handler, formWaitMs: 0 });
+    const asked = await ok(omer, 'rdv_invite', { action: 'create', label: 'Dana' });
+    expect(asked).toMatchObject({ status: 'awaiting_human', via: 'approval form' });
+    const ev = await waitEvent(omer, (e) => e.type === 'approval' && e.tool === 'rdv_invite', 'the approval', 15_000);
+    expect(ev.outcome).toBe('decided');
+    expect(ev.result).toMatchObject({ created: true, local_label: 'Dana' });
+    expect(ev.result.url).toBeUndefined();
+    expect(ev.result.share_text).toBeUndefined();
+    expect(ev.held_for_you).toContain('rdv_invite action "link"');
+    const got = await ok(omer, 'rdv_invite', { action: 'link', approval_id: ev.approval_id });
+    expect(got.url).toMatch(/^https:\/\/rendezvous\.nesher\.co\/i#/);
+    const secret = parseInvite(got.url, { unsafeAllowRelays: [relay.url] }).secret;
+    expect(readFileSync(join(omer.home.dir, 'events.jsonl'), 'utf8')).not.toContain(got.url.split('#')[1]);
+    expect(readFileSync(join(omer.home.dir, 'events.jsonl'), 'utf8')).not.toContain(secret);
+    const again = await omer.call('rdv_invite', { action: 'link', approval_id: ev.approval_id });
+    expect([again.isError, again.text]).toEqual([true, expect.stringContaining('nothing is held')]);
+  }, 60_000);
+
+  it('L3: the terminal command named without a form carries no text from the model', async () => {
+    root = mkdtempSync(join(tmpdir(), 'rdv-invite-mcp-'));
+    const plain = await side('plain');
+    const r = await plain.call('rdv_invite', { action: 'create', name: 'Omer $(touch pwned)', label: '`id` Dana', invoke: ['https://example.com/x;rm'] });
+    expect(r.isError).toBe(true);
+    expect(r.text).toContain('rdv invite create --tier friend');
+    expect(r.text).toContain('--name "<your name>" --label "<their name>"');
+    expect(r.text).toContain('--invoke <capability-uri>');
+    expect(r.text).not.toMatch(/touch pwned|`id`|x;rm/);
+    expect(plain.humanLog.join('\n')).not.toMatch(/touch pwned|`id`|x;rm/);
+  }, 30_000);
 });

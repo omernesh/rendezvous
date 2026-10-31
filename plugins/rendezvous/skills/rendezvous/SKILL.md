@@ -281,7 +281,9 @@ WhatsApp-style "join me" message.
    and names `rdv invite create`, which they run in their own terminal; you
    never run it. An invite gives at most `friend`; closer tiers are granted
    once they are a contact (`rdv_grant` with `agent_id`).
-3. The result (or the `approval` event's result) has `url` and `share_text`.
+3. The result has `url` and `share_text`. If your user approved after the
+   call returned, the `approval` event does not carry them: call
+   `rdv_invite` with `action: "link"` and its `approval_id` (once).
    Give the user `share_text` to send themselves, adapted to the channel if
    they ask (keep the link intact, at the end). It is shown only once: never
    post it anywhere public or send it to anyone else, and do not repeat it

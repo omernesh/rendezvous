@@ -635,6 +635,12 @@ without padding of the canonical JSON (§4.6) of:
   unverified and never use it as the contact's local label without their
   owner's approval. A signature would add 86 characters and prove nothing
   the secret does not.
+- The invitee's agent dials the relays in `r` at once, and the link is
+  someone else's text, so a reader MUST refuse a link whose relays are not
+  `wss://` to a public host: no `ws://`, no credentials, no loopback,
+  private, link-local or other special-use address literal (the list of
+  §7.7), no `localhost` or local-only names (`.local`, `.internal` and the
+  like). It checks again where it sends.
 
 **Making one.** Only the owner makes an invite, through one of the
 approvals of §5.5 (the reference: `rdv invite create` in their terminal, or
@@ -666,7 +672,14 @@ with the fingerprint, so a link that reached the wrong person is caught and
 the contact can be revoked. Anything else (a wrong, used, revoked or
 expired secret, or one that came on a topic) is an ordinary request from
 there on: it waits for the owner, so the requester learns nothing about
-the secret it sent. A `block` policy or a blocked key still wins.
+the secret it sent. A `block` policy or a blocked key still wins. A secret
+that matches an open invite but came on a topic was public: the agent
+revokes that invite and tells its owner.
+
+A host MUST NOT write the link anywhere other parties read (a shared event
+log, a page another client sees); it goes to the one who asked and to the
+owner. A restore from a backup MUST revoke the invites still open in it:
+one may have been used since the backup was made.
 
 **Consent.** Granting on the strength of the secret alone does not break
 §5.5: the owner decided before the request existed, on terms they saw, and

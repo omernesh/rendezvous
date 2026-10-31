@@ -18,6 +18,17 @@ import { type Ctx, invokeScope, tierOf, withAgent } from './commands.js';
 import { CliError, type Home } from './home.js';
 import { clean } from './output.js';
 
+/**
+ * TEST ONLY: relays an invite link may name although they are not public
+ * `wss://` hosts (the in-memory test relay is `ws://127.0.0.1:…`), from
+ * `RDV_TEST_UNSAFE_INVITE_RELAYS` (comma-separated exact URLs). Never set it
+ * otherwise: an invite's relays are someone else's text (review of PR #120).
+ */
+export function unsafeInviteRelays(extra: readonly string[] = []): string[] {
+  const env = (process.env.RDV_TEST_UNSAFE_INVITE_RELAYS ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+  return [...env, ...extra];
+}
+
 /** How long an invite lasts: a duration (12h, 7d, 2w) or an RFC 3339 time, at most 30 days. Default 7 days. */
 export function parseInviteExpiry(v: string | undefined, now = new Date()): string {
   const t = now.getTime();
@@ -83,15 +94,15 @@ export function inviteListView(v: InviteView) {
     ...(v.name !== undefined ? { name: v.name } : {}),
     ...(v.label !== undefined ? { label: v.label } : {}),
     ...(v.used ? { redeemed_at: v.used.at, redeemed_by: v.used.by, redeemed_by_fingerprint: fingerprint(v.used.by) } : {}),
-    ...(v.revoked ? { revoked_at: v.revoked } : {}),
+    ...(v.revoked ? { revoked_at: v.revoked, revoked_by: v.revokedBy ?? 'owner' } : {}),
   };
 }
 
 /** A link our human was given, read and checked (expiry, not our own): CliError with the reason otherwise. */
-export function readInvite(text: string, agent?: Agent): Invite {
+export function readInvite(text: string, agent?: Agent, opts: { unsafeAllowRelays?: readonly string[] } = {}): Invite {
   let inv: Invite;
   try {
-    inv = parseInvite(text);
+    inv = parseInvite(text, { unsafeAllowRelays: unsafeInviteRelays(opts.unsafeAllowRelays) });
   } catch (err) {
     throw new CliError((err as Error).message, 2);
   }
@@ -110,14 +121,14 @@ export interface AcceptResult {
 }
 
 /** Send the contact request an invite asks for. Call inside `withAgent`. */
-export async function acceptInviteIn(agent: Agent, inv: Invite, greeting: string): Promise<AcceptResult> {
+export async function acceptInviteIn(agent: Agent, inv: Invite, greeting: string, opts: { unsafeAllowRelays?: readonly string[] } = {}): Promise<AcceptResult> {
   let req;
   try {
-    req = await agent.acceptInvite(inv, greeting);
+    req = await agent.acceptInvite(inv, greeting, new Date(), { unsafeAllowRelays: unsafeInviteRelays(opts.unsafeAllowRelays) });
   } catch (err) {
     if (err instanceof CliError) throw err;
     const msg = (err as Error).message;
-    throw /already a contact|your own|expired/.test(msg) ? new CliError(msg) : err;
+    throw /already a contact|your own|expired|not a usable invite/.test(msg) ? new CliError(msg) : err;
   }
   return {
     request_id: req.id,
