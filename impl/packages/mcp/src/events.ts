@@ -315,6 +315,20 @@ export function toModelEvent(e: Raw, negotiating: boolean): Omit<McpEvent, 'n' |
         tier: oneOf(TIERS)(e.tier),
         binding: oneOf(BINDINGS)(e.binding),
       };
+    // One of our user's invite links was used (NOTES 101): the contact it made, and which invite.
+    case 'invite-redeemed':
+      return {
+        type: 'invite_redeemed',
+        invite_id: token(e.invite_id),
+        peer: agentId(e.peer),
+        fingerprint: fp(e.peer),
+        // Our own user's words, written when they made the invite.
+        local_label: typeof e.label === 'string' ? safe(e.label) : null,
+        tier: oneOf(TIERS)(e.tier),
+        next_step:
+          'Tell your user that the person they invited accepted (show the fingerprint and the label) and is now a contact. ' +
+          'If it was not who they meant (someone else got the link first), they can revoke the contact with rdv_revoke.',
+      };
     // The home's listener reports a listening relay that stays down (issue #87, NOTES 90). Our own text and our own relay URLs.
     case 'relay-down':
       return {

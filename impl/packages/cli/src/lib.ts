@@ -38,6 +38,16 @@ export {
 export { cardSyncText, cardUpdateText, cardUpdateView, contactRestoredText, contactRestoredView, restoredSyncText, sendRestoredNotices, syncContactCards } from './cardupdate.js';
 export { auditBackup, type BundleContents, createBackup, describeBackup, readBackupFile, restoreBackup, type RestoreResult, writeBackupFile } from './backup.js';
 export { restoreLine } from './commands.js';
+export {
+  acceptInviteIn,
+  type AcceptResult,
+  createInviteIn,
+  inviteListView,
+  type InviteResult,
+  inviteTier,
+  parseInviteExpiry,
+  readInvite,
+} from './invites.js';
 export { RelayLinkMonitor, relayWatchText, type RelayWatchEvent } from './relaywatch.js';
 export { confirmedText, confirmedView, contactFilter, DeliveryClock, receiptTiming, resentText, resentView, unconfirmedText, unconfirmedView } from './delivery.js';
 export { appendEvents, EVENTS_FILE_KEPT, eventsStamp, isNoise, type LoggedEvent, readEvents, STRANGER_DROPS } from './events.js';

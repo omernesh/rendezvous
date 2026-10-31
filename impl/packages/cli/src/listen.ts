@@ -328,6 +328,13 @@ async function handleLocked(
       );
       agent.on('probe-overflow', (o) => events.push({ obj: overflowView(o), human: overflowText(o) }));
       agent.on('contact', (c) => events.push({ obj: { event: 'contact', ...contactView(c) }, human: `contact ${contactText(c)}` }));
+      // One of our human's invite links was used (NOTES 101): tell them who it was, so they can revoke if it was not who they meant.
+      agent.on('invite-redeemed', (r) =>
+        events.push({
+          obj: { event: 'invite-redeemed', invite_id: r.invite.id, ...(r.invite.label ? { invite_label: r.invite.label } : {}), ...contactView(r.contact) },
+          human: `invite ${r.invite.id}${r.invite.label ? ` (for ${clean(r.invite.label)})` : ''} was used: ${contactText(r.contact)}. Not who you meant? Revoke the contact.`,
+        }),
+      );
       agent.on('reverse-grant', (c) =>
         events.push({ obj: { event: 'reverse-grant', ...contactView(c) }, human: `reverse grant: ${contactText(c)}` }),
       );

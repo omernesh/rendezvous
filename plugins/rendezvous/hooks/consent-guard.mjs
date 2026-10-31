@@ -13,7 +13,8 @@
 // `rdv group pending` shows their confirm phrases; SPEC §7.8.2),
 // the owner passphrase that turns auto-approve on (`rdv owner-secret`, issue #47),
 // installing the background listener (`rdv service install`, issue #102; the model's path is rdv_service, whose
-// "install" asks the human in an approval form),
+// "install" asks the human in an approval form), making an invite link (`rdv invite create`, NOTES 101; the model's
+// path is rdv_invite "create", behind an approval form),
 // the identity backup and restore (`rdv backup`, `rdv restore`, issue #88; the model's path is rdv_backup, whose
 // passphrase is typed into a form),
 // and the secret key, consent and auto-approve state (`agent.json`, `agent.json.bak`, `consent.json`,
@@ -91,6 +92,9 @@ const DIRECT_TRANSFER =
 const SERVICE =
   'rdv service install is for the human, in their own terminal: it installs a background listener that starts at every login. ' +
   'Use rdv_service "install" when your user asks: it shows them exactly what is installed in an approval form. "status" and "remove" need no approval.';
+const INVITE_CREATE =
+  'rdv invite create is for the human, in their own terminal: whoever opens the link it makes first becomes their contact without asking them again. ' +
+  'Use rdv_invite "create" when your user asks to invite someone: they choose the terms in an approval form. "rdv invite accept", "list" and "revoke" are fine to run.';
 const SERVICE_FILES =
   'That is a file of the background listener (rdv service install): its script, task, unit, drop-in, plist or record. It runs at every login, so only Rendezvous writes it. ' +
   'Never write or edit it; use rdv_service ("status", "install", which asks your user, or "remove").';
@@ -393,6 +397,7 @@ const OWNER_SUBS = { set: OWNER_SECRET, reset: OWNER_SECRET };
 // The listening relays: adding one routes our messages through it, removing the good ones cuts us off; list shows the human's phrase.
 const RELAYS_SUBS = { add: RELAYS, remove: RELAYS, list: RELAYS };
 const SERVICE_SUBS = { install: SERVICE };
+const INVITE_SUBS = { create: INVITE_CREATE };
 // Groups (SPEC §7.8.2, issue #77): joining one and approving a newcomer are the human's every time; pending shows their phrases.
 // Slice 2 (issue #78): leaving and removing are the human's too, and resync also re-admits a member that equivocated or was muted.
 const GROUP_SUBS = {
@@ -436,6 +441,8 @@ const HUMAN_GROUPS = [
   ['group', GROUP_SUBS],
   // The background listener (issue #102): installing it is the human's; removing it only narrows.
   ['service', SERVICE_SUBS],
+  // Invite links (NOTES 101): making one is consent in advance; accept, list and revoke stay the assistant's.
+  ['invite', INVITE_SUBS],
 ];
 
 /**

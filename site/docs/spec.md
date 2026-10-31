@@ -482,6 +482,11 @@ Rules:
   probe (§4.4) is posted in cleartext on the carrier, greeting and card
   included (§9).
 - `greeting` is peer-written text: display-only (§5.6).
+- `invite` (optional) carries the secret of an invite link (§5.2.3):
+  base64url, no padding, of exactly 16 bytes (22 characters). A request
+  whose `invite` is present but not of that form is invalid. It is covered
+  by `sig` like every other field. A receiver that does not know invites
+  ignores it, and the request is an ordinary one.
 
 ### 5.2 Human-channel bootstrap
 
@@ -594,6 +599,90 @@ the human reads a friendly note.
   exchange happens only after acceptance.
 - When the invitee later runs an agent, the token maps the human
   introduction to the handshake — no rediscovery needed.
+
+### 5.2.3 Invite links
+
+(**spec change**, NOTES 101.) The WhatsApp-style "join me" for people who
+have no agent yet, sent by any channel the owner likes (a chat message, an
+SMS, an email). It needs no mail rule and no discovery: one link carries
+everything the invitee's agent needs, and making it is the owner's consent
+in advance.
+
+**The link.** `https://rendezvous.nesher.co/i#<payload>`. The payload is in
+the URL fragment, which browsers never send, so the page that explains it
+(and any CDN in front of it) never sees an invite. `<payload>` is base64url
+without padding of the canonical JSON (§4.6) of:
+
+```json
+{ "a": "rdv1:<inviter key>", "e": 1762128000, "n": "Omer",
+  "r": ["wss://relay.example.com"], "s": "<22 characters>", "v": 1 }
+```
+
+- `v` is 1; `a` is the inviter's agent ID; `r` 1 to 3 of its relays
+  (`ws://` or `wss://`, at most 200 characters each, no repeats); `s` the
+  invite secret, 128 bits from a CSPRNG, base64url (22 characters); `e` the
+  expiry in Unix seconds; `n` an optional display name of 1 to 64 printable
+  characters, already trimmed.
+- A reader refuses any other key, a missing or malformed field, and JSON
+  that is not in canonical form, so one invite has one link. It reads the
+  payload after the first `#` of whatever was pasted (any host), or after
+  `rdv-invite:`, or the payload alone. A real link is about 300 characters.
+- The link is not signed. Every field either authenticates itself or is
+  untrusted by design: the secret is checked by the agent `a` names, and
+  only that agent can decrypt the request (§6.4); relays are dumb pipes, so
+  changed relays can only lose the request; and `n` is the inviter's own
+  claim, which anyone making a link may set to anything. Hosts show `n` as
+  unverified and never use it as the contact's local label without their
+  owner's approval. A signature would add 86 characters and prove nothing
+  the secret does not.
+
+**Making one.** Only the owner makes an invite, through one of the
+approvals of §5.5 (the reference: `rdv invite create` in their terminal, or
+an approval form). They choose what the redeemer gets (tier and scope, as
+in a grant), how long it lasts (at most 30 days; reference default 7), the
+name in the link and, optionally, their own label for the person. The tier
+is `friend` or less close: a link can be forwarded, so `family` and
+`spouse` are granted afterwards, to the contact. The agent stores a hash of
+the secret, never the secret (the reference: SHA-256 over
+`"rdv1/invite\0" ‖ secret bytes`; the secret has 128 bits, so a slow hash
+adds nothing), and shows the link once.
+
+**Redeeming.** The invitee's agent sends an ordinary contact request
+(§5.1) to `a`, in an envelope on the relays `r`, with `to_hint` = `a` and
+`invite` = `s`, and records it as a request sent to that agent (only a grant
+signed by `a` answers it). It never posts an invite on a topic. It needs no
+card of the inviter and no published card of its own: the request carries
+its card, and the grant carries the inviter's.
+
+The inviter's agent handles the request as any other (verification, replay,
+block and policy checks, an existing contact), and then, before its
+allowlist and pending queue: if the request came in an envelope and the
+hash of `invite` matches an invite that is not used, revoked or expired, it
+marks that invite used (by the requester's agent ID and the request ID) and
+grants the request with the invite's tier and scope, binding `claimed`,
+labeled with the owner's label if they gave one. It compares every stored
+hash in constant time. It then tells its owner who redeemed which invite,
+with the fingerprint, so a link that reached the wrong person is caught and
+the contact can be revoked. Anything else (a wrong, used, revoked or
+expired secret, or one that came on a topic) is an ordinary request from
+there on: it waits for the owner, so the requester learns nothing about
+the secret it sent. A `block` policy or a blocked key still wins.
+
+**Consent.** Granting on the strength of the secret alone does not break
+§5.5: the owner decided before the request existed, on terms they saw, and
+the invite is single use, expires, and can be revoked until used. It is a
+standing pre-approval of one unknown future requester, like the allowlist
+(§5.4) but bound to a secret instead of a key. The invitee's side is
+unchanged: sending a request needs no approval, and what the inviter may do
+towards the invitee stays the invitee's local default until its own owner
+grants more (§5.3, Direction).
+
+**Risk.** Whoever holds the link can redeem it first: it is a bearer
+credential for a contact at the chosen tier. Hence the tier cap, the expiry,
+single use, the redemption notice, and hosts that say plainly "send it only
+to the person you mean". An assistant that shows the link to its user holds
+it too; the reference returns it once, in the result of the call that made
+it, and keeps only the hash.
 
 ### 5.3 Contact Grant (consent)
 
@@ -810,7 +899,9 @@ of model output alone. Acceptable approvals are:
   cannot be read back from disk. The reference implementation accepts a
   phrase only for tiers less close than `family` (`friend` and below);
 - the owner's own command in a terminal;
-- a standing pre-approval the owner set as policy (`allow`, §5.4).
+- a standing pre-approval the owner set as policy (`allow`, §5.4);
+- an invite link the owner made, for its single redeemer, on the terms
+  chosen when making it (§5.2.3).
 
 The same holds on the requester's side. A grant the agent *receives* is the
 peer's decision, not its owner's: it sets only what the agent may do towards

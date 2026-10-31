@@ -11,6 +11,7 @@ import {
   type ContactRequest,
   type GrantCandidate,
   type GrantScope,
+  type InviteView,
   type ProbeOverflow,
   type PendingRequest,
   type TaskAbuse,
@@ -26,6 +27,7 @@ import {
   MEETING_CAPABILITIES,
   verifyContactRequest,
 } from './contact.js';
+import { type Invite, INVITE_RELAYS_MAX, INVITE_TTL_MS, inviteExpired, inviteUrl } from './invite.js';
 import {
   ACK_TYPE,
   ackDue,
@@ -246,8 +248,23 @@ export interface GroupSendReport {
   failed: GroupSendFailure[];
 }
 
+/** Someone redeemed one of our human's invite links (NOTES 101): they are now a contact, on the invite's terms. */
+export interface InviteRedeemed {
+  invite: InviteView;
+  contact: Contact;
+}
+
+/** An invite link our human just made: shown once (only the secret's hash is kept). */
+export interface CreatedInvite {
+  invite: InviteView;
+  link: Invite;
+  url: string;
+}
+
 export interface AgentEvents {
   request: [PendingRequest];
+  /** A contact request carried the secret of an open invite of ours: granted on the invite's terms, and the invite is used up. */
+  'invite-redeemed': [InviteRedeemed];
   /** A grant answering one of our topic probes, waiting for our human (confirmCandidate / rejectCandidate). */
   candidate: [GrantCandidate];
   /** Answers to one of our probes were dropped (too many). Emitted on the first drop per probe; see probeOverflows(). */
@@ -741,6 +758,40 @@ export class Agent extends EventEmitter<AgentEvents> {
       if (!check.ok) throw new Error(`refusing to contact an invalid card: ${check.reason}`);
       await this.deliver(target.id, req, relaysOf(target));
     }
+    return req;
+  }
+
+  /**
+   * Our human makes an invite link (NOTES 101): whoever redeems it first
+   * becomes a contact on these terms, without asking again. Only the owner
+   * calls this, after choosing the terms; nothing in the library does. The
+   * link carries our agent ID, up to three of our relays, the secret, the
+   * expiry (default 7 days, at most 30) and an optional display name.
+   */
+  createInvite(opts: { tier: Tier; scope?: GrantScope; expires?: string; name?: string; label?: string; baseUrl?: string }, now = new Date()): CreatedInvite {
+    const relays = relaysOf(this.card).slice(0, INVITE_RELAYS_MAX);
+    if (relays.length === 0) throw new Error('this agent has no relay to put in an invite');
+    const expires = opts.expires ?? new Date(now.getTime() + INVITE_TTL_MS).toISOString();
+    const { record, secret } = this.book.addInvite({ tier: opts.tier, scope: opts.scope ?? DEFAULT_GRANT_SCOPE, expires, name: opts.name, label: opts.label }, now);
+    const link: Invite = { agentId: this.id, relays, secret, expires: record.expires, ...(record.name !== undefined ? { name: record.name } : {}) };
+    const { hash: _hash, ...view } = record;
+    return { invite: { ...view, status: 'open' }, link, url: inviteUrl(link, opts.baseUrl) };
+  }
+
+  /**
+   * Redeem an invite link our human was given: a contact request to the
+   * inviter, in an envelope on the link's relays, carrying the secret. The
+   * inviter's agent grants it if the invite is still open; otherwise it
+   * waits there like any request. The grant makes the contact (`contact`
+   * event), as for any request sent to a card.
+   */
+  async acceptInvite(invite: Invite, greeting: string, now = new Date()): Promise<ContactRequest> {
+    if (invite.agentId === this.id) throw new Error('that invite is your own');
+    if (inviteExpired(invite, now)) throw new Error(`that invite expired on ${invite.expires}: ask for a new one`);
+    if (this.book.contact(invite.agentId, now)) throw new Error('that agent is already a contact');
+    const req = createContactRequest(this.key, this.card, { toHint: invite.agentId, greeting, invite: invite.secret, now });
+    this.book.trackOutstanding(req, 'claimed', invite.agentId);
+    await this.deliver(invite.agentId, req, invite.relays);
     return req;
   }
 
@@ -1390,9 +1441,14 @@ export class Agent extends EventEmitter<AgentEvents> {
       case 'evicted':
         this.emit('pending-evicted', outcome.total);
         return;
-      case 'auto-grant':
-        await this.issueGrant(req, binding, { tier: outcome.tier, scope: outcome.scope });
+      case 'auto-grant': {
+        const contact = await this.issueGrant(req, binding, { tier: outcome.tier, scope: outcome.scope, label: outcome.label });
+        if (outcome.invite) {
+          const { hash: _hash, ...view } = outcome.invite;
+          this.emit('invite-redeemed', { invite: { ...view, status: 'used' }, contact });
+        }
         return;
+      }
       default:
         this.drop(`contact request ${outcome.status}`, req.id);
     }

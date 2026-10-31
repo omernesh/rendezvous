@@ -4180,10 +4180,157 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
         - The Win32_Process match is anchored: `--service <name>` followed
           by whitespace or the end.
 
+## Invite links (v0.12.0)
+
+101. **Invite links: a one-time secret in a URL fragment, redeemed by an
+    ordinary contact request that carries it** (**spec change**: SPEC
+    §5.2.3, the optional `invite` field of §5.1, one more approval in §5.5).
+    Until now a new person had to install, init, publish, then request
+    contact by address, and the inviter had to approve. Now the inviter's
+    human makes a link and sends it by WhatsApp, SMS or email; the invitee
+    runs one command (`rdv init --invite <link>`) or says one sentence to
+    their assistant ("accept my Rendezvous invite <link>"), and they are
+    contacts.
+    - **Payload.** base64url (no padding) of canonical JSON with short keys,
+      `{a, e, n?, r, s, v}`: agent ID, expiry (Unix seconds), display name,
+      1 to 3 relays, the 128-bit secret (22 characters), version 1. Short
+      keys and Unix seconds keep a link at about 300 characters with one
+      relay, which fits one chat message and three SMS segments. The reader
+      (`parseInvite`) is strict: unknown keys, malformed fields, repeats in
+      `r`, a secret with stray low bits (22 base64url characters carry 132
+      bits) and non-canonical JSON are refused, so each invite has exactly
+      one link. It takes the part after the first `#` of whatever was
+      pasted, whatever the host, or `rdv-invite:<payload>`, or the payload
+      alone, and drops sentence punctuation at the end ("…#abc.").
+    - **Not signed** (deviation from the brief, which asked to consider it).
+      A signature (86 characters, nearly a third of the link) would prove
+      only that the link came from the key in `a`, which anyone making a
+      link has. Every field either authenticates itself or is untrusted by
+      design: the secret is checked by the agent that `a` names, and only it
+      can open the envelope; changed relays can only lose the request (DoS,
+      no disclosure); and `n` is the inviter's own claim, which a signer
+      could set to anything too. The landing page and the agents show `n`
+      as unverified. Recorded in the spec so a later version can add one if
+      a reason appears.
+    - **Where it lives.** In the contact book (`invites` in `agent.json`,
+      mode 600), not a separate file: redeeming then grants and marks the
+      invite used in the same state save, under the same lock, so a crash
+      can't leave a used invite with no contact or a contact with an open
+      invite. Only `inviteSecretHash` = SHA-256(`"rdv1/invite\0"` ‖ the 16
+      secret bytes) is stored; the secret has 128 bits, so scrypt (used for
+      the human-chosen confirm phrases) would add nothing. At most 32 open
+      invites; used, revoked and expired ones are dropped 30 days after they
+      ended. `rdv invite list` and `rdv_invite` "list" never show the hash,
+      and there is no secret to show, so a link is shown only when made.
+    - **Redeeming** (`ContactBook.receiveRequest`). After the usual checks
+      (invalid, duplicate, blocked or `block` policy, already a contact) and
+      before the allowlist, the `allow` policy and the pending queue: only a
+      request that came in an envelope (a topic is cleartext, so a secret
+      seen there is spent for nothing), and only an invite that is open.
+      Every stored hash is compared with a constant-time XOR loop that
+      never stops early. A match marks the invite `used` (time, the
+      requester's agent ID, the request ID) and returns `auto-grant` with the
+      invite's tier, scope and label; `Agent` grants it (binding `claimed`)
+      and emits `invite-redeemed`. Anything else falls through to the
+      ordinary flow, so a wrong, used, revoked or expired secret gets the
+      same treatment (and the same silence) as a request with none: no
+      error oracle. Under the `allow` policy (allowlist only) a valid invite
+      is still honoured: it is the owner's own pre-approval, and a refusal
+      there would have been silent anyway.
+    - **Consent reasoning.** The library still never grants on its own: the
+      human's decision is the invite, made beforehand on terms they saw
+      (the form, or their own terminal), for one future requester, expiring
+      and revocable. It is an allowlist entry bound to a secret instead of a
+      key. The invitee's human approves nothing new: sending a request never
+      needed approval, the grant it gets back sets only what the invitee may
+      do towards the inviter, and what the inviter may do towards the
+      invitee stays the invitee's local default (may write, no meetings,
+      rate-limited) until the invitee's own human grants more. The invitee
+      gets no `local_label` for the inviter (the name in the link is the
+      inviter's claim, NOTES 62): the skill offers `rdv_label`.
+    - **Tier cap** (deviation): an invite gives `friend`, `colleague`,
+      `business` or `stranger`, the tiers a confirm phrase may approve. A
+      link is a bearer credential that travels through chats anyone can
+      forward; `family` and `spouse` are granted to the contact afterwards
+      (`rdv_grant` with `agent_id`). Enforced in core (`INVITE_TIERS`).
+    - **The invitee's side.** `Agent.acceptInvite` sends the request in an
+      envelope to `a` on the link's relays and records it as outstanding
+      for `a` (only `a`'s grant answers it). No card of the inviter is
+      needed (`deliver` takes the ID and relays), and none of the invitee's
+      own is published: `rdv init --invite` with no address works, and the
+      request carries the invitee's card. It refuses its own link, an
+      expired one and an existing contact before sending.
+    - **CLI.** `rdv invite create [--tier] [--expires 7d|<RFC 3339>]
+      [--name] [--label] [--no-meetings] [--invoke <uri>]...` prints the
+      link and a message ready to send (`inviteShareText`); the name
+      defaults to the profile. `rdv invite list`, `rdv invite revoke <id>`
+      (a used invite is reported, not changed: revoke the contact), `rdv
+      invite accept <link> [--greeting]`, and `rdv init --invite <link>`
+      (the link is checked before anything is made, accepted right after).
+      `rdv listen` prints `invite-redeemed` (the invite, its label, the
+      contact). The consent guard refuses `rdv invite create` to the
+      assistant; `accept`, `list`, `revoke` and `init --invite` stay allowed.
+    - **MCP.** `rdv_invite` "create" goes through `settingForm` (item 97):
+      an approval form only, no confirm phrase (it would pass through the
+      model), refused without a form with the exact `rdv invite create …`
+      line. The form says that whoever opens the link first becomes a
+      contact without asking again, and to send it only to that person; the
+      human can change the tier (the four allowed), meetings, the
+      capabilities the model listed (one box), the days (1 to 30), the name
+      and the label. Nothing in it depends on the clock, so an answer given
+      later (issue #103) still matches its digest; the expiry counts from
+      the approval. The result (or the `approval` event's result) carries
+      `url` and `share_text`, once; the human log names the invite but not
+      the link. "list" and "revoke" need no form. `rdv_accept_invite`
+      (invite, greeting) and `rdv_init` `invite` send the request; the name
+      in the link comes back as `untrusted_peer_text`. `invite_redeemed`
+      events go to `rdv_inbox`. Through rdv-gateway: `rdv_invite` "list" is
+      `read`, "create" and "revoke" and `rdv_accept_invite` are
+      `contact:request` (create is asked on the owner's page).
+    - **The link in the assistant's hands.** The model sees the link it
+      hands to its user, and an answered form's result is kept in the
+      home's `events.jsonl` (the `approval` event). Someone who can read
+      the home can read `agent.json` too, so that adds nothing; the tool
+      text tells the assistant never to post or repeat it. A prompt-injected
+      assistant could leak a fresh link; the redeemer would get the tier the
+      human chose, and the human is told who redeemed it.
+    - **Landing page** `site/i.html` (served at `/i` by nginx's new
+      `location = /i`; Cloudflare Pages maps it by itself). No tracking, no
+      inline code (the CSP): `site/invite.js` decodes the fragment in the
+      browser and writes only with `textContent`. Without JS it still reads
+      as instructions; with it, it shows the inviter's fingerprint, the name
+      marked unverified, the expiry (or that it expired), and fills the
+      sentence to paste ("Accept my Rendezvous invite <link>", with a copy
+      button from `app.js`), a one-line Claude Code command (`claude plugin
+      marketplace add …; claude plugin install …; claude "<sentence>"`), and
+      `rdv init --invite`. A plain-text section tells an agent that fetched
+      the page what the link is and which tool to call.
+    - **Skills.** `rdv-onboarding` has a shortcut for "accept this invite
+      <link>" / "set me up from this invite": profile name, optional email,
+      `rdv_init` with `invite`, wait for `contact`, offer a label. The
+      `rendezvous` skill has "Invite someone" (`rdv_invite` create, hand over
+      `share_text`, `invite_redeemed`) and "Accept an invite".
+    - **Wire format.** One new optional, signed request field; no existing
+      document changes, so `vectors/v1.json` is untouched. A receiver older
+      than this ignores `invite` and the request waits for its human.
+    - **Tests.** core `invite.test.ts` (round trip, tampering, canonical
+      form, expiry, secrets and hashes, the share text, the request field,
+      the book: once, by envelope only, expired, revoked, tier cap, limits,
+      pruning; on the relay: a fresh agent with no address becomes a
+      contact on the inviter's terms and the inviter is told, a second
+      redeemer waits, expired, revoked and wrong secrets wait, own and
+      expired links refused, an invite that survives a restart). cli
+      `invite.test.ts` (create, `init --invite`, `invite-redeemed`, a
+      message, reuse pending, list without secrets, revoke; tier and expiry
+      refusals, a bad link makes no agent, own link). MCP `invite.test.ts`
+      (the form and what it says, `rdv_init` with `invite`, the events,
+      `rdv_accept_invite` reuse pending, list and revoke, decline, no form,
+      bad, own and expired links). Plugin: the guard cases and both skills.
+
 ## Not implemented yet
 
 
-Mailbox probe and invite (§5.2), directories and suggestions (§4.5), DNS TXT
+Mailbox probe and the mail invite (§5.2.1, §5.2.2), directories and suggestions (§4.5), DNS TXT
 lookup, key rotation, ntfy/MQTT fallbacks, direct (ICE/WebRTC) channels,
 and `rdv/forget`.
 

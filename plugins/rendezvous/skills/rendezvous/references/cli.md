@@ -14,6 +14,8 @@ machine-readable output.
 | Publish the card | `rdv_publish_card` (`mirror: true` for the discovery mirrors) | `rdv card publish [--mirror]` |
 | Find a card | `rdv_discover` | `rdv lookup john@doe.com` (or `rdv lookup rdv1:…`) |
 | Ask for contact | `rdv_request_contact` | `rdv contact request john@doe.com --greeting "…"` (or the agent ID the user picked or pasted, without `--label`; a card not known yet is fetched by ID) |
+| Accept an invite link | `rdv_accept_invite` (or `rdv_init` with `invite`) | `rdv invite accept <link>` (or `rdv init --invite <link>`) |
+| Invite someone | `rdv_invite` `create` (an approval form) | human only, below; `rdv invite list`, `rdv invite revoke <invite-id>` are fine |
 | Pending requests | `rdv_pending_requests` | none for you: reload the MCP tools first |
 | Contacts | `rdv_status` | `rdv contact list` (the `label` is what your user called them) |
 | Send | `rdv_send` | `rdv send <agent-id> --json '{"type":"note","text":"…"}'` |
@@ -49,14 +51,15 @@ or without `--json`): `rdv contact grant`, `rdv contact confirm`,
 `rdv file direct-transfer`, `rdv relays add`, `rdv relays remove`, `rdv relays list`, `rdv init --force`,
 `rdv group invite`, `rdv group join`, `rdv group approve`, `rdv group resync`, `rdv group pending`,
 `rdv group leave`, `rdv group remove`, `rdv group terms`, `rdv group promote`,
-`rdv listen --auto-grant`, `rdv listen --auto-confirm` and `rdv service install`. Use
+`rdv listen --auto-grant`, `rdv listen --auto-confirm`, `rdv service install` and `rdv invite create`. Use
 `rdv_pending_requests`, `rdv_negotiate` (action `status`), `rdv_task`
 (action `list`), `rdv_file` (action `list`), `rdv_group` (action `list`) and `rdv_relays` instead.
 For the settings among them there are tools that end in an approval form:
 `rdv_label` (`contact label`), `rdv_owner_passphrase` (`owner-secret set`),
 `rdv_resync` (`contact resync`, `group resync`), `rdv_file` "direct-transfer"
 (`file direct-transfer`), `rdv_init` with `replace` (`init --force`) and
-`rdv_service` "install" (`service install`; "status" and "remove" need no form). The
+`rdv_service` "install" (`service install`; "status" and "remove" need no form) and
+`rdv_invite` "create" (`invite create`; "list" and "revoke" need no form). The
 CLI is the fallback when the client shows no forms.
 
 ## Files
