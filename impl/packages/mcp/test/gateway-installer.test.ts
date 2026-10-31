@@ -139,6 +139,24 @@ describe.skipIf(noSh !== null)('install-gateway.sh: helpers', () => {
     expect(lib('header_for own-url').out).toBe('');
   });
 
+  it('refuses to build or run code another user owns (./gw update would run it)', () => {
+    // A stand-in `id` makes us someone who does not own the script file.
+    const r = lib(`id() { if [ "$1" = -u ]; then echo 4242; else command id "$@"; fi; }; check_owned "${SH_PATH}"; echo reached`);
+    expect(r.status).toBe(1);
+    expect(r.out).not.toContain('reached');
+    expect(lib(`check_owned "${SH_PATH}" /nonexistent-rdv-file; echo reached`).out).toBe('reached');
+  });
+
+  it('as root, runs the gateway as the user who ran sudo (or --uid), never a fixed or root id', () => {
+    expect(lib('YES=1 UID_FLAG= SUDO_UID=1001 SUDO_GID=1002; choose_uid >/dev/null; echo "$RDV_UID:$RDV_GID"').out).toBe('1001:1002');
+    expect(lib('YES=1 UID_FLAG=1003 SUDO_UID=1001 SUDO_GID=1002; choose_uid >/dev/null; echo "$RDV_UID"').out).toBe('1003');
+    expect(lib('YES=1 UID_FLAG=0; choose_uid; echo reached').out).not.toContain('reached');
+    // No sudo user, no flag, no terminal: it asks, so it stops and names the flag.
+    const r = lib('YES=0 DRY_RUN=0 UID_FLAG= SUDO_UID=; unset SUDO_UID; choose_uid 2>&1; echo reached');
+    expect(r.out).toMatch(/pass --uid/);
+    expect(r.out).not.toContain('reached');
+  });
+
   it("reads a quick tunnel's address from cloudflared's log", () => {
     const log = [
       '2026-10-31T10:00:00Z INF Requesting new quick Tunnel on trycloudflare.com...',
@@ -194,6 +212,30 @@ describe.concurrent.skipIf(noSh !== null)('install-gateway.sh: --dry-run', () =>
     expect(r.out).toContain(`$ rm -rf ${DIR}/.restore`);
     expect(r.out).toMatch(/quick tunnel is for trying it out/);
     expect(r.out).toContain('$ compose up -d tunnel');
+  });
+
+  it('as root (NAS): builds as root, chowns only data/ to the sudo user, and ./gw update runs the copy outside repo/', async () => {
+    const root = await new Promise<{ status: number | null; out: string }>((resolve) => {
+      const script = `id() { case "$1" in -u) echo 0 ;; -g) echo 0 ;; *) command id "$@" ;; esac; }; RDV_GW_SOURCE_ONLY=1 . "${SH_PATH}"; main "$@"`;
+      const child = spawn('sh', ['-c', script, 'sh', ...BASE, '--allow-root', '--tunnel', 'own-url', '--public-url', 'https://gw.example.com', '--client-ip-header', 'x-real-ip'], {
+        env: { ...env, SUDO_UID: '1001', SUDO_GID: '1001' },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      let out = '';
+      child.stdout.on('data', (d) => (out += d));
+      child.stderr.on('data', (d) => (out += d));
+      child.on('close', (status) => resolve({ status, out }));
+    });
+    expect(root.status, root.out).toBe(0);
+    expect(root.out).toContain(`$ chown 1001:1001 ${DIR}/data\n`);
+    expect(root.out).not.toMatch(/chown[^\n]*\/repo/);
+    expect(root.out).toMatch(/docker run --rm --user 0:0 --cap-drop ALL --security-opt no-new-privileges/);
+    expect(root.out).toContain('RDV_UID=1001');
+    expect(root.out).not.toContain('safe.directory');
+    expect(root.out).toContain(`$ cp ${DIR}/repo/site/install-gateway.sh ${DIR}/install-gateway.sh`);
+    expect(root.out).toContain('update) exec sh "$DIR/install-gateway.sh" --dir "$DIR" --update');
+    // Without --allow-root it refuses.
+    expect(src).toMatch(/do not run this as root/);
   });
 
   it('refuses secrets as arguments', async () => {

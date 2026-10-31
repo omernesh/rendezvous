@@ -57,6 +57,7 @@ With no options it asks every question. Each option answers one question:
   --yes                      take the default for any question not answered by a flag
   --dry-run                  show what would happen; change nothing, no network
   --allow-root               allow running as root (only where Docker needs it, e.g. a NAS)
+  --uid <n>                  as root: the user id the gateway runs as (default: the one who ran sudo)
   -h, --help                 this text
 
 Never given as options: the approval PIN, a backup passphrase, a tunnel token.
@@ -433,7 +434,7 @@ case \$cmd in
   start) compose up -d ;;
   stop) compose stop ;;
   restart) compose restart ;;
-  update) exec sh "\$DIR/repo/site/install-gateway.sh" --dir "\$DIR" --update "\$@" ;;
+  update) exec sh "\$DIR/install-gateway.sh" --dir "\$DIR" --update "\$@" ;;
   rdv) exec compose run --rm --no-deps gateway node packages/cli/dist/src/bin.js "\$@" --home /data ;;
   pin | token | oauth) exec compose run --rm --no-deps gateway node packages/gateway/dist/src/bin.js "\$cmd" "\$@" --home /data ;;
   backup)
@@ -468,7 +469,7 @@ case \$cmd in
   start) svc_start ;;
   stop) svc_stop ;;
   restart) svc_stop; svc_start ;;
-  update) exec sh "\$DIR/repo/site/install-gateway.sh" --dir "\$DIR" --update "\$@" ;;
+  update) exec sh "\$DIR/install-gateway.sh" --dir "\$DIR" --update "\$@" ;;
   rdv) exec "\$NODE" "\$DIR/repo/impl/packages/cli/dist/src/bin.js" "\$@" --home "\$DIR/data" ;;
   pin | token | oauth) exec "\$NODE" "\$DIR/repo/impl/packages/gateway/dist/src/bin.js" "\$cmd" "\$@" --home "\$DIR/data" ;;
   backup) exec "\$NODE" "\$DIR/repo/impl/packages/cli/dist/src/bin.js" backup "\$@" --home "\$DIR/data" ;;
@@ -617,6 +618,28 @@ http_ok() {
 
 # --- the steps -----------------------------------------------------------------
 
+# As root (a NAS where only root can use Docker): which normal user the gateway runs as. The one who ran sudo by
+# default, never a fixed id, and confirmed. Only data/ becomes theirs; the code stays root's.
+choose_uid() {
+  uid=${UID_FLAG:-${SUDO_UID:-}}
+  if [ -z "$uid" ]; then
+    say 'You run this as root. The gateway must run as a normal user, who will own only data/ (the agent).'
+    ask --uid 'That user id (see: id -u <name>)' ''
+    uid=$ANSWER
+  fi
+  matches '^[0-9]{1,10}$' "$uid" && [ "$uid" != 0 ] || die "--uid is a normal user's id, not 0 (got: $uid)"
+  gid=${SUDO_GID:-}
+  [ -n "$UID_FLAG" ] && gid=''
+  if [ -z "$gid" ]; then
+    gid=$(getent passwd "$uid" 2>/dev/null | cut -d: -f4)
+    [ -n "$gid" ] || gid=$uid
+  fi
+  name=$(getent passwd "$uid" 2>/dev/null | cut -d: -f1)
+  ask_yn --uid "Run the gateway as uid $uid${name:+ ($name)}, gid $gid?" y || die 'pass the right one with --uid'
+  RDV_UID=$uid RDV_GID=$gid
+  say "repo/, the installer and ./gw stay root's; only data/ belongs to uid $uid. If your user can use Docker (the docker group, or rootless Docker), run this without sudo instead."
+}
+
 choose_runtime() {
   step 2 'choose the runtime'
   check_docker
@@ -645,6 +668,7 @@ choose_runtime() {
     *) die "--runtime is docker or node (got: $RUNTIME)" ;;
   esac
   [ -n "$COMPOSE" ] || COMPOSE=plugin
+  [ "$(id -u)" != 0 ] || choose_uid
   NODE_BIN=$(command -v node 2>/dev/null || printf '/usr/bin/node')
   if [ "$RUNTIME" = node ] && ! valid_path "$NODE_BIN" && [ "$DRY_RUN" != 1 ]; then
     die "node is at $NODE_BIN; a service cannot start a path with spaces or special characters. Use Docker, or a Node.js installed elsewhere"
@@ -774,30 +798,52 @@ choose_public_address() {
   done_step 3
 }
 
-# git in the clone. As root (a NAS) the clone belongs to the container's uid, which git would otherwise refuse.
-g() { git -c safe.directory="$DIR/repo" -C "$DIR/repo" "$@"; }
+# Who owns a file (GNU, busybox and BSD stat).
+owner_of() { stat -c %u "$1" 2>/dev/null || stat -f %u "$1" 2>/dev/null || printf '?'; }
+
+# The code, the installer copy and the helper must belong to whoever runs this (root on a NAS), never to the
+# gateway's own user: ./gw update runs them later, so a tree that user could change would run its code as you.
+check_owned() {
+  for f in "$@"; do
+    [ -e "$f" ] || continue
+    o=$(owner_of "$f")
+    [ "$o" = "$(id -u)" ] || die "$f belongs to uid $o, not to you (uid $(id -u)). This installer runs only code its own user owns: move it away or fix its owner, then run this again"
+  done
+}
 
 fetch_and_build() {
   step 4 'get the code and build it'
+  check_owned "$DIR" "$DIR/repo" "$DIR/install-gateway.sh" "$DIR/gw"
   run mkdir -p "$DIR" "$DIR/data" "$DIR/logs"
   run chmod 700 "$DIR" "$DIR/data"
   REPO=${RDV_REPO:-https://github.com/omernesh/rendezvous}
   if [ -e "$DIR/repo/.git" ]; then
-    origin=$(g remote get-url origin 2>/dev/null || true)
+    origin=$(git -C "$DIR/repo" remote get-url origin 2>/dev/null || true)
     [ "$origin" = "$REPO" ] || die "$DIR/repo is a clone of '$origin', not '$REPO'"
-    [ -z "$(g status --porcelain 2>/dev/null)" ] || die "$DIR/repo has local changes; this installer will not overwrite them"
+    [ -z "$(git -C "$DIR/repo" status --porcelain 2>/dev/null)" ] || die "$DIR/repo has local changes; this installer will not overwrite them"
   elif [ -e "$DIR/repo" ]; then
     die "$DIR/repo exists but is not a git clone. Move it away"
   else
     run git clone --quiet "$REPO" "$DIR/repo"
   fi
-  run git -c safe.directory="$DIR/repo" -C "$DIR/repo" fetch --quiet origin "$REF"
-  run git -c safe.directory="$DIR/repo" -C "$DIR/repo" checkout --quiet --detach FETCH_HEAD
-  [ "$DRY_RUN" = 1 ] || say "Code: $(g log -1 --format='%h %s')"
+  run git -C "$DIR/repo" fetch --quiet origin "$REF"
+  run git -C "$DIR/repo" checkout --quiet --detach FETCH_HEAD
+  [ "$DRY_RUN" = 1 ] || say "Code: $(git -C "$DIR/repo" log -1 --format='%h %s')"
+  # ./gw update runs this copy, outside repo/: yours like the rest, never the gateway user's.
+  run cp "$DIR/repo/site/install-gateway.sh" "$DIR/install-gateway.sh"
+  run chmod 755 "$DIR/install-gateway.sh"
   say 'Building (a few minutes the first time)...'
   if [ "$RUNTIME" = docker ]; then
-    if [ "$(id -u)" = 0 ]; then run chown -R "$RDV_UID:$RDV_GID" "$DIR/repo" "$DIR/data" "$DIR/logs"; fi
-    run docker run --rm --user "$RDV_UID:$RDV_GID" -e HOME=/tmp -e npm_config_update_notifier=false \
+    # Built as the owner of repo/ (you; root on a NAS, in a container without capabilities), so the gateway's user
+    # never owns the code it runs (the gateway mounts it read-only). Only data/ is that user's.
+    if [ "$(id -u)" = 0 ]; then
+      run chown "$RDV_UID:$RDV_GID" "$DIR/data"
+      build_user=0:0
+    else
+      build_user="$RDV_UID:$RDV_GID"
+    fi
+    run docker run --rm --user "$build_user" --cap-drop ALL --security-opt no-new-privileges \
+      -e HOME=/tmp -e npm_config_update_notifier=false \
       -v "$DIR/repo:/app" -w /app/impl "$NODE_IMAGE" sh -c 'npm ci --no-audit --no-fund && npm run build'
   else
     (cd "$DIR/repo/impl" 2>/dev/null || [ "$DRY_RUN" = 1 ]; run npm ci --no-audit --no-fund && run npm run build) || die 'the build failed'
@@ -1049,7 +1095,7 @@ main() {
   DIR='' RUNTIME='' REF='' PORT='' AGENT='' EMAILS='' RELAYS='' POINTER='' BACKUP=''
   C_RUNTIME='' C_REF='' C_PORT='' C_TUNNEL='' C_PUBLIC_URL='' C_HEADER=''
   TUNNEL='' PUBLIC_URL='' CLIENT_IP_HEADER='' UPDATE=0 YES=0 DRY_RUN=0 ALLOW_ROOT=0 COMPOSE=''
-  SERVICE_FUNCS='' UNINSTALL_EXTRA=: CLOUDFLARED_BIN='' NODE_BIN=node SECRET=''
+  SERVICE_FUNCS='' UNINSTALL_EXTRA=: CLOUDFLARED_BIN='' NODE_BIN=node SECRET='' UID_FLAG=''
   NODE_IMAGE=${RDV_NODE_IMAGE:-$NODE_IMAGE_DEFAULT}
   CLOUDFLARED_IMAGE=${RDV_CLOUDFLARED_IMAGE:-$CLOUDFLARED_IMAGE_DEFAULT}
   while [ $# -gt 0 ]; do
@@ -1067,9 +1113,10 @@ main() {
       --no-public-pointer) POINTER=0 ;;
       --pin | --passphrase | --password | --token | --tunnel-token | --secret)
         die "$1 is not an option on purpose: secrets are typed in your terminal when asked, never passed as arguments (they would land in your shell history and process list)" ;;
-      --dir | --runtime | --ref | --port | --agent | --email | --relay | --backup | --tunnel | --public-url | --client-ip-header)
+      --dir | --runtime | --ref | --port | --agent | --email | --relay | --backup | --tunnel | --public-url | --client-ip-header | --uid)
         [ $# -ge 2 ] || die "$1 needs a value"
         case $1 in
+          --uid) UID_FLAG=$2 ;;
           --dir) DIR=$2 ;;
           --runtime) RUNTIME=$2 ;;
           --ref) REF=$2 ;;
@@ -1093,12 +1140,11 @@ main() {
   for r in $RELAYS; do valid_relay "$r" || die "not a relay address (wss://host): $r"; done
 
   RDV_UID=$(id -u) RDV_GID=$(id -g)
-  if [ "$RDV_UID" = 0 ]; then RDV_UID=1000 RDV_GID=1000; fi
 
   [ "$DRY_RUN" = 1 ] && say 'Dry run: nothing is changed, nothing is downloaded.'
   say 'Rendezvous gateway installer. Questions come one at a time; press Enter to take the [default].'
   if [ "$(id -u)" = 0 ] && [ "$ALLOW_ROOT" != 1 ]; then
-    die 'do not run this as root. Your user needs only Docker access (the docker group) or Node.js, and the agent key should belong to you. On a NAS where only root can use Docker, run it with sudo and --allow-root: the gateway still runs as uid 1000 in a locked-down container.'
+    die 'do not run this as root. Your user needs only Docker access (the docker group) or Node.js, and the agent key should belong to you. On a NAS where only root can use Docker, run it with sudo and --allow-root: the gateway then runs as the user who ran sudo (or --uid), who owns only data/, in a locked-down container.'
   fi
   command -v git >/dev/null 2>&1 || die "git is required but was not found. Install it with: $(pkg_hint git), then run this again"
   choose_dir_and_settings
