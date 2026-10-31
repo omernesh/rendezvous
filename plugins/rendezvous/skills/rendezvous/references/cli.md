@@ -45,7 +45,7 @@ form shows the background listener it installs); the user can also run it in a t
 These approve something or print a confirm phrase, so the human runs them in
 their own terminal, never you (the plugin's consent guard blocks them, with
 or without `--json`): `rdv contact grant`, `rdv contact confirm`,
-`rdv contact resync`, `rdv contact label`, `rdv contact pending`, `rdv dinner confirm`,
+`rdv contact resync`, `rdv contact label`, `rdv contact alias`, `rdv agent-name`, `rdv contact pending`, `rdv dinner confirm`,
 `rdv dinner cancel`, `rdv dinner list`, `rdv task approve`, `rdv task release`,
 `rdv task list`, `rdv contact auto-approve` (on or off), `rdv owner-secret set`, `rdv owner-secret reset`,
 `rdv file direct-transfer`, `rdv relays add`, `rdv relays remove`, `rdv relays list`, `rdv init --force`,
@@ -55,7 +55,7 @@ or without `--json`): `rdv contact grant`, `rdv contact confirm`,
 `rdv_pending_requests`, `rdv_negotiate` (action `status`), `rdv_task`
 (action `list`), `rdv_file` (action `list`), `rdv_group` (action `list`) and `rdv_relays` instead.
 For the settings among them there are tools that end in an approval form:
-`rdv_label` (`contact label`), `rdv_owner_passphrase` (`owner-secret set`),
+`rdv_label` (`contact label`; "add-alias" / "remove-alias" for `contact alias`), `rdv_agent_name` (`agent-name`), `rdv_owner_passphrase` (`owner-secret set`),
 `rdv_resync` (`contact resync`, `group resync`), `rdv_file` "direct-transfer"
 (`file direct-transfer`), `rdv_init` with `replace` (`init --force`) and
 `rdv_service` "install" (`service install`; "status" and "remove" need no form) and

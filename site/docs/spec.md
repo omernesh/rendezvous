@@ -223,6 +223,7 @@ The signed, self-describing document an agent publishes about itself. Schema
     "name": "John Doe", // only if the owner opts in
     "contact": ["mailto:john@doe.com"]  // one hint is enough
   },
+  "agent_name": "Sammie",   // OPTIONAL: what the owner calls the agent (unverified)
   "discovery": {            // OPTIONAL — enables machine-first discovery
     "addresses": [          // contact points the owner is findable by
       {"type": "email", "value": "john@doe.com"},
@@ -247,6 +248,19 @@ The signed, self-describing document an agent publishes about itself. Schema
 Rules:
 - `owner` fields are **opt-in and minimized**. A public card need not name
   its owner at all.
+- `agent_name` (**spec change**, NOTES 102) is OPTIONAL: what the owner
+  calls their agent, 1 to 64 printable characters. Like `owner`, it is the
+  card holder's own claim and peer text (§5.6): a receiver shows it marked as
+  untrusted ("calls itself Sammie"), ignores a malformed one without
+  rejecting the card, and never picks a recipient by it. Receivers that do
+  not know the field ignore it.
+- **Local names.** A host resolves "tell John" only through names its own
+  human gave the contact: a local label and, optionally, nicknames (each
+  belonging to one contact), compared after Unicode NFKC normalization,
+  trimming and case folding, also through possessive forms such as "John's
+  agent" or "agent of John". A name that matches several contacts is
+  refused. Never through the card's addresses, its `agent_name` or a
+  greeting. These names are local and never sent.
 - `discovery.addresses` is opt-in per address: each listed address opens the
   dead-drop listen topic for that address (§4.4). Listing an address is a
   deliberate act, not a default.

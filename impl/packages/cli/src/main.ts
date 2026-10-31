@@ -28,7 +28,7 @@ const COMMON: Options = {
 
 const COMMANDS: Record<string, Command> = {
   init: {
-    usage: 'rdv init --profile omer --email omer@example.com [--email …] [--relay wss://… [--relay …]] [--phone +…] [--phone …] [--public-pointer] [--force] [--invite <link>]',
+    usage: 'rdv init --profile omer --email omer@example.com [--email …] [--relay wss://… [--relay …]] [--phone +…] [--phone …] [--public-pointer] [--agent-name Sammie] [--force] [--invite <link>]',
     summary: 'Generate a key and card, write state (no --relay: the default public relays); --invite: then accept that invite link',
     args: 0,
     options: {
@@ -38,6 +38,7 @@ const COMMANDS: Record<string, Command> = {
       'public-pointer': { type: 'boolean' },
       force: { type: 'boolean' },
       invite: { type: 'string' },
+      'agent-name': { type: 'string' },
     },
     run: cmd.init,
   },
@@ -171,6 +172,36 @@ const COMMANDS: Record<string, Command> = {
     summary: 'Name a contact locally (e.g. the address you know them by); sending by name uses this, never the addresses its card claims',
     args: 2,
     run: cmd.contactLabel,
+  },
+  'contact alias add': {
+    usage: 'rdv contact alias add <agent-id> <name>',
+    summary: 'Give a contact a nickname (local only, at most 8, unique across contacts): "tell <name>" then reaches it, like its label',
+    args: 2,
+    run: cmd.contactAliasAdd,
+  },
+  'contact alias remove': {
+    usage: 'rdv contact alias remove <agent-id> <name>',
+    summary: 'Take a nickname off a contact',
+    args: 2,
+    run: cmd.contactAliasRemove,
+  },
+  'contact alias list': {
+    usage: 'rdv contact alias list',
+    summary: "List each contact's label and nicknames",
+    args: 0,
+    run: cmd.contactAliasList,
+  },
+  'agent-name set': {
+    usage: 'rdv agent-name set <name>',
+    summary: 'Name your agent (e.g. Sammie): shown on its card to others as its own claim; re-signs and republishes the card',
+    args: 1,
+    run: cmd.agentNameSet,
+  },
+  'agent-name clear': {
+    usage: 'rdv agent-name clear',
+    summary: "Take your agent's name off its card",
+    args: 0,
+    run: cmd.agentNameClear,
   },
   'contact revoke': {
     usage: 'rdv contact revoke <agent-id>',
@@ -601,15 +632,28 @@ export async function main(argv: string[]): Promise<number> {
     return 0;
   }
 
+  // A command is named by plain words (security review of PR #122): one word holding a space, as in
+  // `rdv "contact label" …` or `rdv contact "alias add" …`, would otherwise join into a command name that a
+  // check looking at separate words (the plugin's consent guard) never saw. Refused for every command.
+  const plain = (w: string | undefined): w is string => w !== undefined && /^[a-z0-9-]+$/.test(w);
+  if (!plain(argv[0])) {
+    fallbackOut.error(`unknown command ${JSON.stringify(clean(argv[0]))}: a command is one or more plain words (letters, digits and "-"), e.g. rdv contact list (see rdv --help)`);
+    return 2;
+  }
   let name = argv[0];
   let rest = argv.slice(1);
-  if (`${argv[0]} ${argv[1]}` in COMMANDS) {
+  if (plain(argv[1]) && plain(argv[2]) && `${argv[0]} ${argv[1]} ${argv[2]}` in COMMANDS) {
+    name = `${argv[0]} ${argv[1]} ${argv[2]}`;
+    rest = argv.slice(3);
+  } else if (plain(argv[1]) && `${argv[0]} ${argv[1]}` in COMMANDS) {
     name = `${argv[0]} ${argv[1]}`;
     rest = argv.slice(2);
   }
   const command = COMMANDS[name];
   if (!command) {
-    const subs = Object.keys(COMMANDS).filter((k) => k.startsWith(`${argv[0]} `));
+    const two = `${argv[0]} ${argv[1]} `;
+    const deeper = Object.keys(COMMANDS).filter((k) => k.startsWith(two));
+    const subs = deeper.length ? deeper : Object.keys(COMMANDS).filter((k) => k.startsWith(`${argv[0]} `));
     fallbackOut.error(
       subs.length ? `"${argv[0]}" needs a subcommand: ${subs.join(', ')}` : `unknown command "${argv[0]}" (see rdv --help)`,
     );

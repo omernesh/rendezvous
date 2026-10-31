@@ -25,6 +25,13 @@ export interface CardBody {
   expires: string | null;
   capabilities: string[];
   owner?: { name?: string; contact?: string[] };
+  /**
+   * What the owner calls their agent ("Sammie"), OPTIONAL (SPEC §4.3, NOTES
+   * 103): an unverified display field. A receiver shows it only as peer text
+   * ("calls itself Sammie") and never picks a recipient by it; agents that
+   * predate it ignore it.
+   */
+  agent_name?: string;
   discovery?: { addresses: DiscoveryAddress[]; public_pointer: boolean };
   rendezvous: RendezvousHint[];
   policy: { inbound: InboundPolicy; public: boolean };
@@ -36,6 +43,7 @@ export interface CardOptions {
   rendezvous: RendezvousHint[];
   capabilities?: string[];
   owner?: CardBody['owner'];
+  agentName?: string;
   discovery?: CardBody['discovery'];
   policy?: Partial<CardBody['policy']>;
   expires?: string | null;
@@ -54,9 +62,36 @@ export function capabilitiesProblem(v: unknown): string | null {
   return null;
 }
 
+/** The longest `agent_name` (SPEC §4.3). */
+export const AGENT_NAME_MAX = 64;
+
+/** An agent name as the owner typed it: NFKC, trimmed, spaces collapsed, 1..AGENT_NAME_MAX printable characters. Throws otherwise. */
+export function cleanAgentName(name: string): string {
+  const n = typeof name === 'string' ? name.normalize('NFKC').trim().replace(/\s+/gu, ' ') : '';
+  // Characters are code points (SPEC §4.3), not UTF-16 units.
+  if (n.length === 0 || [...n].length > AGENT_NAME_MAX || /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u.test(n)) throw new Error(`an agent name must be 1 to ${AGENT_NAME_MAX} printable characters`);
+  return n;
+}
+
+/**
+ * The name a card's agent calls itself, or null when it has none or it is
+ * not a well-formed one (the card stays valid: the field is display only).
+ * Peer text: show it marked as such, never pick a recipient by it.
+ */
+export function cardAgentName(card: { agent_name?: unknown } | null | undefined): string | null {
+  const v = card?.agent_name;
+  if (typeof v !== 'string') return null;
+  try {
+    return cleanAgentName(v) === v ? v : null;
+  } catch {
+    return null;
+  }
+}
+
 export function createCard(key: AgentKey, opts: CardOptions): AddressCard {
   const problem = opts.capabilities === undefined ? null : capabilitiesProblem(opts.capabilities);
   if (problem) throw new Error(`card: ${problem}`);
+  const agentName = opts.agentName === undefined ? undefined : cleanAgentName(opts.agentName);
   const body: CardBody = {
     v: 1,
     id: key.id,
@@ -64,6 +99,7 @@ export function createCard(key: AgentKey, opts: CardOptions): AddressCard {
     expires: opts.expires ?? null,
     capabilities: opts.capabilities ?? ['rdv/v1', 'a2a/0.3'],
     owner: opts.owner,
+    ...(agentName !== undefined ? { agent_name: agentName } : {}),
     discovery: opts.discovery,
     rendezvous: [...opts.rendezvous].sort((a, b) => a.pref - b.pref),
     policy: { inbound: 'prompt', public: false, ...opts.policy },
@@ -114,12 +150,23 @@ export function reissueCardRelays(key: AgentKey, card: AddressCard, relays: read
   return resignCard(key, card, { rendezvous: [...nostr, ...others] as RendezvousHint[] }, now);
 }
 
-function resignCard(key: AgentKey, card: AddressCard, change: Partial<Pick<CardBody, 'discovery' | 'capabilities' | 'rendezvous'>>, now: Date): AddressCard {
+/**
+ * A newer card with everything the same but `agent_name` (the owner's name
+ * for their agent; null takes it off), dated like reissueCard.
+ */
+export function reissueCardAgentName(key: AgentKey, card: AddressCard, name: string | null, now: Date = new Date()): AddressCard {
+  return resignCard(key, card, { agent_name: name === null ? undefined : cleanAgentName(name) }, now);
+}
+
+function resignCard(key: AgentKey, card: AddressCard, change: Partial<Pick<CardBody, 'discovery' | 'capabilities' | 'rendezvous' | 'agent_name'>>, now: Date): AddressCard {
   if (card.id !== key.id) throw new Error('card belongs to another key');
   const prev = parseTimestamp(card.created) ?? 0;
   const created = new Date(Math.max(now.getTime(), prev) + 1000);
   const { sig: _sig, ...body } = card;
-  return signDoc({ ...body, ...change, created: created.toISOString() } as CardBody, key);
+  const next = { ...body, ...change, created: created.toISOString() } as CardBody;
+  // A field the change takes off is not kept as `undefined` (it would not survive a JSON round trip unchanged in shape).
+  for (const k of Object.keys(change) as Array<keyof CardBody>) if (next[k] === undefined) delete next[k];
+  return signDoc(next, key);
 }
 
 /**

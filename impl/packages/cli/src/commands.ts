@@ -12,6 +12,8 @@ import {
   isDocId,
   b64decode,
   canonAgentId,
+  cardAgentName,
+  cleanAgentName,
   cleanLabel,
   type Contact,
   DEFAULT_GRANT_SCOPE,
@@ -242,6 +244,24 @@ export interface InitOptions {
   force?: boolean;
   /** The card's `capabilities` (default: what this host routes, hostCardCapabilities). */
   capabilities?: string[];
+  /** What the owner calls their agent ("Sammie"): the card's unverified `agent_name` (NOTES 103). */
+  agentName?: string;
+}
+
+/** The greeting a contact request carries when the owner wrote none: names the agent when the owner named it. */
+export function defaultGreeting(profile: string, agentName?: string | null): string {
+  return agentName ? `${agentName}, ${profile}'s agent, would like to get in touch.` : `${profile}'s agent would like to get in touch.`;
+}
+
+/** An agent name from the owner (`--agent-name`, rdv_init), checked before anything is written. */
+export function agentNameOf(v: unknown): string | undefined {
+  const n = str(v);
+  if (n === undefined) return undefined;
+  try {
+    return cleanAgentName(n);
+  } catch (err) {
+    throw new CliError((err as Error).message, 2);
+  }
 }
 
 /** `rdv init` without the output: validate, generate key and card, write state. Shared with the MCP server. */
@@ -261,6 +281,7 @@ export async function initHome(home: Home, opts: InitOptions): Promise<{ id: str
     throw new CliError((err as Error).message, 2);
   }
   const publicPointer = opts.publicPointer === true;
+  const agentName = opts.agentName === undefined ? undefined : agentNameOf(opts.agentName);
   if (home.initialized() && opts.force !== true) {
     throw new CliError(`an agent already exists at ${home.dir} (--force replaces it, and its key, for good)`);
   }
@@ -279,6 +300,7 @@ export async function initHome(home: Home, opts: InitOptions): Promise<{ id: str
       policy: config.policy,
       // The extensions we route (meetings, tasks/v1 and its capabilities), so contacts learn them from the card (SPEC §4.3, §7.5).
       capabilities: opts.capabilities ?? hostCardCapabilities(),
+      ...(agentName !== undefined ? { agentName } : {}),
     });
     home.writeConfig(config);
     home.writeAgentState(a.toJSON());
@@ -315,6 +337,7 @@ export async function init({ home, out, values, tty }: Ctx): Promise<void> {
     phones: list(values.phone),
     publicPointer: values['public-pointer'] === true,
     force: values.force === true,
+    agentName: agentNameOf(values['agent-name']),
   });
   const next = initNextSteps(profile, r.config.public_pointer && r.config.addresses.some((a) => !a.private));
   out.emit(
@@ -381,6 +404,7 @@ export async function whoami({ home, out }: Ctx): Promise<void> {
       id: agent.id,
       fingerprint: fp,
       profile: config.profile,
+      ...(agent.card.agent_name ? { agent_name: agent.card.agent_name } : {}),
       home: home.dir,
       addresses: addressViews(config),
       relay_health: health,
@@ -396,6 +420,7 @@ export async function whoami({ home, out }: Ctx): Promise<void> {
       `id:          ${agent.id}`,
       `fingerprint: ${fp}`,
       `profile:     ${config.profile} (${home.dir})`,
+      `agent name:  ${agent.card.agent_name ? clean(agent.card.agent_name) : '(none: "rdv agent-name set <name>" in your own terminal names it)'}`,
       `addresses:   ${config.addresses.map((a) => (a.private ? `${a.value} (private)` : a.value)).join(', ') || '(none)'}`,
       `relays:      ${config.relays.join(', ')}`,
       ...health.map(relayHealthLine),
@@ -917,7 +942,7 @@ export async function requestContactTo(
 
 export async function contactRequest({ home, out, values, positionals }: Ctx): Promise<void> {
   const res = await withAgent(home, async (agent, config) => {
-    const greeting = str(values.greeting) ?? `${config.profile}'s agent would like to get in touch.`;
+    const greeting = str(values.greeting) ?? defaultGreeting(config.profile, cardAgentName(agent.card));
     return requestContactTo(home, agent, positionals[0], greeting, {
       inPerson: values['in-person'] === true,
       allowFile: true,
@@ -1112,6 +1137,102 @@ export async function contactLabel({ home, out, positionals }: Ctx): Promise<voi
   out.emit({ event: 'labeled', ...contactView(contact) }, `labeled: ${contactText(contact)}`);
 }
 
+/**
+ * `rdv contact alias add|remove <agent-id> <name>` and `rdv contact alias
+ * list`: our human's nicknames for a contact (local only, NOTES 103). Like
+ * the label, a nickname picks the recipient of "tell Ran", so only the human
+ * sets one (the plugin's consent guard refuses these to the assistant). A
+ * name another contact already has is refused.
+ */
+export async function contactAliasAdd({ home, out, positionals }: Ctx): Promise<void> {
+  const [peer, name] = positionals;
+  const contact = await withAgent(home, async (agent) => {
+    if (!agent.book.contact(peer)) throw new CliError(`no active contact ${peer}`);
+    try {
+      return agent.book.addAlias(peer, name);
+    } catch (err) {
+      throw new CliError((err as Error).message, 2);
+    }
+  });
+  out.emit({ event: 'alias-added', ...contactView(contact) }, `nickname added: ${contactText(contact)}`);
+}
+
+export async function contactAliasRemove({ home, out, positionals }: Ctx): Promise<void> {
+  const [peer, name] = positionals;
+  const contact = await withAgent(home, async (agent) => {
+    if (!agent.book.state.contacts[peer]) throw new CliError(`no contact ${peer}`);
+    try {
+      return agent.book.removeAlias(peer, name);
+    } catch (err) {
+      throw new CliError((err as Error).message, 2);
+    }
+  });
+  out.emit({ event: 'alias-removed', ...contactView(contact) }, `nickname removed: ${contactText(contact)}`);
+}
+
+export async function contactAliasList({ home, out }: Ctx): Promise<void> {
+  const contacts = await withAgent(home, async (agent) => agent.contacts(), { save: false });
+  const named = contacts.filter((c) => c.label !== undefined || (c.aliases?.length ?? 0) > 0);
+  if (named.length === 0 && !out.json) out.emit({}, 'no contact has a label or nickname');
+  for (const c of named) {
+    out.emit(
+      { event: 'aliases', peer: c.peer, fingerprint: fingerprint(c.peer), label: c.label, aliases: c.aliases ?? [] },
+      `${c.peer}  fingerprint ${fingerprint(c.peer)}  label ${c.label ? clean(c.label) : '(none)'}  nicknames ${(c.aliases ?? []).map((a) => clean(a)).join(', ') || '(none)'}`,
+    );
+  }
+}
+
+/**
+ * `rdv agent-name set <name>` / `rdv agent-name clear`: what the owner calls
+ * their agent ("Sammie"), published on the card as an unverified display
+ * field (NOTES 103). Re-signs the card, republishes it where it is public and
+ * sends it to contacts, as an address change does.
+ */
+export async function agentNameSet({ home, out, positionals }: Ctx): Promise<void> {
+  const name = agentNameOf(positionals[0])!;
+  const r = await changeAgentName(home, name);
+  out.emit({ event: 'agent-name', agent_name: name, ...r }, `agent name set: ${clean(name)}${r.changed ? '' : ' (unchanged)'}`);
+}
+
+export async function agentNameClear({ home, out }: Ctx): Promise<void> {
+  const r = await changeAgentName(home, null);
+  out.emit({ event: 'agent-name', agent_name: null, ...r }, r.changed ? 'agent name cleared' : 'this agent had no name');
+}
+
+/** The agent's name is no longer the one an approval form showed (changeAgentName `expect`): nothing was changed. */
+export class AgentNameChanged extends CliError {
+  constructor() {
+    super("the agent's name changed after it was shown; nothing was changed");
+  }
+}
+
+/**
+ * Set or clear the card's `agent_name`, then republish and tell contacts.
+ * Shared with the MCP server, which passes `expect` (the name its form
+ * showed): checked under the same lock as the change.
+ */
+export async function changeAgentName(
+  home: Home,
+  name: string | null,
+  opts: { expect?: string | null } = {},
+): Promise<{ changed: boolean; published: string[]; card_created?: string; card_sent?: CardUpdateReport }> {
+  return withAgent(home, async (agent, config) => {
+    if (opts.expect !== undefined && (agent.card.agent_name ?? null) !== opts.expect) throw new AgentNameChanged();
+    if (!agent.setAgentName(name)) return { changed: false, published: [] };
+    let published: string[] = [];
+    if (config.public_pointer && agent.card.policy.public && (agent.card.discovery?.addresses.length ?? 0) > 0) {
+      try {
+        published = await agent.publishPointers();
+      } catch (err) {
+        throw publishFailure(err);
+      }
+    }
+    home.writeAgentState(agent.toJSON());
+    const sent = await agent.sendCardUpdates();
+    return { changed: true, published, card_created: agent.card.created, ...(sent.sent.length || sent.failed.length ? { card_sent: sent } : {}) };
+  });
+}
+
 export async function contactList({ home, out }: Ctx): Promise<void> {
   const { contacts, auto } = await withAgent(home, async (agent) => ({ contacts: agent.contacts(), auto: autoApproveStatus(home, subjectOf(agent)) }), { save: false });
   if (contacts.length === 0 && !out.json) out.emit({}, 'no contacts');
@@ -1133,7 +1254,11 @@ export function contactFor(agent: Agent, target: string): string {
   if (isAgentId(target)) return target;
   const m = agent.book.byLabel(target);
   if (m.length === 1) return m[0].peer;
-  throw new CliError(m.length ? `more than one contact is labeled ${clean(target)}: use the agent ID` : `no contact ${clean(target)} (an agent ID, or a label from "rdv contact list")`);
+  throw new CliError(
+    m.length
+      ? `more than one contact is named ${clean(target)} (fingerprints ${m.map((c) => fingerprint(c.peer)).join(', ')}): use the agent ID`
+      : `no contact ${clean(target)} (an agent ID, or a label or nickname from "rdv contact list")`,
+  );
 }
 
 /**

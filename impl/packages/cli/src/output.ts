@@ -3,6 +3,7 @@
 import {
   type AddressCard,
   allowedCapabilities,
+  cardAgentName,
   type Contact,
   fingerprint,
   MEETING_CAPABILITIES,
@@ -89,6 +90,10 @@ export function contactView(c: Contact) {
     fingerprint: fingerprint(c.peer),
     /** Our human's name for the peer (local only); the addresses in its card are only its own claims. */
     label: c.label,
+    /** Our human's nicknames for the peer (local only, NOTES 103). */
+    ...(c.aliases?.length ? { aliases: [...c.aliases] } : {}),
+    /** What the peer's card says its agent is called: the peer's own claim, marked as peer text as in rdv-mcp (display only). */
+    ...(cardAgentName(c.card) ? { calls_itself: { untrusted_peer_text: cardAgentName(c.card)! } } : {}),
     tier: c.tier,
     binding: c.binding,
     since: c.since,
@@ -115,7 +120,7 @@ export function contactText(c: Contact): string {
   const others = (l: string[]) => l.filter((u) => !MEETING_CAPABILITIES.includes(u)).map(safe).join(', ');
   const theyInvoke = others(v.inbound_invoke) ? `  they may invoke ${others(v.inbound_invoke)}` : '';
   const youInvoke = others(v.outbound_invoke) ? `  you may invoke ${others(v.outbound_invoke)}` : '';
-  const label = v.label ? `  label ${safe(v.label)}` : '';
+  const label = (v.label ? `  label ${safe(v.label)}` : '') + (v.aliases ? `  nicknames ${v.aliases.map(safe).join(', ')}` : '') + (v.calls_itself ? `  (calls itself ${JSON.stringify(safe(v.calls_itself.untrusted_peer_text))}, its own claim)` : '');
   return `${safe(v.peer)}${label}  tier ${safe(v.tier)}  binding ${safe(v.binding)}  fingerprint ${safe(v.fingerprint)}  since ${safe(v.since)}${expires}${theirs}${inbound}${outbound}${youInvoke}${theyInvoke}`;
 }
 

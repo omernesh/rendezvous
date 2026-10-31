@@ -916,6 +916,7 @@ describe('rdv-mcp over stdio', () => {
         [
           'rdv_accept_invite',
           'rdv_addresses',
+          'rdv_agent_name',
           'rdv_auto_approve',
           'rdv_backup',
           'rdv_relays',
@@ -1212,7 +1213,7 @@ describe('chat onboarding (the plugin skill, plugins/rendezvous)', () => {
     for (const c of both) expect(c.label_conflict).toContain('rdv_send "to" refuses it');
     const ambiguous = await omer.call('rdv_send', { to: johnAt, payload: { type: 'note', text: 'which John?' } });
     expect(ambiguous.isError).toBe(true);
-    expect(ambiguous.text).toContain('2 contacts are labeled');
+    expect(ambiguous.text).toContain('2 contacts are labeled or nicknamed');
     for (const c of both) expect(ambiguous.text).toContain(c.fingerprint);
 
     // Nothing but the first note reached anyone.

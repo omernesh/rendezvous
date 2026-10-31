@@ -4447,6 +4447,69 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       parses: its regexes held raw U+2028/U+2029 characters, a syntax error
       in browsers, now `\u` escapes.
 
+## Contact nicknames and the agent's own name
+
+103. **A contact may have nicknames besides its label; a possessive names
+    one too; an agent may name itself on its card** (**spec change** for the
+    card field, §4.3; the nicknames are local and change nothing on the
+    wire). The owner wanted to say "talk to joe" or "tell Ran's agent …" and
+    to call their own agent "Sammie".
+    - **Nicknames (`Contact.aliases`).** Local only, never sent: up to 8 per
+      contact, each 1 to 64 printable characters, never an agent ID. Our
+      human sets and removes them, exactly like the label: `rdv_label` with
+      action `add-alias` / `remove-alias` (an approval form where the human
+      types the name; the model's text is only what the field starts with,
+      and through the gateway only a suggestion beside an empty field), or
+      `rdv contact alias add|remove|list` in their own terminal (the
+      plugin's consent guard refuses it to the assistant, as `contact
+      label`). A name belongs to one contact: a nickname another active
+      contact already has, as its label or a nickname, is refused with its
+      fingerprint. Labels may still collide (a probe labels with the probed
+      address, NOTES 62), so resolution keeps refusing ambiguity.
+    - **Clashes.** Two names clash when one query could reach both: their
+      keys (labelKey) meet, also through a possessive reading
+      (`nameKeys`: "Ran's agent" here and "Ran" there). Adding such a
+      nickname is refused, and so is a label that another contact's
+      nickname reaches; rdv_status flags shared names by the same rule.
+      Lengths count characters (code points), not UTF-16 units.
+    - **Matching.** Names compare as before by canonical address when they
+      are one, else NFKC-normalized, trimmed, white space collapsed and
+      case-folded (`labelKey`). A query also matches through its possessive
+      reading (`possessiveName`): "Ran's agent", "Ran’s agent", "Ran's",
+      "James' agent", "agent of Ran", "the agent of Ran" → "Ran". The exact
+      and the possessive reading are unioned, and more than one contact is
+      ambiguous: refused, never guessed. Only our human's names count: never
+      a card's addresses, a greeting, or the peer's `agent_name`. Every place
+      that takes a contact by name resolves this way (`rdv_send`, `rdv_task`,
+      `rdv_group` invite, `rdv_auto_approve`, and now `rdv_negotiate`
+      "propose" with `to`; in the CLI `contact auto-approve`, `audit
+      --contact`, `group invite/promote/remove`). With no match the model is
+      told to show the contacts with fingerprints and offer the name as a
+      nickname through the form.
+    - **Persistence.** The field lives in the contact book, so it travels in
+      `toJSON`/`fromJSON` and in backups unchanged; a re-founded contact
+      (a new grant) keeps it. State saved before has none: nothing to migrate.
+    - **`agent_name` on the card.** An OPTIONAL top-level string, 1 to 64
+      printable characters (NFKC, trimmed). It is signed with the rest of
+      the card; a card without it has no such key, so the test vectors are
+      unchanged and were not regenerated. Receivers that predate it ignore it
+      (verifyCard checks only the fields it knows, and the signature covers
+      whatever the card holds). A receiver shows it only as peer text
+      (`calls_itself: {"untrusted_peer_text": "calls itself Sammie"}` in
+      `rdv_status`, `rdv_discover` and pending requests; "calls itself
+      \"Sammie\", its own claim" in the CLI) and drops a malformed one
+      without rejecting the card. It never picks a recipient unless the
+      receiver's human adds it as a nickname. Set with `rdv init
+      --agent-name`, `rdv agent-name set|clear`, or
+      `rdv_agent_name` (an approval form, the only path from chat: `rdv_init`
+      takes no name, since the model's text would go on the card unseen;
+      through the gateway, the owner's
+      PIN-locked page like `rdv_label`, with the assistant's name only a
+      suggestion beside an empty field, scope `contact:request`). A change re-signs the card, republishes
+      it where it is public and sends it to contacts (`rdv/card-update`).
+      The default greeting of a contact request names it: "Sammie, omer's
+      agent, would like to get in touch."
+
 ## Not implemented yet
 
 

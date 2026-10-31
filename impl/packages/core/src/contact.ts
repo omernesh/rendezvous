@@ -4,7 +4,7 @@ import type { AddressCard, InboundPolicy } from './card.js';
 import { cardUpdateProblem, verifyCard } from './card.js';
 import { BINDING_STRENGTH, type Binding, topicForHint } from './discovery.js';
 import type { AgentKey } from './identity.js';
-import { isAgentId } from './identity.js';
+import { fingerprint, isAgentId } from './identity.js';
 import { canonicalize, isPast, parseTimestamp } from './encoding.js';
 import { type Signed, signDoc, verifyDoc } from './sign.js';
 import { INVITE_KEEP_MS, INVITE_TIERS, INVITE_MAX_TTL_MS, INVITES_OPEN_MAX, cleanInviteName, inviteSecretHash, isInviteSecret, newInviteSecret, sameHash } from './invite.js';
@@ -225,9 +225,77 @@ export function cleanLabel(label: string): string {
   return l;
 }
 
-/** Labels compare by address (canonical discovery topic) when they are one, else case-insensitively. */
+/**
+ * A name as people type it: Unicode NFKC, trimmed, runs of white space as one
+ * space. "Ｒａｎ  Cohen " and "Ran Cohen" are the same name.
+ */
+export function normalizeName(name: string): string {
+  return name.normalize('NFKC').trim().replace(/\s+/gu, ' ');
+}
+
+/**
+ * Names (labels and aliases) compare by address (canonical discovery topic)
+ * when they are one, else normalized (normalizeName) and case-insensitively.
+ */
 export function labelKey(label: string): string {
-  return topicForHint(label.trim()) ?? label.trim().toLowerCase();
+  const n = normalizeName(label);
+  return topicForHint(n) ?? n.toLowerCase();
+}
+
+/**
+ * The name inside a possessive way of naming someone's agent: "Ran's agent",
+ * "Ran’s agent", "Ran's", "James' agent", "agent of Ran", "the agent of
+ * Ran" all give "Ran" (or "James"). Null when `text` is not such a form.
+ * Only our human's own names are then looked up (byLabel): a possessive
+ * never reaches a card's addresses or a name a peer chose.
+ */
+export function possessiveName(text: string): string | null {
+  const n = normalizeName(text);
+  const m =
+    /^(?:the )?agent of (.+)$/iu.exec(n) ??
+    /^(.+?)['\u2019]s(?: agent)?$/iu.exec(n) ??
+    /^(.+s)['\u2019](?: agent)?$/iu.exec(n);
+  const inner = m?.[1]?.trim();
+  return inner ? inner : null;
+}
+
+/** Most aliases (nicknames) one contact may have besides its label, and the longest one. */
+export const ALIASES_MAX = 8;
+export const ALIAS_MAX = 64;
+
+/**
+ * An alias (nickname) as our human typed it: validated like a label
+ * (cleanLabel), at most ALIAS_MAX characters, normalized (normalizeName), and
+ * never an agent ID (which always means itself). Throws otherwise.
+ */
+export function cleanAlias(alias: string): string {
+  if (typeof alias !== 'string') throw new Error(`a nickname must be 1 to ${ALIAS_MAX} printable characters`);
+  const a = normalizeName(alias);
+  // Characters are code points (SPEC §4.3), not UTF-16 units: 64 emoji are 64 characters.
+  const n = [...a].length;
+  if (n === 0 || n > ALIAS_MAX || /[\p{Cc}\p{Cf}]/u.test(a)) throw new Error(`a nickname must be 1 to ${ALIAS_MAX} printable characters`);
+  if (isAgentId(a)) throw new Error('a nickname cannot be an agent ID');
+  return a;
+}
+
+/**
+ * The keys a name can be reached by: its own (labelKey) and, when it is a
+ * possessive ("Ran's agent"), its inner name's. Two names whose keys meet can
+ * be reached by one query (byLabel), so they clash.
+ */
+export function nameKeys(name: string): string[] {
+  const inner = possessiveName(name);
+  return inner === null ? [labelKey(name)] : [...new Set([labelKey(name), labelKey(inner)])];
+}
+
+const keysMeet = (a: string, b: string): boolean => {
+  const kb = nameKeys(b);
+  return nameKeys(a).some((k) => kb.includes(k));
+};
+
+/** Every name our human gave a contact: its label, then its aliases. */
+export function contactNames(c: Pick<Contact, 'label' | 'aliases'>): string[] {
+  return [...(typeof c.label === 'string' ? [c.label] : []), ...(Array.isArray(c.aliases) ? c.aliases.filter((a): a is string => typeof a === 'string') : [])];
 }
 
 export function createContactRequest(
@@ -413,6 +481,13 @@ export interface Contact {
    * this is the only name that may resolve "tell John" to a contact.
    */
   label?: string;
+  /**
+   * Local only, never sent: other names our own human gave this peer
+   * (nicknames such as "Ran" or "joe"), at most ALIASES_MAX, each unique
+   * across contacts (addAlias). They resolve "tell Ran" like the label.
+   * Absent in state saved before nicknames: none.
+   */
+  aliases?: string[];
   binding: Binding;
   grantId: string;
   expires: string | null;
@@ -722,17 +797,84 @@ export class ContactBook {
       : { to_hint: req.to_hint, sent: req.ts, binding: 'claimed', ...(l ? { label: l } : {}), ...card };
   }
 
-  /** Contacts our human labeled `label` (by labelKey). More than one means the label is ambiguous. */
-  byLabel(label: string, now = new Date()): Contact[] {
-    const key = labelKey(label);
-    return Object.values(this.state.contacts).filter((c) => c.label !== undefined && labelKey(c.label) === key && !isPast(c.expires, now));
+  /**
+   * The contacts our human named `name`: by label or alias (labelKey), and
+   * also by the name inside a possessive ("Ran's agent", "agent of Ran":
+   * possessiveName). More than one means the name is ambiguous. Only our
+   * human's own names count, never a card's addresses or a peer's name.
+   */
+  byLabel(name: string, now = new Date()): Contact[] {
+    const keys = new Set([labelKey(name)]);
+    const inner = possessiveName(name);
+    if (inner !== null) keys.add(labelKey(inner));
+    return Object.values(this.state.contacts).filter((c) => !isPast(c.expires, now) && contactNames(c).some((n) => keys.has(labelKey(n))));
   }
 
-  /** Our human names a contact (local only). */
+  /** Active contacts that hold exactly this name (label or alias, by labelKey; no possessive reading). */
+  holdersOf(name: string, now = new Date()): Contact[] {
+    const key = labelKey(name);
+    return Object.values(this.state.contacts).filter((c) => !isPast(c.expires, now) && contactNames(c).some((n) => labelKey(n) === key));
+  }
+
+  /**
+   * Our human gives a contact a nickname (local only). Refused when it is
+   * not a valid name (cleanAlias), the contact already has it (as its label
+   * or an alias), it has ALIASES_MAX already, or another active contact has
+   * this name: a nickname picks exactly one recipient.
+   */
+  addAlias(peer: string, alias: string, now = new Date()): Contact {
+    const c = this.state.contacts[peer];
+    if (!c) throw new Error(`no contact ${peer}`);
+    const a = cleanAlias(alias);
+    const key = labelKey(a);
+    if (contactNames(c).some((n) => labelKey(n) === key)) throw new Error(`this contact is already called "${a}"`);
+    // Also through a possessive: "Ran's agent" here and "Ran" there would both answer "Ran's agent".
+    const other = this.nameClash(a, peer, 'names', now);
+    if (other) {
+      throw new Error(`"${a}" is already the name of another contact (fingerprint ${fingerprint(other.peer)}): a name belongs to one contact only. Remove it there first, or pick another name`);
+    }
+    const aliases = Array.isArray(c.aliases) ? c.aliases : [];
+    if (aliases.length >= ALIASES_MAX) throw new Error(`this contact already has ${ALIASES_MAX} nicknames, the most it may have: remove one first`);
+    c.aliases = [...aliases, a];
+    return c;
+  }
+
+  /** Our human takes a nickname off a contact (by labelKey). Refused when the contact does not have it. */
+  removeAlias(peer: string, alias: string): Contact {
+    const c = this.state.contacts[peer];
+    if (!c) throw new Error(`no contact ${peer}`);
+    const key = labelKey(alias);
+    const aliases = Array.isArray(c.aliases) ? c.aliases : [];
+    const next = aliases.filter((n) => labelKey(n) !== key);
+    if (next.length === aliases.length) throw new Error(`this contact has no nickname "${normalizeName(alias)}"`);
+    if (next.length) c.aliases = next;
+    else delete c.aliases;
+    return c;
+  }
+
+  /**
+   * Another active contact one of whose names (`which`: every name, or only
+   * its aliases) a query for `name` could also reach (nameKeys), else undefined.
+   */
+  nameClash(name: string, except: string, which: 'names' | 'aliases' = 'names', now = new Date()): Contact | undefined {
+    return Object.values(this.state.contacts).find(
+      (c) => c.peer !== except && !isPast(c.expires, now) && (which === 'names' ? contactNames(c) : contactNames({ aliases: c.aliases })).some((n) => keysMeet(n, name)),
+    );
+  }
+
+  /**
+   * Our human names a contact (local only). A label another contact's
+   * nickname already reaches is refused (a nickname is one contact's only);
+   * two labels may still be alike (a probe labels with the probed address),
+   * which callers refuse when the name is used.
+   */
   setLabel(peer: string, label: string): Contact {
     const c = this.state.contacts[peer];
     if (!c) throw new Error(`no contact ${peer}`);
-    c.label = cleanLabel(label);
+    const l = cleanLabel(label);
+    const other = this.nameClash(l, peer, 'aliases');
+    if (other) throw new Error(`"${l}" is already a nickname of another contact (fingerprint ${fingerprint(other.peer)}): remove it there first, or pick another name`);
+    c.label = l;
     return c;
   }
 
@@ -900,6 +1042,7 @@ export class ContactBook {
       ...(prev?.outboundTs ? { outboundTs: prev.outboundTs } : {}),
       ...(prev?.reverseGrantId ? { reverseGrantId: prev.reverseGrantId } : {}),
       ...(l ? { label: l } : {}),
+      ...(prev?.aliases?.length ? { aliases: [...prev.aliases] } : {}),
       binding,
       grantId: grant.id,
       expires: grant.expires,
@@ -1089,6 +1232,7 @@ export class ContactBook {
       grantedTier: g.tier,
       outboundTs: g.ts,
       ...(l ? { label: l } : {}),
+      ...(prev?.aliases?.length ? { aliases: [...prev.aliases] } : {}),
       binding,
       grantId: g.id,
       expires: g.expires,

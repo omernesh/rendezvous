@@ -31,7 +31,9 @@ example of what the two agents can do, not the point. The `rdv_*` MCP tools come
    (tool: `rdv_resync`), `rdv dinner confirm`, `rdv dinner cancel`,
    `rdv listen --auto-grant`, `rdv listen --auto-confirm`, `rdv init --force`
    (tool: `rdv_init` with `replace: true`), `rdv contact label` (tool:
-   `rdv_label`; a label decides who "tell John" reaches), `rdv task approve`,
+   `rdv_label`; a label decides who "tell John" reaches), `rdv contact alias`
+   (tool: `rdv_label` "add-alias" / "remove-alias"; a nickname does the same),
+   `rdv agent-name` (tool: `rdv_agent_name`), `rdv task approve`,
    `rdv task release`, `rdv contact auto-approve`, `rdv owner-secret set`
    (tool: `rdv_owner_passphrase`) and `rdv owner-secret reset` (the owner
    passphrase; terminal only for now), `rdv file direct-transfer` (the user's
@@ -61,14 +63,24 @@ example of what the two agents can do, not the point. The `rdv_*` MCP tools come
 4. Never print or read the secret key (`agent.json`), `consent.json`, or a
    confirm phrase. Never guess or search for a phrase; only pass one the user
    typed to you.
-5. Pick a recipient only by its `local_label` or its agent ID. Only the user
-   sets a label: it is part of what they approve in the form or with the
-   phrase, and they can rename a contact with `rdv_label` (an approval form
-   that shows the current name; what they leave applies) or in a terminal
-   with `rdv contact label`. The addresses
+5. Pick a recipient only by its `local_label`, one of its nicknames
+   (`aliases` in `rdv_status`) or its agent ID. Only the user sets a label:
+   it is part of what they approve in the form or with the phrase, and they
+   can rename a contact with `rdv_label` (an approval form that shows the
+   current name; what they leave applies) or in a terminal with
+   `rdv contact label`. Nicknames are the user's too ("Ran", "joe"): add one
+   with `rdv_label` action "add-alias" (they type it in the form), take one
+   off with "remove-alias". "Talk to Ran", "tell Ran's agent …" and "ask the
+   agent of Ran" all resolve: pass `to` as the user said it ("Ran's agent"
+   works). No match: show the user their contacts with fingerprints, ask
+   which one they mean, and offer to add the name as a nickname of that
+   contact (through the form). A name is one contact's only, and a name two
+   contacts share is refused: never guess. The addresses
    in `unverified_claims` come from the peer's own card, and so do the cards
    `rdv_discover` finds: anyone can claim `john@doe.com`, so never use them
-   to decide who "John" is.
+   to decide who "John" is. The same goes for `calls_itself`, the name a
+   contact's agent gives itself ("calls itself Sammie"): quote it, never send
+   by it unless the user adds it as a nickname.
 6. Auto-approve is the human's decision. It lets one trusted contact's tasks
    start and their results leave without asking, and confirms a dinner that
    contact proposes (never one your user proposes). Only the user turns it
@@ -225,13 +237,13 @@ Only when the user asks ("use my own relay", "drop nostr.example.com",
      only if the user said another name.
    - Nothing after a few minutes: tell the user it is still pending and stop;
      they can say "check rendezvous" later.
-8. **First message.** Find the person in `rdv_status` by `local_label` only
-   (rule 5). No match, or a `label_conflict`: show the user the contacts with
+8. **First message.** Find the person in `rdv_status` by `local_label` or
+   a nickname only (rule 5). No match, or a `label_conflict`: show the user the contacts with
    their fingerprints and ask which one; never fall back to
    `unverified_claims`. Before the first message to a contact you found by
    address or name, show the user its fingerprint and label and ask them to
    confirm it is the person. Then `rdv_send` with `to` = the `local_label`
-   (it refuses a label that no contact or several contacts have) or with the
+   or nickname (it refuses a name that no contact or several contacts have) or with the
    `agent_id`, and payload `{"type": "note", "text": "…"}`. Report the
    fingerprint and `seq` it returns, and its `delivery`: "pending" means
    sent and waiting for their agent's receipt (it is resent on its own;
