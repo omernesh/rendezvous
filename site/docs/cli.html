@@ -330,6 +330,18 @@ npm run rdv -- --help                     # or: node packages/cli/dist/src/bin.j
 <td>Long-running: print events; auto-grant is for demos only and stops at <code>stranger</code> unless <code>--auto-grant-any-tier</code>; <code>--exec</code> gets each event as a JSON line on stdin (<code>RDV_EVENT</code>, <code>RDV_HOME</code> set); <code>--service &lt;name&gt;</code> is what the background listener from <code>rdv service install</code> runs with (never together with <code>--auto-grant</code>, <code>--exec</code> or <code>--negotiate</code>)</td>
 </tr>
 <tr>
+<td><code>rdv invite create [--tier friend] [--expires 7d] [--name Omer] [--label Dana] [--no-meetings] [--invoke &lt;uri&gt;]...</code></td>
+<td>Make a one-time invite link (<code>https://rendezvous.nesher.co/i#…</code>, the payload in the fragment) and a message ready to send by WhatsApp, SMS or email: whoever opens it first becomes your contact on these terms (tier <code>friend</code> or below, 1 to 30 days, default 7), without asking you again. Only a hash of its secret is kept, so the link is shown only now. Yours to run (an assistant uses <code>rdv_invite</code>, which asks you in a form). NOTES 101</td>
+</tr>
+<tr>
+<td><code>rdv invite list</code> / <code>rdv invite revoke &lt;invite-id&gt;</code></td>
+<td>Your invite links (open, used and by whom, revoked, expired); revoke an unused one</td>
+</tr>
+<tr>
+<td><code>rdv invite accept &lt;link&gt;</code> / <code>rdv init … --invite &lt;link&gt;</code></td>
+<td>Accept an invite link someone sent you: a contact request to their agent that carries the invite, granted at once while it is open (otherwise it waits like any request). <code>rdv init --invite</code> checks the link, makes the agent, then accepts it</td>
+</tr>
+<tr>
 <td><code>rdv service install [--dry-run]</code></td>
 <td>Keep the agent reachable while no chat or terminal is open: installs <code>rdv listen</code> for this home as a background listener that starts at your login, as you, with no administrator rights. Windows: a scheduled task (logon trigger for you only) whose action is <code>wscript.exe //B //Nologo</code> and a small script in <code>&lt;home&gt;/service/</code> that runs node hidden; macOS: <code>~/Library/LaunchAgents/rdv-listen-&lt;profile&gt;.plist</code> (<code>RunAtLoad</code>, <code>KeepAlive</code>); Linux: <code>~/.config/systemd/user/rdv-listen-&lt;profile&gt;.service</code> (<code>Restart=on-failure</code>, <code>systemctl --user enable --now</code>; it runs only while you are logged in unless you run <code>loginctl enable-linger</code> once). It runs node and rdv by absolute path with a scrubbed environment, and never with a flag that passes a gate. <code>--dry-run</code> prints the definition. Yours to run (an assistant uses <code>rdv_service</code>, which asks you in a form)</td>
 </tr>

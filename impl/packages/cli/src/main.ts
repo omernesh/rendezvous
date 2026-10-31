@@ -1,6 +1,7 @@
 import { type ParseArgsConfig, parseArgs } from 'node:util';
 import * as cmd from './commands.js';
 import * as grp from './groups.js';
+import * as inv from './invites.js';
 import * as svc from './service.js';
 import { CliError, Home, RelayPublishError } from './home.js';
 import { clean } from './output.js';
@@ -26,8 +27,8 @@ const COMMON: Options = {
 
 const COMMANDS: Record<string, Command> = {
   init: {
-    usage: 'rdv init --profile omer --email omer@example.com [--email …] [--relay wss://… [--relay …]] [--phone +…] [--phone …] [--public-pointer] [--force]',
-    summary: 'Generate a key and card, write state (no --relay: the default public relays)',
+    usage: 'rdv init --profile omer --email omer@example.com [--email …] [--relay wss://… [--relay …]] [--phone +…] [--phone …] [--public-pointer] [--force] [--invite <link>]',
+    summary: 'Generate a key and card, write state (no --relay: the default public relays); --invite: then accept that invite link',
     args: 0,
     options: {
       email: { type: 'string', multiple: true },
@@ -35,6 +36,7 @@ const COMMANDS: Record<string, Command> = {
       relay: { type: 'string', multiple: true },
       'public-pointer': { type: 'boolean' },
       force: { type: 'boolean' },
+      invite: { type: 'string' },
     },
     run: cmd.init,
   },
@@ -140,6 +142,29 @@ const COMMANDS: Record<string, Command> = {
     run: cmd.contactDecline,
   },
   'contact list': { usage: 'rdv contact list', summary: 'List contacts', args: 0, run: cmd.contactList },
+  'invite create': {
+    usage: 'rdv invite create [--tier friend|colleague|business|stranger] [--expires 7d] [--name Omer] [--label "Dana"] [--no-meetings] [--invoke <capability-uri>]...',
+    summary: 'Make a one-time invite link: whoever opens it first becomes your contact on these terms (default: tier friend, meetings, 7 days)',
+    args: 0,
+    options: {
+      tier: { type: 'string' },
+      expires: { type: 'string' },
+      name: { type: 'string' },
+      label: { type: 'string' },
+      'no-meetings': { type: 'boolean' },
+      invoke: { type: 'string', multiple: true },
+    },
+    run: inv.inviteCreate,
+  },
+  'invite list': { usage: 'rdv invite list', summary: 'List your invite links: open, used (by whom), revoked, expired', args: 0, run: inv.inviteList },
+  'invite revoke': { usage: 'rdv invite revoke <invite-id>', summary: 'Revoke an invite link that was not used yet', args: 1, run: inv.inviteRevoke },
+  'invite accept': {
+    usage: 'rdv invite accept <link> [--greeting "…"]',
+    summary: 'Accept an invite link someone sent you: asks their agent for contact, which connects you at once while the invite is open',
+    args: 1,
+    options: { greeting: { type: 'string' } },
+    run: inv.inviteAccept,
+  },
   'contact label': {
     usage: 'rdv contact label <agent-id> <label>',
     summary: 'Name a contact locally (e.g. the address you know them by); sending by name uses this, never the addresses its card claims',

@@ -1222,3 +1222,22 @@ describe('the skill covers general tasks, files and auto-approve (issue #29)', (
     expect(md).not.toMatch(/auto[-_ ]?approve|dangerous mode/i);
   });
 });
+
+describe('invite links (NOTES 101)', () => {
+  const denied = ['rdv invite create', 'rdv --home ./h invite create --tier friend', 'npx rdv invite create', 'bash -c "rdv invite create --tier colleague"', 'echo create | xargs rdv invite'];
+  const allowed = ['rdv invite list', 'rdv invite revoke 0123456789abcdef', 'rdv invite accept https://rendezvous.nesher.co/i#abc', 'rdv init --profile john --invite https://rendezvous.nesher.co/i#abc'];
+  it.each(denied)('the guard refuses %s', (c) => expect(checkCommand(c)).toBeTruthy());
+  it('and says to use rdv_invite "create"', () => expect(checkCommand('rdv invite create --tier friend')).toMatch(/rdv_invite "create"/));
+  it.each(allowed)('the guard allows %s', (c) => expect(checkCommand(c)).toBeUndefined());
+
+  it('both skills know the invite triggers and the tools', () => {
+    const onboarding = readFileSync(ONBOARDING, 'utf8');
+    const skill = readFileSync(join(SKILL_DIR, 'SKILL.md'), 'utf8');
+    for (const md of [onboarding, skill]) {
+      expect(md).toContain('accept this invite');
+      expect(md).toContain('rdv_accept_invite');
+    }
+    expect(skill).toContain('rdv_invite');
+    expect(skill).toMatch(/invite someone/i);
+  });
+});

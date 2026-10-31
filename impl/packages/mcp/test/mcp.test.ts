@@ -910,6 +910,7 @@ describe('rdv-mcp over stdio', () => {
       const tools = (await client.listTools()).tools.map((t) => t.name).sort();
       expect(tools).toEqual(
         [
+          'rdv_accept_invite',
           'rdv_addresses',
           'rdv_auto_approve',
           'rdv_backup',
@@ -918,6 +919,7 @@ describe('rdv-mcp over stdio', () => {
           'rdv_grant',
           'rdv_inbox',
           'rdv_init',
+          'rdv_invite',
           'rdv_label',
           'rdv_negotiate',
           'rdv_owner_passphrase',

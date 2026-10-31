@@ -141,6 +141,8 @@ import {
   requestView,
 } from './output.js';
 
+import { acceptAfterInit, acceptText, profileArg, readInvite } from './invites.js';
+
 export const TIERS: Tier[] = [...CORE_TIERS];
 
 export interface Ctx {
@@ -182,7 +184,7 @@ export function processTty(): Tty {
 const str = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined);
 const list = (v: unknown): string[] => (Array.isArray(v) ? v : typeof v === 'string' ? [v] : []);
 
-function tierOf(v: unknown): Tier | undefined {
+export function tierOf(v: unknown): Tier | undefined {
   const t = str(v);
   if (t === undefined) return undefined;
   if (!TIERS.includes(t as Tier)) throw new CliError(`unknown tier "${t}" (one of: ${TIERS.join(', ')})`, 2);
@@ -303,6 +305,9 @@ function initNextSteps(profile: string, publishable: boolean): { cmd: string; wh
 
 export async function init({ home, out, values, tty }: Ctx): Promise<void> {
   const profile = str(values.profile) ?? process.env.RDV_PROFILE ?? 'default';
+  // An invite link (NOTES 101): checked before anything is made, redeemed right after.
+  const given = str(values.invite);
+  const link = given !== undefined ? readInvite(given) : undefined;
   const r = await initHome(home, {
     profile,
     relays: list(values.relay),
@@ -316,6 +321,10 @@ export async function init({ home, out, values, tty }: Ctx): Promise<void> {
     { event: 'init', id: r.id, fingerprint: r.fingerprint, profile, home: home.dir, next_steps: next.map((n) => n.cmd) },
     `initialized profile "${profile}" at ${home.dir}\nid:          ${r.id}\nfingerprint: ${r.fingerprint}\n\nNext steps:\n${next.map((n) => `  ${n.cmd.padEnd(34)} # ${n.why}`).join('\n')}`,
   );
+  if (link) {
+    const sent = await acceptAfterInit(home, link, profile);
+    out.emit({ event: 'request-sent', via: 'invite', ...sent }, acceptText(sent, profileArg(profile)));
+  }
   // Setup is where the owner is surely at their own terminal: offer the owner passphrase now (issue #47), so it
   // is theirs before any assistant could set the first one. Only in a real interactive terminal; Enter skips.
   const term = tty ?? processTty();
@@ -1023,7 +1032,7 @@ function labelOf(v: unknown): string | undefined {
  * capabilities with `--no-meetings`. Deny by default: nothing else is allowed.
  * Checked (and both meeting fields made consistent) before anything is sent.
  */
-function invokeScope(scope: GrantScope | undefined, invoke: unknown, noMeetings: boolean): GrantScope | undefined {
+export function invokeScope(scope: GrantScope | undefined, invoke: unknown, noMeetings: boolean): GrantScope | undefined {
   const uris = Array.isArray(invoke) ? (invoke as unknown[]) : invoke === undefined ? [] : [invoke];
   try {
     if (uris.length === 0 && !noMeetings) return scope === undefined ? undefined : grantScope(scope);

@@ -11,7 +11,7 @@ export const SCOPE_TEXT: Record<Scope, string> = {
   read: 'status, contacts, pending requests, the inbox, task and group lists',
   send: 'messages, tasks and group posts to your contacts, as you, and fetching files a contact sent for a task you started',
   'contact:request':
-    'asking people for contact and asking you to approve (only you approve, on the page); also revoking, declining and blocking, which only ever reduce access; ' +
+    'asking people for contact (by address, agent ID or an invite link) and asking you to approve, or to make an invite link (only you approve, on the page); also revoking, declining and blocking, which only ever reduce access; ' +
     "and asking you to rename a contact, take a contact's or a group's messages again after a fork, or turn direct file transfers on (only you decide, on the page; turning them off needs no one)",
   negotiate: 'proposing dinner times (only you confirm a meeting, on the page)',
 };
@@ -26,6 +26,9 @@ const TABLE: Record<string, Record<string, Scope>> = {
   rdv_relays: { '*': 'read' },
   rdv_publish_card: { '*': 'contact:request' },
   rdv_request_contact: { '*': 'contact:request' },
+  // Invite links (NOTES 101): making one is asked on the page; accepting one is a contact request.
+  rdv_accept_invite: { '*': 'contact:request' },
+  rdv_invite: { list: 'read', create: 'contact:request', revoke: 'contact:request' },
   rdv_grant: { '*': 'contact:request' },
   rdv_revoke: { '*': 'contact:request' },
   rdv_label: { '*': 'contact:request' },

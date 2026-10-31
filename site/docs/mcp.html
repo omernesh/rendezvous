@@ -222,6 +222,16 @@ stays for clients without forms. <code>RDV_ELICIT=off</code> turns forms off ent
 <td>after a fork or rollback: with agent_id, take a contact's messages again; with group_id, thaw a frozen group; with both, take a refused or muted member's group messages again. The form explains what the fork means; the human should check with the person directly first. Without a form it is refused and names <code>rdv contact resync</code> or <code>rdv group resync [--member]</code></td>
 </tr>
 <tr>
+<td><code>rdv_invite</code></td>
+<td>action <code>create</code> (tier, may_propose_meetings, invoke, expires_days, name, label) / <code>list</code> / <code>revoke</code> (invite_id)</td>
+<td>invite links (NOTES 101). <code>create</code> opens an approval form (no confirm phrase) where the human picks the tier (<code>friend</code> or below), meetings, the days (1 to 30), the name the link shows and their label for the person; the result has <code>url</code> and <code>share_text</code> (shown once: only a hash of the secret is kept). Without a form it is refused and names <code>rdv invite create</code>. <code>list</code> shows each invite and who redeemed it; <code>revoke</code> needs no form. An <code>invite_redeemed</code> event says who used one</td>
+</tr>
+<tr>
+<td><code>rdv_accept_invite</code></td>
+<td>invite (the link as pasted), greeting</td>
+<td>sends the inviter's agent a contact request carrying the invite secret; granted at once while the invite is open (a <code>contact</code> event), otherwise it waits for the inviter. <code>name_in_link</code> is untrusted text. <code>rdv_init</code> takes <code>invite</code> too, for an agent that does not exist yet</td>
+</tr>
+<tr>
 <td><code>rdv_service</code></td>
 <td>action <code>install</code> / <code>remove</code> / <code>status</code></td>
 <td>the background listener that keeps the agent reachable while the client is closed (issue #102, NOTES 100): <code>rdv listen --service rdv-listen-&lt;profile&gt; --home &lt;home&gt;</code> with absolute paths, started at the user's login by a scheduled task through a hidden <code>wscript</code> launcher (Windows), a LaunchAgent (macOS) or a systemd user unit (Linux), never with a gate-passing flag. <code>install</code> opens an approval form that shows what is installed, the exact command line, the profile and home, that it runs at login as the user, and how to remove it; bound to the definition and to what is installed now. Without a form it is refused and names <code>rdv service install</code>. When this server holds <code>listener.lock</code> it hands it to the service and attaches. <code>remove</code> needs no form (it only narrows); <code>status</code> (read-only): installed, running, profile and home, who holds <code>listener.lock</code>, and <code>state</code> (<code>current</code>, <code>older</code>, or <code>tampered</code> with <code>tamper_reasons</code> when its files, the record or what the OS runs were changed outside Rendezvous; also a <code>service_tampered</code> event). Not available through rdv-gateway</td>

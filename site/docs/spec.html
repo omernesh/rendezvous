@@ -55,7 +55,7 @@
     <p class="crumbs"><a href="/docs/">Docs</a> / Protocol</p>
     <h1>Protocol specification</h1>
     <p class="doc-meta">Rendered from <a href="https://github.com/omernesh/rendezvous/blob/main/SPEC.md">SPEC.md</a> on GitHub. <a href="/docs/spec.md">Markdown version</a> for LLMs.</p>
-    <details class="toc-m"><summary>On this page</summary><ul><li><a href="#1-abstract">1. Abstract</a></li><li><a href="#2-motivation">2. Motivation</a></li><li><a href="#3-design-principles">3. Design principles</a></li><li><a href="#4-identity-layer">4. Identity layer</a><ul><li><a href="#41-agent-key">4.1 Agent key</a></li><li><a href="#42-agent-id">4.2 Agent ID</a></li><li><a href="#43-address-card-calling-card">4.3 Address Card ("calling card")</a></li><li><a href="#44-discovery-of-a-card">4.4 Discovery of a card</a></li><li><a href="#45-discovery-directories-optional">4.5 Discovery directories (optional)</a></li><li><a href="#46-encoding-canonical-json-and-signatures">4.6 Encoding, canonical JSON and signatures</a></li></ul></li><li><a href="#5-contact-layer-consent-handshake">5. Contact layer (consent &amp;amp; handshake)</a><ul><li><a href="#51-contact-request">5.1 Contact Request</a></li><li><a href="#52-human-channel-bootstrap">5.2 Human-channel bootstrap</a></li><li><a href="#521-mailbox-probe-email-probe-profile">5.2.1 Mailbox probe (email probe profile)</a></li><li><a href="#522-invite-no-agent-found">5.2.2 Invite (no agent found)</a></li><li><a href="#53-contact-grant-consent">5.3 Contact Grant (consent)</a></li><li><a href="#54-policy-and-revocation">5.4 Policy and revocation</a></li><li><a href="#55-consent-stays-with-the-human">5.5 Consent stays with the human</a></li><li><a href="#551-auto-approve-all-per-contact">5.5.1 Auto-approve-all per contact</a></li><li><a href="#56-peer-text-is-untrusted-data">5.6 Peer text is untrusted data</a></li></ul></li><li><a href="#6-transport-layer">6. Transport layer</a><ul><li><a href="#61-rendezvous-hints">6.1 Rendezvous hints</a></li><li><a href="#62-primary-relay-nostr">6.2 Primary relay: Nostr</a></li><li><a href="#63-fallbacks-all-optional-all-dumb-pipes">6.3 Fallbacks (all optional, all dumb pipes)</a></li><li><a href="#64-envelope">6.4 Envelope</a></li></ul></li><li><a href="#7-session-task-layer-a2a-semantics">7. Session &amp;amp; task layer (A2A semantics)</a><ul><li><a href="#71-a2a-mapping">7.1 A2A mapping</a></li><li><a href="#72-meeting-verbs">7.2 Meeting verbs</a></li><li><a href="#73-task-states">7.3 Task states</a></li><li><a href="#74-scope-and-defaults">7.4 Scope and defaults</a></li><li><a href="#75-extending-the-meeting-verbs">7.5 Extending the meeting verbs</a></li><li><a href="#76-general-tasks">7.6 General tasks</a></li><li><a href="#77-files">7.7 Files</a></li><li><a href="#78-groups">7.8 Groups</a></li></ul></li><li><a href="#8-threat-model">8. Threat model</a></li><li><a href="#9-privacy">9. Privacy</a></li><li><a href="#10-anti-spam-reputation">10. Anti-spam &amp;amp; reputation</a></li><li><a href="#11-open-problems-honest">11. Open problems (honest)</a></li><li><a href="#12-scope-phases">12. Scope &amp;amp; phases</a></li><li><a href="#13-reference-implementation-distribution">13. Reference implementation &amp;amp; distribution</a></li><li><a href="#14-appendix">14. Appendix</a></li></ul></details>
+    <details class="toc-m"><summary>On this page</summary><ul><li><a href="#1-abstract">1. Abstract</a></li><li><a href="#2-motivation">2. Motivation</a></li><li><a href="#3-design-principles">3. Design principles</a></li><li><a href="#4-identity-layer">4. Identity layer</a><ul><li><a href="#41-agent-key">4.1 Agent key</a></li><li><a href="#42-agent-id">4.2 Agent ID</a></li><li><a href="#43-address-card-calling-card">4.3 Address Card ("calling card")</a></li><li><a href="#44-discovery-of-a-card">4.4 Discovery of a card</a></li><li><a href="#45-discovery-directories-optional">4.5 Discovery directories (optional)</a></li><li><a href="#46-encoding-canonical-json-and-signatures">4.6 Encoding, canonical JSON and signatures</a></li></ul></li><li><a href="#5-contact-layer-consent-handshake">5. Contact layer (consent &amp;amp; handshake)</a><ul><li><a href="#51-contact-request">5.1 Contact Request</a></li><li><a href="#52-human-channel-bootstrap">5.2 Human-channel bootstrap</a></li><li><a href="#521-mailbox-probe-email-probe-profile">5.2.1 Mailbox probe (email probe profile)</a></li><li><a href="#522-invite-no-agent-found">5.2.2 Invite (no agent found)</a></li><li><a href="#523-invite-links">5.2.3 Invite links</a></li><li><a href="#53-contact-grant-consent">5.3 Contact Grant (consent)</a></li><li><a href="#54-policy-and-revocation">5.4 Policy and revocation</a></li><li><a href="#55-consent-stays-with-the-human">5.5 Consent stays with the human</a></li><li><a href="#551-auto-approve-all-per-contact">5.5.1 Auto-approve-all per contact</a></li><li><a href="#56-peer-text-is-untrusted-data">5.6 Peer text is untrusted data</a></li></ul></li><li><a href="#6-transport-layer">6. Transport layer</a><ul><li><a href="#61-rendezvous-hints">6.1 Rendezvous hints</a></li><li><a href="#62-primary-relay-nostr">6.2 Primary relay: Nostr</a></li><li><a href="#63-fallbacks-all-optional-all-dumb-pipes">6.3 Fallbacks (all optional, all dumb pipes)</a></li><li><a href="#64-envelope">6.4 Envelope</a></li></ul></li><li><a href="#7-session-task-layer-a2a-semantics">7. Session &amp;amp; task layer (A2A semantics)</a><ul><li><a href="#71-a2a-mapping">7.1 A2A mapping</a></li><li><a href="#72-meeting-verbs">7.2 Meeting verbs</a></li><li><a href="#73-task-states">7.3 Task states</a></li><li><a href="#74-scope-and-defaults">7.4 Scope and defaults</a></li><li><a href="#75-extending-the-meeting-verbs">7.5 Extending the meeting verbs</a></li><li><a href="#76-general-tasks">7.6 General tasks</a></li><li><a href="#77-files">7.7 Files</a></li><li><a href="#78-groups">7.8 Groups</a></li></ul></li><li><a href="#8-threat-model">8. Threat model</a></li><li><a href="#9-privacy">9. Privacy</a></li><li><a href="#10-anti-spam-reputation">10. Anti-spam &amp;amp; reputation</a></li><li><a href="#11-open-problems-honest">11. Open problems (honest)</a></li><li><a href="#12-scope-phases">12. Scope &amp;amp; phases</a></li><li><a href="#13-reference-implementation-distribution">13. Reference implementation &amp;amp; distribution</a></li><li><a href="#14-appendix">14. Appendix</a></li></ul></details>
     <div class="prose">
 <p><strong>Status:</strong> Draft v0.1 rev 3 (2026-10-25) — for discussion<br>
 <strong>Author:</strong> Omer Nesher<br>
@@ -570,6 +570,11 @@ WhatsApp) addressed to the human.</p>
     probe (§4.4) is posted in cleartext on the carrier, greeting and card
     included (§9).</li>
 <li><code>greeting</code> is peer-written text: display-only (§5.6).</li>
+<li><code>invite</code> (optional) carries the secret of an invite link (§5.2.3):
+    base64url, no padding, of exactly 16 bytes (22 characters). A request
+    whose <code>invite</code> is present but not of that form is invalid. It is covered
+    by <code>sig</code> like every other field. A receiver that does not know invites
+    ignores it, and the request is an ordinary one.</li>
 </ul>
 <h3 id="52-human-channel-bootstrap">5.2 Human-channel bootstrap<a class="anchor" href="#52-human-channel-bootstrap" title="Link to this section" aria-label="Link to this section">#</a></h3>
 <p>When machine-first discovery yields nothing, contact travels the human
@@ -673,6 +678,81 @@ the human reads a friendly note.</p>
 <li>When the invitee later runs an agent, the token maps the human
     introduction to the handshake — no rediscovery needed.</li>
 </ul>
+<h3 id="523-invite-links">5.2.3 Invite links<a class="anchor" href="#523-invite-links" title="Link to this section" aria-label="Link to this section">#</a></h3>
+<p>(<strong>spec change</strong>, NOTES 101.) The WhatsApp-style "join me" for people who
+have no agent yet, sent by any channel the owner likes (a chat message, an
+SMS, an email). It needs no mail rule and no discovery: one link carries
+everything the invitee's agent needs, and making it is the owner's consent
+in advance.</p>
+<p><strong>The link.</strong> <code>https://rendezvous.nesher.co/i#&lt;payload&gt;</code>. The payload is in
+the URL fragment, which browsers never send, so the page that explains it
+(and any CDN in front of it) never sees an invite. <code>&lt;payload&gt;</code> is base64url
+without padding of the canonical JSON (§4.6) of:</p>
+<div class="codeblock"><pre tabindex="0"><code class="language-json">{ &quot;a&quot;: &quot;rdv1:&lt;inviter key&gt;&quot;, &quot;e&quot;: 1762128000, &quot;n&quot;: &quot;Omer&quot;,
+  &quot;r&quot;: [&quot;wss://relay.example.com&quot;], &quot;s&quot;: &quot;&lt;22 characters&gt;&quot;, &quot;v&quot;: 1 }
+</code></pre></div>
+<ul>
+<li><code>v</code> is 1; <code>a</code> is the inviter's agent ID; <code>r</code> 1 to 3 of its relays
+    (<code>ws://</code> or <code>wss://</code>, at most 200 characters each, no repeats); <code>s</code> the
+    invite secret, 128 bits from a CSPRNG, base64url (22 characters); <code>e</code> the
+    expiry in Unix seconds; <code>n</code> an optional display name of 1 to 64 printable
+    characters, already trimmed.</li>
+<li>A reader refuses any other key, a missing or malformed field, and JSON
+    that is not in canonical form, so one invite has one link. It reads the
+    payload after the first <code>#</code> of whatever was pasted (any host), or after
+    <code>rdv-invite:</code>, or the payload alone. A real link is about 300 characters.</li>
+<li>The link is not signed. Every field either authenticates itself or is
+    untrusted by design: the secret is checked by the agent <code>a</code> names, and
+    only that agent can decrypt the request (§6.4); relays are dumb pipes, so
+    changed relays can only lose the request; and <code>n</code> is the inviter's own
+    claim, which anyone making a link may set to anything. Hosts show <code>n</code> as
+    unverified and never use it as the contact's local label without their
+    owner's approval. A signature would add 86 characters and prove nothing
+    the secret does not.</li>
+</ul>
+<p><strong>Making one.</strong> Only the owner makes an invite, through one of the
+approvals of §5.5 (the reference: <code>rdv invite create</code> in their terminal, or
+an approval form). They choose what the redeemer gets (tier and scope, as
+in a grant), how long it lasts (at most 30 days; reference default 7), the
+name in the link and, optionally, their own label for the person. The tier
+is <code>friend</code> or less close: a link can be forwarded, so <code>family</code> and
+<code>spouse</code> are granted afterwards, to the contact. The agent stores a hash of
+the secret, never the secret (the reference: SHA-256 over
+<code>"rdv1/invite\0" ‖ secret bytes</code>; the secret has 128 bits, so a slow hash
+adds nothing), and shows the link once.</p>
+<p><strong>Redeeming.</strong> The invitee's agent sends an ordinary contact request
+(§5.1) to <code>a</code>, in an envelope on the relays <code>r</code>, with <code>to_hint</code> = <code>a</code> and
+<code>invite</code> = <code>s</code>, and records it as a request sent to that agent (only a grant
+signed by <code>a</code> answers it). It never posts an invite on a topic. It needs no
+card of the inviter and no published card of its own: the request carries
+its card, and the grant carries the inviter's.</p>
+<p>The inviter's agent handles the request as any other (verification, replay,
+block and policy checks, an existing contact), and then, before its
+allowlist and pending queue: if the request came in an envelope and the
+hash of <code>invite</code> matches an invite that is not used, revoked or expired, it
+marks that invite used (by the requester's agent ID and the request ID) and
+grants the request with the invite's tier and scope, binding <code>claimed</code>,
+labeled with the owner's label if they gave one. It compares every stored
+hash in constant time. It then tells its owner who redeemed which invite,
+with the fingerprint, so a link that reached the wrong person is caught and
+the contact can be revoked. Anything else (a wrong, used, revoked or
+expired secret, or one that came on a topic) is an ordinary request from
+there on: it waits for the owner, so the requester learns nothing about
+the secret it sent. A <code>block</code> policy or a blocked key still wins.</p>
+<p><strong>Consent.</strong> Granting on the strength of the secret alone does not break
+§5.5: the owner decided before the request existed, on terms they saw, and
+the invite is single use, expires, and can be revoked until used. It is a
+standing pre-approval of one unknown future requester, like the allowlist
+(§5.4) but bound to a secret instead of a key. The invitee's side is
+unchanged: sending a request needs no approval, and what the inviter may do
+towards the invitee stays the invitee's local default until its own owner
+grants more (§5.3, Direction).</p>
+<p><strong>Risk.</strong> Whoever holds the link can redeem it first: it is a bearer
+credential for a contact at the chosen tier. Hence the tier cap, the expiry,
+single use, the redemption notice, and hosts that say plainly "send it only
+to the person you mean". An assistant that shows the link to its user holds
+it too; the reference returns it once, in the result of the call that made
+it, and keeps only the hash.</p>
 <h3 id="53-contact-grant-consent">5.3 Contact Grant (consent)<a class="anchor" href="#53-contact-grant-consent" title="Link to this section" aria-label="Link to this section">#</a></h3>
 <div class="codeblock"><pre tabindex="0"><code class="language-json">{
   &quot;v&quot;: 1,
@@ -889,7 +969,9 @@ of model output alone. Acceptable approvals are:</p>
     cannot be read back from disk. The reference implementation accepts a
     phrase only for tiers less close than <code>family</code> (<code>friend</code> and below);</li>
 <li>the owner's own command in a terminal;</li>
-<li>a standing pre-approval the owner set as policy (<code>allow</code>, §5.4).</li>
+<li>a standing pre-approval the owner set as policy (<code>allow</code>, §5.4);</li>
+<li>an invite link the owner made, for its single redeemer, on the terms
+    chosen when making it (§5.2.3).</li>
 </ul>
 <p>The same holds on the requester's side. A grant the agent <em>receives</em> is the
 peer's decision, not its owner's: it sets only what the agent may do towards
@@ -2881,7 +2963,7 @@ lookups.</p>
 vendor-neutral and unowned.</p>
     </div>
   </article>
-  <div class="docs-toc"><nav class="page-toc" aria-label="On this page"><p class="side-group">On this page</p><ul><li><a href="#1-abstract">1. Abstract</a></li><li><a href="#2-motivation">2. Motivation</a></li><li><a href="#3-design-principles">3. Design principles</a></li><li><a href="#4-identity-layer">4. Identity layer</a><ul><li><a href="#41-agent-key">4.1 Agent key</a></li><li><a href="#42-agent-id">4.2 Agent ID</a></li><li><a href="#43-address-card-calling-card">4.3 Address Card ("calling card")</a></li><li><a href="#44-discovery-of-a-card">4.4 Discovery of a card</a></li><li><a href="#45-discovery-directories-optional">4.5 Discovery directories (optional)</a></li><li><a href="#46-encoding-canonical-json-and-signatures">4.6 Encoding, canonical JSON and signatures</a></li></ul></li><li><a href="#5-contact-layer-consent-handshake">5. Contact layer (consent &amp;amp; handshake)</a><ul><li><a href="#51-contact-request">5.1 Contact Request</a></li><li><a href="#52-human-channel-bootstrap">5.2 Human-channel bootstrap</a></li><li><a href="#521-mailbox-probe-email-probe-profile">5.2.1 Mailbox probe (email probe profile)</a></li><li><a href="#522-invite-no-agent-found">5.2.2 Invite (no agent found)</a></li><li><a href="#53-contact-grant-consent">5.3 Contact Grant (consent)</a></li><li><a href="#54-policy-and-revocation">5.4 Policy and revocation</a></li><li><a href="#55-consent-stays-with-the-human">5.5 Consent stays with the human</a></li><li><a href="#551-auto-approve-all-per-contact">5.5.1 Auto-approve-all per contact</a></li><li><a href="#56-peer-text-is-untrusted-data">5.6 Peer text is untrusted data</a></li></ul></li><li><a href="#6-transport-layer">6. Transport layer</a><ul><li><a href="#61-rendezvous-hints">6.1 Rendezvous hints</a></li><li><a href="#62-primary-relay-nostr">6.2 Primary relay: Nostr</a></li><li><a href="#63-fallbacks-all-optional-all-dumb-pipes">6.3 Fallbacks (all optional, all dumb pipes)</a></li><li><a href="#64-envelope">6.4 Envelope</a></li></ul></li><li><a href="#7-session-task-layer-a2a-semantics">7. Session &amp;amp; task layer (A2A semantics)</a><ul><li><a href="#71-a2a-mapping">7.1 A2A mapping</a></li><li><a href="#72-meeting-verbs">7.2 Meeting verbs</a></li><li><a href="#73-task-states">7.3 Task states</a></li><li><a href="#74-scope-and-defaults">7.4 Scope and defaults</a></li><li><a href="#75-extending-the-meeting-verbs">7.5 Extending the meeting verbs</a></li><li><a href="#76-general-tasks">7.6 General tasks</a></li><li><a href="#77-files">7.7 Files</a></li><li><a href="#78-groups">7.8 Groups</a></li></ul></li><li><a href="#8-threat-model">8. Threat model</a></li><li><a href="#9-privacy">9. Privacy</a></li><li><a href="#10-anti-spam-reputation">10. Anti-spam &amp;amp; reputation</a></li><li><a href="#11-open-problems-honest">11. Open problems (honest)</a></li><li><a href="#12-scope-phases">12. Scope &amp;amp; phases</a></li><li><a href="#13-reference-implementation-distribution">13. Reference implementation &amp;amp; distribution</a></li><li><a href="#14-appendix">14. Appendix</a></li></ul></nav></div>
+  <div class="docs-toc"><nav class="page-toc" aria-label="On this page"><p class="side-group">On this page</p><ul><li><a href="#1-abstract">1. Abstract</a></li><li><a href="#2-motivation">2. Motivation</a></li><li><a href="#3-design-principles">3. Design principles</a></li><li><a href="#4-identity-layer">4. Identity layer</a><ul><li><a href="#41-agent-key">4.1 Agent key</a></li><li><a href="#42-agent-id">4.2 Agent ID</a></li><li><a href="#43-address-card-calling-card">4.3 Address Card ("calling card")</a></li><li><a href="#44-discovery-of-a-card">4.4 Discovery of a card</a></li><li><a href="#45-discovery-directories-optional">4.5 Discovery directories (optional)</a></li><li><a href="#46-encoding-canonical-json-and-signatures">4.6 Encoding, canonical JSON and signatures</a></li></ul></li><li><a href="#5-contact-layer-consent-handshake">5. Contact layer (consent &amp;amp; handshake)</a><ul><li><a href="#51-contact-request">5.1 Contact Request</a></li><li><a href="#52-human-channel-bootstrap">5.2 Human-channel bootstrap</a></li><li><a href="#521-mailbox-probe-email-probe-profile">5.2.1 Mailbox probe (email probe profile)</a></li><li><a href="#522-invite-no-agent-found">5.2.2 Invite (no agent found)</a></li><li><a href="#523-invite-links">5.2.3 Invite links</a></li><li><a href="#53-contact-grant-consent">5.3 Contact Grant (consent)</a></li><li><a href="#54-policy-and-revocation">5.4 Policy and revocation</a></li><li><a href="#55-consent-stays-with-the-human">5.5 Consent stays with the human</a></li><li><a href="#551-auto-approve-all-per-contact">5.5.1 Auto-approve-all per contact</a></li><li><a href="#56-peer-text-is-untrusted-data">5.6 Peer text is untrusted data</a></li></ul></li><li><a href="#6-transport-layer">6. Transport layer</a><ul><li><a href="#61-rendezvous-hints">6.1 Rendezvous hints</a></li><li><a href="#62-primary-relay-nostr">6.2 Primary relay: Nostr</a></li><li><a href="#63-fallbacks-all-optional-all-dumb-pipes">6.3 Fallbacks (all optional, all dumb pipes)</a></li><li><a href="#64-envelope">6.4 Envelope</a></li></ul></li><li><a href="#7-session-task-layer-a2a-semantics">7. Session &amp;amp; task layer (A2A semantics)</a><ul><li><a href="#71-a2a-mapping">7.1 A2A mapping</a></li><li><a href="#72-meeting-verbs">7.2 Meeting verbs</a></li><li><a href="#73-task-states">7.3 Task states</a></li><li><a href="#74-scope-and-defaults">7.4 Scope and defaults</a></li><li><a href="#75-extending-the-meeting-verbs">7.5 Extending the meeting verbs</a></li><li><a href="#76-general-tasks">7.6 General tasks</a></li><li><a href="#77-files">7.7 Files</a></li><li><a href="#78-groups">7.8 Groups</a></li></ul></li><li><a href="#8-threat-model">8. Threat model</a></li><li><a href="#9-privacy">9. Privacy</a></li><li><a href="#10-anti-spam-reputation">10. Anti-spam &amp;amp; reputation</a></li><li><a href="#11-open-problems-honest">11. Open problems (honest)</a></li><li><a href="#12-scope-phases">12. Scope &amp;amp; phases</a></li><li><a href="#13-reference-implementation-distribution">13. Reference implementation &amp;amp; distribution</a></li><li><a href="#14-appendix">14. Appendix</a></li></ul></nav></div>
 </div>
 </main>
 

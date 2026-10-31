@@ -7,6 +7,7 @@ import type { AgentKey } from './identity.js';
 import { isAgentId } from './identity.js';
 import { canonicalize, isPast, parseTimestamp } from './encoding.js';
 import { type Signed, signDoc, verifyDoc } from './sign.js';
+import { INVITE_KEEP_MS, INVITE_TIERS, INVITE_MAX_TTL_MS, INVITES_OPEN_MAX, cleanInviteName, inviteSecretHash, isInviteSecret, newInviteSecret, sameHash } from './invite.js';
 
 export type Tier = 'spouse' | 'family' | 'friend' | 'colleague' | 'business' | 'stranger';
 /** The tier enum, closest first. A grant with any other tier is rejected. */
@@ -160,6 +161,13 @@ export interface ContactRequestBody {
   greeting: string;
   capabilities_offered: string[];
   ts: string;
+  /**
+   * The secret of an invite link the requester's human was given (SPEC
+   * §5.2.3, NOTES 101). Optional; base64url of 16 bytes. Only ever sent in
+   * an envelope to the inviter, never on a topic. A receiver that does not
+   * know invites ignores it (the request is then an ordinary one).
+   */
+  invite?: string;
 }
 export type ContactRequest = Signed<ContactRequestBody>;
 
@@ -225,8 +233,9 @@ export function labelKey(label: string): string {
 export function createContactRequest(
   key: AgentKey,
   card: AddressCard,
-  opts: { toHint: string; greeting: string; capabilities?: string[]; now?: Date },
+  opts: { toHint: string; greeting: string; capabilities?: string[]; now?: Date; invite?: string },
 ): ContactRequest {
+  if (opts.invite !== undefined && !isInviteSecret(opts.invite)) throw new Error('not an invite secret');
   return signDoc<ContactRequestBody>(
     {
       v: 1,
@@ -238,6 +247,7 @@ export function createContactRequest(
       greeting: opts.greeting,
       capabilities_offered: opts.capabilities ?? ['a2a/0.3'],
       ts: (opts.now ?? new Date()).toISOString(),
+      ...(opts.invite !== undefined ? { invite: opts.invite } : {}),
     },
     key,
   );
@@ -306,6 +316,8 @@ export const isDocId = (id: unknown): id is string => typeof id === 'string' && 
 export function verifyContactRequest(input: unknown, now = new Date()): input is ContactRequest {
   const r = input as ContactRequest;
   if (!r || r.v !== 1 || r.type !== 'rdv/contact-request' || !isDocId(r.id) || parseTimestamp(r.ts) === null) return false;
+  // Optional, but well formed when present (NOTES 101).
+  if (Object.hasOwn(r, 'invite') && !isInviteSecret(r.invite)) return false;
   if (!isAgentId(r.from) || !verifyDoc(r, r.from)) return false;
   const card = verifyCard(r.card, now);
   return card.ok && card.card.id === r.from;
@@ -465,8 +477,47 @@ export type RequestOutcome =
   | { status: 'pending'; pending: PendingRequest; evicted?: { id: string; total: number } }
   /** The pending list was full of stronger requests: this one was not kept (retrying later is accepted). */
   | { status: 'evicted'; evicted: string; total: number }
-  | { status: 'auto-grant'; tier: Tier; scope: GrantScope }
+  | { status: 'auto-grant'; tier: Tier; scope: GrantScope; invite?: InviteRecord; label?: string }
   | { status: 'blocked' | 'duplicate' | 'invalid' | 'already-contact' | 'rate-limited' };
+
+/**
+ * An invite link our human made (SPEC §5.2.3, NOTES 101): their consent, in
+ * advance, to whoever redeems it first, on these terms. Only a hash of the
+ * secret is kept; the link itself is shown once, when it is made.
+ */
+export interface InviteRecord {
+  /** Local handle (16 hex), for list and revoke. Not in the link. */
+  id: string;
+  /** inviteSecretHash of the secret. */
+  hash: string;
+  created: string;
+  expires: string;
+  /** What the redeemer gets, as our human chose it. */
+  tier: Tier;
+  scope: GrantScope;
+  /** The display name the link carries (our human's own words). */
+  name?: string;
+  /** Our human's name for the person they invite: the contact's local label. */
+  label?: string;
+  /** Set once redeemed: single use. */
+  used?: { at: string; by: string; request: string };
+  /** Set when our human revoked it. */
+  revoked?: string;
+}
+
+/** An invite as `listInvites` shows it: never the hash. */
+export type InviteView = Omit<InviteRecord, 'hash'> & { status: 'open' | 'used' | 'revoked' | 'expired' };
+
+export function inviteStatus(r: Pick<InviteRecord, 'used' | 'revoked' | 'expires'>, now = new Date()): InviteView['status'] {
+  if (r.used) return 'used';
+  if (r.revoked) return 'revoked';
+  return isPast(r.expires, now) ? 'expired' : 'open';
+}
+
+const inviteView = (r: InviteRecord, now: Date): InviteView => {
+  const { hash: _hash, ...rest } = r;
+  return { ...rest, status: inviteStatus(r, now) };
+};
 
 export interface ContactBookState {
   policy: InboundPolicy;
@@ -497,6 +548,8 @@ export interface ContactBookState {
    * flood never adds a key. Absent in state saved before v0.3.
    */
   taskRate?: Record<string, TaskRateState>;
+  /** Invite links our human made, by id (NOTES 101). Absent in state saved before them. */
+  invites?: Record<string, InviteRecord>;
 }
 
 /** One contact's per-capability task counters (epoch ms, oldest first). */
@@ -690,6 +743,10 @@ export class ContactBook {
     if (this.state.declined.includes(req.id) || !this.markSeen(req.id)) return { status: 'duplicate' };
     if (this.isBlocked(req.from) || this.state.policy === 'block') return { status: 'blocked' };
     if (this.contact(req.from, now)) return { status: 'already-contact' };
+    // An invite our human made is their consent in advance (NOTES 101): only in an envelope (a topic is public),
+    // only an open one, once. Anything else is an ordinary request from here on: no answer tells a wrong secret apart.
+    const invite = arrival?.via === 'envelope' && req.invite !== undefined ? this.redeemInvite(req.invite, req, now) : undefined;
+    if (invite) return { status: 'auto-grant', tier: invite.tier, scope: invite.scope, invite, ...(invite.label ? { label: invite.label } : {}) };
     const allowed = this.state.allowlist[req.from];
     if (allowed) return { status: 'auto-grant', ...allowed };
     if (this.state.policy === 'allow') return { status: 'blocked' }; // allow = allowlist only
@@ -714,6 +771,86 @@ export class ContactBook {
     }
     this.state.pending[req.id] = pending;
     return { status: 'pending', pending };
+  }
+
+  /**
+   * Our human makes an invite link: what whoever redeems it first gets
+   * (tier, scope), until when, the display name the link carries and their
+   * own label for the person. Returns the record and the secret; the secret
+   * is not stored (only its hash), so the link can only be shown now.
+   */
+  addInvite(
+    opts: { tier: Tier; scope: GrantScope; expires: string; name?: string; label?: string },
+    now = new Date(),
+  ): { record: InviteRecord; secret: string } {
+    if (!isTier(opts.tier)) throw new Error(`unknown tier ${String(opts.tier)}`);
+    if (!(INVITE_TIERS as readonly string[]).includes(opts.tier)) throw new Error(`an invite can give tiers ${INVITE_TIERS.join(', ')}; grant "${opts.tier}" to the contact afterwards`);
+    const scope = grantScope(opts.scope); // throws on a malformed invoke
+    const exp = parseTimestamp(opts.expires);
+    if (exp === null || exp <= now.getTime()) throw new Error('an invite must expire in the future');
+    if (exp > now.getTime() + INVITE_MAX_TTL_MS + 60_000) throw new Error('an invite may last at most 30 days');
+    this.pruneInvites(now);
+    const invites = (this.state.invites ??= {});
+    if (Object.values(invites).filter((r) => inviteStatus(r, now) === 'open').length >= INVITES_OPEN_MAX) {
+      throw new Error(`there are already ${INVITES_OPEN_MAX} open invites: revoke some first`);
+    }
+    const secret = newInviteSecret();
+    const id = Array.from(crypto.getRandomValues(new Uint8Array(8)), (b) => b.toString(16).padStart(2, '0')).join('');
+    const record: InviteRecord = {
+      id,
+      hash: inviteSecretHash(secret),
+      created: now.toISOString(),
+      expires: new Date(exp).toISOString(),
+      tier: opts.tier,
+      scope,
+      ...(opts.name !== undefined ? { name: cleanInviteName(opts.name) } : {}),
+      ...(opts.label !== undefined ? { label: cleanLabel(opts.label) } : {}),
+    };
+    invites[id] = record;
+    return { record, secret };
+  }
+
+  /** Our invites, newest first, without their hashes. */
+  listInvites(now = new Date()): InviteView[] {
+    this.pruneInvites(now);
+    return Object.values(this.state.invites ?? {})
+      .map((r) => inviteView(r, now))
+      .sort((a, b) => b.created.localeCompare(a.created));
+  }
+
+  /** Our human revokes an invite (it only narrows). Returns it, or undefined when there is none by that id. */
+  revokeInvite(id: string, now = new Date()): InviteView | undefined {
+    const r = this.state.invites && Object.hasOwn(this.state.invites, id) ? this.state.invites[id] : undefined;
+    if (!r) return undefined;
+    if (!r.used && !r.revoked) r.revoked = now.toISOString();
+    return inviteView(r, now);
+  }
+
+  /**
+   * The open invite this secret belongs to, now marked used by `req.from`,
+   * or undefined. Every stored hash is compared in constant time and the
+   * loop never stops early, so its timing says nothing about a near miss.
+   */
+  private redeemInvite(secret: string, req: ContactRequestBody, now: Date): InviteRecord | undefined {
+    const invites = this.state.invites;
+    if (!invites || !isInviteSecret(secret)) return undefined;
+    const hash = inviteSecretHash(secret);
+    let hit: InviteRecord | undefined;
+    for (const r of Object.values(invites)) if (sameHash(r.hash, hash) && !hit) hit = r;
+    if (!hit || inviteStatus(hit, now) !== 'open') return undefined;
+    hit.used = { at: now.toISOString(), by: req.from, request: req.id };
+    return hit;
+  }
+
+  /** Drop used, revoked and expired invites INVITE_KEEP_MS after they ended. */
+  private pruneInvites(now: Date): void {
+    const invites = this.state.invites;
+    if (!invites) return;
+    for (const [id, r] of Object.entries(invites)) {
+      if (inviteStatus(r, now) === 'open') continue;
+      const ended = parseTimestamp(r.used?.at ?? r.revoked ?? r.expires) ?? 0;
+      if (ended + INVITE_KEEP_MS < now.getTime()) delete invites[id];
+    }
   }
 
   private unmarkSeen(id: string): void {

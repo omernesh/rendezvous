@@ -1651,3 +1651,62 @@ q {
   vertical-align: 0.08em;
   white-space: nowrap;
 }
+
+/* ---- invite landing page (/i#…, NOTES 101) ------------------------------- */
+.docs-layout.invite-layout {
+  grid-template-columns: minmax(0, 1fr);
+  max-width: 46rem;
+  margin-inline: auto;
+}
+.invite-kicker {
+  margin: 0 0 6px;
+  color: var(--accent);
+  font-weight: 600;
+  font-size: 0.85rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.invite-facts {
+  display: grid;
+  gap: 10px;
+  margin: 20px 0;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-alt);
+}
+.invite-facts div {
+  display: grid;
+  grid-template-columns: 9.5em minmax(0, 1fr);
+  gap: 8px;
+}
+.invite-facts dt {
+  color: var(--muted);
+}
+.invite-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.invite-alert {
+  padding: 12px 16px;
+  border-radius: 10px;
+  background: var(--clear-bg);
+  color: var(--clear-ink);
+  font-weight: 600;
+}
+.invite-page .cmd code {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.invite-agents {
+  margin-top: 40px;
+  padding: 16px 20px;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius);
+}
+@media (max-width: 520px) {
+  .invite-facts div {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2px;
+  }
+}
