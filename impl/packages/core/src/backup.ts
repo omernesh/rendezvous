@@ -255,11 +255,25 @@ export function restoredAgentState(state: AgentState, opts: { backupCreated: str
     delete c.resync;
   }
   s.restored = { at: now.toISOString(), backup_created: opts.backupCreated };
+  // Invite links (NOTES 101, review of PR #120): one used after the backup was made is open again in it, and the
+  // agent this replaces may still redeem it. None stays open; restoreRevokedInvites lists them for the owner.
+  for (const r of Object.values(s.book?.invites ?? {})) {
+    if (r.used || r.revoked) continue;
+    r.revoked = s.restored.at;
+    r.revokedBy = 'restore';
+  }
   // Receipts (NOTES 98): what was waiting for one cannot be resent (the outbox is not backed up), and in the new
   // epoch the peer's first receipt would cover it all as "delivered" (review of #112). Dropped; the owner is told
   // how many (pendingInBackup) once, in the restore's result.
   delete s.delivery;
   return s;
+}
+
+/** The invites a restore revoked (restoredAgentState): their ids and labels, for the owner, who can make new ones. */
+export function restoreRevokedInvites(state: AgentState): Array<{ id: string; label?: string }> {
+  return Object.values(state.book?.invites ?? {})
+    .filter((r) => r.revokedBy === 'restore' && r.revoked === state.restored?.at)
+    .map((r) => ({ id: r.id, ...(r.label !== undefined ? { label: r.label } : {}) }));
 }
 
 /** Messages in an agent state still waiting for a contact's receipt: what a restore from it cannot confirm. */

@@ -28,7 +28,7 @@ const TABLE: Record<string, Record<string, Scope>> = {
   rdv_request_contact: { '*': 'contact:request' },
   // Invite links (NOTES 101): making one is asked on the page; accepting one is a contact request.
   rdv_accept_invite: { '*': 'contact:request' },
-  rdv_invite: { list: 'read', create: 'contact:request', revoke: 'contact:request' },
+  rdv_invite: { list: 'read', create: 'contact:request', revoke: 'contact:request', link: 'contact:request' },
   rdv_grant: { '*': 'contact:request' },
   rdv_revoke: { '*': 'contact:request' },
   rdv_label: { '*': 'contact:request' },

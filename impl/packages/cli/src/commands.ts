@@ -1448,6 +1448,7 @@ export async function restoreCmd(ctx: Ctx): Promise<void> {
       `restored ${r.id} (${r.fingerprint}) from the backup made ${r.backup_created}`,
       `  ${r.contacts} contact(s), ${r.groups} group(s)${r.replaced ? `; replaced ${r.replaced}` : ''}`,
       ...(r.owner_passphrase_set ? [`  owner passphrase: the one set ${r.owner_passphrase_set} (as at backup time)`] : []),
+      ...(r.invites_revoked.length ? [`  ${r.invites_revoked.length} invite link(s) that were still open in the backup were revoked (one may have been used since); make new ones if you still want them`] : []),
       ...(r.unconfirmed_before_backup ? [`  ${r.unconfirmed_before_backup} message(s) sent before the backup had no receipt yet and cannot be confirmed now; ask those contacts if it matters`] : []),
       ...(r.auto_approve.length
         ? [`  on auto-approve again, as at backup time: ${r.auto_approve.map((p) => fingerprint(p)).join(', ')} (turn one off: rdv contact auto-approve <agent-id> off)`]

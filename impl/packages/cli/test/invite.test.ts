@@ -15,8 +15,11 @@ describe('rdv invite', () => {
   beforeAll(async () => {
     relay = await startTestRelay();
     root = mkdtempSync(join(tmpdir(), 'rdv-invite-'));
+    // The test relay is ws://127.0.0.1: the `rdv` processes allow it only through the test hook (review of PR #120).
+    process.env.RDV_TEST_UNSAFE_INVITE_RELAYS = relay.url;
   });
   afterAll(async () => {
+    delete process.env.RDV_TEST_UNSAFE_INVITE_RELAYS;
     await relay.close();
     rmSync(root, { recursive: true, force: true });
   });
@@ -30,7 +33,7 @@ describe('rdv invite', () => {
     expect(made).toMatchObject({ event: 'invite', tier: 'colleague', name: 'omer', label: 'John' });
     expect(made.url).toMatch(/^https:\/\/rendezvous\.nesher\.co\/i#[A-Za-z0-9_-]+$/);
     expect(made.share_text).toContain(made.url);
-    const link = parseInvite(made.url);
+    const link = parseInvite(made.url, { unsafeAllowRelays: [relay.url] });
     expect(link).toMatchObject({ agentId: omerId, relays: [relay.url], name: 'omer' });
     // Only a hash is kept: the secret is nowhere in the home.
     expect(readFileSync(join(omerHome, 'agent.json'), 'utf8')).not.toContain(link.secret);
@@ -95,5 +98,12 @@ describe('rdv invite', () => {
 
     const own = await rdv(['invite', 'accept', made.url], home, { check: false });
     expect(own.stderr).toMatch(/your own/);
+
+    // L4: without the test hook a link naming a ws:// or local relay is refused before anything is sent or made.
+    const strict = { env: { RDV_TEST_UNSAFE_INVITE_RELAYS: '' } };
+    const other = join(root, 'strict');
+    const refused = await rdv(['init', '--profile', 'strict', '--relay', relay.url, '--invite', made.url], other, { check: false, ...strict });
+    expect([refused.code, refused.stderr]).toEqual([2, expect.stringMatching(/not a usable invite link.*wss:\/\//)]);
+    expect((await rdv(['whoami'], other, { check: false })).code).not.toBe(0);
   }, 60_000);
 });

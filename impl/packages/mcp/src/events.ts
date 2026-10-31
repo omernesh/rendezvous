@@ -329,6 +329,16 @@ export function toModelEvent(e: Raw, negotiating: boolean): Omit<McpEvent, 'n' |
           'Tell your user that the person they invited accepted (show the fingerprint and the label) and is now a contact. ' +
           'If it was not who they meant (someone else got the link first), they can revoke the contact with rdv_revoke.',
       };
+    // An invite's secret came on a public topic, so the agent revoked that invite (review of PR #120).
+    case 'invite-exposed':
+      return {
+        type: 'invite_exposed',
+        invite_id: token(e.invite_id),
+        from: agentId(e.from),
+        local_label: typeof e.invite_label === 'string' ? safe(e.invite_label) : null,
+        next_step:
+          'Tell your user that the invite link was sent somewhere public, so it was revoked and no longer works. If they still want to invite that person, they can make a new one (rdv_invite "create").',
+      };
     // The home's listener reports a listening relay that stays down (issue #87, NOTES 90). Our own text and our own relay URLs.
     case 'relay-down':
       return {

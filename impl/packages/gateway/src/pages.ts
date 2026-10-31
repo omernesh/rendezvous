@@ -125,8 +125,16 @@ ${flash(opts.message)}${p.changed ? flash({ text: 'This changed since your assis
   );
 }
 
-export function donePage(opts: { title: string; text: string; csrf: string; bad?: boolean }): string {
-  return layout(opts.title, `<h1>${e(opts.title)}</h1>${flash({ text: opts.text, bad: opts.bad })}<p><a href="/approve">Everything that waits for you</a></p>`, opts.csrf);
+/** Labels for what a step made for its asker alone (PrivateResult), shown to the owner once on the page that approved it. */
+const HELD_LABELS: Record<string, string> = { url: 'Invite link', share_text: 'Message ready to send' };
+
+export function donePage(opts: { title: string; text: string; csrf: string; bad?: boolean; held?: Record<string, string> }): string {
+  const held = opts.held
+    ? `<section><p>Shown only now. Send it yourself, only to the person you mean; whoever opens it first becomes your contact.</p>${Object.entries(opts.held)
+        .map(([k, v]) => `<h2>${e(HELD_LABELS[k] ?? k)}</h2><pre class="msg">${e(v)}</pre>`)
+        .join('')}</section>`
+    : '';
+  return layout(opts.title, `<h1>${e(opts.title)}</h1>${flash({ text: opts.text, bad: opts.bad })}${held}<p><a href="/approve">Everything that waits for you</a></p>`, opts.csrf);
 }
 
 export function errorPage(title: string, text: string): string {

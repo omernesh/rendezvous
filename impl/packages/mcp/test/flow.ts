@@ -58,12 +58,12 @@ export function parseResult(text: string): unknown {
 export async function makeSide(
   name: string,
   dir: string,
-  opts: { elicit?: ElicitHandler; defaultRelays?: string[]; capabilities?: Capability[]; fileFetch?: FetchTestOptions; elicitTimeoutMs?: number; forms?: boolean; formWaitMs?: number; service?: RdvMcpOptions['service'] } = {},
+  opts: { elicit?: ElicitHandler; defaultRelays?: string[]; capabilities?: Capability[]; fileFetch?: FetchTestOptions; elicitTimeoutMs?: number; forms?: boolean; formWaitMs?: number; service?: RdvMcpOptions['service']; unsafeInviteRelays?: string[] } = {},
 ): Promise<Side> {
   const home = new Home(dir);
   const humanLog: string[] = [];
   // The flows keep calendars next to the homes: the human allows that directory (--calendar-dir).
-  const server = new RdvMcpServer({ home, humanLog: (l) => humanLog.push(l), sweepMs: 3_600_000, calendarDirs: [dirname(dir)], defaultRelays: opts.defaultRelays, capabilities: opts.capabilities, fileFetch: opts.fileFetch, elicitTimeoutMs: opts.elicitTimeoutMs, forms: opts.forms, service: opts.service,
+  const server = new RdvMcpServer({ home, humanLog: (l) => humanLog.push(l), sweepMs: 3_600_000, calendarDirs: [dirname(dir)], defaultRelays: opts.defaultRelays, capabilities: opts.capabilities, fileFetch: opts.fileFetch, elicitTimeoutMs: opts.elicitTimeoutMs, forms: opts.forms, service: opts.service, unsafeInviteRelays: opts.unsafeInviteRelays,
     // A scripted human answers at once: the call waits for that answer, so these flows read it as the call's result.
     // The real default is 0 (the call returns awaiting_human; issue #103); tests of that pass formWaitMs: 0.
     formWaitMs: opts.formWaitMs ?? 15_000 });

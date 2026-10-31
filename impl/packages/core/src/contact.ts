@@ -501,8 +501,14 @@ export interface InviteRecord {
   label?: string;
   /** Set once redeemed: single use. */
   used?: { at: string; by: string; request: string };
-  /** Set when our human revoked it. */
+  /** Set when it was revoked. */
   revoked?: string;
+  /**
+   * Who revoked it: our human (`owner`, also when absent), a restore from a
+   * backup (`restore`: an invite in a backup may have been used since), or
+   * the agent itself because its secret was seen in the clear (`exposed`).
+   */
+  revokedBy?: 'owner' | 'restore' | 'exposed';
 }
 
 /** An invite as `listInvites` shows it: never the hash. */
@@ -822,8 +828,29 @@ export class ContactBook {
   revokeInvite(id: string, now = new Date()): InviteView | undefined {
     const r = this.state.invites && Object.hasOwn(this.state.invites, id) ? this.state.invites[id] : undefined;
     if (!r) return undefined;
-    if (!r.used && !r.revoked) r.revoked = now.toISOString();
+    if (!r.used && !r.revoked) {
+      r.revoked = now.toISOString();
+      r.revokedBy = 'owner';
+    }
     return inviteView(r, now);
+  }
+
+  /**
+   * A request carrying the secret of one of our open invites came on a
+   * public topic, so anyone could have read the secret (review of PR #120).
+   * The request itself stays an ordinary one; the invite is revoked (only
+   * our human made it, and only they can make a new one) and returned, so
+   * the owner can be told. Undefined when the secret matches no open invite.
+   */
+  exposeInvite(req: ContactRequestBody, now = new Date()): InviteView | undefined {
+    if (req.invite === undefined || !isInviteSecret(req.invite) || !this.state.invites) return undefined;
+    const hash = inviteSecretHash(req.invite);
+    let hit: InviteRecord | undefined;
+    for (const r of Object.values(this.state.invites)) if (sameHash(r.hash, hash) && !hit) hit = r;
+    if (!hit || inviteStatus(hit, now) !== 'open') return undefined;
+    hit.revoked = now.toISOString();
+    hit.revokedBy = 'exposed';
+    return inviteView(hit, now);
   }
 
   /**

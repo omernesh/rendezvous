@@ -30,6 +30,7 @@ import {
   parseBackup,
   restoredAgentState,
   pendingInBackup,
+  restoreRevokedInvites,
   sealBackup,
   verifyCard,
 } from '@rendezvous/core';
@@ -228,6 +229,8 @@ export interface RestoreResult {
   owner_passphrase_set: string | null;
   /** Messages that were still waiting for a contact's receipt in the backup: they cannot be confirmed now (NOTES 98). */
   unconfirmed_before_backup: number;
+  /** Invite links that were still open in the backup, revoked by the restore (NOTES 101): the owner makes new ones if still wanted. */
+  invites_revoked: Array<{ id: string; label?: string }>;
   replaced?: string;
 }
 
@@ -303,6 +306,7 @@ export async function restoreBackup(home: Home, bytes: Uint8Array, passphrase: s
         auto_approve: auto.filter((p) => isAgentId(p)).slice(0, 64),
         owner_passphrase_set: ownerSet,
         unconfirmed_before_backup: pendingInBackup(c.agent),
+        invites_revoked: restoreRevokedInvites(state),
         ...(replaced ? { replaced } : {}),
       };
     });

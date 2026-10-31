@@ -223,7 +223,7 @@ stays for clients without forms. <code>RDV_ELICIT=off</code> turns forms off ent
 </tr>
 <tr>
 <td><code>rdv_invite</code></td>
-<td>action <code>create</code> (tier, may_propose_meetings, invoke, expires_days, name, label) / <code>list</code> / <code>revoke</code> (invite_id)</td>
+<td>action <code>create</code> (tier, may_propose_meetings, invoke, expires_days, name, label) / <code>list</code> / <code>revoke</code> (invite_id) / <code>link</code> (approval_id: the link of a create approved after the call returned, once, to the client that asked; never in the event log)</td>
 <td>invite links (NOTES 101). <code>create</code> opens an approval form (no confirm phrase) where the human picks the tier (<code>friend</code> or below), meetings, the days (1 to 30), the name the link shows and their label for the person; the result has <code>url</code> and <code>share_text</code> (shown once: only a hash of the secret is kept). Without a form it is refused and names <code>rdv invite create</code>. <code>list</code> shows each invite and who redeemed it; <code>revoke</code> needs no form. An <code>invite_redeemed</code> event says who used one</td>
 </tr>
 <tr>

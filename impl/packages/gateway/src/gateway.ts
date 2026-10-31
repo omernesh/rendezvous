@@ -710,6 +710,7 @@ export class Gateway {
         title: no ? 'Declined' : 'Approved',
         text: no ? 'You said no; nothing was approved. Your assistant sees this in its inbox.' : 'Done. Your assistant sees the outcome in its inbox.',
         csrf,
+        ...(!no && out.held ? { held: out.held } : {}),
       }),
     );
   }

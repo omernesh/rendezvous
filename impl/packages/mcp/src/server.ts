@@ -415,8 +415,12 @@ export interface ApprovalAnswer {
 }
 
 export type ApprovalOutcome =
-  /** `unneeded`: the step no longer needed the human (the state moved); it ran as asked and the answer decided nothing. */
-  | { kind: 'done'; value: unknown; unneeded?: boolean }
+  /**
+   * `unneeded`: the step no longer needed the human (the state moved); it ran as asked and the answer decided nothing.
+   * `held`: what the step made for the one who asked and nobody else (an invite link): never in the shared event,
+   * shown to the owner on the page that approved it, and handed to the asking client once (rdv_invite "link").
+   */
+  | { kind: 'done'; value: unknown; unneeded?: boolean; held?: Record<string, string> }
   | { kind: 'error'; error: string }
   /** The item changed since the page showed it: nothing was done; this is the form for it now. */
   | { kind: 'changed'; form: ApprovalForm };
@@ -525,6 +529,11 @@ export interface RdvMcpOptions {
    * can't point the server at any other file.
    */
   calendarDirs?: string[];
+  /**
+   * TEST ONLY: relay URLs an invite link may name although they are not
+   * public `wss://` hosts (the in-memory test relay). bin.ts does not set it.
+   */
+  unsafeInviteRelays?: readonly string[];
   /** Relays `rdv_init` uses when the model names none. Default: DEFAULT_RELAYS (the public set, NOTES 69). */
   defaultRelays?: readonly string[];
   /** Task capabilities besides HOST_CAPABILITIES (request/v1) that this server routes and advertises (tests, later slices). */
@@ -553,6 +562,30 @@ const SERVICE_YIELD_MS = 60_000;
 
 /** An error whose message is ours and safe to show (the model, or the owner on the gateway's page). */
 export class ToolError extends Error {}
+
+/**
+ * A tool result with a part for the caller only (an invite link, review of
+ * PR #120): a direct call gets both parts; a step run again with a human's
+ * answer publishes only `view` in the shared `approval` event, and holds
+ * `secret` for the principal that asked (rdv_invite "link") and the owner's
+ * approval page.
+ */
+class PrivateResult {
+  constructor(
+    readonly view: Record<string, unknown>,
+    readonly secret: Record<string, string>,
+  ) {}
+}
+
+/** A held private result: who may take it, and until when. */
+interface HeldResult {
+  principal?: string;
+  tool: string;
+  secret: Record<string, string>;
+  until: number;
+}
+const HELD_MAX = 64;
+const HELD_TTL_MS = 24 * 3_600_000;
 
 /**
  * Your user said no in an approval form (declined it, or sent it back with the
@@ -1140,7 +1173,15 @@ export class RdvMcpServer {
     approval?: Approval;
     /** Never open a form in this run: the confirm-phrase path (a dismissed form answered while the call waited, the REST API). */
     noForm?: boolean;
+    /** Who calls (rdv-gateway's name for the token; none locally). */
+    principal?: string;
+    /** A run with a human's answer after its call returned: a PrivateResult's secret part goes to `held`, not the result. */
+    deferred?: boolean;
+    held?: Record<string, string>;
   }>();
+  /** Private results waiting for the principal that asked (PrivateResult), by approval id. */
+  private readonly held = new Map<string, HeldResult>();
+  private readonly unsafeInviteRelays: readonly string[];
   private readonly calendarDirs: string[];
   /** The task capabilities routed to the tasks engine and advertised on a new card (issue #36). */
   readonly registry: CapabilityRegistry;
@@ -1161,7 +1202,8 @@ export class RdvMcpServer {
     this.serviceOpts = opts.service ?? {};
     this.fileFetch = opts.fileFetch ?? {};
     this.registry = hostRegistry(opts.capabilities ?? []);
-    this.calendarDirs = [opts.home.dir, ...(opts.calendar ? [dirname(resolve(opts.calendar))] : []), ...(opts.calendarDirs ?? [])].map((d) =>
+    this.unsafeInviteRelays = opts.unsafeInviteRelays ?? [];
+    this.calendarDirs = [opts.home.dir,...(opts.calendar ? [dirname(resolve(opts.calendar))] : []), ...(opts.calendarDirs ?? [])].map((d) =>
       resolve(d),
     );
     this.settings = {
@@ -1227,7 +1269,7 @@ export class RdvMcpServer {
     if (denied) return { ok: false, error: denied };
     try {
       // No MCP session here to show a form on: outside remote mode, a step that needs the human takes the phrase path.
-      return { ok: true, value: await this.calls.run({ tool: name, args: input, noForm: !this.remote }, () => this.runDef(d, input)) };
+      return { ok: true, value: await this.calls.run({ tool: name, args: input, noForm: !this.remote, principal: caller.principal }, () => this.runDef(d, input)) };
     } catch (err) {
       if (err instanceof Declined) return { ok: true, value: this.remoteSafe(err.body) };
       if (err instanceof AwaitingHuman && this.remote) {
@@ -1265,7 +1307,7 @@ export class RdvMcpServer {
       await this.publish([{ type: 'approval', approval_id: approvalId, tool: ask.tool, outcome: 'declined', result: value }]).catch(() => {});
       return { kind: 'done', value };
     }
-    return this.rerun(d, ask, { digest: answer.digest, answer: { kind: 'accept', content: answer.content } }, approvalId);
+    return this.rerun(d, { tool: ask.tool, args: ask.args, principal: (ask as Partial<ApprovalAsk>).principal }, { digest: answer.digest, answer: { kind: 'accept', content: answer.content } }, approvalId);
   }
 
   /**
@@ -1276,10 +1318,23 @@ export class RdvMcpServer {
    * changed item comes back as `changed` (published too when `publishChanged`:
    * a local client has no page that shows the new form).
    */
-  private async rerun(d: ToolDef, ask: Pick<ApprovalAsk, 'tool' | 'args'>, approval: Approval, approvalId?: string, publishChanged = false): Promise<ApprovalOutcome> {
+  private async rerun(
+    d: ToolDef,
+    ask: Pick<ApprovalAsk, 'tool' | 'args'> & { principal?: string },
+    approval: Approval,
+    approvalId?: string,
+    publishChanged = false,
+  ): Promise<ApprovalOutcome> {
     let out: ApprovalOutcome;
+    const ctx: NonNullable<ReturnType<typeof this.calls.getStore>> = { tool: ask.tool, args: ask.args, approval, principal: ask.principal, deferred: true };
     try {
-      out = { kind: 'done', value: await this.calls.run({ tool: ask.tool, args: ask.args, approval }, () => this.runDef(d, ask.args)) };
+      out = { kind: 'done', value: await this.calls.run(ctx, () => this.runDef(d, ask.args)) };
+      if (ctx.held) {
+        // Held for the one who asked, never in the shared event log (every client of the home reads it).
+        const id = approvalId ?? randomBytes(8).toString('hex');
+        this.holdResult(id, { principal: ask.principal, tool: ask.tool, secret: ctx.held, until: Date.now() + HELD_TTL_MS });
+        out = { kind: 'done', value: out.value, held: ctx.held };
+      }
     } catch (err) {
       if (err instanceof Declined) out = { kind: 'done', value: this.remoteSafe(err.body) };
       else if (err instanceof AwaitingHuman) {
@@ -1299,11 +1354,20 @@ export class RdvMcpServer {
     }
     // The state moved to a path that needed no one (e.g. the dinner is no longer agreed): the call ran as asked,
     // and the owner's answer decided nothing. Say so instead of reporting their decision.
-    if (out.kind === 'done' && !approval.used) out = { kind: 'done', value: out.value, unneeded: true };
+    if (out.kind === 'done' && !approval.used) out = { ...out, unneeded: true };
     const outcome = out.kind !== 'done' ? 'failed' : out.unneeded ? 'not_needed' : 'decided';
     const event =
       out.kind === 'done'
-        ? { type: 'approval', approval_id: approvalId, tool: ask.tool, outcome, result: out.value }
+        ? {
+            type: 'approval',
+            approval_id: approvalId,
+            tool: ask.tool,
+            outcome,
+            result: out.value,
+            ...(out.held
+              ? { held_for_you: `${Object.keys(out.held).join(' and ')} are not in this event: only the client that asked can take them, once, with rdv_invite action "link" and this approval_id.` }
+              : {}),
+          }
         : { type: 'approval', approval_id: approvalId, tool: ask.tool, outcome, error: (out as { error: string }).error };
     await this.publish([event]).catch(() => {});
     return out;
@@ -1311,7 +1375,30 @@ export class RdvMcpServer {
 
   /** One tool call: remote results never carry this machine's paths. */
   private async runDef(d: ToolDef, args: Record<string, unknown>): Promise<unknown> {
-    return this.remoteSafe(await d.fn(args));
+    const v = await d.fn(args);
+    if (!(v instanceof PrivateResult)) return this.remoteSafe(v);
+    const call = this.calls.getStore();
+    if (!call?.deferred) return this.remoteSafe({ ...v.view, ...v.secret });
+    call.held = v.secret;
+    return this.remoteSafe(v.view);
+  }
+
+  private holdResult(id: string, h: HeldResult): void {
+    const now = Date.now();
+    for (const [k, x] of this.held) if (x.until <= now) this.held.delete(k);
+    while (this.held.size >= HELD_MAX) this.held.delete(this.held.keys().next().value as string);
+    this.held.set(id, h);
+  }
+
+  /** A held private result for the calling principal (the one that asked), once. */
+  private takeHeld(id: string, tool: string): Record<string, string> {
+    const h = this.held.get(id);
+    const principal = this.calls.getStore()?.principal;
+    if (!h || h.until <= Date.now() || h.tool !== tool || h.principal !== principal) {
+      throw new ToolError(`nothing is held for approval ${safe(id)} for you: it was already taken, it expired, or another client asked for it. Your user can make a new invite.`);
+    }
+    this.held.delete(id);
+    return h.secret;
   }
 
   /** Remote mode: what leaves for the client has no local paths. */
@@ -2253,7 +2340,7 @@ export class RdvMcpServer {
     principal?: string,
   ): Promise<CallToolResult> {
     try {
-      return result(await this.calls.run({ ...ctx, tool: d.name, args }, () => this.runDef(d, args)));
+      return result(await this.calls.run({ ...ctx, tool: d.name, args, principal }, () => this.runDef(d, args)));
     } catch (err) {
       if (err instanceof Declined) return result(this.remoteSafe(err.body));
       if (err instanceof AwaitingHuman) {
@@ -2310,7 +2397,7 @@ export class RdvMcpServer {
         // Nothing to replace yet: a plain create.
         if (a.replace === true && home.initialized()) return this.replaceAgent(a);
         // A bad or expired link is refused before anything is made (NOTES 101).
-        const link = a.invite !== undefined ? readInvite(a.invite) : undefined;
+        const link = a.invite !== undefined ? readInvite(a.invite, undefined, { unsafeAllowRelays: this.unsafeInviteRelays }) : undefined;
         await this.applySettings(a);
         let created = false;
         if (!home.initialized()) {
@@ -2592,9 +2679,11 @@ export class RdvMcpServer {
       'rdv_invite',
       'Invite someone by link, WhatsApp style: "create" opens an approval form where your user chooses what the person gets (tier friend or below, meetings, how long the link works: 1 to 30 days); ' +
         'whoever opens the link first then becomes a contact without asking again. The result has the link and a message ready to send by WhatsApp, SMS or email: give it to your user to send, ' +
-        'it is shown only once. Only when your user asks to invite someone. "list" shows the invites (open, used and by whom, revoked, expired); "revoke" (invite_id) cancels an unused one and needs no approval.',
+        'it is shown only once. Only when your user asks to invite someone. If your user approved after the call returned, the "approval" event does not carry the link: "link" (approval_id) hands it to you once. ' +
+        '"list" shows the invites (open, used and by whom, revoked, expired); "revoke" (invite_id) cancels an unused one and needs no approval.',
       {
-        action: z.enum(['create', 'list', 'revoke']),
+        action: z.enum(['create', 'list', 'revoke', 'link']),
+        approval_id: z.string().max(64).optional().describe('"link": the approval_id of the approval event for a "create" your user approved later'),
         tier: z.enum(INVITE_TIERS as unknown as [Tier, ...Tier[]]).optional().describe('"create": the tier the person gets (default friend); your user can change it in the form'),
         may_propose_meetings: z.boolean().optional().describe('"create": may they propose meetings (default true)'),
         invoke: z.array(z.string().max(200)).max(32).optional().describe('"create": capability URIs (besides meetings) they may invoke, only from your user\'s words'),
@@ -2605,6 +2694,13 @@ export class RdvMcpServer {
       },
       async (a) => {
         if (a.action === 'list') return { invites: (await this.withAgent(async (agent) => agent.book.listInvites())).map((v) => this.inviteView(v)) };
+        if (a.action === 'link') {
+          if (!a.approval_id) throw new ToolError('"link" needs approval_id (from the "approval" event of the create your user approved)');
+          return {
+            ...this.takeHeld(a.approval_id, 'rdv_invite'),
+            note: 'Shown once, to you only. Give it to your user to send to that one person; never post it or repeat it.',
+          };
+        }
         if (a.action === 'revoke') {
           if (!a.invite_id) throw new ToolError('"revoke" needs invite_id (from "list")');
           const v = await this.withAgent(async (agent) => agent.book.revokeInvite(a.invite_id!));
@@ -3592,6 +3688,7 @@ export class RdvMcpServer {
       standing_approvals_restored: r.auto_approve.map((p) => ({ agent_id: safe(p), fingerprint: safe(fingerprint(p)) })),
       owner_passphrase_set: r.owner_passphrase_set === null ? null : safe(r.owner_passphrase_set),
       unconfirmed_before_backup: r.unconfirmed_before_backup,
+      invites_revoked: r.invites_revoked.map((i) => ({ invite_id: safe(i.id), local_label: i.label !== undefined ? safe(i.label) : null })),
       next_step:
         'Tell your user their agent is back. Its contacts are being told it was restored (rdv_status "restore" shows who has confirmed; a "restore_confirmed" event arrives for each). ' +
         'Open tasks, dinners and pending requests were not in the backup. ' +
@@ -4231,41 +4328,62 @@ export class RdvMcpServer {
     const home = this.home;
     if (!home.initialized()) throw new ToolError(`no agent at ${home.dir} yet: call rdv_init first`);
     const { id, profile } = await this.withAgent(async (agent, config) => ({ id: agent.id, profile: config.profile }));
-    let tier = inviteTier(a.tier);
+    const byDefault = profile === 'default' ? undefined : profile;
+    const asked = { tier: inviteTier(a.tier), name: a.name !== undefined ? a.name.trim() || undefined : undefined, label: checkLabel(a.label) };
     let mayMeet = a.may_propose_meetings ?? true;
     let invoke = checkInvoke(a.invoke);
     let days = a.expires_days ?? 7;
-    let name = a.name !== undefined ? a.name.trim() || undefined : profile === 'default' ? undefined : profile;
-    let label = checkLabel(a.label);
+    // Through the gateway the model's tier, name, label and capabilities are suggestions shown beside the fields,
+    // never what the page starts with (as rdv_grant there; review of PR #120). Locally they prefill the form.
+    const remote = this.remote !== undefined;
+    let tier: Tier = remote ? 'friend' : asked.tier;
+    let name = remote ? byDefault : (asked.name ?? byDefault);
+    let label = remote ? undefined : asked.label;
+    const suggestions: ApprovalAsk['suggestions'] = [];
+    if (remote) {
+      if (a.tier !== undefined) suggestions.push({ field: 'tier', value: asked.tier });
+      if (asked.name !== undefined) suggestions.push({ field: 'name', value: asked.name });
+      if (asked.label !== undefined) suggestions.push({ field: 'label', value: asked.label });
+      if (invoke.length) suggestions.push({ field: 'allow_invoke', value: invoke.join(', '), note: 'tick the box only if you want them to invoke these' });
+    }
+    // What the owner may paste into their own terminal: nothing the model wrote goes into it, only placeholders (review of PR #120).
     const terminal =
-      `rdv invite create --tier ${tier}${mayMeet ? '' : ' --no-meetings'}${invoke.map((u) => ` --invoke ${u}`).join('')} --expires ${days}d` +
-      `${name ? ` --name "${clean(name)}"` : ''}${label ? ` --label "${clean(label)}"` : ''} --home "${home.dir}"`;
-    const content = await this.settingForm(
-      terminal,
-      'Rendezvous: make an invite link?\n\n' +
-        'Whoever opens this link first becomes your contact at once, without asking you again:\n' +
-        `  Tier:        ${tier} (change below; family and spouse can be granted once they are a contact)\n` +
-        `  They may:    write to you, ${meetingWords(mayMeet, {})}${invokeWords(invoke)}, see your calendar as free/busy slots only, up to 100 messages a day\n` +
-        `  Link works:  ${days} day(s) from now, once\n` +
-        `  Your name in the link: ${name ? JSON.stringify(clean(name)) : '(none)'} (the person sees it, unverified)\n` +
-        `  ${describeLabel(label)}${label !== undefined ? ', as your assistant suggests' : ''}\n\n` +
-        'Anyone who gets the link first can use it, so send it only to the person you mean and not in a public place. ' +
-        'You are told when it is used and by which agent (fingerprint); you can revoke the link, or the contact, any time.',
-      {
-        approve: { type: 'boolean', title: 'Make this invite link', default: false },
-        tier: { type: 'string', title: 'Tier', enum: [...INVITE_TIERS], default: tier },
-        may_propose_meetings: { type: 'boolean', title: 'May propose meetings', default: mayMeet },
-        ...invokeField(invoke),
-        expires_days: { type: 'integer', title: 'Days the link works', minimum: 1, maximum: 30, default: days },
-        name: { type: 'string', title: 'Your name in the link', description: 'Shown to the person you invite; empty for none', maxLength: 64, default: name ?? '' },
-        label: labelField(label),
-      },
-      ['approve'],
-      bindOf({ invite_from: id }),
-    );
+      `rdv invite create --tier ${tier}${mayMeet ? '' : ' --no-meetings'}${invoke.length ? ' --invoke <capability-uri>' : ''} --expires ${days}d` +
+      ` --name "<your name>" --label "<their name>" --home "${home.dir}"`;
+    const invokeLine = !invoke.length ? '' : remote ? `\n  Your assistant suggests they may also invoke: ${invoke.map((u) => safe(u)).join(', ')} (only if you tick it below)` : '';
+    let content: Record<string, unknown>;
+    try {
+      content = await this.settingForm(
+        terminal,
+        'Rendezvous: make an invite link?\n\n' +
+          'Whoever opens this link first becomes your contact at once, without asking you again:\n' +
+          `  Tier:        ${tier} (change below; family and spouse can be granted once they are a contact)\n` +
+          `  They may:    write to you, ${meetingWords(mayMeet, {})}${remote ? '' : invokeWords(invoke)}, see your calendar as free/busy slots only, up to 100 messages a day${invokeLine}\n` +
+          `  Link works:  ${days} day(s) from now, once\n` +
+          `  Your name in the link: ${name ? JSON.stringify(clean(name)) : '(none)'} (the person sees it, unverified)\n` +
+          `  ${describeLabel(label)}${label !== undefined ? ', as your assistant suggests' : ''}\n\n` +
+          'Anyone who gets the link first can use it, so send it only to the person you mean and not in a public place. ' +
+          'You are told when it is used and by which agent (fingerprint); you can revoke the link, or the contact, any time.',
+        {
+          approve: { type: 'boolean', title: 'Make this invite link', default: false },
+          tier: { type: 'string', title: 'Tier', enum: [...INVITE_TIERS], default: tier },
+          may_propose_meetings: { type: 'boolean', title: 'May propose meetings', default: mayMeet },
+          ...Object.fromEntries(Object.entries(invokeField(invoke)).map(([k, f]) => [k, remote ? { ...f, default: false } : f])),
+          expires_days: { type: 'integer', title: 'Days the link works', minimum: 1, maximum: 30, default: days },
+          name: { type: 'string', title: 'Your name in the link', description: 'Shown to the person you invite; empty for none', maxLength: 64, default: name ?? '' },
+          label: labelField(label),
+        },
+        ['approve'],
+        bindOf({ invite_from: id }),
+      );
+    } catch (err) {
+      if (err instanceof AwaitingHuman) err.suggestions = suggestions;
+      throw err;
+    }
     if (typeof content.tier === 'string' && (INVITE_TIERS as readonly string[]).includes(content.tier)) tier = content.tier as Tier;
     if (typeof content.may_propose_meetings === 'boolean') mayMeet = content.may_propose_meetings;
-    invoke = formInvoke(content, invoke);
+    // Remote: capabilities only if the owner ticked the box on the page (it starts unticked).
+    invoke = remote && content.allow_invoke !== true ? [] : formInvoke(content, invoke);
     if (content.expires_days !== undefined) {
       if (!Number.isSafeInteger(content.expires_days) || (content.expires_days as number) < 1 || (content.expires_days as number) > 30) {
         throw new ToolError('the days your user entered are not a whole number from 1 to 30. Nothing was made; ask them again.');
@@ -4280,27 +4398,31 @@ export class RdvMcpServer {
     const expires = new Date(Date.now() + days * 86_400_000).toISOString();
     const r = await this.withAgent(async (agent) => createInviteIn(agent, { tier, scope: scopeFor(mayMeet, invoke), expires, name, label }));
     this.humanLog(`invite ${r.invite_id} made through the approval form (tier ${r.tier}, until ${r.expires}); whoever opens it first becomes your contact`);
-    return {
-      created: true,
-      invite_id: r.invite_id,
-      url: r.url,
-      share_text: r.share_text,
-      expires: r.expires,
-      tier: r.tier,
-      may_propose_meetings: mayMeet,
-      name: r.name ?? null,
-      local_label: r.label ?? null,
-      next_step:
-        'Give your user share_text (or url) to send to the person themselves, by WhatsApp, SMS or email. It is shown only now: do not post it anywhere public, do not send it to anyone else, and do not repeat it later. ' +
-        'An "invite_redeemed" event arrives in rdv_inbox when it is used: tell your user who used it (fingerprint).',
-    };
+    // The link goes only to the caller (and, through the gateway, to the owner's approval page): never into the shared event log.
+    return new PrivateResult(
+      {
+        created: true,
+        invite_id: r.invite_id,
+        expires: r.expires,
+        tier: r.tier,
+        may_propose_meetings: mayMeet,
+        invoke,
+        name: r.name ?? null,
+        local_label: r.label ?? null,
+        next_step:
+          'Give your user share_text (or url) to send to the person themselves, by WhatsApp, SMS or email. It is shown only now: do not post it anywhere public, do not send it to anyone else, and do not repeat it later. ' +
+          'If this came as an "approval" event, the link is not in it: take it once with rdv_invite action "link" and the approval_id. ' +
+          'An "invite_redeemed" event arrives in rdv_inbox when it is used: tell your user who used it (fingerprint).',
+      },
+      { url: r.url, share_text: r.share_text },
+    );
   }
 
   /** rdv_accept_invite, and rdv_init with invite: an ordinary contact request to the inviter, carrying the invite's secret. */
   private async acceptInvite(text: string, greeting?: string) {
     const r = await this.withAgent(async (agent, config) => {
-      const inv = readInvite(text, agent);
-      return acceptInviteIn(agent, inv, greeting ?? `${config.profile}'s agent accepts your invite.`);
+      const inv = readInvite(text, agent, { unsafeAllowRelays: this.unsafeInviteRelays });
+      return acceptInviteIn(agent, inv, greeting ?? `${config.profile}'s agent accepts your invite.`, { unsafeAllowRelays: this.unsafeInviteRelays });
     });
     return {
       request_id: r.request_id,

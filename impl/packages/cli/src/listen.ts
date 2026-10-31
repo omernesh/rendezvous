@@ -329,6 +329,13 @@ async function handleLocked(
       agent.on('probe-overflow', (o) => events.push({ obj: overflowView(o), human: overflowText(o) }));
       agent.on('contact', (c) => events.push({ obj: { event: 'contact', ...contactView(c) }, human: `contact ${contactText(c)}` }));
       // One of our human's invite links was used (NOTES 101): tell them who it was, so they can revoke if it was not who they meant.
+      // Its secret came on a public topic: revoked, so whoever read it can't use it (review of PR #120).
+      agent.on('invite-exposed', (x) =>
+        events.push({
+          obj: { event: 'invite-exposed', invite_id: x.invite.id, ...(x.invite.label ? { invite_label: x.invite.label } : {}), from: x.from },
+          human: `invite ${x.invite.id}${x.invite.label ? ` (for ${clean(x.invite.label)})` : ''} was sent in the clear by ${clean(x.from)}, so it was revoked; make a new one if you still want to invite them.`,
+        }),
+      );
       agent.on('invite-redeemed', (r) =>
         events.push({
           obj: { event: 'invite-redeemed', invite_id: r.invite.id, ...(r.invite.label ? { invite_label: r.invite.label } : {}), ...contactView(r.contact) },

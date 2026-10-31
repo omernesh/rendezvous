@@ -4279,21 +4279,71 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       capabilities the model listed (one box), the days (1 to 30), the name
       and the label. Nothing in it depends on the clock, so an answer given
       later (issue #103) still matches its digest; the expiry counts from
-      the approval. The result (or the `approval` event's result) carries
-      `url` and `share_text`, once; the human log names the invite but not
-      the link. "list" and "revoke" need no form. `rdv_accept_invite`
+      the approval. The result carries `url` and `share_text`, once (an
+      answer after the call returned: "link", below); the human log names
+      the invite but not the link. "list" and "revoke" need no form. `rdv_accept_invite`
       (invite, greeting) and `rdv_init` `invite` send the request; the name
       in the link comes back as `untrusted_peer_text`. `invite_redeemed`
       events go to `rdv_inbox`. Through rdv-gateway: `rdv_invite` "list" is
       `read`, "create" and "revoke" and `rdv_accept_invite` are
       `contact:request` (create is asked on the owner's page).
     - **The link in the assistant's hands.** The model sees the link it
-      hands to its user, and an answered form's result is kept in the
-      home's `events.jsonl` (the `approval` event). Someone who can read
-      the home can read `agent.json` too, so that adds nothing; the tool
-      text tells the assistant never to post or repeat it. A prompt-injected
-      assistant could leak a fresh link; the redeemer would get the tier the
-      human chose, and the human is told who redeemed it.
+      hands to its user; the tool text tells it never to post or repeat it.
+      A prompt-injected assistant could leak a fresh link; the redeemer
+      would get the tier the human chose, and the human is told who
+      redeemed it.
+    - **Never in the shared event log** (review of PR #120, M1). The first
+      version let an approved create's result, link included, go into the
+      `approval` event in `events.jsonl`, reasoning that whoever reads the
+      home also reads `agent.json`. That was wrong for rdv-gateway: every
+      token reads that log through `rdv_inbox`, so a token with only `read`
+      could have taken the link and redeemed it first. Now `createInvite`
+      returns a `PrivateResult` (a view, and a secret part: `url`,
+      `share_text`). A direct call gets both. A step run again with a
+      human's answer (a form answered after its call returned, or the
+      gateway's page) publishes only the view, with `held_for_you` saying
+      where the link is; the secret part is held in memory for 24 hours (at
+      most 64) for the principal that asked, which takes it once with
+      `rdv_invite` "link" (`approval_id`). The gateway shows it to the owner,
+      escaped, on the page that approved it. A restart drops what is held.
+      Locally this also keeps it out of `events.jsonl`; a second rdv-mcp
+      attached to the home cannot take it (the form's own server holds it).
+    - **Restore** (L1). `restoredAgentState` revokes every invite still
+      open in the backup (`revokedBy: 'restore'`): one may have been used
+      after the backup was made, and the agent the restore replaces may
+      still redeem it. `rdv restore` and `rdv_backup` "restore" list them
+      (`invites_revoked`), as they list the auto-approve entries.
+    - **A secret seen on a topic** (L2). A request that carries the secret
+      of an open invite on a public topic was readable by anyone: the agent
+      revokes that invite (`revokedBy: 'exposed'`), the request stays an
+      ordinary one, and the owner gets `invite-exposed` (`invite_exposed` in
+      `rdv_inbox`). Our own agents never post one; this catches a copied
+      secret or a broken client.
+    - **The terminal fallback** (L3). Without a form, `rdv_invite` "create"
+      names `rdv invite create` with placeholders (`--name "<your name>"
+      --label "<their name>"`, `--invoke <capability-uri>`), like
+      `rdv_label`: nothing the model wrote goes into a line the owner may
+      paste (`$(…)` survives `clean`).
+    - **Relays in a link** (L4, and the automated review's SSRF). The
+      invitee's agent dials a link's relays at once, and the link is
+      someone else's text: `parseInvite` and `Agent.acceptInvite` (both,
+      whoever parsed the link) take only `wss://` to a public host. Refused:
+      `ws://`, credentials, address literals in the file-fetch block list
+      (`isBlockedAddress`: loopback, RFC 1918, CGNAT 100.64/10, ULA
+      fc00::/7, link-local, and the rest of §7.7's list, IPv4-mapped forms
+      included), numeric or hex host lookalikes, single-label hosts and
+      `localhost`, `.local`, `.internal`, `.lan`, `.home`, `.corp`,
+      `.home.arpa` names. Names are not resolved: a public name that
+      resolves to a private address is not caught (the connection is a
+      WebSocket to a relay, not an HTTP fetch of attacker-chosen content).
+      The test hook is an exact-URL list: `unsafeAllowRelays` in core,
+      `RDV_TEST_UNSAFE_INVITE_RELAYS` for `rdv` processes, the
+      `unsafeInviteRelays` option for rdv-mcp; none is set in real use. The
+      inviter's side is not checked: its own relays are its owner's choice.
+    - **Suggestions through the gateway** (L5). As for `rdv_grant` there,
+      the model's tier, name, label and capabilities are shown beside the
+      fields; the page starts at `friend`, the profile name, no label and
+      the capabilities unticked.
     - **Landing page** `site/i.html` (served at `/i` by nginx's new
       `location = /i`; Cloudflare Pages maps it by itself). No tracking, no
       inline code (the CSP): `site/invite.js` decodes the fragment in the

@@ -3,9 +3,11 @@
 // email), as a link whose payload sits in the URL fragment. The invitee's
 // agent sends an ordinary contact request carrying the secret; the inviter's
 // agent grants it on the terms its human chose when making the invite, once.
+import { isIP } from 'node:net';
 import { sha256 } from '@noble/hashes/sha256';
 import { base64urlnopad } from '@scure/base';
 import { canonicalize, parseTimestamp, utf8ToBytes } from './encoding.js';
+import { isBlockedAddress } from './filefetch.js';
 import { isAgentId } from './identity.js';
 
 /** Where invite links point: the landing page, which reads the fragment in the browser only. */
@@ -82,6 +84,47 @@ export function cleanInviteName(name: string): string {
 
 const isRelayUrl = (r: unknown): r is string => typeof r === 'string' && r.length <= INVITE_RELAY_MAX && /^wss?:\/\/[^\s/?#]+[^\s]*$/.test(r);
 
+/** Host names that only mean something inside one network: never dialled for a link from someone else. */
+const LOCAL_NAME = /(^|\.)(localhost|local|internal|intranet|lan|home|corp|localdomain|home\.arpa)$/i;
+
+/**
+ * Why a relay from an invite link must not be dialled, or null when it may
+ * (NOTES 101, review of PR #120). The link is someone else's text, and the
+ * invitee's agent connects to its relays at once, so a link could aim that
+ * connection at the invitee's own network. Only `wss://` to a public host:
+ * no `ws://`, no loopback, private (RFC 1918, CGNAT 100.64/10, ULA
+ * fc00::/7), link-local or other special-use address literal (the same list
+ * as file fetches, §7.7), no `localhost` and no `.local`, `.internal` or like
+ * names, no bare single-label host, no credentials. `unsafeAllow` lists
+ * exact URLs exempt from this (tests and local development only).
+ */
+export function inviteRelayProblem(url: string, unsafeAllow: readonly string[] = []): string | null {
+  if (unsafeAllow.includes(url)) return null;
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    return 'not a URL';
+  }
+  if (u.protocol !== 'wss:') return 'an invite relay must be wss://';
+  if (u.username || u.password) return 'an invite relay must not carry credentials';
+  const host = u.hostname.replace(/^\[/, '').replace(/\]$/, '').replace(/\.$/, '').toLowerCase();
+  if (host === '') return 'no host';
+  if (isIP(host)) return isBlockedAddress(host) ? 'an invite relay must not be a private, loopback or link-local address' : null;
+  // A dotted-quad lookalike that is not one (e.g. 0x7f.1) is refused rather than left to the resolver.
+  if (/^[0-9.]+$/.test(host) || /^0x/i.test(host)) return 'not a host name';
+  if (!host.includes('.') || LOCAL_NAME.test(host)) return 'an invite relay must be a public host name';
+  return null;
+}
+
+/** Throws when any relay of a parsed invite is one an invitee must not dial. */
+export function checkInviteRelays(inv: Pick<Invite, 'relays'>, unsafeAllow: readonly string[] = []): void {
+  for (const r of inv.relays) {
+    const why = inviteRelayProblem(r, unsafeAllow);
+    if (why) throw new Error(`not a usable invite link (relay ${r.slice(0, 80)}: ${why})`);
+  }
+}
+
 /** A fresh secret: 128 bits from the platform's CSPRNG. */
 export function newInviteSecret(): string {
   return base64urlnopad.encode(crypto.getRandomValues(new Uint8Array(16)));
@@ -144,7 +187,7 @@ const PAYLOAD_KEYS = new Set(['v', 'a', 'r', 's', 'e', 'n']);
  * check the expiry (`inviteExpired`): an expired link still parses, so the
  * invitee can be told why it no longer works.
  */
-export function parseInvite(text: string): Invite {
+export function parseInvite(text: string, opts: { unsafeAllowRelays?: readonly string[] } = {}): Invite {
   if (typeof text !== 'string') throw new Error('not an invite link');
   let s = text.trim();
   const hash = s.indexOf('#');
@@ -182,7 +225,9 @@ export function parseInvite(text: string): Invite {
   }
   // The canonical form only: one link per invite, so what a person compares is what the agent reads.
   if (canonicalize(p) !== json) throw new Error('not an invite link (not in canonical form)');
-  return { agentId: p.a as string, relays: [...(p.r as string[])], secret: p.s as string, expires: new Date(p.e * 1000).toISOString(), ...(name !== undefined ? { name } : {}) };
+  const inv: Invite = { agentId: p.a as string, relays: [...(p.r as string[])], secret: p.s as string, expires: new Date(p.e * 1000).toISOString(), ...(name !== undefined ? { name } : {}) };
+  checkInviteRelays(inv, opts.unsafeAllowRelays);
+  return inv;
 }
 
 export function inviteExpired(inv: Pick<Invite, 'expires'>, now = new Date()): boolean {
