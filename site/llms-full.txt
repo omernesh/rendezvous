@@ -883,9 +883,9 @@ curl -fsSL https://rendezvous.nesher.co/install-gateway.sh | sh
 
 It asks one question at a time, with the default in brackets (press Enter to take it), and does everything in the steps below:
 
-1. **Folder**: where it lives (default `~/rendezvous-gateway`: the code in `repo/`, your agent in `data/`).
+1. **Folder**: where it lives (default `~/rendezvous-gateway`: the code in `repo/`, your agent in `data/`). It must be new, empty or an earlier install, belong to you, and not be a system or shared folder (`/`, `/tmp`, your home itself, a NAS volume's top or its `docker` share). `--ref` takes only a branch, a tag or a commit on one of them, and an update says which it installs.
 2. **Runtime**: Docker Compose in the hardened container shown below (preferred), or Node.js 20+ as a service of your user (systemd on Linux, launchd on macOS). It says exactly what is missing if neither is ready.
-3. **Public address**: a Cloudflare Tunnel on your own domain (you paste the tunnel token from the Cloudflare dashboard; it is saved in `cloudflared.env`, mode 600, and never shown), a Cloudflare quick tunnel to try it out (a random `trycloudflare.com` address that changes on every restart), your own reverse proxy, or Tailscale Funnel. The gateway itself only ever listens on `127.0.0.1`.
+3. **Public address**: a Cloudflare Tunnel on your own domain (you paste the tunnel token from the Cloudflare dashboard; it is saved in `cloudflared.token`, mode 600, never shown, and given to `cloudflared --token-file`, so no environment variable or `docker inspect` shows it), a Cloudflare quick tunnel to try it out (a random `trycloudflare.com` address that changes on every restart), your own reverse proxy, or Tailscale Funnel. The gateway itself only ever listens on `127.0.0.1`.
 4. **Build**: clones the repository and builds it in the pinned Node image (`node:22-alpine` by digest), as your user.
 5. **Agent**: a new one (email, relays: `wss://relay.nesher.co` plus the default public relays, and whether it is findable by email), or a restore from your `.rdvbackup` file. For a restore, `rdv restore` shows the agent ID and fingerprint and asks for the passphrase itself.
 6. **PIN**: runs `rdv-gateway pin set`, which asks for the approval PIN twice, with nothing shown.
@@ -915,14 +915,14 @@ git clone https://github.com/omernesh/rendezvous.git repo
 mkdir -m 700 data
 ```
 
-Build inside the pinned Node image as uid 1000, so nothing on the host needs Node and the files are owned by the user the container will run as:
+Build inside the pinned Node image as your own login user (run these as that user, not as root), so nothing on the host needs Node and the files belong to you:
 
 ```bash
-docker run --rm -u 1000:1000 -v "$PWD/repo:/app" -w /app/impl node:22-alpine \
+docker run --rm -u "$(id -u):$(id -g)" -e HOME=/tmp -v "$PWD/repo:/app" -w /app/impl node:22-alpine \
   sh -c 'npm ci && npm run build'
 ```
 
-If your login user is not uid 1000, run `sudo chown -R 1000:1000 repo data` first. For a stricter pin, replace `node:22-alpine` with a full tag or `@sha256:` digest, here and in `.env` below, and use the same image for both.
+Never chown the code to another user: whoever can write `repo/` decides what the gateway runs. For a stricter pin, replace `node:22-alpine` with a full tag or `@sha256:` digest, here and in `.env` below, and use the same image for both.
 
 ### 2. Compose files
 
@@ -932,6 +932,7 @@ Create these three files in `~/rdv-gateway`.
 
 ```bash
 NODE_IMAGE=node:22-alpine
+# Your own uid and gid (id -u, id -g): the gateway runs as you and owns only data/
 RDV_UID=1000
 RDV_GID=1000
 GW_PORT=8787
@@ -1095,7 +1096,7 @@ With the one-command install, the same commands run through its `./gw` helper (`
 
 ```bash
 cd ~/rdv-gateway/repo && git fetch origin && git checkout <tag-or-commit> && cd ..
-docker run --rm -u 1000:1000 -v "$PWD/repo:/app" -w /app/impl node:22-alpine \
+docker run --rm -u "$(id -u):$(id -g)" -e HOME=/tmp -v "$PWD/repo:/app" -w /app/impl node:22-alpine \
   sh -c 'npm ci && npm run build'
 docker compose up -d --force-recreate
 ```

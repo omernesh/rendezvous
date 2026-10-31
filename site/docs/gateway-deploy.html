@@ -65,9 +65,9 @@
 </code></pre></div>
 <p>It asks one question at a time, with the default in brackets (press Enter to take it), and does everything in the steps below:</p>
 <ol>
-<li><strong>Folder</strong>: where it lives (default <code>~/rendezvous-gateway</code>: the code in <code>repo/</code>, your agent in <code>data/</code>).</li>
+<li><strong>Folder</strong>: where it lives (default <code>~/rendezvous-gateway</code>: the code in <code>repo/</code>, your agent in <code>data/</code>). It must be new, empty or an earlier install, belong to you, and not be a system or shared folder (<code>/</code>, <code>/tmp</code>, your home itself, a NAS volume's top or its <code>docker</code> share). <code>--ref</code> takes only a branch, a tag or a commit on one of them, and an update says which it installs.</li>
 <li><strong>Runtime</strong>: Docker Compose in the hardened container shown below (preferred), or Node.js 20+ as a service of your user (systemd on Linux, launchd on macOS). It says exactly what is missing if neither is ready.</li>
-<li><strong>Public address</strong>: a Cloudflare Tunnel on your own domain (you paste the tunnel token from the Cloudflare dashboard; it is saved in <code>cloudflared.env</code>, mode 600, and never shown), a Cloudflare quick tunnel to try it out (a random <code>trycloudflare.com</code> address that changes on every restart), your own reverse proxy, or Tailscale Funnel. The gateway itself only ever listens on <code>127.0.0.1</code>.</li>
+<li><strong>Public address</strong>: a Cloudflare Tunnel on your own domain (you paste the tunnel token from the Cloudflare dashboard; it is saved in <code>cloudflared.token</code>, mode 600, never shown, and given to <code>cloudflared --token-file</code>, so no environment variable or <code>docker inspect</code> shows it), a Cloudflare quick tunnel to try it out (a random <code>trycloudflare.com</code> address that changes on every restart), your own reverse proxy, or Tailscale Funnel. The gateway itself only ever listens on <code>127.0.0.1</code>.</li>
 <li><strong>Build</strong>: clones the repository and builds it in the pinned Node image (<code>node:22-alpine</code> by digest), as your user.</li>
 <li><strong>Agent</strong>: a new one (email, relays: <code>wss://relay.nesher.co</code> plus the default public relays, and whether it is findable by email), or a restore from your <code>.rdvbackup</code> file. For a restore, <code>rdv restore</code> shows the agent ID and fingerprint and asks for the passphrase itself.</li>
 <li><strong>PIN</strong>: runs <code>rdv-gateway pin set</code>, which asks for the approval PIN twice, with nothing shown.</li>
@@ -89,15 +89,16 @@
 git clone https://github.com/omernesh/rendezvous.git repo
 mkdir -m 700 data
 </code></pre></div>
-<p>Build inside the pinned Node image as uid 1000, so nothing on the host needs Node and the files are owned by the user the container will run as:</p>
-<div class="codeblock"><pre tabindex="0"><code class="language-bash">docker run --rm -u 1000:1000 -v &quot;$PWD/repo:/app&quot; -w /app/impl node:22-alpine \
+<p>Build inside the pinned Node image as your own login user (run these as that user, not as root), so nothing on the host needs Node and the files belong to you:</p>
+<div class="codeblock"><pre tabindex="0"><code class="language-bash">docker run --rm -u &quot;$(id -u):$(id -g)&quot; -e HOME=/tmp -v &quot;$PWD/repo:/app&quot; -w /app/impl node:22-alpine \
   sh -c 'npm ci &amp;&amp; npm run build'
 </code></pre></div>
-<p>If your login user is not uid 1000, run <code>sudo chown -R 1000:1000 repo data</code> first. For a stricter pin, replace <code>node:22-alpine</code> with a full tag or <code>@sha256:</code> digest, here and in <code>.env</code> below, and use the same image for both.</p>
+<p>Never chown the code to another user: whoever can write <code>repo/</code> decides what the gateway runs. For a stricter pin, replace <code>node:22-alpine</code> with a full tag or <code>@sha256:</code> digest, here and in <code>.env</code> below, and use the same image for both.</p>
 <h3 id="2-compose-files">2. Compose files<a class="anchor" href="#2-compose-files" title="Link to this section" aria-label="Link to this section">#</a></h3>
 <p>Create these three files in <code>~/rdv-gateway</code>.</p>
 <p><code>.env</code> (not committed anywhere; no secrets in it, only your address):</p>
 <div class="codeblock"><pre tabindex="0"><code class="language-bash">NODE_IMAGE=node:22-alpine
+# Your own uid and gid (id -u, id -g): the gateway runs as you and owns only data/
 RDV_UID=1000
 RDV_GID=1000
 GW_PORT=8787
@@ -214,7 +215,7 @@ docker compose restart gateway                        # agents are read at start
 <p>With the one-command install, the same commands run through its <code>./gw</code> helper (<code>./gw agent add kids new --email kids@example.com</code>, <code>./gw agent list</code>, <code>./gw token create --agent kids …</code>, in your own terminal), then <code>./gw restart</code>. The installer prints each agent's MCP address at the end.</p>
 <h3 id="7-update">7. Update<a class="anchor" href="#7-update" title="Link to this section" aria-label="Link to this section">#</a></h3>
 <div class="codeblock"><pre tabindex="0"><code class="language-bash">cd ~/rdv-gateway/repo &amp;&amp; git fetch origin &amp;&amp; git checkout &lt;tag-or-commit&gt; &amp;&amp; cd ..
-docker run --rm -u 1000:1000 -v &quot;$PWD/repo:/app&quot; -w /app/impl node:22-alpine \
+docker run --rm -u &quot;$(id -u):$(id -g)&quot; -e HOME=/tmp -v &quot;$PWD/repo:/app&quot; -w /app/impl node:22-alpine \
   sh -c 'npm ci &amp;&amp; npm run build'
 docker compose up -d --force-recreate
 </code></pre></div>
