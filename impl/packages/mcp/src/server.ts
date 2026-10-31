@@ -3572,7 +3572,16 @@ export class RdvMcpServer {
   /** The backup path a model names: absolute, so the form shows exactly where the file goes or comes from. */
   private backupPath(path: string): string {
     if (!isAbsolute(path)) throw new ToolError('give an absolute path for the backup file (ask your user where they want it, e.g. a folder their cloud drive or password manager syncs)');
-    return resolve(path);
+    // A network path (\\host\share, //host/share, \\?\UNC\…, \\.\…) would reach another machine: on Windows
+    // even reading it can send the user's NTLM credentials there, and a backup written there is that host's
+    // (re-review of PR #120). Local paths only; a synced folder is a local path too.
+    const refuse = () => {
+      throw new ToolError('give a path on this machine, not a network path (\\\\host\\share or //host/share): a backup must not reach another computer. A folder your cloud drive syncs is fine.');
+    };
+    if (/^[\\/]{2}/.test(path)) refuse();
+    const full = resolve(path);
+    if (/^[\\/]{2}/.test(full)) refuse();
+    return full;
   }
 
   /** Refused without a form: the passphrase is typed only into one (issue #88). Never a phrase, never an argument. */

@@ -13,6 +13,7 @@
 // refused or attaches), and appends what it handles to `events.jsonl`.
 import { spawn } from 'node:child_process';
 import { statSync } from 'node:fs';
+import type { LookupFunction } from 'node:net';
 import { type CapabilityRegistry, expire, isA2APayload, isTerminal, receive, type Step } from '@rendezvous/a2a';
 import {
   Agent,
@@ -178,6 +179,11 @@ export class FeedTransport implements Transport {
 
   sendEnvelope(e: Envelope, relays?: string[]) {
     return this.real.sendEnvelope(e, relays);
+  }
+  /** An invite link's relays (NOTES 101): the real transport's own, short-lived connections, never its pool. */
+  sendEnvelopeIsolated(e: Envelope, relays: string[], opts: { lookup: LookupFunction }) {
+    if (!this.real.sendEnvelopeIsolated) throw new Error('this transport cannot send to an invite link\'s relays');
+    return this.real.sendEnvelopeIsolated(e, relays, opts);
   }
   publishTopic(topic: string, doc: object, extra?: string[], opts?: TopicPublishOptions) {
     return this.real.publishTopic(topic, doc, extra, opts);

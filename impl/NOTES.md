@@ -4333,15 +4333,22 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       fc00::/7, link-local, and the rest of §7.7's list, IPv4-mapped forms
       included), numeric or hex host lookalikes, single-label hosts and
       `localhost`, `.local`, `.internal`, `.lan`, `.home`, `.corp`,
-      `.home.arpa` names. Names are resolved safely too (re-review):
-      `acceptInvite` registers each of the link's relays with
-      `guardRelayLookup`, and every new socket this process opens to that
-      URL resolves through `guardedLookup` (filefetch's pinned lookup:
-      every answer must pass `isBlockedAddress`, and the connection is
-      pinned to the checked answer), so `127.0.0.1.nip.io` or a rebinding
-      name fails at connect. A socket already open to the same URL (our
-      own relay) is not affected; an IP literal never resolves and was
-      checked above. The test hook is an exact-URL list for the literal
+      `.home.arpa` names. Names are resolved safely too: only after every
+      check passed, `acceptInvite` sends the request through
+      `Transport.sendEnvelopeIsolated`, a short-lived pool of its own for
+      the link's relays whose sockets resolve every host through
+      `guardedLookup` (filefetch's pinned lookup: every answer must pass
+      `isBlockedAddress`, and the connection is pinned to the checked
+      answer), closed afterwards. So `127.0.0.1.nip.io` or a rebinding name
+      fails at connect. The request goes nowhere else (not to our own
+      relays). A first version (second review) registered the guard in a
+      process-wide map by URL, before the expiry and contact checks: a
+      crafted, even expired, link naming the victim's own relay (say a
+      Tailscale `wss://relay.<tailnet>.ts.net` resolving to 100.x) would
+      have broken every later reconnect to it until a restart (third
+      review, MED). Our own relay connections, their pool, cooldowns and
+      status are now never used or changed by an invite. An IP literal
+      never resolves and was checked above. The test hook is an exact-URL list for the literal
       check only: `unsafeAllowRelays` in core, the `unsafeInviteRelays`
       option for rdv-mcp, and `RDV_TEST_UNSAFE_INVITE_RELAYS` for `rdv`
       processes, which is honoured only under `NODE_ENV=test` (vitest sets
@@ -4359,6 +4366,10 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       inside double quotes in sh, PowerShell and cmd (letters, digits,
       space, `_ . - / \ : ~ +`); otherwise `"<backup file>"`. A blank "days"
       field on the gateway's page (null) keeps the days the form showed.
+      `rdv_backup` also refuses network paths (`\\host\share`,
+      `//host/share`, `\\?\UNC\…`; third review): on Windows reading one
+      can send the user's NTLM credentials to that host, and a backup
+      written there is that host's.
     - **Suggestions through the gateway** (L5). As for `rdv_grant` there,
       the model's tier, name, label and capabilities are shown beside the
       fields; the page starts at `friend`, the profile name, no label and

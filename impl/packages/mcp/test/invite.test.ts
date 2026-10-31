@@ -178,6 +178,17 @@ describe('invite links from the chat', () => {
       expect(b.text).not.toContain('touch pwned');
     }
     expect(plain.humanLog.join('\n')).not.toContain('touch pwned');
+    // Network (UNC) paths are refused for both, before any form or file access (re-review of PR #120).
+    for (const action of ['create', 'restore'] as const) {
+      const slash = await plain.call('rdv_backup', { action, path: '//evil.example/share/b.rdvbackup' });
+      expect([slash.isError, slash.text]).toEqual([true, expect.stringContaining('not a network path')]);
+      const unc = await plain.call('rdv_backup', { action, path: '\\\\evil.example\\share\\b.rdvbackup' });
+      expect([unc.isError, unc.text]).toEqual([true, expect.stringMatching(process.platform === 'win32' ? /not a network path/ : /absolute path|network path/)]);
+      if (process.platform === 'win32') {
+        const dev = await plain.call('rdv_backup', { action, path: '\\\\?\\UNC\\evil.example\\share\\b.rdvbackup' });
+        expect(dev.text).toContain('not a network path');
+      }
+    }
     const fine = join(root, 'my backup.rdvbackup');
     expect((await plain.call('rdv_backup', { action: 'create', path: fine })).text).toContain(`rdv backup "${fine}"`);
   }, 30_000);
