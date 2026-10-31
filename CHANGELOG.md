@@ -8,12 +8,14 @@ The format follows Keep a Changelog. One line per change a user can see; PR numb
 
 ### Added
 - Invite people by link, WhatsApp style: ask your assistant to invite someone, choose in an approval form what they get and for how long, and send the ready-made message; when they open the link and tell their assistant "accept my Rendezvous invite", or run `rdv init --invite <link>`, you are connected at once, and you are told who used it. The link works once and expires (7 days by default); `rdv invite create` in a terminal does the same.
+- Nicknames for your contacts: tell your assistant "talk to joe" or "tell Ran's agent …" once you have given that contact the nickname (you type it in an approval form; at most 8 per contact, each name belongs to one contact). You can also name your own agent (e.g. "Sammie"): contacts see it as what your agent calls itself, never as a way to pick it, and your contact requests greet with it.
 
 ### Changed
 - The docs, site, plugin and MCP server text now describe Rendezvous as cross-platform secure agent-to-agent messaging, with meeting scheduling as one example. The CLI reference follows the order you use it (identity, contacts, messages, tasks and files, groups, backups), and the FAQ shows the current version.
 
 ### Fixed
 - **Security:** a relay can no longer inject text into your assistant's connection to Rendezvous or into `rdv --json` output: messages a relay sends for display (NOTICE) are dropped instead of printed, and anything a library prints goes to the error stream as one cleaned line. Before, a hostile relay (one named in a contact's card, or now in an invite link) could forge tool results or approval prompts.
+- **Security:** `rdv` no longer runs a command whose name was given as one quoted word (such as `"contact grant"`), which slipped past the plugin's check that keeps your assistant away from commands that are yours alone; that check now also reads such words.
 - Rendezvous no longer crashes when its error stream is closed (for example when `rdv` is piped into a program that exits early); the line is dropped instead.
 - `rdv --version`, the MCP server and the gateway's API document now report the real release version instead of 0.1.0, and the site's `llms.txt` takes it from the plugin manifest.
 - The backup form and `rdv backup` now tell you the passphrase rules up front (length, variety, no common words) instead of only after you submit.

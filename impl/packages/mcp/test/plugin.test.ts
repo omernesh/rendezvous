@@ -165,6 +165,57 @@ describe('the skill', () => {
     expect(consentViolations('Name them: run `rdv contact label rdv1:abc john@doe.com`.')).toHaveLength(1);
     expect(consentViolations('```sh\nrdv contact label rdv1:abc john@doe.com\n```\n')).toHaveLength(1);
     expect(consentViolations('The human names a contact with `rdv contact label <agent-id> <label>` in their own terminal.')).toEqual([]);
+    // A nickname does the same (NOTES 103), and the agent's own name goes on its card.
+    expect(consentViolations('Add the nickname: run `rdv contact alias add rdv1:abc Ran`.')).toHaveLength(1);
+    expect(consentViolations('```sh\nrdv agent-name set Sammie\n```\n')).toHaveLength(1);
+    expect(consentViolations('The human adds one with `rdv contact alias add <agent-id> <name>` in their own terminal.')).toEqual([]);
+  });
+
+  it('refuses the nickname and agent-name commands in every form (NOTES 103), and lets the rest through', () => {
+    for (const c of [
+      'rdv contact alias add rdv1:abc Ran',
+      'rdv contact alias remove rdv1:abc Ran',
+      'rdv contact alias list',
+      'rdv --profile omer contact alias add rdv1:abc Ran',
+      'npx rdv contact alias add rdv1:abc Ran',
+      'npm run rdv -- contact alias add rdv1:abc Ran',
+      "rdv con''tact ali\\as add rdv1:abc Ran",
+      'bash -c "rdv contact alias add rdv1:abc Ran"',
+      `node -e "require('child_process').execFileSync('rdv', ['contact', 'alias', 'add', 'rdv1:abc', 'Ran'])"`,
+      'rdv agent-name set Sammie',
+      'rdv agent-name clear',
+      'npx @rendezvous/cli agent-name set Sammie',
+      'npm run rdv -- agent-name set Sammie',
+    ]) {
+      expect(checkCommand(c), c).toBeTruthy();
+    }
+    // A quoted run of command words is matched like separate words (security review of PR #122, H1): the CLI refuses
+    // such a word as well, but a guard that saw only "contact" then "alias add" let it through.
+    for (const c of [
+      'rdv contact "alias add" rdv1:abc Ran',
+      'rdv "contact alias" add rdv1:abc Ran',
+      'rdv "contact alias add" rdv1:abc Ran',
+      'rdv "agent-name set" Sammie',
+      'rdv "contact label" rdv1:abc Ran',
+      'rdv "contact grant" 0f1e --tier friend',
+      'rdv "contact confirm" g1',
+      'rdv "contact pending"',
+      'rdv contact "grant " 0f1e',
+      'rdv "contact auto-approve" rdv1:abc all',
+      "rdv 'contact  auto-approve' rdv1:abc off",
+      'npx rdv "contact label" rdv1:abc Ran',
+      'npm run rdv -- "contact grant" x',
+      'rdv-gateway "pin set"',
+      'bash -c \'rdv "contact grant" x\'',
+    ]) {
+      expect(checkCommand(c), c).toBeTruthy();
+    }
+    // Free text in an argument stays free text.
+    expect(checkCommand('rdv contact request john@doe.com --greeting "please grant me contact"')).toBeFalsy();
+    expect(checkCommand('git commit -m "docs: rdv contact grant is for the human"')).toBeFalsy();
+    expect(checkCommand('rdv contact alias add rdv1:abc Ran')).toMatch(/rdv_label/);
+    expect(checkCommand('rdv agent-name set Sammie')).toMatch(/rdv_agent_name/);
+    for (const c of ['rdv whoami', 'rdv contact list', 'git commit -m "docs: rdv contact alias is for the human"', 'echo agent-name']) expect(checkCommand(c), c).toBeFalsy();
   });
 
   it('installs clean in Hermes: no pipe-to-shell installer and nothing else its scanner flags, in any skill file (issue #13)', () => {

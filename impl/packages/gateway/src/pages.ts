@@ -74,6 +74,8 @@ function suggestionText(p: PendingApproval, field: string, value: string): { tex
     };
   }
   if (field === 'label') return { text: `Your assistant suggests the label "${value}". Type it yourself if you want it.`, warn: false };
+  if (field === 'name') return { text: `Your assistant suggests the agent name "${value}". Type it yourself if you want it.`, warn: false };
+  if (field === 'alias') return { text: `Your assistant suggests the nickname "${value}". Type it yourself if you want it.`, warn: false };
   return { text: `Your assistant suggests ${field}: "${value}".`, warn: false };
 }
 

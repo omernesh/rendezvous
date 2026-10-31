@@ -3,7 +3,7 @@
 // judgment calls — the owner (human, CLI script, or MCP host) decides on
 // pending requests through `grant` / `decline`.
 import { EventEmitter } from 'node:events';
-import { type AddressCard, type CardOptions, createCard, type DiscoveryAddress, missingCapabilities, newerCard, reissueCard, reissueCardCapabilities, reissueCardRelays, verifyCard } from './card.js';
+import { type AddressCard, type CardOptions, createCard, type DiscoveryAddress, missingCapabilities, newerCard, reissueCard, reissueCardAgentName, reissueCardCapabilities, reissueCardRelays, verifyCard } from './card.js';
 import {
   type Contact,
   ContactBook,
@@ -521,6 +521,19 @@ export class Agent extends EventEmitter<AgentEvents> {
     this.card = reissueCardRelays(this.key, this.card, relays, opts.now);
     this.transport.setRelays?.(relays, opts.mirrorRelays);
     return this.card;
+  }
+
+  /**
+   * Set or clear (null) what the owner calls this agent ("Sammie"), the
+   * card's unverified `agent_name` (NOTES 103). Re-signed with a later
+   * `created` only when it changes; returns whether it did. Call
+   * `publishPointers()` and `sendCardUpdates()` afterwards, as for addresses.
+   */
+  setAgentName(name: string | null, opts: { now?: Date } = {}): boolean {
+    const next = reissueCardAgentName(this.key, this.card, name, opts.now);
+    if ((next.agent_name ?? null) === (this.card.agent_name ?? null)) return false;
+    this.card = next;
+    return true;
   }
 
   /** Active contacts that have not been sent our current card yet (NOTES 82). */

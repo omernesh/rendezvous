@@ -73,7 +73,7 @@ Commands follow the order you use them: set up an identity, find and connect to 
 
 | Command | Does |
 |---|---|
-| `rdv init --profile omer --email omer@example.com [--email …] [--relay wss://… [--relay …]] [--phone +…] [--phone …] [--public-pointer] [--force]` | Generate key and card, write state. Repeat `--email` / `--phone` for more addresses (canonicalized, repeats dropped, at most 8). Without `--relay`: `DEFAULT_RELAYS` (below). An agent keeps the relays it was created with |
+| `rdv init --profile omer --email omer@example.com [--email …] [--relay wss://… [--relay …]] [--phone +…] [--phone …] [--public-pointer] [--agent-name Sammie] [--force]` | Generate key and card, write state. Repeat `--email` / `--phone` for more addresses (canonicalized, repeats dropped, at most 8). Without `--relay`: `DEFAULT_RELAYS` (below). An agent keeps the relays it was created with |
 | `rdv whoami` | Print agent ID, fingerprint, addresses, per-relay health (`relay_health`: last OK, last error, cooldown), card JSON (never the secret key) |
 | `rdv address list` | Our addresses, each public (on the card, answers probes; with its topic) or private (kept in `config.json` only) |
 | `rdv address add <email\|+phone> [--public\|--private]` | Add one (default public). A public one re-signs the card with a later `created`, republishes it if the public pointer is on, and a running `listen` / `rdv-mcp` starts answering probes on it within a second. Duplicates (in any spelling) and a ninth address are refused |
@@ -94,6 +94,8 @@ Contact needs consent from both humans. Nothing is granted on its own.
 | `rdv contact pending` | Pending inbound requests with binding, fingerprint, greeting; answers to your topic probes awaiting confirmation |
 | `rdv contact grant <request-id> [--tier friend] [--scope-file s.json] [--label john@doe.com]` | Approve (`--label`: your local name for them) |
 | `rdv contact label <agent-id> <label>` | Name a contact locally; sending by name (`rdv_send` `to`) resolves through this, never through the addresses its card claims. Yours to run: an assistant may only suggest a label, which you approve with the contact (NOTES 62). From chat: the `rdv_label` tool, which asks you in an approval form |
+| `rdv contact alias add\|remove <agent-id> <name>` / `rdv contact alias list` | A contact's nicknames besides its label (at most 8, 64 characters each, a name belongs to one contact only): sending by name resolves them too, also as "Ran's agent" or "agent of Ran". Yours to run, in your own terminal; from chat: `rdv_label` "add-alias" / "remove-alias" (an approval form) (NOTES 103) |
+| `rdv agent-name set <name>` / `rdv agent-name clear` | Name your agent (e.g. Sammie): it goes on the card, where contacts see it only as what your agent calls itself, and the default greeting uses it. Re-signs and republishes the card and sends it to contacts. Yours to run, in your own terminal; also `rdv init --agent-name`; from chat: `rdv_agent_name` (an approval form) |
 | `rdv contact grant <agent-id> [--tier …] [--scope-file …] [--invoke <capability-uri>]… [--no-meetings]` | Give a contact you requested rights towards you (by default it may write, not propose meetings); the contact gets a reverse grant, so it can then propose (NOTES 60) |
 | `rdv contact confirm <grant-id>` / `rdv contact reject <grant-id> [--block]` | Accept or turn down an answer to your topic probe (anyone who saw the probe can answer; check the fingerprint) |
 | `rdv contact decline <request-id> [--block]` | Decline |

@@ -219,7 +219,7 @@ npm run rdv -- --help                     # or: node packages/cli/dist/src/bin.j
 </thead>
 <tbody>
 <tr>
-<td><code>rdv init --profile omer --email omer@example.com [--email …] [--relay wss://… [--relay …]] [--phone +…] [--phone …] [--public-pointer] [--force]</code></td>
+<td><code>rdv init --profile omer --email omer@example.com [--email …] [--relay wss://… [--relay …]] [--phone +…] [--phone …] [--public-pointer] [--agent-name Sammie] [--force]</code></td>
 <td>Generate key and card, write state. Repeat <code>--email</code> / <code>--phone</code> for more addresses (canonicalized, repeats dropped, at most 8). Without <code>--relay</code>: <code>DEFAULT_RELAYS</code> (below). An agent keeps the relays it was created with</td>
 </tr>
 <tr>
@@ -285,6 +285,14 @@ npm run rdv -- --help                     # or: node packages/cli/dist/src/bin.j
 <tr>
 <td><code>rdv contact label &lt;agent-id&gt; &lt;label&gt;</code></td>
 <td>Name a contact locally; sending by name (<code>rdv_send</code> <code>to</code>) resolves through this, never through the addresses its card claims. Yours to run: an assistant may only suggest a label, which you approve with the contact (NOTES 62). From chat: the <code>rdv_label</code> tool, which asks you in an approval form</td>
+</tr>
+<tr>
+<td><code>rdv contact alias add\|remove &lt;agent-id&gt; &lt;name&gt;</code> / <code>rdv contact alias list</code></td>
+<td>A contact's nicknames besides its label (at most 8, 64 characters each, a name belongs to one contact only): sending by name resolves them too, also as "Ran's agent" or "agent of Ran". Yours to run, in your own terminal; from chat: <code>rdv_label</code> "add-alias" / "remove-alias" (an approval form) (NOTES 102)</td>
+</tr>
+<tr>
+<td><code>rdv agent-name set &lt;name&gt;</code> / <code>rdv agent-name clear</code></td>
+<td>Name your agent (e.g. Sammie): it goes on the card, where contacts see it only as what your agent calls itself, and the default greeting uses it. Re-signs and republishes the card and sends it to contacts. Yours to run, in your own terminal; also <code>rdv init --agent-name</code>; from chat: <code>rdv_agent_name</code> (an approval form)</td>
 </tr>
 <tr>
 <td><code>rdv contact grant &lt;agent-id&gt; [--tier …] [--scope-file …] [--invoke &lt;capability-uri&gt;]… [--no-meetings]</code></td>

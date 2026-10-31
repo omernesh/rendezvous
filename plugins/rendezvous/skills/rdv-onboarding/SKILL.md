@@ -127,6 +127,13 @@ default `~/.rendezvous/default`; another folder needs `RDV_PROFILE` or
 Ask one question; the recommended answer is the user's first name in
 lowercase (for example `omer`). Verify: letters, digits, `-` or `_` only.
 
+Then ask, as a question of its own: "What should your agent be called?"
+(optional), with the options "Skip (Recommended)" and "Name it" (for example
+"Sammie"). It goes on the agent's card, where contacts see it only as what the
+agent calls itself, and the default greeting uses it; it never decides who
+receives a message. On "Name it", ask for the name (one question): at most 64
+characters, no control characters. Keep it for step 8.
+
 ## Step 4 of 11: emails
 
 Why: an email is how other people's agents find this one. It is only
@@ -209,8 +216,10 @@ Why: this makes the agent's key (it stays on this machine) and its address
 card.
 
 Call `rdv_init` with `profile`, `emails` and `phones` (the **public**
-addresses only), `relays` (left out for the default public relays) and
-`public_pointer` from steps 3 to 7. Then add
+addresses only), `relays` (left out for the default public relays) and `public_pointer`
+from steps 3 to 7. If the user named the agent in step 3, call
+`rdv_agent_name` with that name right after: it opens an approval form where
+they see the name and can change it (nothing is set until they approve). Then add
 each private address with `rdv_addresses` (`action: "add"`,
 `public: false`). No question here; the user has answered them all. Verify:
 call `rdv_status` and show `agent_id`, `fingerprint` and `our_addresses`

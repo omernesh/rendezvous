@@ -12,7 +12,7 @@ export const SCOPE_TEXT: Record<Scope, string> = {
   send: 'messages, tasks and group posts to your contacts, as you, and fetching files a contact sent for a task you started',
   'contact:request':
     'asking people for contact (by address, agent ID or an invite link) and asking you to approve, or to make an invite link (only you approve, on the page); also revoking, declining and blocking, which only ever reduce access; ' +
-    "and asking you to rename a contact, take a contact's or a group's messages again after a fork, or turn direct file transfers on (only you decide, on the page; turning them off needs no one)",
+    "and asking you to rename a contact, give it a nickname, name your agent, take a contact's or a group's messages again after a fork, or turn direct file transfers on (only you decide, on the page; turning them off needs no one)",
   negotiate: 'proposing dinner times (only you confirm a meeting, on the page)',
 };
 
@@ -32,6 +32,7 @@ const TABLE: Record<string, Record<string, Scope>> = {
   rdv_grant: { '*': 'contact:request' },
   rdv_revoke: { '*': 'contact:request' },
   rdv_label: { '*': 'contact:request' },
+  rdv_agent_name: { '*': 'contact:request' },
   rdv_resync: { '*': 'contact:request' },
   rdv_auto_approve: { off: 'contact:request' },
   rdv_send: { '*': 'send' },

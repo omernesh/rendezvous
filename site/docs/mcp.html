@@ -208,8 +208,18 @@ stays for clients without forms. <code>RDV_ELICIT=off</code> turns forms off ent
 </tr>
 <tr>
 <td><code>rdv_label</code></td>
-<td>agent_id, label</td>
+<td>agent_id, action?, label?, alias?</td>
 <td>renames a contact (its <code>local_label</code>, what <code>rdv_send</code> "to" resolves). The approval form shows the agent ID, the fingerprint and the current label; the human may change the name, and what they leave applies. Without a form it is refused and names <code>rdv contact label &lt;agent-id&gt; &lt;label&gt;</code>. Through rdv-gateway the label is only a suggestion: the owner types the name on the page, which starts at the current label</td>
+</tr>
+<tr>
+<td><code>rdv_label</code> "add-alias" / "remove-alias"</td>
+<td>agent_id, alias</td>
+<td>gives a contact a nickname besides its label, or takes one off (NOTES 102): at most 8, a name belongs to one contact only, and "to" then resolves it, also as "Ran's agent" or "agent of Ran". The human types the nickname in the approval form.</td>
+</tr>
+<tr>
+<td><code>rdv_agent_name</code></td>
+<td>name?, clear?</td>
+<td>names this agent (e.g. "Sammie") on its card, where contacts see it only as its own claim, or takes the name off; the human types it in the approval form (through the gateway, on the PIN-locked page, with the assistant's name only as a suggestion beside an empty field).</td>
 </tr>
 <tr>
 <td><code>rdv_owner_passphrase</code></td>
