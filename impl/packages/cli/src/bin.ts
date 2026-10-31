@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// First: stdout is our output (`--json` lines), so every console call goes to stderr, one safe line each (review of PR #120).
+import '@rendezvous/core/safe-console';
 import { main } from './main.js';
 
 const code = await main(process.argv.slice(2));

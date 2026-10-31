@@ -12,6 +12,10 @@
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
+    "./safe-console": {
+      "types": "./dist/safeconsole-install.d.ts",
+      "default": "./dist/safeconsole-install.js"
+    },
     "./testing": {
       "types": "./dist/testing/relay.d.ts",
       "default": "./dist/testing/relay.js"

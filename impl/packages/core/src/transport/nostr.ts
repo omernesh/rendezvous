@@ -100,7 +100,8 @@ useWebSocketImplementation(QuietWebSocket);
 function lookupWebSocket(lookup: LookupFunction): typeof WebSocket {
   return class extends QuietWebSocket {
     constructor(address: string | URL, protocols?: string | string[]) {
-      super(address, Array.isArray(protocols) || typeof protocols === 'string' ? protocols : [], { lookup } as never);
+      // A relay someone else named: no frame larger than 1 MiB (an envelope is far smaller, MAX_EVENT_CONTENT).
+      super(address, Array.isArray(protocols) || typeof protocols === 'string' ? protocols : [], { lookup, maxPayload: 1 << 20 } as never);
     }
   } as unknown as typeof WebSocket;
 }
@@ -325,7 +326,25 @@ export function agentTag(id: string): string {
  * and timeout are set per relay here and a failed ping `terminate()`s the
  * socket, which closes at once and runs the subscription's `onclose`.
  */
-class LivePool extends SimplePool {
+/**
+ * A pool whose relays never print what a relay says (review of PR #120,
+ * round 4). nostr-tools' default `onnotice` is `console.debug("NOTICE from
+ * <url>: <msg>")`, which goes to stdout: in rdv-mcp that is the JSON-RPC
+ * channel, so a hostile relay (one named in an invite link or a peer's card)
+ * could send a NOTICE holding a forged JSON-RPC line. NOTICE text is dropped,
+ * set on each relay as soon as the pool creates it, before it connects.
+ */
+class QuietPool extends SimplePool {
+  override ensureRelay(url: string, params?: Parameters<SimplePool['ensureRelay']>[1]): ReturnType<SimplePool['ensureRelay']> {
+    const connecting = super.ensureRelay(url, params);
+    const relay = this.relays.get(normalizeURL(url));
+    if (relay) relay.onnotice = dropNotice;
+    return connecting;
+  }
+}
+const dropNotice = (): void => {};
+
+class LivePool extends QuietPool {
   constructor(
     private readonly pingFrequencyMs: number,
     private readonly pingTimeoutMs: number,
@@ -830,7 +849,7 @@ export class NostrTransport implements Transport {
       this.carrier,
     );
     const targets = [...new Set(relays)];
-    const pool = new SimplePool({ websocketImplementation: lookupWebSocket(opts.lookup), enablePing: false, enableReconnect: false } as never);
+    const pool = new QuietPool({ websocketImplementation: lookupWebSocket(opts.lookup), enablePing: false, enableReconnect: false } as never);
     const report: PublishReport = { accepted: [], rejected: [], skipped: [] };
     try {
       await Promise.all(

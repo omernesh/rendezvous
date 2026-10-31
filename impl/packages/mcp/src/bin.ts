@@ -6,6 +6,8 @@
 // Home resolution is the same as `rdv` (--home, else $RDV_HOME, else
 // ~/.rendezvous/<profile>), so both can share a profile. stdout carries the
 // MCP protocol; human-facing notices (including confirm phrases) go to stderr.
+// First, before anything that could print: stdout is the MCP protocol, so every console call goes to stderr (review of PR #120).
+import '@rendezvous/core/safe-console';
 import { parseArgs } from 'node:util';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { Home } from '@rendezvous/cli/lib';
