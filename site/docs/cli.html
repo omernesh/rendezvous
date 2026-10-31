@@ -326,8 +326,8 @@ npm run rdv -- --help                     # or: node packages/cli/dist/src/bin.j
 <td>Show received payloads</td>
 </tr>
 <tr>
-<td><code>rdv listen [--auto-grant &lt;tier&gt; [--auto-grant-any-tier]] [--exec &lt;script&gt;]</code></td>
-<td>Long-running: print events; auto-grant is for demos only and stops at <code>stranger</code> unless <code>--auto-grant-any-tier</code>; <code>--exec</code> gets each event as a JSON line on stdin (<code>RDV_EVENT</code>, <code>RDV_HOME</code> set)</td>
+<td><code>rdv listen [--auto-grant &lt;tier&gt; [--auto-grant-any-tier]] [--exec &lt;script&gt;] [--service &lt;name&gt;]</code></td>
+<td>Long-running: print events; auto-grant is for demos only and stops at <code>stranger</code> unless <code>--auto-grant-any-tier</code>; <code>--exec</code> gets each event as a JSON line on stdin (<code>RDV_EVENT</code>, <code>RDV_HOME</code> set); <code>--service &lt;name&gt;</code> is what the background listener from <code>rdv service install</code> runs with (never together with <code>--auto-grant</code>, <code>--exec</code> or <code>--negotiate</code>)</td>
 </tr>
 <tr>
 <td><code>rdv service install [--dry-run]</code></td>
@@ -350,7 +350,7 @@ npm run rdv -- --help                     # or: node packages/cli/dist/src/bin.j
 </thead>
 <tbody>
 <tr>
-<td><code>rdv task request &lt;agent-id&gt; --text "…" [--capability &lt;uri&gt;] [--input '{…}'] [--expires &lt;rfc3339&gt;]</code></td>
+<td><code>rdv task request &lt;agent-id&gt; --text "…"… [--capability &lt;uri&gt;] [--input '{…}'] [--expires &lt;rfc3339&gt;] [--file &lt;sha256&gt;=&lt;https-url&gt;]… [--inline &lt;path&gt;]…</code></td>
 <td>Ask a contact's agent for a task (SPEC §7.6; default capability <code>request/v1</code>, a free-text request). Needs its grant to you and its card to list the capability</td>
 </tr>
 <tr>
@@ -362,7 +362,7 @@ npm run rdv -- --help                     # or: node packages/cli/dist/src/bin.j
 <td>Let your agent act on a contact's task (start gate, SPEC §5.5), or refuse it. <code>--code</code> is refused if the task changed since you reviewed it. <code>approve</code> is yours to run. A task a group member gave you takes <code>--group &lt;group-id&gt;</code> here and in <code>submit</code>, <code>ask</code>, <code>finish</code> and <code>release</code></td>
 </tr>
 <tr>
-<td><code>rdv task submit &lt;task-id&gt; --text "…" [--name …] [--complete]</code> / <code>rdv task ask &lt;task-id&gt; --text "…"</code> / <code>rdv task finish &lt;task-id&gt; [--failed] [--text …]</code></td>
+<td><code>rdv task submit &lt;task-id&gt; [--text "…"]… [--data '{…}']… [--name …] [--complete]</code> / <code>rdv task ask &lt;task-id&gt; --text "…"</code> / <code>rdv task finish &lt;task-id&gt; [--failed] [--text …]</code></td>
 <td>Draft a result, a question or the end of a contact's task; a draft leaves only when released</td>
 </tr>
 <tr>
@@ -589,11 +589,11 @@ test</code> on the in-memory relay; by hand:
 <td>Offer up to 3 free slots; run <code>listen --negotiate</code> to handle the replies</td>
 </tr>
 <tr>
-<td><code>rdv dinner confirm &lt;task-id&gt; --hold &lt;code&gt;</code></td>
+<td><code>rdv dinner confirm &lt;task-id&gt; --hold &lt;code&gt; [--calendar cal.json]</code></td>
 <td>Confirm the dinner a negotiation holds for you: sends <code>meeting/accept</code> (their offer) or <code>meeting/confirm</code> (they accepted yours). <code>--hold</code> is the code <code>rdv dinner list</code> shows; it is refused if the meeting changed since</td>
 </tr>
 <tr>
-<td><code>rdv dinner cancel &lt;task-id&gt; [--reason …]</code></td>
+<td><code>rdv dinner cancel &lt;task-id&gt; [--reason …] [--calendar cal.json]</code></td>
 <td>Send <code>rdv/cancel</code> for a pending negotiation and release its hold; for an agreed (completed) dinner, send <code>meeting/cancel</code>: it leaves your calendar and the peer's agent removes it from theirs</td>
 </tr>
 <tr>
@@ -914,6 +914,8 @@ node packages/gateway/dist/src/bin.js oauth revoke &lt;cli_…|grt_…&gt; --hom
 </code></pre></div>
 <p><strong>Static tokens</strong>, for assistants without OAuth (Muse, scripts):</p>
 <div class="codeblock"><pre tabindex="0"><code class="language-bash">node packages/gateway/dist/src/bin.js token create --name muse --scope read,send,contact:request --home ~/.rendezvous/omer
+node packages/gateway/dist/src/bin.js token list --home ~/.rendezvous/omer
+node packages/gateway/dist/src/bin.js token revoke &lt;id&gt; --home ~/.rendezvous/omer
 </code></pre></div>
 <h2 id="develop">Develop<a class="anchor" href="#develop" title="Link to this section" aria-label="Link to this section">#</a></h2>
 <p>Run from <code>impl/</code> (works the same in PowerShell and bash):</p>

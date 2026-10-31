@@ -1173,7 +1173,7 @@ Contact needs consent from both humans. Nothing is granted on its own.
 |---|---|
 | `rdv send <agent-id> --json '{"type":"a2a/message","text":"hi"}'` | Send any payload (`--payload '…'` is the same without JSON output) |
 | `rdv inbox [--follow]` | Show received payloads |
-| `rdv listen [--auto-grant <tier> [--auto-grant-any-tier]] [--exec <script>]` | Long-running: print events; auto-grant is for demos only and stops at `stranger` unless `--auto-grant-any-tier`; `--exec` gets each event as a JSON line on stdin (`RDV_EVENT`, `RDV_HOME` set) |
+| `rdv listen [--auto-grant <tier> [--auto-grant-any-tier]] [--exec <script>] [--service <name>]` | Long-running: print events; auto-grant is for demos only and stops at `stranger` unless `--auto-grant-any-tier`; `--exec` gets each event as a JSON line on stdin (`RDV_EVENT`, `RDV_HOME` set); `--service <name>` is what the background listener from `rdv service install` runs with (never together with `--auto-grant`, `--exec` or `--negotiate`) |
 | `rdv service install [--dry-run]` | Keep the agent reachable while no chat or terminal is open: installs `rdv listen` for this home as a background listener that starts at your login, as you, with no administrator rights. Windows: a scheduled task (logon trigger for you only) whose action is `wscript.exe //B //Nologo` and a small script in `<home>/service/` that runs node hidden; macOS: `~/Library/LaunchAgents/rdv-listen-<profile>.plist` (`RunAtLoad`, `KeepAlive`); Linux: `~/.config/systemd/user/rdv-listen-<profile>.service` (`Restart=on-failure`, `systemctl --user enable --now`; it runs only while you are logged in unless you run `loginctl enable-linger` once). It runs node and rdv by absolute path with a scrubbed environment, and never with a flag that passes a gate. `--dry-run` prints the definition. Yours to run (an assistant uses `rdv_service`, which asks you in a form) |
 | `rdv service remove` / `rdv service status` | Stop and remove it; show whether it is installed and running and who holds `listener.lock` |
 
@@ -1183,10 +1183,10 @@ Ask a contact's agent to do something, and send files. Each step that acts or re
 
 | Command | Does |
 |---|---|
-| `rdv task request <agent-id> --text "…" [--capability <uri>] [--input '{…}'] [--expires <rfc3339>]` | Ask a contact's agent for a task (SPEC §7.6; default capability `request/v1`, a free-text request). Needs its grant to you and its card to list the capability |
+| `rdv task request <agent-id> --text "…"… [--capability <uri>] [--input '{…}'] [--expires <rfc3339>] [--file <sha256>=<https-url>]… [--inline <path>]…` | Ask a contact's agent for a task (SPEC §7.6; default capability `request/v1`, a free-text request). Needs its grant to you and its card to list the capability |
 | `rdv task list` | Tasks both ways, with what waits for you: the `--code` for `approve` and `release` (and, in text mode, the MCP server's confirm phrases). Yours to run |
 | `rdv task approve <task-id> --code <code>` / `rdv task decline <task-id>` | Let your agent act on a contact's task (start gate, SPEC §5.5), or refuse it. `--code` is refused if the task changed since you reviewed it. `approve` is yours to run. A task a group member gave you takes `--group <group-id>` here and in `submit`, `ask`, `finish` and `release` |
-| `rdv task submit <task-id> --text "…" [--name …] [--complete]` / `rdv task ask <task-id> --text "…"` / `rdv task finish <task-id> [--failed] [--text …]` | Draft a result, a question or the end of a contact's task; a draft leaves only when released |
+| `rdv task submit <task-id> [--text "…"]… [--data '{…}']… [--name …] [--complete]` / `rdv task ask <task-id> --text "…"` / `rdv task finish <task-id> [--failed] [--text …]` | Draft a result, a question or the end of a contact's task; a draft leaves only when released |
 | `rdv task submit <task-id> --file <sha256>=<https-url>… [--inline <path>…]` | Attach files by reference (or up to 16 KiB inline) to the draft. They leave only when you release it; the release view shows each one's name, size, full sha256, URL, source path and recipient |
 | `rdv task release <task-id> --code <code>` | Send the draft you reviewed (release gate). Yours to run |
 | `rdv task cancel <task-id>` / `rdv task input <task-id> --text "…"` | Withdraw a task you requested, or answer its executor's question |
@@ -1322,8 +1322,8 @@ Meetings are one use of the tasks layer, built on the `a2a` package's meeting en
 | Command | Does |
 |---|---|
 | `rdv dinner propose <agent-id> --calendar cal.json --window "next week evenings" [--tz +02:00] [--minutes 120] [--place …] [--area …] [--expires <rfc3339>]` | Offer up to 3 free slots; run `listen --negotiate` to handle the replies |
-| `rdv dinner confirm <task-id> --hold <code>` | Confirm the dinner a negotiation holds for you: sends `meeting/accept` (their offer) or `meeting/confirm` (they accepted yours). `--hold` is the code `rdv dinner list` shows; it is refused if the meeting changed since |
-| `rdv dinner cancel <task-id> [--reason …]` | Send `rdv/cancel` for a pending negotiation and release its hold; for an agreed (completed) dinner, send `meeting/cancel`: it leaves your calendar and the peer's agent removes it from theirs |
+| `rdv dinner confirm <task-id> --hold <code> [--calendar cal.json]` | Confirm the dinner a negotiation holds for you: sends `meeting/accept` (their offer) or `meeting/confirm` (they accepted yours). `--hold` is the code `rdv dinner list` shows; it is refused if the meeting changed since |
+| `rdv dinner cancel <task-id> [--reason …] [--calendar cal.json]` | Send `rdv/cancel` for a pending negotiation and release its hold; for an agreed (completed) dinner, send `meeting/cancel`: it leaves your calendar and the peer's agent removes it from theirs |
 | `rdv dinner list` | Negotiations with state, round, agreed or held slot (and what it waits for) |
 | `rdv listen --negotiate --calendar cal.json [--window "…"] [--tz +02:00] [--auto-confirm]` | `--negotiate` answers dinner proposals from the calendar (window default `next week evenings`) and holds a slot for you to confirm; `--auto-confirm` skips the human (bots, demos). Takes the same flags as `rdv listen` above |
 
@@ -1537,6 +1537,8 @@ node packages/gateway/dist/src/bin.js oauth revoke <cli_…|grt_…> --home ~/.r
 
 ```bash
 node packages/gateway/dist/src/bin.js token create --name muse --scope read,send,contact:request --home ~/.rendezvous/omer
+node packages/gateway/dist/src/bin.js token list --home ~/.rendezvous/omer
+node packages/gateway/dist/src/bin.js token revoke <id> --home ~/.rendezvous/omer
 ```
 
 ## Develop
