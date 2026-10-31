@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Deploy rdv-gateway | Rendezvous docs</title>
-<meta name="description" content="Run rdv-gateway in a hardened Docker container behind a TLS tunnel, set the approval PIN, connect claude.ai, ChatGPT and Claude Code, and update it.">
+<meta name="description" content="Deploy rdv-gateway with one command (or by hand) in a hardened Docker container behind a TLS tunnel, set the approval PIN, connect claude.ai, ChatGPT and Claude Code, and update it.">
 <meta name="color-scheme" content="light dark">
 <meta name="theme-color" content="#232a7a">
 <link rel="canonical" href="https://rendezvous.nesher.co/docs/gateway-deploy.html">
@@ -55,17 +55,35 @@
     <p class="crumbs"><a href="/docs/">Docs</a> / Get started</p>
     <h1>Deploy rdv-gateway</h1>
     <p class="doc-meta">Rendered from <a href="https://github.com/omernesh/rendezvous/blob/main/docs/gateway-deploy.md">docs/gateway-deploy.md</a> on GitHub. <a href="/docs/gateway-deploy.md">Markdown version</a> for LLMs.</p>
-    <details class="toc-m"><summary>On this page</summary><ul><li><a href="#what-you-need">What you need</a></li><li><a href="#1-get-the-code-and-build-it">1. Get the code and build it</a></li><li><a href="#2-compose-files">2. Compose files</a></li><li><a href="#3-create-the-agent-and-the-pin-before-the-first-start">3. Create the agent and the PIN (before the first start)</a><ul><li><a href="#moving-to-your-real-identity-later">Moving to your real identity later</a></li></ul></li><li><a href="#4-expose-it-through-a-tunnel-or-proxy">4. Expose it through a tunnel or proxy</a></li><li><a href="#5-check-it">5. Check it</a></li><li><a href="#6-connect-your-assistants">6. Connect your assistants</a></li><li><a href="#several-agents-on-one-gateway">Several agents on one gateway</a></li><li><a href="#7-update">7. Update</a></li><li><a href="#troubleshooting">Troubleshooting</a></li></ul></details>
+    <details class="toc-m"><summary>On this page</summary><ul><li><a href="#install-with-one-command">Install with one command</a></li><li><a href="#by-hand">By hand</a><ul><li><a href="#what-you-need">What you need</a></li><li><a href="#1-get-the-code-and-build-it">1. Get the code and build it</a></li><li><a href="#2-compose-files">2. Compose files</a></li><li><a href="#3-create-the-agent-and-the-pin-before-the-first-start">3. Create the agent and the PIN (before the first start)</a></li><li><a href="#4-expose-it-through-a-tunnel-or-proxy">4. Expose it through a tunnel or proxy</a></li><li><a href="#5-check-it">5. Check it</a></li><li><a href="#6-connect-your-assistants">6. Connect your assistants</a></li><li><a href="#several-agents-on-one-gateway">Several agents on one gateway</a></li><li><a href="#7-update">7. Update</a></li></ul></li><li><a href="#troubleshooting">Troubleshooting</a></li></ul></details>
     <div class="prose">
 <p><code>rdv-gateway</code> puts your Rendezvous agent behind an HTTPS address so cloud assistants (claude.ai, ChatGPT, Claude Code on another machine, a Custom GPT) can use it. This guide runs it in a hardened Docker container on a machine that is always on (a home server, a NAS, a small VPS), reachable only through a TLS tunnel or reverse proxy. It was written from a working deployment, with every host name replaced by a placeholder: <code>gw.example.com</code> is your public address, and <code>~/rdv-gateway</code> is the deploy folder.</p>
 <p>The gateway runs the same tools as <code>rdv-mcp</code>, minus your setup (<code>rdv_init</code>, address and relay changes, turning auto-approve on, local file paths). Nothing is approved through the assistant: a step that needs you returns an approval link, and you decide on the gateway's own PIN-locked page. Read the <a href="https://github.com/omernesh/rendezvous/blob/main/impl/packages/gateway/THREAT-MODEL.md">threat model</a> before you expose it, and the design notes (NOTES 89 and 93 in <a href="https://github.com/omernesh/rendezvous/blob/main/impl/NOTES.md">impl/NOTES.md</a>) if you want the reasons. The tool and flag reference is in the gateway section of <a href="/docs/cli.html">CLI and library</a>.</p>
-<h2 id="what-you-need">What you need<a class="anchor" href="#what-you-need" title="Link to this section" aria-label="Link to this section">#</a></h2>
+<h2 id="install-with-one-command">Install with one command<a class="anchor" href="#install-with-one-command" title="Link to this section" aria-label="Link to this section">#</a></h2>
+<p>On the machine that will run it (Linux, a NAS, or macOS), in your own terminal (over <code>ssh -t</code> is fine):</p>
+<div class="codeblock"><pre tabindex="0"><code class="language-bash">curl -fsSL https://rendezvous.nesher.co/install-gateway.sh | sh
+</code></pre></div>
+<p>It asks one question at a time, with the default in brackets (press Enter to take it), and does everything in the steps below:</p>
+<ol>
+<li><strong>Folder</strong>: where it lives (default <code>~/rendezvous-gateway</code>: the code in <code>repo/</code>, your agent in <code>data/</code>).</li>
+<li><strong>Runtime</strong>: Docker Compose in the hardened container shown below (preferred), or Node.js 20+ as a service of your user (systemd on Linux, launchd on macOS). It says exactly what is missing if neither is ready.</li>
+<li><strong>Public address</strong>: a Cloudflare Tunnel on your own domain (you paste the tunnel token from the Cloudflare dashboard; it is saved in <code>cloudflared.env</code>, mode 600, and never shown), a Cloudflare quick tunnel to try it out (a random <code>trycloudflare.com</code> address that changes on every restart), your own reverse proxy, or Tailscale Funnel. The gateway itself only ever listens on <code>127.0.0.1</code>.</li>
+<li><strong>Build</strong>: clones the repository and builds it in the pinned Node image (<code>node:22-alpine</code> by digest), as your user.</li>
+<li><strong>Agent</strong>: a new one (email, relays: <code>wss://relay.nesher.co</code> plus the default public relays, and whether it is findable by email), or a restore from your <code>.rdvbackup</code> file. For a restore, <code>rdv restore</code> shows the agent ID and fingerprint and asks for the passphrase itself.</li>
+<li><strong>PIN</strong>: runs <code>rdv-gateway pin set</code>, which asks for the approval PIN twice, with nothing shown.</li>
+<li><strong>Start</strong>: starts it, waits for <code>/healthz</code> locally and on the public address, and prints the MCP address with the steps for claude.ai, ChatGPT and Claude Code, and the <code>token create</code> command for clients that need a token (it never makes one for you).</li>
+</ol>
+<p>It writes <code>./gw</code> in the folder for everything after that: <code>./gw status</code>, <code>./gw logs</code> (<code>./gw logs tunnel</code>), <code>./gw stop</code> / <code>./gw start</code>, <code>./gw update</code> (pull, rebuild, restart, keeping your answers), <code>./gw backup &lt;file&gt;</code>, <code>./gw rdv &lt;command&gt;</code>, <code>./gw pin set</code>, <code>./gw token create ...</code>, <code>./gw oauth list</code>, and <code>./gw uninstall</code> (stops and removes the service; your agent stays in <code>data/</code> until you delete it). Running the installer again also updates.</p>
+<p>Every answer that is not a secret is also a flag, for a scripted install or one your assistant prepares (the <code>rdv-gateway-setup</code> skill of the Claude Code plugin does that): <code>--dir</code>, <code>--runtime docker|node</code>, <code>--ref</code>, <code>--port</code>, <code>--agent new|restore</code>, <code>--email</code> (repeat), <code>--relay</code> (repeat), <code>--public-pointer</code>, <code>--backup</code>, <code>--tunnel cloudflare-token|cloudflare-quick|own-url|tailscale</code>, <code>--public-url</code>, <code>--client-ip-header</code>, <code>--yes</code> and <code>--dry-run</code> (shows every command and file, changes nothing). See <code>sh install-gateway.sh --help</code>. The PIN, a backup passphrase and a tunnel token are never flags. It refuses to run as root; on a NAS where only root can use Docker, run it with <code>sudo</code> and <code>--allow-root</code> (the gateway still runs as uid 1000 in the locked-down container). Windows: run it inside WSL 2.</p>
+<p>With Cloudflare, turn off Email Obfuscation for the gateway's hostname (see step 4 below). The rest of this page is the same setup by hand, and what the installer writes.</p>
+<h2 id="by-hand">By hand<a class="anchor" href="#by-hand" title="Link to this section" aria-label="Link to this section">#</a></h2>
+<h3 id="what-you-need">What you need<a class="anchor" href="#what-you-need" title="Link to this section" aria-label="Link to this section">#</a></h3>
 <ul>
 <li>A machine with Docker and the Compose plugin, and <code>git</code>.</li>
 <li>A public HTTPS name for it, such as <code>gw.example.com</code>, served by a TLS tunnel (Cloudflare Tunnel is what this guide shows) or a reverse proxy that forwards to <code>127.0.0.1:8787</code>.</li>
 <li>A terminal you control on that machine (over <code>ssh -t</code> is fine) for the owner-only commands.</li>
 </ul>
-<h2 id="1-get-the-code-and-build-it">1. Get the code and build it<a class="anchor" href="#1-get-the-code-and-build-it" title="Link to this section" aria-label="Link to this section">#</a></h2>
+<h3 id="1-get-the-code-and-build-it">1. Get the code and build it<a class="anchor" href="#1-get-the-code-and-build-it" title="Link to this section" aria-label="Link to this section">#</a></h3>
 <p>Keep the deployment in its own checkout, separate from any development copy, so an update is a deliberate step.</p>
 <div class="codeblock"><pre tabindex="0"><code class="language-bash">mkdir -p ~/rdv-gateway &amp;&amp; cd ~/rdv-gateway
 git clone https://github.com/omernesh/rendezvous.git repo
@@ -76,7 +94,7 @@ mkdir -m 700 data
   sh -c 'npm ci &amp;&amp; npm run build'
 </code></pre></div>
 <p>If your login user is not uid 1000, run <code>sudo chown -R 1000:1000 repo data</code> first. For a stricter pin, replace <code>node:22-alpine</code> with a full tag or <code>@sha256:</code> digest, here and in <code>.env</code> below, and use the same image for both.</p>
-<h2 id="2-compose-files">2. Compose files<a class="anchor" href="#2-compose-files" title="Link to this section" aria-label="Link to this section">#</a></h2>
+<h3 id="2-compose-files">2. Compose files<a class="anchor" href="#2-compose-files" title="Link to this section" aria-label="Link to this section">#</a></h3>
 <p>Create these three files in <code>~/rdv-gateway</code>.</p>
 <p><code>.env</code> (not committed anywhere; no secrets in it, only your address):</p>
 <div class="codeblock"><pre tabindex="0"><code class="language-bash">NODE_IMAGE=node:22-alpine
@@ -137,7 +155,7 @@ fi
 exec docker compose run --rm gateway node packages/gateway/dist/src/bin.js &quot;$@&quot; --home /data
 </code></pre></div>
 <p>The flag names are the ones in <code>impl/packages/gateway/src/bin.ts</code>. With an <code>https</code> <code>--public-url</code> the gateway refuses to start without <code>--client-ip-header</code>, and it refuses to bind anything but a local address unless you pass <code>--allow-remote-bind</code>, which this setup never does.</p>
-<h2 id="3-create-the-agent-and-the-pin-before-the-first-start">3. Create the agent and the PIN (before the first start)<a class="anchor" href="#3-create-the-agent-and-the-pin-before-the-first-start" title="Link to this section" aria-label="Link to this section">#</a></h2>
+<h3 id="3-create-the-agent-and-the-pin-before-the-first-start">3. Create the agent and the PIN (before the first start)<a class="anchor" href="#3-create-the-agent-and-the-pin-before-the-first-start" title="Link to this section" aria-label="Link to this section">#</a></h3>
 <p>The server refuses to start until you have set an approval PIN, and with <code>restart: unless-stopped</code> a missing PIN would loop. So do these first, in your own terminal, one command at a time.</p>
 <p><strong>Use a dedicated test identity for the first run.</strong> It lets you try every connector without your real contacts at stake, and it stays off the public discovery topics (the public pointer is off unless you pass <code>--public-pointer</code>):</p>
 <div class="codeblock"><pre tabindex="0"><code class="language-bash">./gw rdv init --email gateway-test@example.com
@@ -151,7 +169,7 @@ exec docker compose run --rm gateway node packages/gateway/dist/src/bin.js &quot
 docker compose ps        # gateway should become &quot;healthy&quot;
 docker compose logs gateway
 </code></pre></div>
-<h3 id="moving-to-your-real-identity-later">Moving to your real identity later<a class="anchor" href="#moving-to-your-real-identity-later" title="Link to this section" aria-label="Link to this section">#</a></h3>
+<h4 id="moving-to-your-real-identity-later">Moving to your real identity later<a class="anchor" href="#moving-to-your-real-identity-later" title="Link to this section" aria-label="Link to this section">#</a></h4>
 <p>Do not run <code>init</code> again over a real agent. Make an encrypted backup of the real agent on the machine that has it (see the backup section of <a href="/docs/cli.html">CLI and library</a>; you type the passphrase in your own terminal), copy the one file to the server, stop the gateway, and restore it over the test identity:</p>
 <div class="codeblock"><pre tabindex="0"><code class="language-bash">docker compose stop gateway
 mkdir -p backup &amp;&amp; cp /path/to/agent.backup backup/
@@ -160,12 +178,12 @@ docker compose run --rm -v &quot;$PWD/backup:/backup:ro&quot; gateway \
 docker compose up -d
 </code></pre></div>
 <p>It shows the agent ID and fingerprint in the file and asks for the passphrase. Your contacts are told on the next start, so conversations carry on. Only one machine should receive for an agent, so stop <code>rdv listen</code> or <code>rdv-mcp</code> on the old one. Delete the backup copy from the server when done, and keep the passphrase apart from the file.</p>
-<h2 id="4-expose-it-through-a-tunnel-or-proxy">4. Expose it through a tunnel or proxy<a class="anchor" href="#4-expose-it-through-a-tunnel-or-proxy" title="Link to this section" aria-label="Link to this section">#</a></h2>
+<h3 id="4-expose-it-through-a-tunnel-or-proxy">4. Expose it through a tunnel or proxy<a class="anchor" href="#4-expose-it-through-a-tunnel-or-proxy" title="Link to this section" aria-label="Link to this section">#</a></h3>
 <p>Point your TLS endpoint at <code>127.0.0.1:8787</code> and nothing else. <strong>Never bind the gateway to the LAN or a public interface.</strong> The gateway refuses to by default, and <code>network_mode: host</code> is only safe because it listens on loopback.</p>
 <p>With a Cloudflare Tunnel, add a public hostname for <code>gw.example.com</code> whose service is <code>http://127.0.0.1:8787</code> (or, in <code>cloudflared</code> config, <code>ingress: - hostname: gw.example.com</code> with <code>service: http://127.0.0.1:8787</code>). <code>cloudflared</code> must run on the same host.</p>
 <p><strong>If you use Cloudflare:</strong> turn off Email Obfuscation for the gateway's hostname (Rules → Configuration Rules → hostname equals <code>gw.example.com</code> → Email Obfuscation: Off), and keep Rocket Loader and Auto Minify off for it. Obfuscation masks addresses on the approval page as "[email protected]", and its decoder script is blocked by the page's CSP, so you would be deciding without seeing who it is. The gateway sends <code>Cache-Control: no-store, no-transform</code> on every response, so most proxies leave the pages alone, but turn these off anyway.</p>
 <p>With another reverse proxy, terminate TLS, forward to <code>http://127.0.0.1:8787</code>, keep the original <code>Host</code>, turn response buffering off (the MCP stream is long-lived), and set a header with the real client address that a client cannot forge, for example nginx <code>proxy_set_header X-Real-IP $remote_addr;</code> with <code>GW_CLIENT_IP_HEADER=x-real-ip</code>. The gateway uses that header to count wrong PINs per client, so a stranger cannot use up your attempts. A header the proxy does not overwrite defeats this.</p>
-<h2 id="5-check-it">5. Check it<a class="anchor" href="#5-check-it" title="Link to this section" aria-label="Link to this section">#</a></h2>
+<h3 id="5-check-it">5. Check it<a class="anchor" href="#5-check-it" title="Link to this section" aria-label="Link to this section">#</a></h3>
 <div class="codeblock"><pre tabindex="0"><code class="language-bash">curl -s https://gw.example.com/healthz                         # {&quot;ok&quot;:true}
 curl -s -o /dev/null -w '%{http_code}\n' https://gw.example.com/openapi.json   # 200
 curl -si https://gw.example.com/mcp | head -n 5                # 401, with WWW-Authenticate: Bearer ... resource_metadata=&quot;...&quot;
@@ -173,7 +191,7 @@ curl -si https://gw.example.com/api/v1/tools | head -n 5       # 401, same heade
 curl -s https://gw.example.com/.well-known/oauth-protected-resource
 </code></pre></div>
 <p>From a different machine on your LAN, <code>curl http://&lt;server-lan-address&gt;:8787/healthz</code> must be refused. If it answers, the gateway is bound too widely: stop it and look at the <code>--host</code> value.</p>
-<h2 id="6-connect-your-assistants">6. Connect your assistants<a class="anchor" href="#6-connect-your-assistants" title="Link to this section" aria-label="Link to this section">#</a></h2>
+<h3 id="6-connect-your-assistants">6. Connect your assistants<a class="anchor" href="#6-connect-your-assistants" title="Link to this section" aria-label="Link to this section">#</a></h3>
 <p>The MCP address is <code>https://gw.example.com/mcp</code>.</p>
 <ul>
 <li><strong>claude.ai:</strong> Settings, Connectors, Add custom connector. Paste the URL. Leave the client ID and secret empty so it registers itself ("Register automatically").</li>
@@ -183,7 +201,7 @@ curl -s https://gw.example.com/.well-known/oauth-protected-resource
 </ul>
 <p>OAuth connectors send your browser to the gateway's consent page. <strong>Check the return address on that page before you approve</strong>: anyone can register an app under any name, so trust the host it returns to (<code>claude.ai</code>, <code>chatgpt.com</code>), not the name. You unlock the page with your PIN, can untick scopes, and approve. Nothing is approved automatically, and no scope can approve a contact, a task or a dinner: those wait for you on the page.</p>
 <p>See and end connections with <code>./gw oauth list</code> and <code>./gw oauth revoke &lt;cli_...|grt_...&gt;</code>.</p>
-<h2 id="several-agents-on-one-gateway">Several agents on one gateway<a class="anchor" href="#several-agents-on-one-gateway" title="Link to this section" aria-label="Link to this section">#</a></h2>
+<h3 id="several-agents-on-one-gateway">Several agents on one gateway<a class="anchor" href="#several-agents-on-one-gateway" title="Link to this section" aria-label="Link to this section">#</a></h3>
 <p>One gateway can serve several agents: yours and a second one for another assistant, or a family's. <code>data/</code> becomes the gateway's root: the PIN, tokens and OAuth state stay there, and each further agent is a normal home in <code>data/agents/&lt;name&gt;/</code>. Your existing agent in <code>data/</code> keeps working as it is. Every token and every OAuth connection reaches exactly one agent and nothing of the others. One PIN unlocks the approval page for all of them, and every approval says which agent it is for (name and fingerprint), so only put agents on one gateway that you would trust to one machine.</p>
 <div class="codeblock"><pre tabindex="0"><code class="language-bash">./gw agent add kids new --email kids@example.com      # a new identity
 ./gw agent list
@@ -193,7 +211,8 @@ docker compose restart gateway                        # agents are read at start
 <p>To bring an existing agent instead, restore its backup as a new agent, with the backup folder mounted as in "Moving to your real identity" above: <code>docker compose run --rm -v "$PWD/backup:/backup:ro" gateway node packages/gateway/dist/src/bin.js agent add kids --restore /backup/kids.backup --home /data</code>. Stop <code>rdv listen</code> or <code>rdv-mcp</code> for it on the old machine.</p>
 <p>Each agent has its own MCP address, <code>https://gw.example.com/a/kids/mcp</code> (REST under <code>/a/kids/api/v1</code>, OpenAPI at <code>/a/kids/openapi.json</code>). <code>https://gw.example.com/mcp</code> still works for any token, and serves that token's own agent. An OAuth client connected to an agent's address is fixed to it on the consent page; one connected to <code>/mcp</code> makes you pick the agent there. With several agents, give each its own calendar: <code>--calendar kids=/data/kids-cal.json</code>.</p>
 <p><code>./gw agent remove kids</code> moves the agent to <code>data/agents/.removed/</code>, key and all (delete it yourself once you have a backup); it refuses while the gateway runs or while tokens or connections still reach it (<code>--force</code> revokes them). To have your first agent in <code>data/agents/</code> too, stop the gateway and run <code>./gw agent migrate</code>: it copies, checks the copy, and keeps the originals in <code>data/.premigrate-&lt;time&gt;/</code>. Migrating is optional.</p>
-<h2 id="7-update">7. Update<a class="anchor" href="#7-update" title="Link to this section" aria-label="Link to this section">#</a></h2>
+<p>With the one-command install, the same commands run through its <code>./gw</code> helper (<code>./gw agent add kids new --email kids@example.com</code>, <code>./gw agent list</code>, <code>./gw token create --agent kids …</code>, in your own terminal), then <code>./gw restart</code>. The installer prints each agent's MCP address at the end.</p>
+<h3 id="7-update">7. Update<a class="anchor" href="#7-update" title="Link to this section" aria-label="Link to this section">#</a></h3>
 <div class="codeblock"><pre tabindex="0"><code class="language-bash">cd ~/rdv-gateway/repo &amp;&amp; git fetch origin &amp;&amp; git checkout &lt;tag-or-commit&gt; &amp;&amp; cd ..
 docker run --rm -u 1000:1000 -v &quot;$PWD/repo:/app&quot; -w /app/impl node:22-alpine \
   sh -c 'npm ci &amp;&amp; npm run build'
@@ -211,7 +230,7 @@ docker compose up -d --force-recreate
 </ul>
     </div>
   </article>
-  <div class="docs-toc"><nav class="page-toc" aria-label="On this page"><p class="side-group">On this page</p><ul><li><a href="#what-you-need">What you need</a></li><li><a href="#1-get-the-code-and-build-it">1. Get the code and build it</a></li><li><a href="#2-compose-files">2. Compose files</a></li><li><a href="#3-create-the-agent-and-the-pin-before-the-first-start">3. Create the agent and the PIN (before the first start)</a><ul><li><a href="#moving-to-your-real-identity-later">Moving to your real identity later</a></li></ul></li><li><a href="#4-expose-it-through-a-tunnel-or-proxy">4. Expose it through a tunnel or proxy</a></li><li><a href="#5-check-it">5. Check it</a></li><li><a href="#6-connect-your-assistants">6. Connect your assistants</a></li><li><a href="#several-agents-on-one-gateway">Several agents on one gateway</a></li><li><a href="#7-update">7. Update</a></li><li><a href="#troubleshooting">Troubleshooting</a></li></ul></nav></div>
+  <div class="docs-toc"><nav class="page-toc" aria-label="On this page"><p class="side-group">On this page</p><ul><li><a href="#install-with-one-command">Install with one command</a></li><li><a href="#by-hand">By hand</a><ul><li><a href="#what-you-need">What you need</a></li><li><a href="#1-get-the-code-and-build-it">1. Get the code and build it</a></li><li><a href="#2-compose-files">2. Compose files</a></li><li><a href="#3-create-the-agent-and-the-pin-before-the-first-start">3. Create the agent and the PIN (before the first start)</a></li><li><a href="#4-expose-it-through-a-tunnel-or-proxy">4. Expose it through a tunnel or proxy</a></li><li><a href="#5-check-it">5. Check it</a></li><li><a href="#6-connect-your-assistants">6. Connect your assistants</a></li><li><a href="#several-agents-on-one-gateway">Several agents on one gateway</a></li><li><a href="#7-update">7. Update</a></li></ul></li><li><a href="#troubleshooting">Troubleshooting</a></li></ul></nav></div>
 </div>
 </main>
 

@@ -28,6 +28,11 @@ What it contains:
   `rendezvous` skill.
 - `skills/rdv-backup/SKILL.md`: "back up my agent" and "recover my agent
   from backup", one step per turn in plain language (below).
+- `skills/rdv-gateway-setup/SKILL.md`: "set up my gateway" and "connect
+  claude.ai to my agent": asks the gateway installer's questions one at a
+  time, hands the user one command for their own terminal (where they type
+  the PIN and any secret), then checks it and gives each assistant's
+  connector address.
 - `skills/rendezvous/SKILL.md`: the setup and messaging workflow, with the
   consent rules. It uses the Agent Skills format, so other agents can load it
   too (`npx skills add omernesh/rendezvous`).

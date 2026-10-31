@@ -1,0 +1,1115 @@
+#!/bin/sh
+# Rendezvous gateway installer for Linux, macOS and NAS boxes (POSIX sh).
+#
+#   curl -fsSL https://rendezvous.nesher.co/install-gateway.sh | sh
+#
+# Puts your Rendezvous agent behind an HTTPS address so claude.ai, ChatGPT and
+# other cloud assistants can use it. It asks one question at a time (the
+# default is in brackets: press Enter to take it), builds the gateway, creates
+# or restores your agent, has you set the approval PIN, connects a tunnel or
+# your own proxy, starts it and checks it. Run it again to update.
+#
+# Every answer that is not a secret can also be given as a flag, so the same
+# install can be scripted or prepared by your assistant:
+#
+#   curl -fsSL https://rendezvous.nesher.co/install-gateway.sh | sh -s -- --help
+#
+# Secrets are never flags: the approval PIN, a backup's passphrase and a
+# Cloudflare tunnel token are typed in this terminal, with nothing shown.
+# The PIN and the passphrase go straight to the Rendezvous commands; this
+# script never sees them. No sudo; Docker is the preferred runtime.
+#
+# Environment overrides:
+#   RDV_REPO   git URL or local path to clone (default: https://github.com/omernesh/rendezvous)
+
+# Everything runs from main(), called on the last line, so a download that is
+# cut short executes nothing.
+
+set -eu
+
+# Pinned images (tag for people, digest for the machine). Update both together.
+NODE_IMAGE_DEFAULT='node:22.23.4-alpine@sha256:fe4f6d74e20370acb04ad889077d14d0f64a9c8ea6a42bc60cddf1e844699914'
+CLOUDFLARED_IMAGE_DEFAULT='cloudflare/cloudflared:2026.10.0@sha256:9b49eed8f62806d5d45ddf59ecefb5710429598ea6d3fcccd2af938f621b2b07'
+# A new agent listens here unless you choose other relays: this project's relay, then rdv's default public set.
+DEFAULT_RELAYS='wss://relay.nesher.co wss://nos.lol wss://relay.primal.net wss://relay.nostr.net wss://nostr.oxtr.dev'
+STEPS=7
+
+usage() {
+  cat <<'EOF'
+usage: install-gateway.sh [options]
+
+With no options it asks every question. Each option answers one question:
+
+  --dir <path>               install folder (default ~/rendezvous-gateway)
+  --runtime docker|node      Docker Compose (default) or Node.js with a user service
+  --ref <branch|tag|commit>  what to build (default main)
+  --port <n>                 local port on 127.0.0.1 (default 8787)
+  --agent new|restore        create a new agent, or restore one from a backup file
+  --email <address>          the new agent's email (repeat for more)
+  --relay <wss://...>        a relay for the new agent (repeat; default: relay.nesher.co and 4 public relays)
+  --public-pointer           make the new agent findable by its email
+  --no-public-pointer        keep it unlisted (default)
+  --backup <file>            the .rdvbackup file to restore
+  --tunnel <mode>            cloudflare-token | cloudflare-quick | own-url | tailscale
+  --public-url <https://...> the public address (own-url, cloudflare-token)
+  --client-ip-header <name>  the header your proxy puts the client address in (own-url)
+  --update                   re-run with the saved settings: pull, rebuild, restart
+  --yes                      take the default for any question not answered by a flag
+  --dry-run                  show what would happen; change nothing, no network
+  --allow-root               allow running as root (only where Docker needs it, e.g. a NAS)
+  -h, --help                 this text
+
+Never given as options: the approval PIN, a backup passphrase, a tunnel token.
+EOF
+}
+
+# --- output ------------------------------------------------------------------
+
+die() {
+  printf 'rendezvous gateway install: error: %s\n' "$*" >&2
+  exit 1
+}
+warn() { printf 'WARNING: %s\n' "$*" >&2; }
+say() { printf '%s\n' "$*"; }
+step() { printf '\n==> Step %s of %s: %s\n' "$1" "$STEPS" "$2"; }
+done_step() { printf 'Step %s of %s done.\n' "$1" "$STEPS"; }
+
+# One argument, quoted for a shell when it needs it (for showing commands).
+shquote() {
+  case $1 in
+    '' | *[!A-Za-z0-9_./:=@%+,-]*) printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")" ;;
+    *) printf '%s' "$1" ;;
+  esac
+}
+show_cmd() {
+  printf '  $'
+  for a in "$@"; do printf ' %s' "$(shquote "$a")"; done
+  printf '\n'
+}
+
+# Run a command with stdin closed (so nothing reads the rest of a piped script),
+# or only show it with --dry-run.
+run() {
+  if [ "$DRY_RUN" = 1 ]; then show_cmd "$@"; return 0; fi
+  "$@" </dev/null
+}
+# Run a command that asks the human something in this terminal.
+run_tty() {
+  if [ "$DRY_RUN" = 1 ]; then show_cmd "$@"; return 0; fi
+  "$@" </dev/tty
+}
+
+# Write stdin to a file (mode $2) atomically, or show it with --dry-run.
+write_file() {
+  if [ "$DRY_RUN" = 1 ]; then
+    printf -- '--- would write %s (mode %s)\n' "$1" "$2"
+    cat
+    printf -- '--- end of %s\n' "$1"
+    return 0
+  fi
+  tmp="$1.tmp.$$"
+  (umask 077 && cat >"$tmp") || die "cannot write $tmp"
+  chmod "$2" "$tmp" || die "cannot chmod $tmp"
+  mv -f "$tmp" "$1" || die "cannot move $tmp to $1"
+}
+
+# --- validation (pure; the tests call these) --------------------------------
+
+has_newline() { [ "$(printf '%s' "$1" | wc -l | tr -d ' ')" != 0 ]; }
+matches() { ! has_newline "$2" && printf '%s' "$2" | grep -Eq "$1"; }
+
+valid_https_url() { matches '^https://[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?(:[0-9]{1,5})?$' "$1"; }
+valid_header() { matches '^[A-Za-z0-9-]{1,64}$' "$1"; }
+valid_port() { matches '^[0-9]{1,5}$' "$1" && [ "$1" -ge 1 ] && [ "$1" -le 65535 ]; }
+valid_email() { matches '^[A-Za-z0-9._%+-]+@[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?\.[A-Za-z]{2,}$' "$1"; }
+valid_relay() { matches '^wss://[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?(:[0-9]{1,5})?(/[A-Za-z0-9._~/-]*)?$' "$1"; }
+valid_ref() { matches '^[A-Za-z0-9._][A-Za-z0-9._/-]{0,99}$' "$1"; }
+valid_token() { matches '^[A-Za-z0-9+/=_-]{40,4096}$' "$1"; }
+# A path we can write into compose files, unit files and shell lines without quoting surprises.
+valid_path() { matches '^/[A-Za-z0-9._/@+,:-]*$' "$1"; }
+
+# "~/x" and relative paths become absolute.
+abs_path() {
+  p=$1
+  # shellcheck disable=SC2088  # a literal "~/" typed at the prompt, expanded here
+  case $p in
+    '~') p=$HOME ;;
+    '~/'*) p="$HOME/${p#'~/'}" ;;
+  esac
+  case $p in
+    /*) ;;
+    *) here=$(pwd); p="${here%/}/$p" ;;
+  esac
+  while :; do
+    case $p in
+      */) [ "$p" = / ] && break; p=${p%/} ;;
+      *) break ;;
+    esac
+  done
+  printf '%s' "$p"
+}
+
+# Strip one trailing slash from a URL.
+trim_url() {
+  u=$1
+  case $u in */) u=${u%/} ;; esac
+  printf '%s' "$u"
+}
+
+# The client-IP header each tunnel sets (and a client cannot forge past it).
+header_for() {
+  case $1 in
+    cloudflare-token | cloudflare-quick) printf 'cf-connecting-ip' ;;
+    tailscale) printf 'x-forwarded-for' ;;
+    *) printf '' ;;
+  esac
+}
+
+# The first .trycloudflare.com address in some log text, or nothing.
+quick_url_from() {
+  printf '%s\n' "$1" | grep -Eo 'https://[a-z0-9-]+\.trycloudflare\.com' | tail -n 1 || true
+}
+
+# --- questions (one at a time, from the terminal) ----------------------------
+
+tty_ok() { [ "${RDV_GW_NO_TTY:-0}" != 1 ] && (: </dev/tty) 2>/dev/null; }
+
+# ask <flag> <question> <default>: sets ANSWER. Without a terminal, the default
+# is taken only with --yes or --dry-run; otherwise the flag is required.
+ask() {
+  if [ -n "$3" ] && [ "$YES" = 1 ]; then
+    ANSWER=$3
+    say "$2 [$3]: (default)"
+    return 0
+  fi
+  if tty_ok; then
+    if [ -n "$3" ]; then printf '%s [%s]: ' "$2" "$3" >/dev/tty; else printf '%s: ' "$2" >/dev/tty; fi
+    IFS= read -r ANSWER </dev/tty || ANSWER=
+    [ -n "$ANSWER" ] || ANSWER=$3
+    return 0
+  fi
+  if [ -n "$3" ] && [ "$DRY_RUN" = 1 ]; then
+    ANSWER=$3
+    say "$2 [$3]: (default)"
+    return 0
+  fi
+  die "no terminal to ask \"$2\". Run this from your own terminal, or pass $1"
+}
+
+# ask_yn <flag> <question> y|n: returns 0 for yes.
+ask_yn() {
+  while :; do
+    if [ "$3" = y ]; then ask "$1" "$2 (y/n)" y; else ask "$1" "$2 (y/n)" n; fi
+    case $ANSWER in
+      y | Y | yes | YES | Yes) return 0 ;;
+      n | N | no | NO | No) return 1 ;;
+      *) say 'Please answer y or n.' ;;
+    esac
+  done
+}
+
+# A secret from the terminal, never echoed, into SECRET.
+read_secret() {
+  tty_ok || die "no terminal to ask for $1. Run this from your own terminal"
+  printf '%s (nothing is shown as you type): ' "$1" >/dev/tty
+  old=$(stty -g </dev/tty)
+  trap 'stty "$old" </dev/tty 2>/dev/null; exit 130' INT TERM
+  stty -echo </dev/tty
+  IFS= read -r SECRET </dev/tty || SECRET=
+  stty "$old" </dev/tty
+  trap - INT TERM
+  printf '\n' >/dev/tty
+}
+
+# --- prerequisites -----------------------------------------------------------
+
+pkg_hint() {
+  case "$(uname -s 2>/dev/null)" in
+    Darwin) printf 'brew install %s' "$1" ;;
+    Linux)
+      if command -v apt-get >/dev/null 2>&1; then printf 'sudo apt-get install %s' "$1"
+      elif command -v dnf >/dev/null 2>&1; then printf 'sudo dnf install %s' "$1"
+      elif command -v pacman >/dev/null 2>&1; then printf 'sudo pacman -S %s' "$1"
+      elif command -v apk >/dev/null 2>&1; then printf 'sudo apk add %s' "$1"
+      else printf 'your package manager (package "%s")' "$1"; fi ;;
+    *) printf 'your package manager (package "%s")' "$1" ;;
+  esac
+}
+
+# Which compose to call: the plugin ("docker compose") or a standalone v2 docker-compose (Synology).
+detect_compose() {
+  COMPOSE=
+  if docker compose version >/dev/null 2>&1; then COMPOSE=plugin
+  elif command -v docker-compose >/dev/null 2>&1 && docker-compose version 2>/dev/null | grep -Eq 'v?2\.'; then COMPOSE=standalone
+  fi
+}
+compose() {
+  if [ "$COMPOSE" = standalone ]; then docker-compose --project-directory "$DIR" -f "$DIR/docker-compose.yml" "$@"
+  else docker compose --project-directory "$DIR" -f "$DIR/docker-compose.yml" "$@"; fi
+}
+
+# Sets DOCKER_MISSING to what Docker lacks here ("" when ready).
+check_docker() {
+  DOCKER_MISSING=
+  if [ "$(uname -s 2>/dev/null)" = Darwin ]; then
+    DOCKER_MISSING='Docker on macOS cannot share the host network the gateway needs; use --runtime node'
+    return
+  fi
+  if ! command -v docker >/dev/null 2>&1; then
+    DOCKER_MISSING='docker is not installed (https://docs.docker.com/engine/install/)'
+    return
+  fi
+  detect_compose
+  if [ -z "$COMPOSE" ]; then
+    DOCKER_MISSING='the Docker Compose v2 plugin is missing (https://docs.docker.com/compose/install/linux/)'
+    return
+  fi
+  if ! err=$(docker info 2>&1 >/dev/null); then
+    case $err in
+      *ermission*) DOCKER_MISSING="your user cannot use Docker. Add it to the docker group (then log in again), or on a NAS where only root can, run this with sudo and --allow-root" ;;
+      *) DOCKER_MISSING='the Docker daemon is not running (start Docker, then run this again)' ;;
+    esac
+  fi
+}
+
+# Sets NODE_MISSING to what the Node runtime lacks here ("" when ready).
+check_node() {
+  NODE_MISSING=
+  if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then
+    NODE_MISSING='Node.js 20 or newer with npm (https://nodejs.org)'
+    return
+  fi
+  v=$(node -p 'process.versions.node' 2>/dev/null || printf 0)
+  major=${v%%.*}
+  case $major in '' | *[!0-9]*) major=0 ;; esac
+  if [ "$major" -lt 20 ]; then NODE_MISSING="Node.js 20 or newer (found v$v; https://nodejs.org)"; return; fi
+  case "$(uname -s 2>/dev/null)" in
+    Darwin) command -v launchctl >/dev/null 2>&1 || NODE_MISSING='launchctl (macOS service manager)' ;;
+    Linux) systemctl --user show-environment >/dev/null 2>&1 || NODE_MISSING='a systemd user session (systemctl --user); use Docker instead' ;;
+    *) NODE_MISSING="a supported service manager (systemd or launchd) on $(uname -s 2>/dev/null)" ;;
+  esac
+}
+
+# --- saved settings ----------------------------------------------------------
+
+# install.conf holds only the non-secret answers, as KEY=value lines we parse (never source).
+load_conf() {
+  CONF_FOUND=0
+  [ -f "$DIR/install.conf" ] || return 0
+  CONF_FOUND=1
+  while IFS='=' read -r k v; do
+    case $k in
+      RUNTIME) C_RUNTIME=$v ;;
+      REF) C_REF=$v ;;
+      PORT) C_PORT=$v ;;
+      TUNNEL) C_TUNNEL=$v ;;
+      PUBLIC_URL) C_PUBLIC_URL=$v ;;
+      CLIENT_IP_HEADER) C_HEADER=$v ;;
+    esac
+  done <"$DIR/install.conf"
+}
+
+save_conf() {
+  write_file "$DIR/install.conf" 600 <<EOF
+# Written by install-gateway.sh: your answers, so a re-run (./gw update) keeps them. No secrets here.
+RUNTIME=$RUNTIME
+REF=$REF
+PORT=$PORT
+TUNNEL=$TUNNEL
+PUBLIC_URL=$PUBLIC_URL
+CLIENT_IP_HEADER=$CLIENT_IP_HEADER
+EOF
+}
+
+# --- the generated files -----------------------------------------------------
+
+write_env() {
+  write_file "$DIR/.env" 600 <<EOF
+# Read by docker compose (the project is named after this folder). No secrets here (a tunnel token lives in cloudflared.env).
+NODE_IMAGE=$NODE_IMAGE
+CLOUDFLARED_IMAGE=$CLOUDFLARED_IMAGE
+RDV_UID=$RDV_UID
+RDV_GID=$RDV_GID
+GW_PORT=$PORT
+GW_PUBLIC_URL=$PUBLIC_URL
+GW_CLIENT_IP_HEADER=$CLIENT_IP_HEADER
+EOF
+}
+
+compose_tunnel_service() {
+  # shellcheck disable=SC2016  # ${GW_PORT} is for compose to fill in
+  case $TUNNEL in
+    cloudflare-token) cmd='["tunnel", "--no-autoupdate", "run"]'; envf='    env_file:
+      - ./cloudflared.env
+' ;;
+    cloudflare-quick) cmd='["tunnel", "--no-autoupdate", "--url", "http://127.0.0.1:${GW_PORT}"]'; envf='' ;;
+    *) return 0 ;;
+  esac
+  cat <<EOF
+  tunnel:
+    image: \${CLOUDFLARED_IMAGE}
+    command: $cmd
+$envf    environment:
+      - HOME=/tmp
+    network_mode: host
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+EOF
+}
+
+write_compose() {
+  {
+    cat <<'EOF'
+# Written by install-gateway.sh; a re-run rewrites it. Settings are in .env.
+services:
+  gateway:
+    image: ${NODE_IMAGE}
+    working_dir: /app/impl
+    command:
+      - node
+      - packages/gateway/dist/src/bin.js
+      - serve
+      - --home
+      - /data
+      - --host
+      - 127.0.0.1
+      - --port
+      - "${GW_PORT}"
+      - --public-url
+      - ${GW_PUBLIC_URL}
+      - --client-ip-header
+      - ${GW_CLIENT_IP_HEADER}
+    network_mode: host          # listens on 127.0.0.1 only; the tunnel or proxy on this host reaches it there
+    user: "${RDV_UID}:${RDV_GID}"
+    environment:
+      - HOME=/tmp
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+    volumes:
+      - ./repo:/app:ro
+      - ./data:/data            # the agent's home: key, contacts, PIN hash, tokens
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:${GW_PORT}/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+EOF
+    compose_tunnel_service
+  } | write_file "$DIR/docker-compose.yml" 644
+}
+
+write_ctl() {
+  if [ "$RUNTIME" = docker ]; then
+    write_file "$DIR/gw" 755 <<EOF
+#!/bin/sh
+# Control the Rendezvous gateway in this folder (written by install-gateway.sh).
+#   ./gw status | logs [tunnel] | start | stop | restart | update | uninstall
+#   ./gw rdv <command...>        the rdv CLI on the gateway's agent (e.g. ./gw rdv whoami)
+#   ./gw backup <file>           an encrypted backup of the agent (you type a new passphrase)
+#   ./gw pin|token|oauth ...     rdv-gateway's owner commands, in your own terminal
+set -eu
+DIR=\$(CDPATH= cd -- "\$(dirname -- "\$0")" && pwd)
+compose() {
+  if docker compose version >/dev/null 2>&1; then docker compose --project-directory "\$DIR" -f "\$DIR/docker-compose.yml" "\$@"
+  else docker-compose --project-directory "\$DIR" -f "\$DIR/docker-compose.yml" "\$@"; fi
+}
+cmd=\${1:-help}
+[ \$# -gt 0 ] && shift
+case \$cmd in
+  status) compose ps; printf 'local health: '; wget -q -O - "http://127.0.0.1:$PORT/healthz" 2>/dev/null || curl -fsS "http://127.0.0.1:$PORT/healthz" || printf 'not answering'; printf '\n' ;;
+  logs) compose logs -f --tail 100 "\${1:-gateway}" ;;
+  start) compose up -d ;;
+  stop) compose stop ;;
+  restart) compose restart ;;
+  update) exec sh "\$DIR/repo/site/install-gateway.sh" --dir "\$DIR" --update "\$@" ;;
+  rdv) exec compose run --rm --no-deps gateway node packages/cli/dist/src/bin.js "\$@" --home /data ;;
+  pin | token | oauth) exec compose run --rm --no-deps gateway node packages/gateway/dist/src/bin.js "\$cmd" "\$@" --home /data ;;
+  backup)
+    [ \$# -eq 1 ] || { echo 'usage: ./gw backup <file>' >&2; exit 2; }
+    out=\$(CDPATH= cd -- "\$(dirname -- "\$1")" && pwd)
+    exec compose run --rm --no-deps -v "\$out:/out" gateway node packages/cli/dist/src/bin.js backup "/out/\$(basename -- "\$1")" --home /data ;;
+  uninstall)
+    compose down --remove-orphans
+    $UNINSTALL_EXTRA
+    printf 'Stopped and removed the containers. Your agent is still in %s/data.\n' "\$DIR"
+    printf 'To delete everything, including the agent key (back it up first: ./gw backup <file>), run: rm -rf %s\n' "\$DIR" ;;
+  *) sed -n '2,6p' "\$0" ;;
+esac
+EOF
+  else
+    write_file "$DIR/gw" 755 <<EOF
+#!/bin/sh
+# Control the Rendezvous gateway in this folder (written by install-gateway.sh).
+#   ./gw status | logs [tunnel] | start | stop | restart | update | uninstall
+#   ./gw rdv <command...>        the rdv CLI on the gateway's agent (e.g. ./gw rdv whoami)
+#   ./gw backup <file>           an encrypted backup of the agent (you type a new passphrase)
+#   ./gw pin|token|oauth ...     rdv-gateway's owner commands, in your own terminal
+set -eu
+DIR=\$(CDPATH= cd -- "\$(dirname -- "\$0")" && pwd)
+NODE='$NODE_BIN'
+cmd=\${1:-help}
+[ \$# -gt 0 ] && shift
+$SERVICE_FUNCS
+case \$cmd in
+  status) svc_status; printf 'local health: '; curl -fsS "http://127.0.0.1:$PORT/healthz" 2>/dev/null || wget -q -O - "http://127.0.0.1:$PORT/healthz" 2>/dev/null || printf 'not answering'; printf '\n' ;;
+  logs) svc_logs "\${1:-gateway}" ;;
+  start) svc_start ;;
+  stop) svc_stop ;;
+  restart) svc_stop; svc_start ;;
+  update) exec sh "\$DIR/repo/site/install-gateway.sh" --dir "\$DIR" --update "\$@" ;;
+  rdv) exec "\$NODE" "\$DIR/repo/impl/packages/cli/dist/src/bin.js" "\$@" --home "\$DIR/data" ;;
+  pin | token | oauth) exec "\$NODE" "\$DIR/repo/impl/packages/gateway/dist/src/bin.js" "\$cmd" "\$@" --home "\$DIR/data" ;;
+  backup) exec "\$NODE" "\$DIR/repo/impl/packages/cli/dist/src/bin.js" backup "\$@" --home "\$DIR/data" ;;
+  uninstall)
+    svc_remove
+    $UNINSTALL_EXTRA
+    printf 'Stopped and removed the service. Your agent is still in %s/data.\n' "\$DIR"
+    printf 'To delete everything, including the agent key (back it up first: ./gw backup <file>), run: rm -rf %s\n' "\$DIR" ;;
+  *) sed -n '2,6p' "\$0" ;;
+esac
+EOF
+  fi
+}
+
+# --- node runtime: user services ---------------------------------------------
+
+gateway_args() {
+  printf '%s' "$DIR/repo/impl/packages/gateway/dist/src/bin.js serve --home $DIR/data --host 127.0.0.1 --port $PORT --public-url $PUBLIC_URL --client-ip-header $CLIENT_IP_HEADER"
+}
+tunnel_args() {
+  case $TUNNEL in
+    cloudflare-token) printf 'tunnel --no-autoupdate run' ;;
+    cloudflare-quick) printf 'tunnel --no-autoupdate --url http://127.0.0.1:%s' "$PORT" ;;
+  esac
+}
+has_tunnel_service() { case $TUNNEL in cloudflare-*) return 0 ;; *) return 1 ;; esac; }
+
+UNIT_DIR="${XDG_CONFIG_HOME:-${HOME:-}/.config}/systemd/user"
+AGENTS_DIR="${HOME:-}/Library/LaunchAgents"
+
+write_systemd_units() {
+  write_file "$UNIT_DIR/rdv-gateway.service" 644 <<EOF
+# Written by install-gateway.sh ($DIR).
+[Unit]
+Description=Rendezvous gateway
+After=network-online.target
+
+[Service]
+ExecStart=$NODE_BIN $(gateway_args)
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=default.target
+EOF
+  if has_tunnel_service; then
+    envline=
+    [ "$TUNNEL" = cloudflare-token ] && envline="EnvironmentFile=$DIR/cloudflared.env"
+    write_file "$UNIT_DIR/rdv-gateway-tunnel.service" 644 <<EOF
+# Written by install-gateway.sh ($DIR).
+[Unit]
+Description=Rendezvous gateway tunnel (cloudflared)
+After=network-online.target
+
+[Service]
+$envline
+ExecStart=$CLOUDFLARED_BIN $(tunnel_args)
+StandardError=append:$DIR/logs/cloudflared.log
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=default.target
+EOF
+  fi
+}
+
+plist() { # plist <label> <log> <program args...>
+  label=$1 log=$2
+  shift 2
+  printf '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'
+  printf '<plist version="1.0"><dict>\n  <key>Label</key><string>%s</string>\n  <key>ProgramArguments</key><array>\n' "$label"
+  for a in "$@"; do printf '    <string>%s</string>\n' "$a"; done
+  printf '  </array>\n  <key>RunAtLoad</key><true/>\n  <key>KeepAlive</key><true/>\n  <key>Umask</key><integer>63</integer>\n'
+  printf '  <key>StandardOutPath</key><string>%s</string>\n  <key>StandardErrorPath</key><string>%s</string>\n</dict></plist>\n' "$log" "$log"
+}
+
+write_launchd_agents() {
+  # shellcheck disable=SC2046  # gateway_args is validated: no spaces inside its words
+  plist co.nesher.rdv-gateway "$DIR/logs/gateway.log" "$NODE_BIN" $(gateway_args) | write_file "$AGENTS_DIR/co.nesher.rdv-gateway.plist" 644
+  if has_tunnel_service; then
+    if [ "$TUNNEL" = cloudflare-token ]; then
+      # The token reaches cloudflared from the 600 env file, never from this plist.
+      # shellcheck disable=SC2016  # $0 and $1 are expanded by that sh, not here
+      plist co.nesher.rdv-gateway-tunnel "$DIR/logs/cloudflared.log" /bin/sh -c 'set -a; . "$0"; exec "$1" tunnel --no-autoupdate run' "$DIR/cloudflared.env" "$CLOUDFLARED_BIN" |
+        write_file "$AGENTS_DIR/co.nesher.rdv-gateway-tunnel.plist" 644
+    else
+      # shellcheck disable=SC2046
+      plist co.nesher.rdv-gateway-tunnel "$DIR/logs/cloudflared.log" "$CLOUDFLARED_BIN" $(tunnel_args) |
+        write_file "$AGENTS_DIR/co.nesher.rdv-gateway-tunnel.plist" 644
+    fi
+  fi
+}
+
+service_funcs() {
+  if [ "$(uname -s)" = Darwin ]; then
+    cat <<'EOF'
+D="gui/$(id -u)"
+svc_status() { launchctl print "$D/co.nesher.rdv-gateway" 2>/dev/null | grep -E '^\s*state' || printf 'not loaded\n'; }
+svc_logs() { if [ "$1" = tunnel ]; then tail -n 100 -f "$DIR/logs/cloudflared.log"; else tail -n 100 -f "$DIR/logs/gateway.log"; fi; }
+svc_start() { for p in "$HOME"/Library/LaunchAgents/co.nesher.rdv-gateway*.plist; do [ -f "$p" ] && launchctl bootstrap "$D" "$p" 2>/dev/null || true; done; }
+svc_stop() { for l in co.nesher.rdv-gateway-tunnel co.nesher.rdv-gateway; do launchctl bootout "$D/$l" 2>/dev/null || true; done; }
+svc_remove() { svc_stop; rm -f "$HOME"/Library/LaunchAgents/co.nesher.rdv-gateway.plist "$HOME"/Library/LaunchAgents/co.nesher.rdv-gateway-tunnel.plist; }
+EOF
+  else
+    cat <<'EOF'
+U="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
+units() { for u in rdv-gateway rdv-gateway-tunnel; do [ -f "$U/$u.service" ] && printf '%s ' "$u"; done; }
+svc_status() { systemctl --user --no-pager status $(units) || true; }
+svc_logs() { if [ "$1" = tunnel ]; then tail -n 100 -f "$DIR/logs/cloudflared.log"; else journalctl --user -u rdv-gateway -f -n 100; fi; }
+svc_start() { systemctl --user start $(units); }
+svc_stop() { systemctl --user stop $(units); }
+svc_remove() { systemctl --user disable --now $(units) || true; rm -f "$U/rdv-gateway.service" "$U/rdv-gateway-tunnel.service"; systemctl --user daemon-reload; }
+EOF
+  fi
+}
+
+# --- running rdv and rdv-gateway against the gateway's home ------------------
+
+CLI_JS=packages/cli/dist/src/bin.js
+GW_JS=packages/gateway/dist/src/bin.js
+
+# tool <run|run_tty> <rdv|gw> <args...>
+tool() {
+  how=$1 which=$2
+  shift 2
+  if [ "$which" = rdv ]; then js=$CLI_JS; else js=$GW_JS; fi
+  if [ "$RUNTIME" = docker ]; then
+    if [ "$how" = run ]; then "$how" compose run --rm --no-deps -T gateway node "$js" "$@" --home /data
+    else "$how" compose run --rm --no-deps gateway node "$js" "$@" --home /data; fi
+  else
+    "$how" "$NODE_BIN" "$DIR/repo/impl/$js" "$@" --home "$DIR/data"
+  fi
+}
+
+http_ok() {
+  if command -v curl >/dev/null 2>&1; then curl -fsS -m 5 -o /dev/null "$1" 2>/dev/null
+  elif command -v wget >/dev/null 2>&1; then wget -q -T 5 -O /dev/null "$1" 2>/dev/null
+  elif [ "$RUNTIME" = docker ]; then compose exec -T gateway wget -q -T 5 -O /dev/null "$1" 2>/dev/null
+  else "$NODE_BIN" -e 'fetch(process.argv[1]).then(r=>process.exit(r.ok?0:1),()=>process.exit(1))' "$1"
+  fi
+}
+
+# --- the steps -----------------------------------------------------------------
+
+choose_runtime() {
+  step 2 'choose the runtime'
+  check_docker
+  check_node
+  if [ -n "$DOCKER_MISSING" ]; then say "Docker: not ready: $DOCKER_MISSING"; else say 'Docker: ready'; fi
+  if [ -n "$NODE_MISSING" ]; then say "Node.js: not ready: $NODE_MISSING"; else say "Node.js: ready ($(node --version))"; fi
+  if [ -z "$RUNTIME" ]; then
+    if [ -z "$DOCKER_MISSING" ] && [ -z "$NODE_MISSING" ]; then
+      say 'Both can run the gateway. Docker keeps it in a locked-down container (recommended); Node.js runs it as a service of your user.'
+      while :; do
+        ask --runtime 'Runtime: docker or node' "${C_RUNTIME:-docker}"
+        case $ANSWER in docker | node) RUNTIME=$ANSWER; break ;; *) say 'Type docker or node.' ;; esac
+      done
+    elif [ -z "$DOCKER_MISSING" ]; then RUNTIME=docker
+    elif [ -z "$NODE_MISSING" ]; then RUNTIME=node
+    elif [ "$DRY_RUN" = 1 ]; then RUNTIME=docker; warn 'nothing can run the gateway here yet (dry run goes on with docker)'
+    else die "nothing here can run the gateway yet. Fix one of: Docker: $DOCKER_MISSING; or Node.js: $NODE_MISSING"
+    fi
+  fi
+  case $RUNTIME in
+    docker) [ -z "$DOCKER_MISSING" ] || [ "$DRY_RUN" = 1 ] || die "Docker is not ready: $DOCKER_MISSING" ;;
+    node)
+      [ -z "$NODE_MISSING" ] || [ "$DRY_RUN" = 1 ] || die "Node.js is not ready: $NODE_MISSING"
+      [ "$(id -u)" != 0 ] || die 'the Node.js runtime runs as your own user: do not use root for it'
+      ;;
+    *) die "--runtime is docker or node (got: $RUNTIME)" ;;
+  esac
+  [ -n "$COMPOSE" ] || COMPOSE=plugin
+  NODE_BIN=$(command -v node 2>/dev/null || printf '/usr/bin/node')
+  if [ "$RUNTIME" = node ] && ! valid_path "$NODE_BIN" && [ "$DRY_RUN" != 1 ]; then
+    die "node is at $NODE_BIN; a service cannot start a path with spaces or special characters. Use Docker, or a Node.js installed elsewhere"
+  fi
+  say "Runtime: $RUNTIME"
+  done_step 2
+}
+
+choose_dir_and_settings() {
+  step 1 'choose the folder'
+  if [ -z "$DIR" ]; then
+    ask --dir 'Install folder' "$HOME/rendezvous-gateway"
+    DIR=$ANSWER
+  fi
+  DIR=$(abs_path "$DIR")
+  valid_path "$DIR" || die "use a folder path without spaces or special characters (got: $DIR)"
+  load_conf
+  if [ "$CONF_FOUND" = 1 ]; then
+    say "Found a gateway installed here (runtime ${C_RUNTIME:-?}, ${C_TUNNEL:-?}, ${C_PUBLIC_URL:-?})."
+    if [ "$UPDATE" != 1 ] && ask_yn --update 'Update it and keep these settings?' y; then UPDATE=1; fi
+    # Saved answers are the defaults; flags given now win.
+    [ -n "$RUNTIME" ] || [ "$UPDATE" != 1 ] || RUNTIME=${C_RUNTIME:-}
+    [ -n "$REF" ] || REF=${C_REF:-}
+    [ -n "$PORT" ] || PORT=${C_PORT:-}
+    if [ "$UPDATE" = 1 ]; then
+      [ -n "$TUNNEL" ] || TUNNEL=${C_TUNNEL:-}
+      [ -n "$PUBLIC_URL" ] || PUBLIC_URL=${C_PUBLIC_URL:-}
+      [ -n "$CLIENT_IP_HEADER" ] || CLIENT_IP_HEADER=${C_HEADER:-}
+    fi
+  elif [ "$UPDATE" = 1 ]; then
+    die "--update needs an existing install in $DIR (install.conf not found)"
+  fi
+  [ -n "$REF" ] || REF=main
+  valid_ref "$REF" || die "--ref is a branch, tag or commit (got: $REF)"
+  [ -n "$PORT" ] || PORT=8787
+  valid_port "$PORT" || die "--port is a port number (got: $PORT)"
+  say "Folder: $DIR (code in repo/, the agent in data/)"
+  done_step 1
+}
+
+choose_public_address() {
+  step 3 'choose how assistants reach it'
+  if [ -z "$TUNNEL" ]; then
+    say 'The gateway listens only on 127.0.0.1 here. Something must give it a public https address:'
+    say '  cloudflare-token  a Cloudflare Tunnel on your own domain (recommended; free Cloudflare account)'
+    say '  cloudflare-quick  a quick try-out address (random *.trycloudflare.com, changes on every restart)'
+    say '  own-url           your own reverse proxy or domain, already set up on this machine'
+    command -v tailscale >/dev/null 2>&1 && say '  tailscale         Tailscale Funnel (https://<machine>.<tailnet>.ts.net)'
+    while :; do
+      ask --tunnel 'Public address' "${C_TUNNEL:-cloudflare-token}"
+      case $ANSWER in cloudflare-token | cloudflare-quick | own-url | tailscale) TUNNEL=$ANSWER; break ;; *) say 'Type one of the names above.' ;; esac
+    done
+  fi
+  case $TUNNEL in cloudflare-token | cloudflare-quick | own-url | tailscale) ;; *) die "--tunnel is cloudflare-token, cloudflare-quick, own-url or tailscale (got: $TUNNEL)" ;; esac
+
+  CLOUDFLARED_BIN=
+  if has_tunnel_service && [ "$RUNTIME" = node ]; then
+    CLOUDFLARED_BIN=$(command -v cloudflared 2>/dev/null || true)
+    [ -n "$CLOUDFLARED_BIN" ] || [ "$DRY_RUN" = 1 ] || die "cloudflared is needed for a Cloudflare tunnel with the Node.js runtime. Install it with: $(pkg_hint cloudflared) (or see https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/), then run this again"
+    [ -n "$CLOUDFLARED_BIN" ] || CLOUDFLARED_BIN=/usr/local/bin/cloudflared
+  fi
+
+  case $TUNNEL in
+    cloudflare-token)
+      if [ -z "$PUBLIC_URL" ]; then
+        say 'In the Cloudflare dashboard: Zero Trust, Networks, Tunnels, Create a tunnel (type Cloudflared).'
+        say "Give it a public hostname (for example gw.example.com) whose service is HTTP, URL 127.0.0.1:$PORT."
+        say 'Then turn off Email Obfuscation for that hostname (Rules, Configuration Rules), so the approval page shows real addresses.'
+        ask --public-url 'The public hostname, as an https address (e.g. https://gw.example.com)' ''
+        PUBLIC_URL=$ANSWER
+      fi
+      [ -n "$CLIENT_IP_HEADER" ] || CLIENT_IP_HEADER=cf-connecting-ip
+      ;;
+    cloudflare-quick)
+      warn 'a quick tunnel is for trying it out: its address is random and changes whenever the tunnel restarts (a reboot, an update). Connected assistants then stop working until you connect them again.'
+      PUBLIC_URL=${PUBLIC_URL:-}
+      [ -n "$CLIENT_IP_HEADER" ] || CLIENT_IP_HEADER=cf-connecting-ip
+      ;;
+    own-url)
+      say "Your proxy must terminate TLS on this machine and forward to http://127.0.0.1:$PORT, with response buffering off."
+      if [ -z "$PUBLIC_URL" ]; then
+        ask --public-url 'Its public https address (e.g. https://gw.example.com)' ''
+        PUBLIC_URL=$ANSWER
+      fi
+      if [ -z "$CLIENT_IP_HEADER" ]; then
+        # shellcheck disable=SC2016  # nginx's variable, shown as is
+        say 'The gateway counts wrong PINs per client, using a header your proxy sets to the real client address and a client cannot forge (nginx: proxy_set_header X-Real-IP $remote_addr).'
+        ask --client-ip-header 'That header' x-real-ip
+        CLIENT_IP_HEADER=$ANSWER
+      fi
+      ;;
+    tailscale)
+      command -v tailscale >/dev/null 2>&1 || [ "$DRY_RUN" = 1 ] || die 'tailscale is not installed (https://tailscale.com/download)'
+      if [ -z "$PUBLIC_URL" ] && command -v tailscale >/dev/null 2>&1; then
+        name=$(tailscale status --json 2>/dev/null | grep -o '"DNSName": *"[^"]*"' | head -n 1 | sed 's/.*"\([^"]*\)"$/\1/; s/\.$//')
+        [ -n "$name" ] || die 'could not read this machine'"'"'s Tailscale name (is it logged in? tailscale up)'
+        PUBLIC_URL="https://$name"
+      fi
+      [ -n "$PUBLIC_URL" ] || PUBLIC_URL=https://machine.tailnet.ts.net
+      [ -n "$CLIENT_IP_HEADER" ] || CLIENT_IP_HEADER=x-forwarded-for
+      ;;
+  esac
+  if [ "$TUNNEL" != cloudflare-quick ] || [ -n "$PUBLIC_URL" ]; then
+    PUBLIC_URL=$(trim_url "$PUBLIC_URL")
+    valid_https_url "$PUBLIC_URL" || die "the public address must be https://host (no path), got: $PUBLIC_URL"
+  fi
+  valid_header "$CLIENT_IP_HEADER" || die "--client-ip-header is a header name (got: $CLIENT_IP_HEADER)"
+
+  if [ "$TUNNEL" = cloudflare-token ]; then
+    if [ -f "$DIR/cloudflared.env" ] && { [ "$UPDATE" = 1 ] || ask_yn --update 'A tunnel token is saved here. Keep it?' y; }; then
+      say 'Keeping the saved tunnel token.'
+    elif [ "$DRY_RUN" = 1 ]; then
+      say "Would ask for the tunnel token here (never shown) and save it to $DIR/cloudflared.env (mode 600)."
+    else
+      say 'Paste the tunnel token: in the dashboard it is the long string after --token in the install command.'
+      read_secret 'Tunnel token'
+      valid_token "$SECRET" || die 'that does not look like a tunnel token (one long string of letters, digits and -_+/=); nothing saved'
+      mkdir -p "$DIR" && chmod 700 "$DIR"
+      printf 'TUNNEL_TOKEN=%s\n' "$SECRET" | write_file "$DIR/cloudflared.env" 600
+      SECRET=
+      say "Saved to $DIR/cloudflared.env (mode 600)."
+    fi
+  fi
+  shown=$PUBLIC_URL
+  [ -n "$shown" ] || shown='known once the quick tunnel starts'
+  say "Public address: $shown; client address header: $CLIENT_IP_HEADER"
+  done_step 3
+}
+
+# git in the clone. As root (a NAS) the clone belongs to the container's uid, which git would otherwise refuse.
+g() { git -c safe.directory="$DIR/repo" -C "$DIR/repo" "$@"; }
+
+fetch_and_build() {
+  step 4 'get the code and build it'
+  run mkdir -p "$DIR" "$DIR/data" "$DIR/logs"
+  run chmod 700 "$DIR" "$DIR/data"
+  REPO=${RDV_REPO:-https://github.com/omernesh/rendezvous}
+  if [ -e "$DIR/repo/.git" ]; then
+    origin=$(g remote get-url origin 2>/dev/null || true)
+    [ "$origin" = "$REPO" ] || die "$DIR/repo is a clone of '$origin', not '$REPO'"
+    [ -z "$(g status --porcelain 2>/dev/null)" ] || die "$DIR/repo has local changes; this installer will not overwrite them"
+  elif [ -e "$DIR/repo" ]; then
+    die "$DIR/repo exists but is not a git clone. Move it away"
+  else
+    run git clone --quiet "$REPO" "$DIR/repo"
+  fi
+  run git -c safe.directory="$DIR/repo" -C "$DIR/repo" fetch --quiet origin "$REF"
+  run git -c safe.directory="$DIR/repo" -C "$DIR/repo" checkout --quiet --detach FETCH_HEAD
+  [ "$DRY_RUN" = 1 ] || say "Code: $(g log -1 --format='%h %s')"
+  say 'Building (a few minutes the first time)...'
+  if [ "$RUNTIME" = docker ]; then
+    if [ "$(id -u)" = 0 ]; then run chown -R "$RDV_UID:$RDV_GID" "$DIR/repo" "$DIR/data" "$DIR/logs"; fi
+    run docker run --rm --user "$RDV_UID:$RDV_GID" -e HOME=/tmp -e npm_config_update_notifier=false \
+      -v "$DIR/repo:/app" -w /app/impl "$NODE_IMAGE" sh -c 'npm ci --no-audit --no-fund && npm run build'
+  else
+    (cd "$DIR/repo/impl" 2>/dev/null || [ "$DRY_RUN" = 1 ]; run npm ci --no-audit --no-fund && run npm run build) || die 'the build failed'
+  fi
+  [ "$DRY_RUN" = 1 ] || [ -f "$DIR/repo/impl/$GW_JS" ] || die "the build finished but $DIR/repo/impl/$GW_JS is missing"
+
+  # The settings files, before anything runs through compose.
+  save_conf
+  if [ "$RUNTIME" = docker ]; then
+    write_env
+    write_compose
+  fi
+  done_step 4
+}
+
+setup_agent() {
+  step 5 'your agent'
+  if [ -f "$DIR/data/agent.json" ]; then
+    say 'An agent is already set up here; keeping it:'
+    tool run rdv whoami || true
+    done_step 5
+    return
+  fi
+  if [ -z "$AGENT" ]; then
+    say 'new: a new agent for an email address (best for a first try: use a test address).'
+    say 'restore: bring back an agent you already have, from its encrypted .rdvbackup file.'
+    while :; do
+      ask --agent 'Agent: new or restore' new
+      case $ANSWER in new | restore) AGENT=$ANSWER; break ;; *) say 'Type new or restore.' ;; esac
+    done
+  fi
+  case $AGENT in
+    new)
+      if [ -z "$EMAILS" ]; then
+        while :; do
+          ask --email 'Email address for this agent' ''
+          valid_email "$ANSWER" && break
+          say "That is not an email address: $ANSWER"
+        done
+        EMAILS=$ANSWER
+        while ask_yn --email 'Add another email?' n; do
+          ask --email 'Another email address' ''
+          if valid_email "$ANSWER"; then EMAILS="$EMAILS $ANSWER"; else say "That is not an email address: $ANSWER"; fi
+        done
+      fi
+      for e in $EMAILS; do valid_email "$e" || die "not an email address: $e"; done
+      if [ -z "$RELAYS" ]; then
+        say "Relays: $DEFAULT_RELAYS"
+        if ask_yn --relay 'Use these relays?' y; then RELAYS=$DEFAULT_RELAYS
+        else
+          ask --relay 'Relays, separated by spaces (wss://...)' ''
+          RELAYS=$ANSWER
+        fi
+      fi
+      for r in $RELAYS; do valid_relay "$r" || die "not a relay address (wss://host): $r"; done
+      if [ -z "$POINTER" ]; then
+        say 'A public pointer lets anyone who knows your email find this agent and ask for contact (you still approve each one).'
+        if ask_yn --public-pointer 'Make it findable by email?' n; then POINTER=1; else POINTER=0; fi
+      fi
+      set -- init
+      for e in $EMAILS; do set -- "$@" --email "$e"; done
+      for r in $RELAYS; do set -- "$@" --relay "$r"; done
+      [ "$POINTER" = 1 ] && set -- "$@" --public-pointer
+      tool run rdv "$@" || die 'rdv init failed'
+      if [ "$POINTER" = 1 ]; then tool run rdv card publish || warn 'publishing the card failed; run ./gw rdv card publish later'; fi
+      ;;
+    restore)
+      if [ -z "$BACKUP" ]; then
+        ask --backup 'Path to the .rdvbackup file' ''
+        BACKUP=$ANSWER
+      fi
+      BACKUP=$(abs_path "$BACKUP")
+      [ -f "$BACKUP" ] && [ -r "$BACKUP" ] || [ "$DRY_RUN" = 1 ] || die "cannot read the backup file: $BACKUP"
+      tty_ok || [ "$DRY_RUN" = 1 ] || die 'restoring asks for the passphrase: run this from your own terminal'
+      say 'Next, rdv shows the agent ID and fingerprint in the file and asks for its passphrase. Check they are yours, then type it.'
+      if [ "$RUNTIME" = docker ]; then
+        # A private copy the container's user can read; removed right after.
+        run mkdir -p "$DIR/.restore"
+        run chmod 700 "$DIR/.restore"
+        run cp "$BACKUP" "$DIR/.restore/agent.rdvbackup"
+        if [ "$(id -u)" = 0 ]; then run chown -R "$RDV_UID:$RDV_GID" "$DIR/.restore"; fi
+        st=0
+        run_tty compose run --rm --no-deps -v "$DIR/.restore:/backup:ro" gateway node "$CLI_JS" restore /backup/agent.rdvbackup --home /data || st=$?
+        run rm -rf "$DIR/.restore"
+        [ "$st" = 0 ] || die 'restore failed (a wrong passphrase restores nothing); run this again to retry'
+      else
+        run_tty "$NODE_BIN" "$DIR/repo/impl/$CLI_JS" restore "$BACKUP" --home "$DIR/data" || die 'restore failed (a wrong passphrase restores nothing); run this again to retry'
+      fi
+      say 'Only one machine should receive for an agent: stop rdv listen / rdv-mcp for it on the old one.'
+      ;;
+    *) die "--agent is new or restore (got: $AGENT)" ;;
+  esac
+  tool run rdv whoami || true
+  done_step 5
+}
+
+setup_pin() {
+  step 6 'the approval PIN'
+  if [ -f "$DIR/data/gateway.json" ] && grep -q '"owner"' "$DIR/data/gateway.json" 2>/dev/null; then
+    if [ "$UPDATE" = 1 ] || ask_yn --update 'An approval PIN is set. Keep it?' y; then
+      say 'Keeping the PIN.'
+      done_step 6
+      return
+    fi
+  fi
+  say 'You unlock the approval page with this PIN; it is what keeps an assistant from approving things itself.'
+  say 'Choose 6 or more characters you use nowhere else. Nothing is shown as you type. Type only the PIN.'
+  tty_ok || [ "$DRY_RUN" = 1 ] || die 'setting the PIN needs your own terminal: run this from one (ssh -t is fine)'
+  tool run_tty gw pin set || die 'the PIN was not set; run this again to retry'
+  done_step 6
+}
+
+start_quick_tunnel() {
+  # The quick tunnel's address is known only once it runs.
+  if [ "$RUNTIME" = docker ]; then
+    run compose up -d tunnel
+  fi
+  [ "$DRY_RUN" = 1 ] && { PUBLIC_URL=https://example-words.trycloudflare.com; return 0; }
+  i=0
+  url=
+  while [ $i -lt 30 ]; do
+    if [ "$RUNTIME" = docker ]; then logs=$(compose logs --no-color tunnel 2>&1 || true)
+    else logs=$(cat "$DIR/logs/cloudflared.log" 2>/dev/null || true); fi
+    url=$(quick_url_from "$logs")
+    [ -n "$url" ] && break
+    i=$((i + 1))
+    sleep 2
+  done
+  [ -n "$url" ] || die 'the quick tunnel did not report its address; see ./gw logs tunnel'
+  PUBLIC_URL=$url
+  save_conf
+  [ "$RUNTIME" = docker ] && write_env
+  return 0
+}
+
+start_services() {
+  step 7 'start it and check'
+  UNINSTALL_EXTRA=':'
+  if [ "$TUNNEL" = tailscale ]; then
+    UNINSTALL_EXTRA='tailscale funnel --https=443 off || echo "turn Tailscale Funnel off by hand (see: tailscale funnel status)"'
+    if ! run tailscale funnel --bg "$PORT"; then
+      die "tailscale funnel failed. On Linux your user may need to be its operator first: sudo tailscale set --operator=\$USER (then run this again), and Funnel must be allowed in your tailnet's policy"
+    fi
+  fi
+  if [ "$RUNTIME" = docker ]; then
+    [ "$TUNNEL" = cloudflare-quick ] && start_quick_tunnel
+    has_tunnel_service && [ "$TUNNEL" != cloudflare-quick ] && run compose up -d tunnel
+    run compose up -d --force-recreate --remove-orphans gateway
+  else
+    SERVICE_FUNCS=$(service_funcs)
+    if [ "$(uname -s)" = Darwin ]; then
+      run mkdir -p "$AGENTS_DIR"
+      d="gui/$(id -u)"
+      if [ "$TUNNEL" = cloudflare-quick ]; then
+        run rm -f "$DIR/logs/cloudflared.log"
+        write_launchd_agents
+        run launchctl bootout "$d/co.nesher.rdv-gateway-tunnel" 2>/dev/null || true
+        run launchctl bootstrap "$d" "$AGENTS_DIR/co.nesher.rdv-gateway-tunnel.plist"
+        start_quick_tunnel
+      fi
+      write_launchd_agents
+      for l in co.nesher.rdv-gateway-tunnel co.nesher.rdv-gateway; do
+        [ "$l" = co.nesher.rdv-gateway-tunnel ] && { ! has_tunnel_service || [ "$TUNNEL" = cloudflare-quick ]; } && continue
+        run launchctl bootout "$d/$l" 2>/dev/null || true
+        run launchctl bootstrap "$d" "$AGENTS_DIR/$l.plist"
+      done
+    else
+      run mkdir -p "$UNIT_DIR"
+      if [ "$TUNNEL" = cloudflare-quick ]; then
+        run rm -f "$DIR/logs/cloudflared.log"
+        write_systemd_units
+        run systemctl --user daemon-reload
+        run systemctl --user enable rdv-gateway-tunnel
+        run systemctl --user restart rdv-gateway-tunnel
+        start_quick_tunnel
+      fi
+      write_systemd_units
+      run systemctl --user daemon-reload
+      run systemctl --user enable rdv-gateway
+      has_tunnel_service && [ "$TUNNEL" != cloudflare-quick ] && { run systemctl --user enable rdv-gateway-tunnel; run systemctl --user restart rdv-gateway-tunnel; }
+      run systemctl --user restart rdv-gateway
+      if [ "$(loginctl show-user "$(id -un)" -p Linger 2>/dev/null || true)" != Linger=yes ]; then
+        warn "the gateway stops when you log out. To keep it running, run once: loginctl enable-linger $(id -un)"
+      fi
+    fi
+  fi
+  [ -n "${SERVICE_FUNCS:-}" ] || SERVICE_FUNCS=$(service_funcs)
+  write_ctl
+
+  if [ "$DRY_RUN" = 1 ]; then done_step 7; return 0; fi
+  i=0
+  until http_ok "http://127.0.0.1:$PORT/healthz"; do
+    i=$((i + 1))
+    [ $i -lt 30 ] || die "the gateway did not answer on 127.0.0.1:$PORT; see $DIR/gw logs"
+    sleep 2
+  done
+  say "Local check: http://127.0.0.1:$PORT/healthz answers."
+  i=0
+  until http_ok "$PUBLIC_URL/healthz"; do
+    i=$((i + 1))
+    if [ $i -ge 20 ]; then
+      warn "$PUBLIC_URL/healthz does not answer yet. Check the tunnel or proxy ($DIR/gw logs tunnel), then: curl $PUBLIC_URL/healthz"
+      break
+    fi
+    sleep 3
+  done
+  [ $i -ge 20 ] || say "Public check: $PUBLIC_URL/healthz answers."
+  done_step 7
+}
+
+next_steps() {
+  cat <<EOF
+
+The Rendezvous gateway is running.
+
+Your MCP address:  $PUBLIC_URL/mcp
+
+Connect your assistants (each one sends you to the gateway's page; unlock it with your PIN,
+and check that the return address is claude.ai or chatgpt.com before you approve):
+  claude.ai     Settings, Connectors, Add custom connector: paste the MCP address,
+                leave the client ID and secret empty.
+  ChatGPT       Settings, Connectors, Advanced: developer mode on; create a connector
+                with the MCP address, authentication OAuth.
+  Claude Code   claude mcp add --transport http rendezvous $PUBLIC_URL/mcp
+                then /mcp inside Claude Code to sign in.
+  Others (Hermes, a Custom GPT, scripts) use a bearer token you make yourself, shown once:
+                $DIR/gw token create --name hermes --scope read,send
+                (OpenAPI for GPT Actions: $PUBLIC_URL/openapi.json)
+
+Manage it from $DIR:
+  ./gw status            is it up?
+  ./gw logs              follow the gateway's log (./gw logs tunnel for the tunnel)
+  ./gw update            pull, rebuild and restart, keeping your settings (or run this installer again)
+  ./gw stop | ./gw start
+  ./gw rdv whoami        the agent's ID and fingerprint
+  ./gw oauth list        connected assistants (./gw oauth revoke <id> to cut one off)
+  ./gw uninstall         stop and remove the service; your agent stays in data/
+
+Keep data/ private and backed up (./gw backup <file>): it holds the agent's key.
+Docs: https://rendezvous.nesher.co/docs/gateway-deploy.html
+EOF
+  if [ "$TUNNEL" = cloudflare-quick ]; then
+    warn 'this is a quick tunnel: after a restart its address changes. Run ./gw update to pick up the new one, then connect your assistants again.'
+  fi
+}
+
+main() {
+  [ -n "${HOME:-}" ] || die 'HOME is not set'
+  DIR='' RUNTIME='' REF='' PORT='' AGENT='' EMAILS='' RELAYS='' POINTER='' BACKUP=''
+  C_RUNTIME='' C_REF='' C_PORT='' C_TUNNEL='' C_PUBLIC_URL='' C_HEADER=''
+  TUNNEL='' PUBLIC_URL='' CLIENT_IP_HEADER='' UPDATE=0 YES=0 DRY_RUN=0 ALLOW_ROOT=0 COMPOSE=''
+  SERVICE_FUNCS='' UNINSTALL_EXTRA=: CLOUDFLARED_BIN='' NODE_BIN=node SECRET=''
+  NODE_IMAGE=${RDV_NODE_IMAGE:-$NODE_IMAGE_DEFAULT}
+  CLOUDFLARED_IMAGE=${RDV_CLOUDFLARED_IMAGE:-$CLOUDFLARED_IMAGE_DEFAULT}
+  while [ $# -gt 0 ]; do
+    opt=$1
+    case $opt in
+      --*=*) val=${opt#*=}; opt=${opt%%=*}; shift; set -- "$opt" "$val" "$@" ;;
+    esac
+    case $1 in
+      -h | --help) usage; exit 0 ;;
+      --update) UPDATE=1; YES=1 ;;
+      --yes | -y) YES=1 ;;
+      --dry-run) DRY_RUN=1 ;;
+      --allow-root) ALLOW_ROOT=1 ;;
+      --public-pointer) POINTER=1 ;;
+      --no-public-pointer) POINTER=0 ;;
+      --pin | --passphrase | --password | --token | --tunnel-token | --secret)
+        die "$1 is not an option on purpose: secrets are typed in your terminal when asked, never passed as arguments (they would land in your shell history and process list)" ;;
+      --dir | --runtime | --ref | --port | --agent | --email | --relay | --backup | --tunnel | --public-url | --client-ip-header)
+        [ $# -ge 2 ] || die "$1 needs a value"
+        case $1 in
+          --dir) DIR=$2 ;;
+          --runtime) RUNTIME=$2 ;;
+          --ref) REF=$2 ;;
+          --port) PORT=$2 ;;
+          --agent) AGENT=$2 ;;
+          --email) EMAILS="${EMAILS:+$EMAILS }$2" ;;
+          --relay) RELAYS="${RELAYS:+$RELAYS }$2" ;;
+          --backup) BACKUP=$2 ;;
+          --tunnel) TUNNEL=$2 ;;
+          --public-url) PUBLIC_URL=$2 ;;
+          --client-ip-header) CLIENT_IP_HEADER=$2 ;;
+        esac
+        shift ;;
+      *) die "unknown option: $1 (see --help)" ;;
+    esac
+    shift
+  done
+  # Emails and relays are word-split later: validate them before anything else sees them.
+  set -f
+  for e in $EMAILS; do valid_email "$e" || die "not an email address: $e"; done
+  for r in $RELAYS; do valid_relay "$r" || die "not a relay address (wss://host): $r"; done
+
+  RDV_UID=$(id -u) RDV_GID=$(id -g)
+  if [ "$RDV_UID" = 0 ]; then RDV_UID=1000 RDV_GID=1000; fi
+
+  [ "$DRY_RUN" = 1 ] && say 'Dry run: nothing is changed, nothing is downloaded.'
+  say 'Rendezvous gateway installer. Questions come one at a time; press Enter to take the [default].'
+  if [ "$(id -u)" = 0 ] && [ "$ALLOW_ROOT" != 1 ]; then
+    die 'do not run this as root. Your user needs only Docker access (the docker group) or Node.js, and the agent key should belong to you. On a NAS where only root can use Docker, run it with sudo and --allow-root: the gateway still runs as uid 1000 in a locked-down container.'
+  fi
+  command -v git >/dev/null 2>&1 || die "git is required but was not found. Install it with: $(pkg_hint git), then run this again"
+  choose_dir_and_settings
+  choose_runtime
+  choose_public_address
+  fetch_and_build
+  setup_agent
+  setup_pin
+  start_services
+  next_steps
+}
+
+# Tests source this file with RDV_GW_SOURCE_ONLY=1 to call the functions above.
+[ "${RDV_GW_SOURCE_ONLY:-0}" = 1 ] || main "$@"

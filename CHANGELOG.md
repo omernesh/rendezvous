@@ -14,6 +14,9 @@ The format follows Keep a Changelog. One line per change a user can see; PR numb
 ### Changed
 - The docs, site, plugin and MCP server text now describe Rendezvous as cross-platform secure agent-to-agent messaging, with meeting scheduling as one example. The CLI reference follows the order you use it (identity, contacts, messages, tasks and files, groups, backups), and the FAQ shows the current version.
 
+### Added
+- One-command gateway install: `curl -fsSL https://rendezvous.nesher.co/install-gateway.sh | sh` builds and starts `rdv-gateway` behind a Cloudflare Tunnel, your own proxy or Tailscale Funnel, one question at a time, and the plugin's `rdv-gateway-setup` skill prepares it from chat.
+
 ### Fixed
 - **Security:** a relay can no longer inject text into your assistant's connection to Rendezvous or into `rdv --json` output: messages a relay sends for display (NOTICE) are dropped instead of printed, and anything a library prints goes to the error stream as one cleaned line. Before, a hostile relay (one named in a contact's card, or now in an invite link) could forge tool results or approval prompts.
 - **Security:** `rdv` no longer runs a command whose name was given as one quoted word (such as `"contact grant"`), which slipped past the plugin's check that keeps your assistant away from commands that are yours alone; that check now also reads such words, and refuses a subcommand built while the command runs (shell parameters such as `$@`, PowerShell splatting and expressions).

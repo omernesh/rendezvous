@@ -484,11 +484,11 @@ const GATEWAY_GROUPS = [
   // Multi-agent gateways (NOTES 104): adding, restoring, removing or migrating an agent creates or moves a key.
   ['agent', { add: GATEWAY_AGENT, remove: GATEWAY_AGENT, migrate: GATEWAY_AGENT }],
 ];
-/** rdv-gateway under any of its names: the npm script or shim, the built bin.js, the npm package. */
+/** rdv-gateway under any of its names: the npm script or shim, the built bin.js, the npm package, and the `gw` helper the gateway installer writes (`./gw pin set`, `./gw token create`). */
 const isGateway = (w) =>
   braces(w).some((x) => {
     const p = progName(x);
-    return p === 'rdv-gateway' || p === 'bin.js' || /^@rendezvous\/gateway(@|$)/i.test(x);
+    return p === 'rdv-gateway' || p === 'gw' || p === 'bin.js' || /^@rendezvous\/gateway(@|$)/i.test(x);
   });
 /** rdv commands of one word that are the human's (issue #88): the backup holds the key, the restore replaces the agent. */
 const ONE_WORD_HUMAN = ['backup', 'restore'];
@@ -775,7 +775,8 @@ function checkWords(words, ctx, depth) {
     // rdv's next word must be a literal: not built at run time, and no wildcard the shell could expand into a subcommand.
     if (isRdv(a) && (dynamic(b) || GLOB_CHARS.test(b))) throw new Refusal(OPAQUE);
     // The one-word human-only commands (issue #88): rdv backup, rdv restore (also after `npm run rdv --`).
-    if (isRdv(a)) {
+    // The installer's `./gw backup <file>` runs rdv backup in the gateway's home.
+    if (isRdv(a) || progName(a) === 'gw') {
       const next = b === '--' ? words[i + 2] : b;
       if (next !== undefined && ONE_WORD_HUMAN.some((s) => couldBe(next, s, ctx.cwd))) throw new Refusal(BACKUP);
     }
