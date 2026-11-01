@@ -981,6 +981,7 @@ export class Gateway {
       try {
         await this.store.setPin(next, check.pinSetAt);
       } catch (err) {
+        if (err instanceof PinChangedError) return bad(409, `${err.message}.`);
         if (err instanceof StoreError) return bad(400, `${err.message}; nothing changed.`);
         throw err;
       }

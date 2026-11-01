@@ -151,7 +151,8 @@ export class GatewayStore {
     await this.update((d) => {
       if (onlyIfSetAt !== undefined && (d.owner?.created ?? null) !== onlyIfSetAt) throw new PinChangedError('the PIN changed meanwhile; nothing changed');
       // Only ever grows, even when the clock steps back: a session compares this value to know the PIN changed.
-      const prev = d.owner ? Date.parse(d.owner.created) : Number.NEGATIVE_INFINITY;
+      const parsed = d.owner ? Date.parse(d.owner.created) : Number.NaN;
+      const prev = Number.isFinite(parsed) ? parsed : Number.NEGATIVE_INFINITY; // a hand-edited value never blocks a change
       const created = new Date(Math.max(Date.now(), prev + 1)).toISOString();
       d.owner = { salt: salt.toString('base64'), hash: hash.toString('base64'), created };
       d.lockout = { failures: 0 };
