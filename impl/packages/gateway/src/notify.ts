@@ -31,7 +31,7 @@ import { request as httpsRequest } from 'node:https';
 import { BlockList, isIP } from 'node:net';
 import { join } from 'node:path';
 import { acquireLock, clean, eventsStamp, type Home, type LoggedEvent, readEvents, writeAtomic } from '@rendezvous/cli/lib';
-import { fingerprint, guardedLookup, isAgentId, isBlockedAddress, type Resolver } from '@rendezvous/core';
+import { fingerprint, guardedLookup, isAgentId, isBlockedAddress, isCapabilityUri, type Resolver } from '@rendezvous/core';
 import { AGENT_NAME_RE, NOTIFY_SECRET_RE, ROOT_BINDING } from './agents.js';
 
 export const NOTIFY_FILE = 'gateway-notify.json';
@@ -733,7 +733,7 @@ export function eventData(obj: LoggedEvent['obj'], contactLabel: (peer: string) 
         data: {
           invite_id: inviteId(obj.invite_id),
           fingerprint: fp(obj.peer),
-          covers: (Array.isArray(obj.covers) ? obj.covers : []).slice(0, 32).filter((c): c is string => typeof c === 'string' && c.length <= 200 && /^[A-Za-z0-9:/._~%+@=-]+$/.test(c)),
+          covers: (Array.isArray(obj.covers) ? obj.covers : []).slice(0, 32).filter((c): c is string => isCapabilityUri(c)),
           until: typeof obj.until === 'string' ? clean(obj.until).slice(0, 64) : null,
         },
       };

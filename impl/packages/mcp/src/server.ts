@@ -1512,7 +1512,7 @@ export class RdvMcpServer {
       throw new ToolError(`nothing is held for approval ${safe(id)} for you: it was already taken, it expired, or another client asked for it. Your user can make a new invite.`);
     }
     if (h.ownerOnly) {
-      throw new ToolError('your user ticked "Don\'t ask again" on this invite, so the link is shown only to them on the approval page and is not available to you. Ask them to send it themselves; do not make another invite to get around this.');
+      throw new ToolError('your user ticked "Don\'t ask again" on this invite, so the link is shown only to them on the approval page and is not available to you. Ask them to send it themselves. If your user no longer has the link, they can revoke this invite and make a new one.');
     }
     this.held.delete(id);
     return h.secret;
@@ -2797,7 +2797,7 @@ export class RdvMcpServer {
       'rdv_invite',
       'Invite someone by link, WhatsApp style: "create" opens an approval form where your user chooses what the person gets (tier friend or below, meetings, how long the link works: 1 to 30 days); ' +
         'whoever opens the link first then becomes a contact without asking again. The result has the link and a message ready to send by WhatsApp, SMS or email: give it to your user to send, ' +
-        'exactly as returned, in full (the link on its own line or in a code block; never shortened, abbreviated or with "…", which breaks it); it is shown only once. Only when your user asks to invite someone. If your user approved after the call returned, the "approval" event does not carry the link: "link" (approval_id) hands it to you once. ' +
+        'exactly as returned, in full (the link on its own line or in a code block; never shortened, abbreviated or with "…", which breaks it); it is shown only once. Only when your user asks to invite someone. If your user approved after the call returned, the "approval" event does not carry the link: "link" (approval_id) hands it to you once. If your user chose "Don\'t ask again" on the form, the link may be shown only on their own approval page and "link" refuses. ' +
         '"list" shows the invites (open, used and by whom, revoked, expired); "revoke" (invite_id) cancels an unused one and needs no approval.',
       {
         action: z.enum(['create', 'list', 'revoke', 'link']),
@@ -3648,6 +3648,15 @@ export class RdvMcpServer {
     }
   }
 
+  /** After the state is saved: an audit failure is reported to the owner's log, never allowed to undo or block the change. */
+  private auditDisarmSafe(list: ReadonlyArray<{ id: string }>, via: 'mcp' | 'settings'): void {
+    try {
+      this.auditDisarm(list, via);
+    } catch {
+      this.humanLog('the audit line for turning off an invite link could not be written; the change itself was saved');
+    }
+  }
+
   private auditDisarm(list: ReadonlyArray<{ id: string }>, via: 'mcp' | 'settings'): void {
     if (!list.length) return;
     const ts = new Date().toISOString();
@@ -3670,11 +3679,12 @@ export class RdvMcpServer {
   /** The owner's Disarm on the settings page: reduce-only; the invite stays open as an ordinary one. Never a tool. False when it was not armed. */
   async disarmInviteFromSettings(inviteId: string): Promise<boolean> {
     if (!/^[0-9a-f]{16}$/.test(inviteId)) return false;
-    return this.withAgent(async (agent) => {
-      const d = agent.book.disarmInvites(inviteId);
-      this.auditDisarm(d, 'settings');
-      return d.length > 0;
+    const d = await this.withAgent(async (agent) => {
+      return agent.book.disarmInvites(inviteId);
     });
+    // Audited only after the state holding the change is saved (withAgent saves on return); an audit failure cannot undo it.
+    this.auditDisarmSafe(d, 'settings');
+    return d.length > 0;
   }
 
   /**
@@ -3696,14 +3706,15 @@ export class RdvMcpServer {
     let disarmed: Array<{ id: string; label?: string; expires: string }> = [];
     const off = await this.withAgent(async (agent) => {
       if (all) {
-        // "Everything off" also takes the choice off open invite links (NOTES 112): none is left to switch it on later.
+        // Contacts first; then "everything off" also takes the choice off open invite links (NOTES 112): none is left to switch it on later.
+        const peers = turnOffAllAutoApprove(this.home, new Date(), 'mcp');
         disarmed = agent.book.disarmInvites();
-        this.auditDisarm(disarmed, 'mcp');
-        return turnOffAllAutoApprove(this.home, new Date(), 'mcp');
+        return peers;
       }
       const peer = this.autoApprovePeer(agent, agentIdArg ?? to!, agentIdArg !== undefined);
       return turnOffAutoApprove(this.home, peer, new Date(), 'mcp') ? [peer] : [];
     });
+    this.auditDisarmSafe(disarmed, 'mcp'); // the state (disarm included) is saved by now
     if (off.length) await this.publish(off.map((p) => ({ type: 'auto_approve_off', peer: safe(p), fingerprint: safe(fingerprint(p)), reason: 'owner', next_step: AUTO_OFF_NEXT })));
     this.humanLog(off.length ? `auto-approve turned OFF through your assistant for ${off.map((p) => fingerprint(p)).join(', ')} (audited)` : 'your assistant asked to turn auto-approve off; it was not on');
     if (disarmed.length) this.humanLog(`invite link(s) ${disarmed.map((d) => d.id).join(', ')} no longer put whoever uses them on auto-approve (turned off through your assistant); they still work as ordinary invites`);
@@ -6412,7 +6423,7 @@ export class RdvMcpServer {
       `This lasts until you turn it off: ${off}. ` +
       (on.editable ? 'Anything you untick above is not covered. ' : '') +
       (on.peer ? '' : 'It starts when the link is used, and if someone else gets the link first it applies to them; nothing is left if you revoke the link or it expires. ') +
-      (on.peer ? '' : this.remote ? 'With this box ticked the link is shown only on the next page, to you: your assistant never sees it, so send it yourself. ' : 'Your assistant sees this link too, since it has to pass it on to you. ') +
+      (on.peer ? '' : this.remote ? 'With this box ticked the link is shown only on the next page, to you: your assistant never sees it, so send it yourself (if this choice ends up not applying, the link is an ordinary one and goes to your assistant as usual). ' : 'Your assistant sees this link too, since it has to pass it on to you. ') +
       'It never covers new contacts, groups, changing this grant, or calling off an agreed meeting. ' +
       "Risk: a prompt injection from this contact then gets your agent's tools for these, with nobody checking.";
     return { fields: { [ALWAYS_ALLOW_FIELD]: { type: 'boolean', title: "Don't ask again for this contact", description: text, default: false } }, offered };
