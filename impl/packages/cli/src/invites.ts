@@ -72,10 +72,10 @@ export interface InviteResult {
  * `name` goes into the link (only when the human asked: it makes the link
  * longer, NOTES 105); `from` names the inviter in the share text only.
  */
-export function createInviteIn(agent: Agent, opts: { tier: Tier; scope?: GrantScope; expires: string; name?: string; label?: string; from?: string; standing?: InviteStanding }): InviteResult {
+export function createInviteIn(agent: Agent, opts: { tier: Tier; scope?: GrantScope; expires: string; name?: string; label?: string; from?: string; standing?: InviteStanding; via?: 'assistant'; suggestedLabel?: string }): InviteResult {
   let made: CreatedInvite;
   try {
-    made = agent.createInvite({ tier: opts.tier, scope: opts.scope, expires: opts.expires, name: opts.name, label: opts.label, standing: opts.standing });
+    made = agent.createInvite({ tier: opts.tier, scope: opts.scope, expires: opts.expires, name: opts.name, label: opts.label, standing: opts.standing, via: opts.via, suggestedLabel: opts.suggestedLabel });
   } catch (err) {
     throw new CliError((err as Error).message, 2);
   }
@@ -103,6 +103,9 @@ export function inviteListView(v: InviteView) {
     ...(v.label !== undefined ? { label: v.label } : {}),
     // The owner's own choice on the form (NOTES 112), for the one contact that redeems it; never the record it is bound to.
     ...(v.standing ? { auto_approve_when_used: v.standing.covers } : {}),
+    // Made by the owner's assistant under their setting on the gateway (NOTES 113); the note is the assistant's, not a label.
+    ...(v.via ? { via: v.via } : {}),
+    ...(v.suggestedLabel !== undefined ? { suggested_label: v.suggestedLabel } : {}),
     ...(v.used ? { redeemed_at: v.used.at, redeemed_by: v.used.by, redeemed_by_fingerprint: fingerprint(v.used.by) } : {}),
     ...(v.revoked ? { revoked_at: v.revoked, revoked_by: v.revokedBy ?? 'owner' } : {}),
   };
@@ -183,6 +186,7 @@ export async function inviteList({ home, out }: Ctx): Promise<void> {
       { event: 'invite', ...x },
       `${x.invite_id}  ${x.status}  tier ${x.tier}  expires ${x.expires}` +
         (x.label ? `  for ${clean(x.label)}` : '') +
+        (x.via ? `  made by your assistant${x.suggested_label !== undefined ? ` (its note: ${clean(x.suggested_label)})` : ''}` : '') +
         (x.redeemed_by ? `  redeemed by ${x.redeemed_by} (${x.redeemed_by_fingerprint}) at ${x.redeemed_at}` : ''),
     );
   }

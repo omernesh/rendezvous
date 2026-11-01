@@ -344,8 +344,16 @@ async function handleLocked(
       );
       agent.on('invite-redeemed', (r) => {
         events.push({
-          obj: { event: 'invite-redeemed', invite_id: r.invite.id, ...(r.invite.label ? { invite_label: r.invite.label } : {}), ...contactView(r.contact) },
-          human: `invite ${r.invite.id}${r.invite.label ? ` (for ${clean(r.invite.label)})` : ''} was used: ${contactText(r.contact)}. Not who you meant? Revoke the contact.`,
+          obj: {
+            event: 'invite-redeemed',
+            invite_id: r.invite.id,
+            ...(r.invite.label ? { invite_label: r.invite.label } : {}),
+            // Made by the assistant under the owner's setting (NOTES 113): the note is the assistant's, and names nobody.
+            ...(r.invite.via ? { via: r.invite.via } : {}),
+            ...(r.invite.suggestedLabel !== undefined ? { suggested_label: r.invite.suggestedLabel } : {}),
+            ...contactView(r.contact),
+          },
+          human: `invite ${r.invite.id}${r.invite.label ? ` (for ${clean(r.invite.label)})` : ''}${r.invite.via ? ', made by your assistant,' : ''} was used: ${contactText(r.contact)}. Not who you meant? Revoke the contact.`,
         });
         // What our human chose on the invite's form (NOTES 112): now, for this contact only.
         if (!r.invite.standing) return;

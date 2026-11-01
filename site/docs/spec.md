@@ -706,6 +706,19 @@ the secret, never the secret (the reference: SHA-256 over
 `"rdv1/invite\0" ‖ secret bytes`; the secret has 128 bits, so a slow hash
 adds nothing), and shows the link once.
 
+A host MAY let its owner give a standing approval, once per agent and
+revocable, for links their assistant makes without asking (**spec change**,
+NOTES 113; the reference: its gateway). Such a link MUST give the lowest terms
+whatever the assistant asks: tier `stranger`, no meetings, no capabilities, no
+standing approval, a short life (the reference: at most 7 days). The host MUST
+NOT take the assistant's words for the owner's label: it does not name the
+contact, since a link goes to whoever opens it first and a name decides who
+"tell John" reaches. A request for more goes to the ordinary approval and is
+never lowered in silence; the host MUST cap the number open at once, and SHOULD
+tell the owner of each one without going through the assistant. Turning the
+approval on is an owner's approval under §5.5, which no assistant can give.
+Nothing of this is on the wire.
+
 **Redeeming.** The invitee's agent sends an ordinary contact request
 (§5.1) to `a`, in an envelope on the relays `r`, with `to_hint` = `a` and
 `invite` = `s`, and records it as a request sent to that agent (only a grant

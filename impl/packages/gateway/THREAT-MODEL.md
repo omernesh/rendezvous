@@ -36,6 +36,9 @@ tokens) and 93 (slice 2: the built-in OAuth 2.1 authorization server).
 | Someone who learned the PIN, from the network (NOTES 110) | unlock the page, so also the settings page | read a token's value or hash, a webhook secret or its path; set a webhook; add, remove or move an agent; clear the PIN wait |
 | A token or OAuth grant of one agent on a multi-agent gateway (NOTES 104), or whoever steers its assistant | everything its scopes allow on its own agent | call tools on, read the inbox of, see or answer approvals of, or take held results (invite links) of any other agent; open or reuse a session under another agent |
 | The owner's webhook receiver, the network to it, or a name it resolves through (NOTES 106) | receive, delay or refuse the agent's signed event notices | approve, grant or revoke anything; get an invite link, a key or message text; redirect the gateway to a private address; get another agent's events |
+| A prompt injection steering an assistant whose owner turned on "may create invites without asking" (NOTES 113), or someone holding its leaked token | make stranger-level invite links on that agent, up to 5 open, and hand them to anyone | turn the setting on or change it; give a link more than a stranger's terms (no meetings, no invoke, no standing approval, at most 7 days); name a contact, or take the name of one ("tell John"); pass the cap; act quietly (each link logs, audits and sends the owner a webhook event) |
+| Whoever opens such a link first (NOTES 113) | become a stranger contact, who can write to the agent (100 messages a day) | propose meetings; invoke anything; be auto-approved; answer to a name, until the owner types one |
+| Any reader of the event log or the webhook (NOTES 113) | see that an assistant made an invite, its id, tier and expiry | get the link: it goes only into the result of the call that made it |
 
 The last row is the one the second review found: `echo 123456 | rdv-gateway
 pin set` followed by two posts to the page approved anything. What stops it
@@ -317,6 +320,31 @@ label and capabilities for an invite are suggestions beside the fields; the
 page starts at `friend`, the profile name, no label and the capabilities
 unticked.
 
+**Invites the assistant makes without asking** (NOTES 113). *New surface:*
+before it, every invite was a decision on the page. With the owner's standing
+choice, one per agent, default off, an assistant with `contact:request` (or an
+injection steering it) gets a bearer link in its tool result with nobody looking.
+*Controls:* only the owner turns it on, on the settings page, with the PIN again
+(it outlives the session), so everything in **The settings page** below applies;
+no tool, REST route or scope reaches it. It is stored in `gateway.json` for one
+binding and identity, so it does not leak to another agent or to one that later
+takes the name. The server forces the terms: tier stranger, no meetings, no
+capabilities, no standing approval, at most 7 days. Asking for more is not lowered
+but goes to the ordinary page, as does a sixth open link (counted under the home
+lock). The model's `label` never names the contact: a collision check protects
+only the names that exist today, while a planted name would misroute a clean
+session's "tell my accountant" later, so it stays a note that nothing resolves, and
+the owner types any name with `rdv_label` on the page. Each link logs an `admin:`
+line and an audit line and sends a metadata-only `invite_created_by_assistant`
+event (in the webhook's default set); the settings page lists the open ones with a
+Revoke. *Limits:* used and revoked links free their slots, so the cap bounds what
+waits, not how many stranger contacts an injected assistant makes over time, and
+each new stranger is one more source of peer text reaching the assistant. Without a
+webhook, the owner learns of a link from the settings page, the log or the assistant
+itself. A link already made outlives the setting until it expires or is revoked.
+With a shell on the gateway host the setting falls like the rest of `gateway.json`
+(#51, #126: the guard refuses the file, the real boundary is file permissions).
+
 **Several agents on one gateway** (NOTES 104). *Blast radius:* one process
 holds several keys, and so does one disk. Whatever reaches the process or
 the root folder (code execution in the gateway, the container's volume, a
@@ -406,7 +434,8 @@ assistant had asked for. Now whoever holds the PIN and reaches the page can
 also, from the network, make a token with any scopes for any agent served
 (lasting access until revoked, still unable to approve anything), revoke
 tokens and connections, turn a webhook off, turn a contact's auto-approve off
-(it only narrows), and change the PIN (locking the
+(it only narrows), let the assistant make stranger-level invites without asking
+(NOTES 113; the PIN again, as for a token), and change the PIN (locking the
 owner out until they set a new one in their terminal: `pin set` asks for
 the current PIN, so a lost PIN means editing `gateway.json` on the host).
 *Controls:* the page lives under `/approve/admin` and goes through the same

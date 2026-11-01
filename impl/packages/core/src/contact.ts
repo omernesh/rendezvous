@@ -598,6 +598,17 @@ export interface InviteRecord {
   revokedBy?: 'owner' | 'restore' | 'exposed';
   /** Only while the invite is open; gone once it was used, revoked or expired. */
   standing?: InviteStanding;
+  /**
+   * Made by the owner's assistant under their standing choice on the gateway's
+   * settings page (NOTES 113), not on a form. Local only, never in the link or
+   * on the wire. It marks the record and counts toward that choice's cap.
+   */
+  via?: 'assistant';
+  /**
+   * What the assistant called the person, kept as a note on such an invite. Not
+   * a label: it never names the contact (only `label`, our human's, does).
+   */
+  suggestedLabel?: string;
 }
 
 /** An invite as `listInvites` shows it: never the hash. */
@@ -956,7 +967,7 @@ export class ContactBook {
    * is not stored (only its hash), so the link can only be shown now.
    */
   addInvite(
-    opts: { tier: Tier; scope: GrantScope; expires: string; name?: string; label?: string; standing?: InviteStanding },
+    opts: { tier: Tier; scope: GrantScope; expires: string; name?: string; label?: string; standing?: InviteStanding; via?: 'assistant'; suggestedLabel?: string },
     now = new Date(),
   ): { record: InviteRecord; secret: string } {
     if (!isTier(opts.tier)) throw new Error(`unknown tier ${String(opts.tier)}`);
@@ -983,6 +994,8 @@ export class ContactBook {
       ...(opts.name !== undefined ? { name: cleanInviteName(opts.name) } : {}),
       ...(opts.label !== undefined ? { label: cleanLabel(opts.label) } : {}),
       ...(opts.standing ? { standing: { covers: [...opts.standing.covers], owner: opts.standing.owner } } : {}),
+      ...(opts.via ? { via: opts.via } : {}),
+      ...(opts.suggestedLabel !== undefined ? { suggestedLabel: cleanLabel(opts.suggestedLabel) } : {}),
     };
     invites[id] = record;
     return { record, secret };

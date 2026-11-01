@@ -48,7 +48,7 @@ export class Approvals {
     const key = callKey(a.tool, a.args, a.principal);
     for (const p of this.byId.values()) {
       if (callKey(p.tool, p.args, p.principal) === key) {
-        Object.assign(p, { form: a.form, suggestions: a.suggestions, askedBy, changed: false });
+        Object.assign(p, { form: a.form, suggestions: a.suggestions, note: a.note, askedBy, changed: false });
         return this.urlFor(p.id);
       }
     }

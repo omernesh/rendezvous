@@ -48,6 +48,17 @@ export interface StoreData {
   owner?: { salt: string; hash: string; created: string };
   lockout: { failures: number; until?: number; last?: number };
   tokens: Record<string, ApiToken>;
+  /**
+   * "My assistant may create invites without asking" (NOTES 113), by the agent's binding, as for tokens. Present
+   * means on, and only for the identity it records; missing means off.
+   */
+  assistantInvites?: Record<string, AssistantInvitesSetting>;
+}
+
+export interface AssistantInvitesSetting {
+  /** The identity (rdv1:…) it was turned on for: another agent that later takes the binding starts with it off. */
+  agentId: string;
+  since: string;
 }
 
 const empty = (): StoreData => ({ v: 1, lockout: { failures: 0 }, tokens: {} });
@@ -73,6 +84,14 @@ export function pinRuleError(pin: string): string | undefined {
 
 /** `pinSetAt` is the PIN's `created` the check actually ran against: an effect it authorizes must still find that PIN in place. */
 export type PinCheck = { ok: true; pinSetAt: string } | { ok: false; lockedFor?: number; noPin?: boolean };
+
+/** The setting follows its agent through `agent migrate` and its undo; the identity it records is checked at every read. */
+function moveAssistantInvites(d: StoreData, from: string, to: string): void {
+  const all = d.assistantInvites;
+  if (!all || !Object.hasOwn(all, from)) return;
+  all[to] = all[from];
+  delete all[from];
+}
 
 export class GatewayStore {
   readonly path: string;
@@ -261,6 +280,7 @@ export class GatewayStore {
           n += 1;
         }
       }
+      moveAssistantInvites(d, ROOT_BINDING, to);
       return n;
     });
   }
@@ -291,16 +311,53 @@ export class GatewayStore {
           n += 1;
         }
       }
+      moveAssistantInvites(d, to, ROOT_BINDING);
       return n;
     });
   }
 
-  /** `agent remove --force`: every token of that agent is revoked. */
+  /** `agent remove --force`: every token of that agent is revoked, and its assistant-invite setting goes with it. */
   async revokeAgent(agent: string): Promise<string[]> {
     return this.update((d) => {
       const gone = Object.values(d.tokens).filter((t) => t.agent === agent).map((t) => t.id);
       for (const id of gone) delete d.tokens[id];
+      if (d.assistantInvites && Object.hasOwn(d.assistantInvites, agent)) delete d.assistantInvites[agent];
       return gone;
+    });
+  }
+
+  // --- "My assistant may create invites without asking" (NOTES 113) ----------------
+
+  /** Whether the owner turned it on for this agent: this binding and this identity. Anything else, or a file that does not read, is off. */
+  assistantInvitesOn(binding: string, agentId: string): boolean {
+    return this.assistantInvitesSince(binding, agentId) !== undefined;
+  }
+
+  /** When it was turned on, if it is on (assistantInvitesOn). */
+  assistantInvitesSince(binding: string, agentId: string): string | undefined {
+    try {
+      const all = this.read().assistantInvites;
+      const s = all && Object.hasOwn(all, binding) ? all[binding] : undefined;
+      return s?.agentId === agentId ? s.since : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** The owner turned it on, after giving the PIN: it must still be the PIN they gave (like a token made on the page). */
+  async enableAssistantInvites(binding: string, agentId: string, expectedPinSetAt: string): Promise<void> {
+    await this.update((d) => {
+      if (d.owner?.created !== expectedPinSetAt) throw new PinChangedError('the PIN changed meanwhile');
+      (d.assistantInvites ??= {})[binding] = { agentId, since: new Date().toISOString() };
+    });
+  }
+
+  /** The owner turned it off. Whether it was on. */
+  async disableAssistantInvites(binding: string): Promise<boolean> {
+    return this.update((d) => {
+      if (!d.assistantInvites || !Object.hasOwn(d.assistantInvites, binding)) return false;
+      delete d.assistantInvites[binding];
+      return true;
     });
   }
 

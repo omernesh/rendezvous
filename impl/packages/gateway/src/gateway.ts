@@ -273,6 +273,11 @@ export class Gateway {
             this.log(label(`waiting for you: ${x.form.message.split('\n')[0]} (${url})`));
             return url;
           },
+          // The owner's standing choice for this agent (NOTES 113), read at each use, bound to the identity like a token.
+          assistantInvites: () => {
+            const id = ids[found.indexOf(a)];
+            return id !== undefined && this.store.assistantInvitesOn(a.root ? ROOT_BINDING : a.name, id);
+          },
         },
         calendar: calendars.get(a.name),
         calendarDirs: opts.calendarDirs,
@@ -1061,6 +1066,40 @@ export class Gateway {
       return show(200, { text: `Invite ${id} no longer puts whoever uses it on auto-approve. The link still works as an ordinary invite.` });
     }
 
+    if (action === 'assistant-invites/on') {
+      const rt = this.byName.get(agentName);
+      if (!rt) return bad(400, 'No such agent; nothing changed.');
+      // It outlives this session, so it asks for the PIN again, with the same backoff as the unlock (like making a token).
+      const check = await this.ownerPin(who, form.get('pin') ?? '', 'gateway settings page (assistant invites)');
+      if (!check.ok) return bad(check.status, `${check.text} Nothing changed.`);
+      if (!rt.id) return bad(409, `Agent ${rt.name}'s identity cannot be read; nothing changed.`);
+      try {
+        await this.store.enableAssistantInvites(rt.root ? ROOT_BINDING : rt.name, rt.id, check.pinSetAt);
+      } catch (err) {
+        if (err instanceof PinChangedError) return bad(409, 'The PIN changed meanwhile; nothing changed. Unlock again.');
+        throw err;
+      }
+      this.log(`admin: the assistant of agent ${rt.name} may now create invites without asking (stranger only), turned on on the gateway settings page`);
+      return show(200, { text: `Your assistant can now make stranger-level invite links for ${rt.name} without asking. Turn it off here any time.` });
+    }
+
+    if (action === 'assistant-invites/off') {
+      const rt = this.byName.get(agentName);
+      if (!rt) return bad(400, 'No such agent; nothing changed.');
+      if (!(await this.store.disableAssistantInvites(rt.root ? ROOT_BINDING : rt.name))) return show(200, { text: `It was already off for ${rt.name}.` });
+      this.log(`admin: the assistant of agent ${rt.name} may no longer create invites without asking, turned off on the gateway settings page`);
+      return show(200, { text: `Every new invite for ${rt.name} asks you again. Links already made keep working until you revoke them.` });
+    }
+
+    if (action === 'invite/revoke') {
+      const rt = this.byName.get(agentName);
+      if (!rt) return bad(400, 'No such agent; nothing changed.');
+      const id = form.get('id') ?? '';
+      if (!(await rt.server.revokeAssistantInviteFromSettings(id))) return bad(404, 'That is not an open invite your assistant made (it may have been used, revoked or expired); nothing changed.');
+      this.log(`admin: invite ${id} of agent ${rt.name}, made by the assistant, revoked on the gateway settings page`);
+      return show(200, { text: `Invite ${id} is revoked: the link no longer works.` });
+    }
+
     if (action === 'notify/clear') {
       const rt = this.byName.get(agentName);
       if (!rt) return bad(400, 'No such agent; nothing changed.');
@@ -1124,6 +1163,11 @@ export class Gateway {
         grants: o.grants.filter((g) => this.bindingIsFor(g.agent, rt.name)).map((g) => grantView(g, rt.name)),
         autoApproved: rt.server.autoApprovedContacts(),
         armedInvites: rt.server.armedInvites(),
+        ...(() => {
+          const since = rt.id ? this.store.assistantInvitesSince(binding, rt.id) : undefined;
+          return since ? { assistantInvitesSince: since } : {};
+        })(),
+        assistantInvites: rt.server.assistantMadeInvites().map(({ suggestedLabel, ...i }) => ({ ...i, ...(suggestedLabel !== undefined ? { note: suggestedLabel } : {}) })),
         ...(cfg
           ? {
               webhook: {

@@ -5382,6 +5382,80 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
     - **Covered by.** `mcp/test/contactbox.test.ts`,
       `gateway/test/contactbox.test.ts`, `core/test/invite.test.ts`.
 
+113. **The owner may let their assistant make low-tier invites without asking**
+    (**spec change**, §5.2.3; the owner's decision, 2026-11-01: an invite needing
+    the page and the PIN each time is tedious; he wants to say "invite Ran" and
+    have the link in chat or by email). Gateway only: a local client already gets
+    an inline form. No wire change; the test vectors are unchanged.
+    - **The setting.** "My assistant may create invites without asking", per
+      agent, on `/approve/admin`, default off. It lives in `gateway.json`
+      (`assistantInvites[binding] = { agentId, since }`), written through
+      `GatewayStore.update`, so `gateway.lock` and the atomic write; present
+      means on, and only for the identity it records, so an agent that later
+      takes the binding starts with it off. `agent migrate` moves it
+      (`rebindAgent`, undone by `unbindAgent`), and `agent remove` and `add`
+      drop it (`revokeAgent`). A migrate killed halfway and resumed with no
+      token left on the root leaves it on the root marker: it reads as off,
+      the safe side, so it is not one of the bindings that block a migrate.
+      On needs the PIN again (`ownerPin`, the same check and backoff as token
+      create, and the PIN checked must still be in place under the lock) because
+      it outlives the session; off needs only the session. The setting has no
+      tool, REST route or scope; bearers are refused like every admin path.
+    - **When on.** `rdv_invite` "create" from a principal (`contact:request`, the
+      scope table) returns `url` and `share_text` in the tool result, on terms
+      the server forces: tier `stranger`, no meetings, no `invoke`, no standing
+      approval, `expires_days` or 7. `assistantInvite` runs before the form, and
+      never on a run carrying the owner's answer: an approved form finishes as
+      that form says, even with the setting on. The setting is read again and the
+      cap counted under the home lock, so parallel calls cannot pass it.
+    - **More is never lowered.** A `tier` other than stranger, meetings true, any
+      `invoke` or over 7 days goes to the ordinary page, whose defaults are as
+      they always were, and the note says so. A `name` argument is the exception:
+      it is dropped and the result says so (`name_note`), since the name in a link
+      is the owner's words and going to the page over it would defeat the point;
+      the message to send still names the owner's profile.
+    - **The label decision: a model's label never names a contact.** The brief
+      offered refusing collisions and accepting the rest, or leaving the contact
+      unlabelled. I chose the second, for every label, because the first is not
+      safe: a label decides who "tell John" reaches, a link goes to whoever opens
+      it first, and a collision check protects only names that exist today. An
+      injected assistant could make a link labelled "Mom" or "my accountant", pass
+      it to its attacker, and a clean session weeks later would send "tell my
+      accountant my SSN" to that contact. So the invite stores no `label`, and the
+      model's word is kept as `suggestedLabel`, a note: shown by `rdv_invite`
+      "list", in `invite_redeemed` as `suggested_label` and on the settings page
+      as "its note", none of which `rdv_send` resolves. The note exists so a later
+      session can still say which link this was; it proves nothing about who used
+      it, and the texts say so. One that collides with an existing contact's label
+      or nickname (`nameClash`, also through "John's agent") is not even kept, and
+      the result says so (`label_note`). To name the contact the assistant offers
+      `rdv_label`, where the owner types the name on the page. The cost: "tell
+      Ran" takes one approval after Ran accepts, once.
+    - **The cap.** At most 5 open invites with `via: "assistant"`, counted from
+      the records in `agent.json`; the sixth goes to the page with a line beside
+      the form (`ApprovalAsk.note`, not in the digest, so a slot freed while the
+      form waits does not make the owner's answer stale). Revoked, used and
+      expired ones do not count. `via` and `suggestedLabel` are on the local
+      record only, never in the link or on the wire.
+    - **What the owner sees.** `rdv_invite` "list" shows `via`. The settings page
+      lists the open ones (id, the assistant's note, escaped, made, until) with a
+      Revoke that takes only an open invite the assistant made, behind the session,
+      CSRF and agent checks, with an `admin:` line and an audit line. Each creation
+      logs an `admin:` line (the principal's id), an audit line (`gate: invite`,
+      `by: assistant-setting`) and an `invite_created_by_assistant` event: an `mcp`
+      item in `events.jsonl`, which every client of the home reads, so metadata
+      only and never the link. The webhook carries it, in the default set for new
+      `notify set` calls; an existing webhook keeps the events it was set with.
+      `invite_redeemed` says `via: "assistant"` in the inbox and the webhook; the
+      note is not in the webhook (the assistant's words).
+    - **Accepted.** Used ones free slots, as the brief says, so five open is a cap
+      on what waits and not on how many stranger contacts an injected assistant
+      can make over time; each one is reported, and a contact it made can only
+      write. A create and revoke loop can also fill a webhook's outbox up to its
+      caps (the per-token rate of 120 a minute applies). Not built: a rate on
+      creations. Worth a look if the setting is used widely.
+    - **Covered by.** `gateway/test/assistantinvites.test.ts`.
+
 ## Not implemented yet
 
 
