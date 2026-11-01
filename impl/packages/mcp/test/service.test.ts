@@ -12,6 +12,7 @@ import { type Home, serviceDefinition, type ServiceEnv, type ServicePlatform, tr
 import { startTestRelay, type TestRelay } from '@rendezvous/core/testing';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { type ElicitHandler, makeSide, ok, type Side, waitEvent } from './flow.js';
+import { quickReason } from '../src/server.js';
 
 const T = 15_000;
 const NAME = 'rdv-listen-omer';
@@ -61,6 +62,7 @@ function fakeOs(dir: string) {
   const os = { env, calls, tasks, regOverride: undefined as string | undefined, home: undefined as Home | undefined, held: undefined as (() => void) | undefined, took: false, noTake: false };
   const registered = () => os.regOverride ?? serviceDefinition(os.home!.dir, 'omer', env).registered;
   const take = () => {
+    os.regOverride = undefined; // (re)installing registers the real definition again
     if (os.noTake) return;
     const l = tryLongLock(os.home!.listenerLockPath, ROLE);
     os.took = !!l.release;
@@ -290,6 +292,39 @@ describe('rdv_service', () => {
     tamper(true);
     await run(6 * 60_000);
     expect(warnings()).toBe(2);
+  });
+
+  it('a reinstall or a remove forgets reported tampering: the same change afterwards warns again (issue #118)', { timeout: 60_000 }, async () => {
+    const { s: side, os } = await omer({ elicit: human(yes).handler });
+    await ok(side, 'rdv_service', { action: 'install' });
+    const timed = await makeSide('omer-clock2', side.home.dir, { elicit: human(yes).handler, service: { env: os.env, run: os.run, waitMs: 500 } });
+    sides.push(timed);
+    const warnings = () => timed.humanLog.filter((l) => l.includes('WARNING: the background listener')).length;
+    const orig = os.tasks.get(NAME);
+    const tamper = () => {
+      if (os.env.platform === 'win32') os.tasks.set(NAME, orig!.replace('</Arguments>', ' --auto-grant friend</Arguments>'));
+      else os.regOverride = 'something-else';
+    };
+    tamper();
+    await ok(timed, 'rdv_service', { action: 'status' });
+    expect(warnings()).toBe(1);
+    await ok(timed, 'rdv_service', { action: 'install' }); // puts it back
+    tamper();
+    await ok(timed, 'rdv_service', { action: 'status' });
+    expect(warnings()).toBe(2);
+    await ok(timed, 'rdv_service', { action: 'remove' });
+    await ok(timed, 'rdv_service', { action: 'install' });
+    tamper();
+    await ok(timed, 'rdv_service', { action: 'status' });
+    expect(warnings()).toBe(3);
+  });
+
+  it('a registration reason is full-only whatever OS text ends it (issue #118)', () => {
+    expect(quickReason('what the OS runs is not what was installed: x is gone')).toBe(false);
+    expect(quickReason('what the OS runs is not what was installed: x was changed')).toBe(false);
+    expect(quickReason('it runs with --auto-grant')).toBe(false);
+    expect(quickReason('/path/unit.service is gone')).toBe(true);
+    expect(quickReason('there is no record of what was installed')).toBe(true);
   });
 
   it('a profile that cannot name a service is refused at rdv_init, and an existing one at install', { timeout: 60_000 }, async () => {
