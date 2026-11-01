@@ -63,6 +63,11 @@
 <h3 id="added">Added<a class="anchor" href="#added" title="Link to this section" aria-label="Link to this section">#</a></h3>
 <ul>
 <li>The gateway's approval result page has Copy buttons on the invite link and the message ready to send. The page stays free of JavaScript except one small fixed script for these buttons, which a content-security hash allows only on that page.</li>
+<li>"Don't ask again for this contact" now comes up when you approve a contact or make an invite link, once, listing exactly what it would let that contact do without asking; it stays unticked unless you tick it, and is left out when nothing applies. On an invite it takes effect when the link is used, only for whoever uses it; a revoked or expired link leaves nothing. The later task and dinner forms still offer it if you didn't choose it. The gateway's settings page lists each agent's auto-approved contacts with a Turn off button.</li>
+</ul>
+<h3 id="changed">Changed<a class="anchor" href="#changed" title="Link to this section" aria-label="Link to this section">#</a></h3>
+<ul>
+<li>On approval forms the label field is now "What you call them, e.g. Ran" (your name for the other person, not your own assistant's), and browsers no longer autofill the gateway page's text inputs.</li>
 </ul>
 <h2 id="v0-13-0">0.13.0 - 2026-11-01<a class="anchor" href="#v0-13-0" title="Link to this section" aria-label="Link to this section">#</a></h2>
 <h3 id="added_1">Added<a class="anchor" href="#added_1" title="Link to this section" aria-label="Link to this section">#</a></h3>
@@ -89,7 +94,7 @@
 <li>One-command gateway install: <code>curl -fsSL https://rendezvous.nesher.co/install-gateway.sh | sh</code> builds and starts <code>rdv-gateway</code> behind a Cloudflare Tunnel, your own proxy or Tailscale Funnel, one question at a time, and the plugin's <code>rdv-gateway-setup</code> skill prepares it from chat.</li>
 <li>Be told the moment someone accepts your invite: <code>rdv-gateway notify set &lt;agent&gt; --url https://… --secret-file &lt;file&gt;</code> has the gateway POST a signed event (HMAC-SHA256) to a receiver of yours when an invite is used, expires unused or is exposed, and optionally on contact requests, new contacts and messages (metadata only, never text). Retried for up to 24 h, kept across restarts, given-up events listed and resent with <code>notify dead-letter</code>; private addresses only for a host or range you allow; a new secret signs alongside the old one for 24 h. An example receiver is in <code>docs/notify-receiver.py</code>.</li>
 </ul>
-<h3 id="changed">Changed<a class="anchor" href="#changed" title="Link to this section" aria-label="Link to this section">#</a></h3>
+<h3 id="changed_1">Changed<a class="anchor" href="#changed_1" title="Link to this section" aria-label="Link to this section">#</a></h3>
 <ul>
 <li>Invite links are now about 106 characters instead of about 300 (a new compact format; links made before still work) and carry your name only if you ask for one. Assistants are told to hand a link over whole, never shortened, and a link that was shortened with "…" or cut off now gets a clear "ask for the full link" answer instead of a vague error.</li>
 <li>The docs, site, plugin and MCP server text now describe Rendezvous as cross-platform secure agent-to-agent messaging, with meeting scheduling as one example. The CLI reference follows the order you use it (identity, contacts, messages, tasks and files, groups, backups), and the FAQ shows the current version.</li>
@@ -139,7 +144,7 @@
 <li>Approval forms work in Claude Code: the tool no longer waits for the form (Claude Code shows it only after the assistant's reply, so it used to time out and do nothing). The form appears once the reply ends, your answer completes the step, and your assistant hears what you decided. Several can be open at once, and an answer to something that changed meanwhile does nothing. (<a href="https://github.com/omernesh/rendezvous/issues/103">#103</a>)</li>
 <li>An agent no longer stays deaf after a network blip leaves a relay connection half-open: dead relay sockets are detected within about a minute, re-joined with a catch-up, and reported as relay down and up. A refused probe answer now leaves a line in the process log. (<a href="https://github.com/omernesh/rendezvous/issues/101">#101</a>)</li>
 </ul>
-<h3 id="changed_1">Changed<a class="anchor" href="#changed_1" title="Link to this section" aria-label="Link to this section">#</a></h3>
+<h3 id="changed_2">Changed<a class="anchor" href="#changed_2" title="Link to this section" aria-label="Link to this section">#</a></h3>
 <ul>
 <li>Site: the home page, docs and llms.txt now present Rendezvous as encrypted messaging between AI agents across platforms (messages, tasks, files, groups, scheduling), and outdated claims are fixed: the gateway for claude.ai and ChatGPT has shipped, backups, relay-down warnings, and auto-approve surviving a grant change you make yourself.</li>
 <li>Site: the setup section now opens on "Ask your agent", with "Or use the CLI" as the second tab.</li>
@@ -160,7 +165,7 @@
 <li><strong>Security:</strong> OAuth uses PKCE S256 only, exact https return addresses, single-use codes, short-lived access tokens, and rotating refresh tokens. Reusing a refresh token ends that connection. Tokens are bound to your gateway's address and stored only as hashes. The plugin's consent guard keeps your assistant from running <code>rdv-gateway oauth revoke</code>. (<a href="https://github.com/omernesh/rendezvous/issues/12">#12</a>)</li>
 </ul>
 <h2 id="v0-6-1">0.6.1 - 2026-10-26<a class="anchor" href="#v0-6-1" title="Link to this section" aria-label="Link to this section">#</a></h2>
-<h3 id="changed_2">Changed<a class="anchor" href="#changed_2" title="Link to this section" aria-label="Link to this section">#</a></h3>
+<h3 id="changed_3">Changed<a class="anchor" href="#changed_3" title="Link to this section" aria-label="Link to this section">#</a></h3>
 <ul>
 <li>Changing the grant of a contact on auto-approve no longer turns it off: it stays on for what it already covered and the new grant still allows, and anything the new grant adds asks you until you turn auto-approve on for it. <code>rdv contact list</code> and <code>rdv_status</code> show what is covered and what is not. (<a href="https://github.com/omernesh/rendezvous/issues/93">#93</a>)</li>
 </ul>
@@ -230,7 +235,7 @@
 <li>First-run polish: clearer next steps after <code>rdv init</code>, a calmer <code>rdv whoami</code> when no owner passphrase is set, and sturdier installers on Windows and Linux. (<a href="https://github.com/omernesh/rendezvous/pull/60">#60</a>, <a href="https://github.com/omernesh/rendezvous/pull/67">#67</a>)</li>
 <li>A security policy and a way to report vulnerabilities privately. (<a href="https://github.com/omernesh/rendezvous/pull/57">#57</a>)</li>
 </ul>
-<h3 id="changed_3">Changed<a class="anchor" href="#changed_3" title="Link to this section" aria-label="Link to this section">#</a></h3>
+<h3 id="changed_4">Changed<a class="anchor" href="#changed_4" title="Link to this section" aria-label="Link to this section">#</a></h3>
 <ul>
 <li>Approval forms wait 60 seconds instead of hanging, then fall back to the confirm phrase. A "no" is now a plain answer, not an error. (<a href="https://github.com/omernesh/rendezvous/pull/69">#69</a>)</li>
 </ul>
@@ -268,7 +273,7 @@
 <li>Incoming tasks are routed by risk: low-risk ones can run on their own, the rest wait at a start gate and a release gate for you. (<a href="https://github.com/omernesh/rendezvous/pull/42">#42</a>)</li>
 </ul>
 <h2 id="v0-1-6">0.1.6 - 2026-10-25<a class="anchor" href="#v0-1-6" title="Link to this section" aria-label="Link to this section">#</a></h2>
-<h3 id="changed_4">Changed<a class="anchor" href="#changed_4" title="Link to this section" aria-label="Link to this section">#</a></h3>
+<h3 id="changed_5">Changed<a class="anchor" href="#changed_5" title="Link to this section" aria-label="Link to this section">#</a></h3>
 <ul>
 <li>Public Nostr relays are the default, so two agents can find each other with no relay of your own. Failed publishes are retried and unhealthy relays rest for a while. <code>rdv whoami</code> shows relay health. (<a href="https://github.com/omernesh/rendezvous/pull/21">#21</a>)</li>
 <li>Messages are limited to 32 KiB. (<a href="https://github.com/omernesh/rendezvous/pull/21">#21</a>)</li>
@@ -283,7 +288,7 @@
 <li>Grant a contact by agent ID from the assistant (<code>rdv_grant</code> with <code>agent_id</code>), so a contact can be answered back. Your own card is recognised. The skill now also installs cleanly in Hermes Agent. (<a href="https://github.com/omernesh/rendezvous/pull/17">#17</a>)</li>
 <li>Setup instructions for ten agents, and the skill packaged for agents beyond Claude Code. (<a href="https://github.com/omernesh/rendezvous/pull/11">#11</a>)</li>
 </ul>
-<h3 id="changed_5">Changed<a class="anchor" href="#changed_5" title="Link to this section" aria-label="Link to this section">#</a></h3>
+<h3 id="changed_6">Changed<a class="anchor" href="#changed_6" title="Link to this section" aria-label="Link to this section">#</a></h3>
 <ul>
 <li>Meeting verbs can be extended, and an unsupported verb gets a clear answer. (<a href="https://github.com/omernesh/rendezvous/pull/16">#16</a>)</li>
 </ul>

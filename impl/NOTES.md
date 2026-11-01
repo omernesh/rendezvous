@@ -5274,6 +5274,84 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
     - **Covered by.** `gateway/test/invite.test.ts`: markup, hash against
       the served text, the exact CSP, and `PAGE_CSP` on the other pages.
 
+## "Don't ask again" when a contact is made
+
+112. **The choice comes forward: the forms that make a contact offer it, once**
+    (**spec change**, §5.5.1; the owner's words, 2026-11-01: "the order is
+    wrong. when the two agents are approved by the users to communicate, the
+    users should allow/disallow approve all. saves for future nagging"). No
+    wire change; the test vectors are unchanged. Reuses the storage, MAC,
+    events and off path of NOTES 96; there is no second mechanism.
+    - **Where.** `rdv_grant` for a request (`grantRequest`) or a probe answer
+      (`confirmCandidate`), and `rdv_invite` "create"; locally and on the
+      gateway's PIN page, in the one `always_allow` field, with the title of
+      NOTES 96. `rdv_grant` with `agent_id` keeps its form as it is: it makes
+      no contact. **Worth a later decision:** that form is where a contact we
+      requested first gets rights, so the requester's human still sees the box
+      only on a later task or dinner form.
+    - **What it lists** (`contactAlwaysOffer`, `coverageOf`): exactly what
+      auto-approve would cover under the scope the form would grant, which is
+      the existing rule (a dinner the contact proposes; the start and release
+      of tasks it may invoke; never meeting-cancel or groups), and it is absent
+      when that is nothing. The tier plays no part: in this code a tier never
+      grants a capability, the scope does, so a stranger granted meetings is
+      offered meetings and one granted nothing sees no box. **A probe answer
+      normally shows no box**: `addReceivedGrant` gives it the default inbound
+      rights (`inboundGranted` false), which `autoApproveTarget` refuses. It
+      shows one only when our human had already granted that agent rights,
+      which the confirm keeps.
+    - **Never more than the form leaves.** What is covered is what the box
+      listed intersected with the grant as finally approved: `allowAlways`
+      filters, so unticking "Allow these requests" or meetings narrows it, and
+      a grant that leaves nothing sets nothing and says so. A capability the
+      human adds beyond what the box listed (ticking meetings an assistant
+      asked to leave off) is not covered; the later form offers it. This box
+      covers a list at once, unlike the one capability of NOTES 96: that is
+      what was asked, and the list is in its text.
+    - **Authentication: none beyond the form, matching NOTES 96** and the
+      owner's decision there (2026-10-27), and what production's gateway form
+      did. A form's answer comes from the client's UI or the PIN page, not from
+      the model; `boundForm` already refuses a passphrase field on the gateway.
+      As there, it is not offered when the owner passphrase file is unreadable
+      or one existed and is gone, and the entry binds to the passphrase record
+      at that moment. `rdv_auto_approve` "on" keeps its passphrase.
+    - **Only the human's answer.** No tool takes the field (a test lists the
+      schemas; REST refuses the argument; MCP's schema drops it); it starts
+      `default: false`; `boundForm` keeps only the form's own fields, so an
+      answer on a form with no box is not read; the digest covers its text; a
+      confirm phrase never carries it, since the phrase path has no form. The
+      contact appears by fingerprint only, never by a name a peer wrote.
+    - **An invite's** is stored on its record (`InviteRecord.standing`:
+      `covers` and the owner binding then), since that record already has the
+      right lifetime and lives in `agent.json` beside the key the entry's MAC
+      needs, so no separate MAC buys anything. Core only keeps it; the listener
+      applies it at `invite-redeemed`, under the lock, right after the grant
+      (`applyInviteStanding`): `allowAlways` with `seen: null`, for that peer
+      alone, audited `via: "form"`, with an `auto_approve_on` event and the
+      human's log line. Once redeemed the record drops it, so a second person
+      with the link is an ordinary request and gets nothing. Revoking,
+      exposure, expiry (`dropEndedStanding`, at a listing and in every inbound
+      item) and a restore drop it. A passphrase set, changed or reset since it
+      was chosen ends it, as it ends every entry: the contact stands, an
+      `auto_approve_off` event (reason `owner-secret`) says so.
+    - **The bearer risk is real and accepted.** An invite is a bearer link: if
+      someone else gets there first, they get the standing approval too. The
+      box says exactly that, and the events tell the human at once.
+    - **Later forms.** `alwaysAllowOffer` already offers nothing once covered,
+      and still offers for a capability not covered yet. Unchanged.
+    - **Settings page** (`/approve/admin`, NOTES 110): per agent, each
+      auto-approved contact (fingerprint, the owner's label, coverage, until)
+      and Turn off, through the page's session and CSRF checks; `RdvMcpServer`
+      exposes `autoApprovedContacts` and `turnOffAutoApproveFromSettings`,
+      neither a tool. Audited `via: "settings"`, an `admin:` line, an
+      `auto_approve_off` event. Bearers are refused like every admin path.
+    - **The label field.** Owners put their own assistant's name in "Local
+      label", so it is now "What you call them, e.g. Ran", and the page's text
+      inputs carry `autocomplete="off"` (browsers offered the owner's own
+      name); PIN inputs keep theirs.
+    - **Covered by.** `mcp/test/contactbox.test.ts`,
+      `gateway/test/contactbox.test.ts`, `core/test/invite.test.ts`.
+
 ## Not implemented yet
 
 

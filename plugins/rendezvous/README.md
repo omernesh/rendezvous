@@ -147,11 +147,13 @@ address is only a claim, so it never labels a contact.
 
 Approving a contact: Claude calls `rdv_grant`, and Claude Code shows you an
 approval form (MCP elicitation) once Claude's reply ends. Claude can't fill
-it in for you; your answer completes the step. The forms for a contact's
+it in for you; your answer completes the step. The form that approves a
+contact, the one that makes an invite link, and the forms for a contact's
 task and for a dinner it proposed also have "Don't ask again for this
-contact": tick it with your approval and that contact's tasks of that kind
-(or its dinners) stop asking you, until you ask Claude to turn auto-approve
-off.
+contact": tick it with your approval and what it lists (on the task and
+dinner forms, that contact's tasks of that kind, or its dinners) stops asking
+you, until you ask Claude to turn auto-approve off. On an invite link it
+applies only to the contact that uses the link, when they use it.
 
 Tasks and files (v0.3): ask "Ask John's agent to review this", or answer
 when a contact asks your agent for something. Claude uses `rdv_task` and

@@ -8,6 +8,10 @@ The format follows Keep a Changelog. One line per change a user can see; PR numb
 
 ### Added
 - The gateway's approval result page has Copy buttons on the invite link and the message ready to send. The page stays free of JavaScript except one small fixed script for these buttons, which a content-security hash allows only on that page.
+- "Don't ask again for this contact" now comes up when you approve a contact or make an invite link, once, listing exactly what it would let that contact do without asking; it stays unticked unless you tick it, and is left out when nothing applies. On an invite it takes effect when the link is used, only for whoever uses it; a revoked or expired link leaves nothing. The later task and dinner forms still offer it if you didn't choose it. The gateway's settings page lists each agent's auto-approved contacts with a Turn off button.
+
+### Changed
+- On approval forms the label field is now "What you call them, e.g. Ran" (your name for the other person, not your own assistant's), and browsers no longer autofill the gateway page's text inputs.
 
 ## 0.13.0 - 2026-11-01 {#v0-13-0}
 

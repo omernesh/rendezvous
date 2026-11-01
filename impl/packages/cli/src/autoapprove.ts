@@ -9,9 +9,12 @@
 //   passphrase where only the server sees it (issue #44); or, for the one
 //   capability being approved, by ticking "Don't ask again for this contact"
 //   on that gate's approval form or the gateway's PIN-locked page
-//   (allowAlways, issue #103): the human's own channel, never the model; no
-//   confirm phrase, tool argument or peer can set, extend or change it;
-//   turning it off needs nothing (both hosts);
+//   (allowAlways, issue #103), or, for what a grant being approved allows, by
+//   ticking the same box on the form that makes the contact (rdv_grant, or
+//   rdv_invite "create", which takes effect for whoever redeems that invite;
+//   NOTES 112): the human's own channel, never the model; no confirm phrase,
+//   tool argument or peer can set, extend or change it; turning it off needs
+//   nothing (both hosts, and the gateway's settings page);
 // - local state (autoapprove.json, mode 600), never on the wire; each entry is
 //   MACed with the agent's secret key, so a file written by anything that
 //   cannot read agent.json approves nothing;
@@ -38,7 +41,7 @@
 // Contacts, groups, grants, invoke, limits, cancelling an agreed meeting and
 // auto-approve itself stay with the human every time.
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import { type Agent, type AgentState, b64decode, type Contact, ContactBook, effectiveInvoke, fingerprint, type GrantScope, GROUPS_EXTENSION, MEETING_CANCEL_CAPABILITY, MEETINGS_CAPABILITY, parseTimestamp } from '@rendezvous/core';
+import { type Agent, type AgentState, b64decode, type Contact, ContactBook, effectiveInvoke, fingerprint, type GrantScope, GROUPS_EXTENSION, type InviteStanding, MEETING_CANCEL_CAPABILITY, MEETINGS_CAPABILITY, parseTimestamp } from '@rendezvous/core';
 import { type AuditEntry, type AutoApproveEntry, type AutoApproveOff, CliError, type Home } from './home.js';
 import { sha, stable } from './hash.js';
 import { clean } from './output.js';
@@ -201,6 +204,9 @@ export function autoApprovedFor(home: Home, subject: AutoApproveSubject, peer: s
  */
 const covered = (scope: GrantScope | null | undefined): string[] =>
   Object.keys(effectiveInvoke(scope)).filter((u) => u !== MEETING_CANCEL_CAPABILITY && u !== GROUPS_EXTENSION);
+
+/** What auto-approve could cover under `scope` (covered): the exact list a form that makes a contact may offer. */
+export const coverageOf = (scope: GrantScope | null | undefined): string[] => covered(scope);
 
 /**
  * May auto-approve confirm a meeting in a negotiation `peer` started, now?
@@ -549,7 +555,7 @@ export function autoApproveDigest(c: Contact, capabilities: string[], until: str
 }
 
 /** Turn it off (reduce-only: no confirmation). Inside the home lock. False when it was not on. */
-export function turnOffAutoApprove(home: Home, peer: string, now = new Date(), via: 'cli' | 'mcp' = 'cli'): boolean {
+export function turnOffAutoApprove(home: Home, peer: string, now = new Date(), via: 'cli' | 'mcp' | 'settings' = 'cli'): boolean {
   let all: Record<string, AutoApproveEntry>;
   try {
     all = home.readAutoApprove();
@@ -612,13 +618,65 @@ export function alwaysAllowOffer(
   return { contact: target.contact, until: on?.until ?? null, was: on ? { set: on.set, until: on.until } : null };
 }
 
+/**
+ * What the box on a form that makes a contact (NOTES 112) may offer for the
+ * grant `scope` the form would approve, or null when it is not offered:
+ * nothing applies under that grant, or (as alwaysAllowOffer) the owner
+ * passphrase file is unreadable or a passphrase existed and is gone. Display
+ * only: reads, writes nothing.
+ */
+export function contactAlwaysOffer(home: Home, scope: GrantScope | null | undefined): string[] | null {
+  const capabilities = covered(scope);
+  return capabilities.length && ownerBinding(home) ? capabilities : null;
+}
+
+/**
+ * The owner's choice for an invite (NOTES 112) as stored with it, or undefined
+ * when there is nothing to store: what the invite's grant still allows of what
+ * the box showed, under the owner record now.
+ */
+export function inviteStanding(home: Home, offered: readonly string[], scope: GrantScope): InviteStanding | undefined {
+  const allowed = covered(scope);
+  const covers = offered.filter((u) => allowed.includes(u));
+  const owner = ownerBinding(home);
+  return covers.length && owner ? { covers, owner } : undefined;
+}
+
+/**
+ * An invite with the owner's choice on it was just redeemed by `peer`, inside
+ * the home lock (listen.ts). Bound to the grant the redemption just made, and
+ * only if the owner record is still the one it was chosen under: a passphrase
+ * set, changed or reset since ends it, as it ends every entry. Otherwise it is
+ * off, audited, and the human told; the redemption itself stands.
+ */
+export function applyInviteStanding(
+  home: Home,
+  subject: AutoApproveSubject,
+  standing: InviteStanding,
+  peer: string,
+  now = new Date(),
+): { on: true; capabilities: string[]; until: string | null } | { on: false; reason: AutoApproveOff } {
+  let reason: AutoApproveOff = 'owner-secret';
+  if (standing.owner === ownerBinding(home)) {
+    try {
+      const r = allowAlways(home, subject, peer, standing.covers, now, null);
+      return { on: true, capabilities: r.capabilities, until: r.entry.until };
+    } catch {
+      reason = 'grant-changed';
+    }
+  }
+  home.appendAudit([offLine(now, peer, reason)]);
+  return { on: false, reason };
+}
+
 /** The contact's auto-approve as the form saw it (null: off), so allowAlways writes only onto that same state. */
 export type AlwaysAllowSeen = { set: string; until: string | null } | null;
 
 /**
  * Our human ticked "Don't ask again for this contact" and approved, on an
  * approval form (the MCP client's own UI) or the gateway's PIN-locked page:
- * auto-approve for `peer` now also covers `capability`. Inside the home lock,
+ * auto-approve for `peer` now also covers `capability` (a form that makes the
+ * contact: what its box listed, as far as the grant now allows). Inside the home lock,
  * after the gate's own step went through. The answer came from the human's
  * channel, never from the model, which is the trust the owner passphrase buys
  * on the other paths, so none is asked here. Bound to the grant now and to
@@ -631,12 +689,13 @@ export function allowAlways(
   home: Home,
   subject: AutoApproveSubject,
   peer: string,
-  capability: string,
+  capability: string | readonly string[],
   now = new Date(),
   seen?: AlwaysAllowSeen,
 ): { action: 'set' | 'extend'; entry: AutoApproveEntry; capabilities: string[] } {
   const { contact, capabilities: allowed } = autoApproveTarget(subject, peer, now);
-  if (!allowed.includes(capability)) throw new CliError(`your grant to ${peer} no longer allows ${capability}: auto-approve was not turned on`);
+  const wanted = (typeof capability === 'string' ? [capability] : capability).filter((u) => allowed.includes(u));
+  if (wanted.length === 0) throw new CliError(`your grant to ${peer} no longer allows ${typeof capability === 'string' ? capability : 'what the form listed'}: auto-approve was not turned on`);
   const owner = ownerBinding(home);
   if (owner === undefined) throw new CliError('the owner passphrase file is unreadable: auto-approve was not turned on');
   if (owner === null) {
@@ -650,7 +709,7 @@ export function allowAlways(
     const same = seen === null ? before === null : before !== null && before.entry.set === seen.set && before.entry.until === seen.until;
     if (!same) throw new CliError(`auto-approve for ${peer} changed while the form was open (it ended, was turned off or changed): it was not turned on`);
   }
-  const covers = before ? [...before.capabilities.filter((u) => u !== capability), capability] : [capability];
+  const covers = before ? [...before.capabilities.filter((u) => !wanted.includes(u)), ...wanted] : wanted;
   let all: Record<string, AutoApproveEntry>;
   try {
     all = home.readAutoApprove();

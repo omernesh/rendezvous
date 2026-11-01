@@ -546,11 +546,13 @@ address is only a claim, so it never labels a contact.
 
 Approving a contact: Claude calls `rdv_grant`, and Claude Code shows you an
 approval form (MCP elicitation) once Claude's reply ends. Claude can't fill
-it in for you; your answer completes the step. The forms for a contact's
+it in for you; your answer completes the step. The form that approves a
+contact, the one that makes an invite link, and the forms for a contact's
 task and for a dinner it proposed also have "Don't ask again for this
-contact": tick it with your approval and that contact's tasks of that kind
-(or its dinners) stop asking you, until you ask Claude to turn auto-approve
-off.
+contact": tick it with your approval and what it lists (on the task and
+dinner forms, that contact's tasks of that kind, or its dinners) stops asking
+you, until you ask Claude to turn auto-approve off. On an invite link it
+applies only to the contact that uses the link, when they use it.
 
 Tasks and files (v0.3): ask "Ask John's agent to review this", or answer
 when a contact asks your agent for something. Claude uses `rdv_task` and
@@ -744,6 +746,15 @@ the audit log.
   form. It says what it covers and the risk under the box. Your assistant
   can't tick it, and a confirm phrase never offers it. It is audited like
   the rest (`via: "form"`).
+- **Or when you approve the contact.** The form that approves a contact
+  request, and the one that makes an invite link, offer the same box once,
+  for everything that grant lets it cover (it lists them), so you need not
+  be asked again later. It is left out when nothing applies: a contact with
+  no meetings and nothing to invoke, or a confirmed probe answer, which
+  starts with no rights it could cover. On an invite it takes effect when the
+  link is used, and only for the contact that uses it; a link you revoke, or
+  that expires, leaves nothing behind. If you don't tick it, the task and
+  dinner forms still offer it later; once it is on, they stop asking.
 - **It covers less than it sounds.** One contact's tasks, under capabilities
   its grant already allows, and the dinners that contact proposes when its
   grant allows meetings. Not new contacts, grants, a dinner you proposed,
@@ -1079,6 +1090,7 @@ Routine administration needs no terminal: open `https://gw.example.com/approve/a
 
 - **Access tokens**: name, id, scopes and when each was made (never the token itself). Make one (a name, the scopes you tick, nothing ticked to start, and your PIN again): the token is shown once, on that page only. Revoke one: the gateway refuses it at the next request and closes its open sessions.
 - **Connected apps (OAuth)**: each connection's app name (what the app called itself), where it returns, scopes and last refresh. Disconnect one, or remove a whole app with every connection it has.
+- **Auto-approved contacts**: each contact that no longer needs your approval (fingerprint, your name for it, what it covers), with a Turn off button. Turning it on stays on approval forms ("Don't ask again for this contact").
 - **Webhook**: where it posts (scheme and host only), which events, how many wait and how many are dead letters. Turn it off. Setting a webhook stays in the terminal (`./gw notify set`), because it needs a secret file and, for a private address, an allowed host.
 - **Your PIN**: change it with the current one and the new one twice. Every unlocked page signs out.
 
@@ -1942,8 +1954,10 @@ one of these:
 1. **Elicitation.** If the client advertises the `elicitation` capability, the
    server asks the client to show the human a form: requester agent ID,
    fingerprint, binding (with a warning that `claimed` proves nothing), how the
-   request arrived, the greeting marked untrusted, a tier picker, and the
-   local label (the model's suggestion, editable; empty for none). Only
+   request arrived, the greeting marked untrusted, a tier picker, the label
+   ("What you call them", the model's suggestion, editable; empty for none),
+   and, when the grant allows anything it covers, the unticked "Don't ask again"
+   box below. Only
    `accept` with `approve: true` grants; the human's tier and label win over
    the model's. The model never sees or answers this form. A probe answer
    gets the same form, with the probed address as the label.
@@ -2045,6 +2059,20 @@ its expiry; otherwise until turned off). The answer comes from the human's
 client or PIN-locked page, never from the model: no tool argument sets it, a
 confirm phrase never offers it, and the form's digest binds it. Not offered
 for a task in a group or a dinner we started.
+
+The same box comes earlier too (NOTES 112), on the forms that make a contact:
+`rdv_grant` for a request or a probe answer, and `rdv_invite` "create". There
+it lists everything the grant being approved lets auto-approve cover, and it
+is absent when that is nothing (a grant with no meetings and nothing to
+invoke; a probe answer, unless this agent already had rights from its human).
+With the same authentication as above: no passphrase, offered only while the
+owner passphrase file is usable. What the human unticks elsewhere on the form
+is not covered. On an invite the choice is stored with the invite and applied
+when it is redeemed, only for that contact, under the same passphrase record
+it was chosen under; a revoke, an expiry or a restore drops it. The forms for
+tasks and dinners keep their own box for contacts that did not choose it, and
+do not ask once it is on. The gateway's settings page lists who is on it, per
+agent, with a Turn off button; turning on stays on approval forms.
 
 "off" (one contact or `all_contacts`) needs nothing. Every change is audited
 with `via: "cli"`, `"mcp"` or `"form"`; an `auto_approve_on` event says how to
@@ -3255,15 +3283,21 @@ MAY set `auto_approve: "all"` on that contact, optionally with an expiry
   approval of a gate it would cover (issue #103): the form that asks the
   owner to start a task from that contact, release its result, or confirm
   a meeting that contact started MAY carry a "don't ask again for this
-  contact" choice. That choice starts unset, exists only in a form shown to
+  contact" choice. The form that makes a contact (approving its request or
+  a probe answer, or making an invite link) MAY carry the same choice, for
+  what the grant being approved lets the setting cover (listed in the
+  choice), and carries none when that is nothing. That choice starts unset,
+  exists only in a form shown to
   the owner (a host's consent form, or an approval page only the owner can
   unlock), never in a confirm phrase or a tool argument, says what it
-  covers (this contact, this capability, until turned off), how to turn it
-  off and the risk in one sentence, and is bound with the rest of the
+  covers (this contact, this capability or list, until turned off), how to
+  turn it off and the risk in one sentence, and is bound with the rest of the
   form. Chosen with an approval, it covers that capability once the
   approved step went through; no secret is asked, since the answer comes
   from the owner's own channel, which is what the secret stands for on the
-  other paths. Turning it off needs no confirmation (it only narrows), and
+  other paths. Chosen on an invite link's form, it takes effect only when
+  the invite is redeemed and only for the contact that redeems it; a revoked
+  or expired invite leaves nothing of it. Turning it off needs no confirmation (it only narrows), and
   a host MAY let a model do it. Hosts list the terminal command as
   human-only wherever they list the contact grant command.
 - **Warning at set time.** Before it is set the owner is shown, in plain
@@ -3272,7 +3306,7 @@ MAY set `auto_approve: "all"` on that contact, optionally with an expiry
   files from that contact reach this agent's model with its tools, so
   prompt injection from that contact gets the power of those tools; the
   expiry; and how to turn it off. A "don't ask again" choice on a gate's
-  form says the same in short, for its one capability.
+  form says the same in short, for what it lists.
 - **Bound to the grant.** The setting is bound to the grant it was set
   on. It is off at once when the owner turns it off (narrowing needs no
   confirmation), when it expires, and when the contact is revoked or
@@ -4940,6 +4974,10 @@ The format follows Keep a Changelog. One line per change a user can see; PR numb
 
 ### Added
 - The gateway's approval result page has Copy buttons on the invite link and the message ready to send. The page stays free of JavaScript except one small fixed script for these buttons, which a content-security hash allows only on that page.
+- "Don't ask again for this contact" now comes up when you approve a contact or make an invite link, once, listing exactly what it would let that contact do without asking; it stays unticked unless you tick it, and is left out when nothing applies. On an invite it takes effect when the link is used, only for whoever uses it; a revoked or expired link leaves nothing. The later task and dinner forms still offer it if you didn't choose it. The gateway's settings page lists each agent's auto-approved contacts with a Turn off button.
+
+### Changed
+- On approval forms the label field is now "What you call them, e.g. Ran" (your name for the other person, not your own assistant's), and browsers no longer autofill the gateway page's text inputs.
 
 ## 0.13.0 - 2026-11-01 {#v0-13-0}
 

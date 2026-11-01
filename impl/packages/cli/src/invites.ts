@@ -10,6 +10,7 @@ import {
   INVITE_TIERS,
   inviteExpired,
   inviteShareText,
+  type InviteStanding,
   type InviteView,
   parseInvite,
   type Tier,
@@ -71,10 +72,10 @@ export interface InviteResult {
  * `name` goes into the link (only when the human asked: it makes the link
  * longer, NOTES 105); `from` names the inviter in the share text only.
  */
-export function createInviteIn(agent: Agent, opts: { tier: Tier; scope?: GrantScope; expires: string; name?: string; label?: string; from?: string }): InviteResult {
+export function createInviteIn(agent: Agent, opts: { tier: Tier; scope?: GrantScope; expires: string; name?: string; label?: string; from?: string; standing?: InviteStanding }): InviteResult {
   let made: CreatedInvite;
   try {
-    made = agent.createInvite({ tier: opts.tier, scope: opts.scope, expires: opts.expires, name: opts.name, label: opts.label });
+    made = agent.createInvite({ tier: opts.tier, scope: opts.scope, expires: opts.expires, name: opts.name, label: opts.label, standing: opts.standing });
   } catch (err) {
     throw new CliError((err as Error).message, 2);
   }
@@ -100,6 +101,8 @@ export function inviteListView(v: InviteView) {
     tier: v.tier,
     ...(v.name !== undefined ? { name: v.name } : {}),
     ...(v.label !== undefined ? { label: v.label } : {}),
+    // The owner's own choice on the form (NOTES 112), for the one contact that redeems it; never the record it is bound to.
+    ...(v.standing ? { auto_approve_when_used: v.standing.covers } : {}),
     ...(v.used ? { redeemed_at: v.used.at, redeemed_by: v.used.by, redeemed_by_fingerprint: fingerprint(v.used.by) } : {}),
     ...(v.revoked ? { revoked_at: v.revoked, revoked_by: v.revokedBy ?? 'owner' } : {}),
   };

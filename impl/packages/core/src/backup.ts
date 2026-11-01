@@ -258,6 +258,7 @@ export function restoredAgentState(state: AgentState, opts: { backupCreated: str
   // Invite links (NOTES 101, review of PR #120): one used after the backup was made is open again in it, and the
   // agent this replaces may still redeem it. None stays open; restoreRevokedInvites lists them for the owner.
   for (const r of Object.values(s.book?.invites ?? {})) {
+    delete r.standing;
     if (r.used || r.revoked) continue;
     r.revoked = s.restored.at;
     r.revokedBy = 'restore';

@@ -483,6 +483,21 @@ export function toModelEvent(e: Raw, negotiating: boolean): Omit<McpEvent, 'n' |
     }
     case 'revoked':
       return { type: 'revoked', peer: agentId(e.peer) };
+    case 'auto-approve-on':
+      // Our own listener (NOTES 112): an invite with the owner's choice on it was redeemed, by this contact. The fields are ours; checked anyway.
+      return {
+        type: 'auto_approve_on',
+        agent_id: agentId(e.peer),
+        fingerprint: fp(e.peer),
+        covers: (Array.isArray(e.covers) ? e.covers : []).slice(0, 32).map(capability),
+        until: typeof e.until === 'string' ? safe(e.until) : 'until your user turns it off',
+        via: 'invite link',
+        invite_id: token(e.invite_id),
+        how_to_turn_off: 'Your user can turn it off any time: ask you (call rdv_auto_approve with action "off" and this agent_id), or in their own terminal, or on their gateway\'s settings page if they use one. rdv_status shows what it covers.',
+        next_step:
+          `Your user ticked "Don't ask again for this contact" when they made this invite link, and ${who(e.peer)} just used it, so auto-approve is on for this contact and what it covers (audited). ` +
+          'Tell them in plain words what that means and how to turn it off; never suggest widening it.',
+      };
     case 'auto-approve-off':
       // Our own sweep (issue #25): the contact's auto-approve ended. The fields are ours; checked anyway.
       return {

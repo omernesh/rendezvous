@@ -127,6 +127,26 @@ binds the commit to that state (the NOTES 59 pattern the elicitation and the
 phrases use). A decided approval is removed, so a replayed post finds
 nothing; a second submit while one runs is refused.
 
+**Standing approval is the owner's choice on the page** (NOTES 112). The pages
+that approve a contact request or a probe answer and that make an invite link
+may carry "Don't ask again for this contact", for exactly what that grant lets
+auto-approve cover (its text lists it, nothing else), absent when that is
+nothing. It widens what a contact can do with no human, so: it starts
+unticked, an assistant can neither tick nor suggest it (no tool takes it; REST
+refuses the argument, MCP's schema drops it; a form without the box ignores a
+posted one), its text is in the form's digest, it holds no peer text (the
+contact by fingerprint, or "whoever uses this link"), and it covers only what
+the owner left granted on that form. On an invite it is stored with the
+invite, inert until redeemed, then applies to the redeemer alone under the
+passphrase record it was chosen under; a revoke, an exposure, an expiry or a
+restore drops it. *Limit:* an invite is a bearer link, so whoever gets it
+first gets the standing approval too, with nobody checking until the owner
+reads the `invite_redeemed` and `auto_approve_on` events. The box's text says
+so: send such a link only to the person you mean. The settings page lists each agent's auto-approved contacts (fingerprint,
+the owner's label, escaped, and coverage) with a Turn off that takes the
+session's CSRF token, logs an `admin:` line, and is audited (`via: settings`);
+no bearer reaches it, and nothing there turns it on.
+
 **Suggestions are not defaults.** `rdv_grant`'s tier and label come from the
 assistant, so the page preselects the default tier for the binding, never
 prefills the assistant's label, and shows both as suggestions, with a warning
@@ -379,7 +399,8 @@ webhook needed a terminal on the gateway host; the PIN only approved what an
 assistant had asked for. Now whoever holds the PIN and reaches the page can
 also, from the network, make a token with any scopes for any agent served
 (lasting access until revoked, still unable to approve anything), revoke
-tokens and connections, turn a webhook off, and change the PIN (locking the
+tokens and connections, turn a webhook off, turn a contact's auto-approve off
+(it only narrows), and change the PIN (locking the
 owner out until they set a new one in their terminal: `pin set` asks for
 the current PIN, so a lost PIN means editing `gateway.json` on the host).
 *Controls:* the page lives under `/approve/admin` and goes through the same

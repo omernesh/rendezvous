@@ -73,6 +73,8 @@ describe('rdv-gateway end to end', () => {
       expect((await b.unlock(path)).status).toBe(303);
       const page = await b.get(path);
       expect(page.text).toContain('is this the agent you were looking for?');
+      // A probe answer gets only the default rights: nothing for "Don't ask again" to cover, so no box (NOTES 112).
+      expect(page.text).not.toContain('f_always_allow');
       // The label defaults to the address Omer probed (the form's own default, not the assistant's).
       expect(page.text).toContain('value="john.e2e@doe.com"');
       const done = await b.post(path, { csrf: hidden(page.text, 'csrf'), digest: hidden(page.text, 'digest'), decision: 'approve', f_label: 'john.e2e@doe.com' });

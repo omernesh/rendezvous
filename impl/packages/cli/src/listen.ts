@@ -50,7 +50,7 @@ import {
   requestText,
   requestView,
 } from './output.js';
-import { meetingAutoApproved, subjectOf, sweepAutoApprove } from './autoapprove.js';
+import { applyInviteStanding, meetingAutoApproved, subjectOf, sweepAutoApprove } from './autoapprove.js';
 import {
   changeText,
   changeView,
@@ -342,12 +342,27 @@ async function handleLocked(
           human: `invite ${x.invite.id}${x.invite.label ? ` (for ${clean(x.invite.label)})` : ''} was sent in the clear by ${clean(x.from)}, so it was revoked; make a new one if you still want to invite them.`,
         }),
       );
-      agent.on('invite-redeemed', (r) =>
+      agent.on('invite-redeemed', (r) => {
         events.push({
           obj: { event: 'invite-redeemed', invite_id: r.invite.id, ...(r.invite.label ? { invite_label: r.invite.label } : {}), ...contactView(r.contact) },
           human: `invite ${r.invite.id}${r.invite.label ? ` (for ${clean(r.invite.label)})` : ''} was used: ${contactText(r.contact)}. Not who you meant? Revoke the contact.`,
-        }),
-      );
+        });
+        // What our human chose on the invite's form (NOTES 112): now, for this contact only.
+        if (!r.invite.standing) return;
+        const peer = r.contact.peer;
+        const s = applyInviteStanding(home, subjectOf(agent), r.invite.standing, peer);
+        events.push(
+          s.on
+            ? {
+                obj: { event: 'auto-approve-on', peer, covers: s.capabilities, until: s.until, invite_id: r.invite.id },
+                human: `auto-approve is on for ${clean(peer)}, as you chose on invite ${r.invite.id}: ${s.capabilities.map((u) => clean(u)).join(', ')}, until you turn it off`,
+              }
+            : {
+                obj: { event: 'auto-approve-off', peer, reason: s.reason, invite_id: r.invite.id },
+                human: `auto-approve was NOT turned on for ${clean(peer)}, though you chose it on invite ${r.invite.id} (${s.reason}); it asks you as usual`,
+              },
+        );
+      });
       agent.on('reverse-grant', (c) =>
         events.push({ obj: { event: 'reverse-grant', ...contactView(c) }, human: `reverse grant: ${contactText(c)}` }),
       );
@@ -438,6 +453,7 @@ async function handleLocked(
       await agent.deliveryTick();
       await agent.idle();
       // auto-approve ends with the grant it was set on (revoked, blocked, abuse, a fork) and on expiry: off now, audited (issue #25).
+      agent.book.dropEndedStanding();
       const auto = sweepAutoApprove(home, subjectOf(agent));
       for (const e of auto.ended) events.push({ obj: { event: 'auto-approve-off', peer: e.peer, reason: e.reason }, human: `auto-approve is off for ${clean(e.peer)} (${e.reason})` });
       if (auto.error) events.push({ obj: { event: 'error', message: auto.error }, human: `error: ${clean(auto.error)}` });

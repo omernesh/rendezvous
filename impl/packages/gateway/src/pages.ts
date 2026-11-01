@@ -97,7 +97,7 @@ export function listPage(opts: { agents: Array<AgentLabel & { items: PendingAppr
           .join('')}`;
   return layout(
     'Rendezvous approvals',
-    `<h1>Rendezvous approvals</h1>${flash(opts.message)}${body}<p><a href="/approve/admin">Gateway settings</a> <span class="muted">(access tokens, connected apps, your PIN, webhooks)</span></p>`,
+    `<h1>Rendezvous approvals</h1>${flash(opts.message)}${body}<p><a href="/approve/admin">Gateway settings</a> <span class="muted">(access tokens, connected apps, auto-approved contacts, your PIN, webhooks)</span></p>`,
     opts.csrf,
   );
 }
@@ -139,7 +139,7 @@ function field(p: PendingApproval, name: string, f: Record<string, unknown>): st
   }
   if (f.type === 'string') {
     // A label the assistant suggested is never prefilled (the form's own default, e.g. the probed address, is).
-    return `<label for="${id}">${title}</label><input type="text" id="${id}" name="${id}"${typeof f.maxLength === 'number' ? ` maxlength="${f.maxLength}"` : ''} value="${e(f.default ?? '')}">${sugg}`;
+    return `<label for="${id}">${title}</label><input type="text" id="${id}" name="${id}"${typeof f.maxLength === 'number' ? ` maxlength="${f.maxLength}"` : ''} value="${e(f.default ?? '')}" autocomplete="off">${sugg}`;
   }
   if (f.type === 'integer' || f.type === 'number') {
     const attr = (k: string) => (typeof f[k] === 'number' ? ` ${k === 'minimum' ? 'min' : 'max'}="${f[k]}"` : '');

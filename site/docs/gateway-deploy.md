@@ -210,6 +210,7 @@ Routine administration needs no terminal: open `https://gw.example.com/approve/a
 
 - **Access tokens**: name, id, scopes and when each was made (never the token itself). Make one (a name, the scopes you tick, nothing ticked to start, and your PIN again): the token is shown once, on that page only. Revoke one: the gateway refuses it at the next request and closes its open sessions.
 - **Connected apps (OAuth)**: each connection's app name (what the app called itself), where it returns, scopes and last refresh. Disconnect one, or remove a whole app with every connection it has.
+- **Auto-approved contacts**: each contact that no longer needs your approval (fingerprint, your name for it, what it covers), with a Turn off button. Turning it on stays on approval forms ("Don't ask again for this contact").
 - **Webhook**: where it posts (scheme and host only), which events, how many wait and how many are dead letters. Turn it off. Setting a webhook stays in the terminal (`./gw notify set`), because it needs a secret file and, for a private address, an allowed host.
 - **Your PIN**: change it with the current one and the new one twice. Every unlocked page signs out.
 

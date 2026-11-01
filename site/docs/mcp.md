@@ -188,8 +188,10 @@ one of these:
 1. **Elicitation.** If the client advertises the `elicitation` capability, the
    server asks the client to show the human a form: requester agent ID,
    fingerprint, binding (with a warning that `claimed` proves nothing), how the
-   request arrived, the greeting marked untrusted, a tier picker, and the
-   local label (the model's suggestion, editable; empty for none). Only
+   request arrived, the greeting marked untrusted, a tier picker, the label
+   ("What you call them", the model's suggestion, editable; empty for none),
+   and, when the grant allows anything it covers, the unticked "Don't ask again"
+   box below. Only
    `accept` with `approve: true` grants; the human's tier and label win over
    the model's. The model never sees or answers this form. A probe answer
    gets the same form, with the probed address as the label.
@@ -291,6 +293,20 @@ its expiry; otherwise until turned off). The answer comes from the human's
 client or PIN-locked page, never from the model: no tool argument sets it, a
 confirm phrase never offers it, and the form's digest binds it. Not offered
 for a task in a group or a dinner we started.
+
+The same box comes earlier too (NOTES 112), on the forms that make a contact:
+`rdv_grant` for a request or a probe answer, and `rdv_invite` "create". There
+it lists everything the grant being approved lets auto-approve cover, and it
+is absent when that is nothing (a grant with no meetings and nothing to
+invoke; a probe answer, unless this agent already had rights from its human).
+With the same authentication as above: no passphrase, offered only while the
+owner passphrase file is usable. What the human unticks elsewhere on the form
+is not covered. On an invite the choice is stored with the invite and applied
+when it is redeemed, only for that contact, under the same passphrase record
+it was chosen under; a revoke, an expiry or a restore drops it. The forms for
+tasks and dinners keep their own box for contacts that did not choose it, and
+do not ask once it is on. The gateway's settings page lists who is on it, per
+agent, with a Turn off button; turning on stays on approval forms.
 
 "off" (one contact or `all_contacts`) needs nothing. Every change is audited
 with `via: "cli"`, `"mcp"` or `"form"`; an `auto_approve_on` event says how to
