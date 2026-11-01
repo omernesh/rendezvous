@@ -5451,9 +5451,51 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
     - **Accepted.** Used ones free slots, as the brief says, so five open is a cap
       on what waits and not on how many stranger contacts an injected assistant
       can make over time; each one is reported, and a contact it made can only
-      write. A create and revoke loop can also fill a webhook's outbox up to its
-      caps (the per-token rate of 120 a minute applies). Not built: a rate on
-      creations. Worth a look if the setting is used widely.
+      write. (Reworded in the fix-pass below: a redeemed link also lets an
+      assistant with `send` message that contact by agent id, so it is an
+      outbound channel too; not new power, since `rdv_accept_invite` already
+      makes a contact with no human.)
+    - **Fix-pass (review of cbc2fb94, M1, M2, L1-L6).**
+      - *M1, creation budget.* At most 20 invites with `via: "assistant"` created
+        in a trailing 24 hours per agent (`ASSISTANT_INVITES_PER_DAY_MAX`),
+        counted by `created` from the retained records under the same home lock
+        as the open cap, whether revoked, used or expired; over it goes to the
+        page with a note, like the open cap. Core keeps an assistant record at
+        least `INVITE_BUDGET_WINDOW_MS` (24 h) after it ended
+        (`pruneInvites`; the 30-day prune is otherwise unchanged), so a revoke
+        cannot erase it from the count. That bounds the record growth in
+        `agent.json` (about 600 in the 30-day window) and so also the webhook
+        outbox eviction (L1): a create-and-revoke loop makes at most 20 events a
+        day.
+      - *M2, the assistant's note.* Only a short plain name is kept as
+        `suggestedLabel`: at most 64 characters, one line, letters, digits,
+        spaces and `. _ ' -`, starting with a letter or digit (the strict token
+        check of `untrusted.ts` has no spaces, so it did not fit); anything else
+        is not kept and `label_note` says so. In the `invite_redeemed` event, the
+        `rdv_invite` list and the create result it comes back under
+        `untrusted_peer_text`, and `next_step` says an assistant session wrote it
+        when making the link, it is unverified, and proves nothing and authorizes
+        nothing (no longer "your own earlier note").
+      - *L2, old webhooks.* A webhook set before this version has no
+        `invite_created_by_assistant` event. The settings page, when the setting
+        is on, and the turn-on answer say so and show the `notify set` command
+        with the events it has plus the new one. The THREAT-MODEL row says "if
+        that webhook includes the event".
+      - *L3, identity read live.* `RemoteApprovals.assistantInvites(agentId)`
+        is called with the id the server reads from the home inside `withAgent`
+        at creation, not the id the gateway read at startup. (A test can only
+        show the mismatch path: a setting recorded for another identity reads as
+        off.)
+      - *L4, wording.* "Can only write" / "nothing more" are gone from the
+        THREAT-MODEL rows, the page's setting text, the CHANGELOG and both
+        `next_step` texts: a redeemed link is an outbound channel as well.
+      - *L5, accepted.* The off path's `clientNote` and the tool descriptions
+        change text only; no behaviour changed.
+      - *L6, allowlist.* The invite check in `receiveRequest` runs before the
+        `policy === 'allow'` check, so an assistant link would bypass an
+        allowlist-only agent. When `inboundPolicy` is `allow` the direct path
+        does not apply and the call goes to the approval page with a note.
+        Owner-approved invites are unchanged. SPEC 5.2.3 says so.
     - **Covered by.** `gateway/test/assistantinvites.test.ts`.
 
 ## Not implemented yet

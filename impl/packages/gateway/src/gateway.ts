@@ -60,7 +60,7 @@ import { type AgentLabel, approvalPage, consentCsp, consentPage, CSS, donePage, 
 import { authorizeCall, SCOPES, type Scope, toolScopes } from './scopes.js';
 import { GatewayStore, PinChangedError, pinRuleError, StoreError } from './store.js';
 import { Notifier, type NotifierOptions, NotifyStore, receiverName } from './notify.js';
-import { type AdminAgent, type AdminGrant, type AdminToken, adminPage, tokenMadePage } from './admin.js';
+import { type AdminAgent, type AdminGrant, type AdminToken, adminPage, inviteEventCommand, tokenMadePage } from './admin.js';
 
 export const DEFAULT_PORT = 8787;
 export const API_BODY_MAX = 256 * 1024;
@@ -274,10 +274,8 @@ export class Gateway {
             return url;
           },
           // The owner's standing choice for this agent (NOTES 113), read at each use, bound to the identity like a token.
-          assistantInvites: () => {
-            const id = ids[found.indexOf(a)];
-            return id !== undefined && this.store.assistantInvitesOn(a.root ? ROOT_BINDING : a.name, id);
-          },
+          // The identity is the one the server reads from the home at that moment, not the one read at startup.
+          assistantInvites: (liveId: string) => this.store.assistantInvitesOn(a.root ? ROOT_BINDING : a.name, liveId),
         },
         calendar: calendars.get(a.name),
         calendarDirs: opts.calendarDirs,
@@ -1080,7 +1078,12 @@ export class Gateway {
         throw err;
       }
       this.log(`admin: the assistant of agent ${rt.name} may now create invites without asking (stranger only), turned on on the gateway settings page`);
-      return show(200, { text: `Your assistant can now make stranger-level invite links for ${rt.name} without asking. Turn it off here any time.` });
+      const missing = this.webhookLacksInviteEvent(rt);
+      return show(200, {
+        text:
+          `Your assistant can now make stranger-level invite links for ${rt.name} without asking. Turn it off here any time.` +
+          (missing ? ` Your webhook for this agent was set before this version and does not send invite_created_by_assistant, so you will not hear about each link. In your terminal: ${missing}` : ''),
+      });
     }
 
     if (action === 'assistant-invites/off') {
@@ -1116,6 +1119,19 @@ export class Gateway {
     const a = this.boundAgent(binding);
     if (agentName === '-') return a === undefined || !this.byName.has(a);
     return a !== undefined && a === agentName && this.byName.has(a);
+  }
+
+  /** The command that adds `invite_created_by_assistant` to a webhook set without it; undefined when there is no webhook or it has the event (NOTES 113). */
+  private webhookLacksInviteEvent(rt: AgentRuntime): string | undefined {
+    try {
+      const n = this.notifyStore.read();
+      const binding = rt.root ? ROOT_BINDING : rt.name;
+      const cfg = Object.hasOwn(n.agents, binding) ? n.agents[binding] : undefined;
+      if (!cfg || cfg.events.includes('invite_created_by_assistant')) return undefined;
+      return inviteEventCommand(rt.name, [...cfg.events]);
+    } catch {
+      return undefined;
+    }
   }
 
   private agentText(agentName: string): string {
@@ -1165,7 +1181,9 @@ export class Gateway {
         armedInvites: rt.server.armedInvites(),
         ...(() => {
           const since = rt.id ? this.store.assistantInvitesSince(binding, rt.id) : undefined;
-          return since ? { assistantInvitesSince: since } : {};
+          if (!since) return {};
+          const cmd = cfg && !cfg.events.includes('invite_created_by_assistant') ? inviteEventCommand(rt.name, [...cfg.events]) : undefined;
+          return { assistantInvitesSince: since, ...(cmd ? { inviteEventCommand: cmd } : {}) };
         })(),
         assistantInvites: rt.server.assistantMadeInvites().map(({ suggestedLabel, ...i }) => ({ ...i, ...(suggestedLabel !== undefined ? { note: suggestedLabel } : {}) })),
         ...(cfg

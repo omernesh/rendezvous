@@ -26,6 +26,11 @@ export const INVITE_MAX_TTL_MS = 30 * 86_400_000;
 export const INVITES_OPEN_MAX = 32;
 /** Used, revoked and expired invites are kept this long for `list`, then dropped. */
 export const INVITE_KEEP_MS = 30 * 86_400_000;
+/**
+ * The trailing window an assistant's creation budget counts over (NOTES 113). Records the assistant made are kept at
+ * least this long after they ended, whatever INVITE_KEEP_MS says, so a revoke cannot erase a creation from the count.
+ */
+export const INVITE_BUDGET_WINDOW_MS = 24 * 3_600_000;
 /** Longest display name a link carries. */
 export const INVITE_NAME_MAX = 64;
 /** At most this many relays in a link. */
