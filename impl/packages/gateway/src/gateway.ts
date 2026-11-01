@@ -234,6 +234,8 @@ export class Gateway {
       }
     }
     if (this.skipped.length) this.log(found.length ? `serving the other agents: ${found.map((a) => a.name).join(', ')}` : 'no other agent to serve');
+    // Every agent unreadable: never stand in for them (a stand-in name could let a stale binding reach the root).
+    if (!found.length && this.skipped.length) throw new Error(`no agent can be served: ${this.skipped.join(', ')} cannot be read. Fix or remove them, then restart.`);
     // No agent yet: the root stands in, so start() can say so.
     const entries = found.length ? found : [{ name: 'default', home: opts.home, root: true }];
     const multi = entries.length > 1;
