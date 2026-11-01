@@ -352,11 +352,21 @@ async function agentCommand(root: AgentRoot, store: GatewayStore, sub: string | 
       if (t.length || g.length) process.stderr.write(`Revoked ${t.length} token(s) and ${g.length} OAuth grant(s) left bound to "${to}".\n`);
       await notify.clear(to, { dead: true });
     }
-    const r = await root.migrate(values.name, async (from, to) => {
-      await store.rebindAgent(from, to);
-      await oauth.rebindAgent(from, to);
-      await notify.rebind(ROOT_BINDING, to);
-    });
+    const r = await root.migrate(
+      values.name,
+      async (from, to) => {
+        await store.rebindAgent(from, to);
+        await oauth.rebindAgent(from, to);
+        await notify.rebind(ROOT_BINDING, to);
+      },
+      new Date(),
+      // A failure after the rebind started puts every binding back on the root agent.
+      async (from, to) => {
+        await store.unbindAgent(to);
+        await oauth.unbindAgent(from, to);
+        await notify.rebind(to, ROOT_BINDING);
+      },
+    );
     process.stderr.write(
       `Moved the root agent (${fingerprint(r.id)}) into ${r.dir} as "${r.name}"; its tokens and OAuth grants follow it.\n` +
         `The original files (${r.files.length}, the key among them) are kept in ${r.kept}: delete that folder yourself once the gateway runs well.\n`,

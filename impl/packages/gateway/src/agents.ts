@@ -12,8 +12,8 @@
 // Nothing here moves a key on its own: `agent migrate` and `agent remove`
 // are the owner's commands, refused while anything listens for that home,
 // and both keep the old files instead of deleting them.
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmdirSync, rmSync } from 'node:fs';
+import { basename, join } from 'node:path';
 import { Home, tryLongLock } from '@rendezvous/cli/lib';
 import { fingerprint } from '@rendezvous/core';
 
@@ -32,6 +32,8 @@ export const isRootBinding = (b: string | undefined): boolean => b === undefined
 export const GATEWAY_FILES = ['gateway.json', 'gateway.lock', 'gateway-oauth.json', 'gateway-oauth.lock', 'gateway-notify.json', 'gateway-notify.lock'];
 /** A home's lock files: held by whoever runs, never copied. */
 const LOCK_FILES = ['lock', 'listener.lock', 'events.lock'];
+/** A gateway webhook secret in the root (notify.ts): the gateway's, never an agent's, so never migrated (rebind renames it). */
+export const NOTIFY_SECRET_RE = /^notify-[a-z0-9_][a-z0-9_-]{0,31}\.secret(\.prev)?$/;
 
 export class AgentError extends Error {}
 
@@ -200,14 +202,23 @@ export class AgentRoot {
 
   /**
    * `rdv-gateway agent migrate`: move the root agent into agents/<name>/, so
-   * the root holds only the gateway's state. Copy first, check the copy is
-   * the same agent (the same agent.json, byte for byte), put it in place,
-   * then move the originals into .premigrate-<time>/ in the root (kept, not
-   * deleted). Refused while anything listens for the root home; done under
-   * its state lock. `rebind` moves tokens and grants to the new name once the
-   * copy is in place.
+   * the root holds only the gateway's state. All or nothing: it plans the
+   * file list first (the gateway's own files, locks, agents/, dot folders and
+   * the webhook secrets stay: rebind renames those), checks every planned file
+   * is there, copies them to a stage, checks the copy is the same agent (the
+   * same key file, byte for byte), puts it in place, moves the originals into
+   * .premigrate-<time>/ in the root (kept, not deleted), and only then calls
+   * `rebind` (tokens, grants, webhooks to the new name). On any failure every
+   * step is undone (`unbind` reverses a rebind that started) and one error
+   * says so. Refused while anything listens for the root home; done under its
+   * state lock.
    */
-  async migrate(name: string | undefined, rebind: (from: string, to: string) => Promise<void>, now = new Date()): Promise<{ name: string; id: string; dir: string; kept: string; files: string[] }> {
+  async migrate(
+    name: string | undefined,
+    rebind: (from: string, to: string) => Promise<void>,
+    now = new Date(),
+    unbind?: (from: string, to: string) => Promise<void>,
+  ): Promise<{ name: string; id: string; dir: string; kept: string; files: string[] }> {
     const from = this.rootAgentName();
     if (!from) throw new AgentError(`no agent in the root ${this.dir} to migrate`);
     const to = checkAgentName(name ?? from);
@@ -218,24 +229,67 @@ export class AgentRoot {
     try {
       return await this.home.locked(async () => {
         const id = this.home.readAgentState().card.id;
-        const files = readdirSync(this.dir).filter((f) => !GATEWAY_FILES.includes(f) && !LOCK_FILES.includes(f) && f !== AGENTS_DIR && !f.startsWith('.'));
-        mkdirSync(this.agentsDir, { recursive: true, mode: 0o700 });
-        // A stage left by an earlier run that stopped is only ever a copy: the originals move last.
+        const files = readdirSync(this.dir).filter(
+          (f) => !GATEWAY_FILES.includes(f) && !LOCK_FILES.includes(f) && f !== AGENTS_DIR && !f.startsWith('.') && !NOTIFY_SECRET_RE.test(f),
+        );
+        if (!files.includes(basename(this.home.agentPath))) throw new AgentError(`no agent key file in ${this.dir}; nothing was moved`);
         const stage = join(this.agentsDir, `.${to}.migrating`);
-        rmSync(stage, { recursive: true, force: true });
-        mkdirSync(stage, { mode: 0o700 });
-        for (const f of files) cpSync(join(this.dir, f), join(stage, f), { recursive: true, errorOnExist: true, force: false, preserveTimestamps: true });
-        const copy = new Home(stage);
-        if (!readFileSync(copy.agentPath).equals(readFileSync(this.home.agentPath)) || copy.readAgentState().card.id !== id) {
-          rmSync(stage, { recursive: true, force: true });
-          throw new AgentError('the copy did not read back as the same agent; nothing was moved');
-        }
-        renameSync(stage, target.dir);
-        await rebind(from, to);
         const kept = join(this.dir, `.premigrate-${stamp(now)}`);
-        mkdirSync(kept, { mode: 0o700 });
-        for (const f of files) renameSync(join(this.dir, f), join(kept, f));
-        return { name: to, id, dir: target.dir, kept, files };
+        const moved: string[] = [];
+        let placed = false;
+        let bound = false;
+        let madeAgents = false;
+        const undo = async (): Promise<string[]> => {
+          const left: string[] = [];
+          const step = async (what: string, fn: () => unknown) => {
+            try {
+              await fn();
+            } catch (err) {
+              left.push(`${what}: ${(err as Error).message}`);
+            }
+          };
+          if (bound && unbind) await step('tokens, grants and webhooks', () => unbind(from, to));
+          // The originals go back first; only then is the copy removed.
+          for (const f of [...moved].reverse()) await step(f, () => renameSync(join(kept, f), join(this.dir, f)));
+          if (!left.length) {
+            await step(kept, () => rmSync(kept, { recursive: true, force: true }));
+            if (placed) await step(target.dir, () => rmSync(target.dir, { recursive: true, force: true }));
+          }
+          await step(stage, () => rmSync(stage, { recursive: true, force: true }));
+          if (madeAgents && !left.length) await step(this.agentsDir, () => rmdirSync(this.agentsDir));
+          return left;
+        };
+        try {
+          const missing = files.filter((f) => !existsSync(join(this.dir, f)));
+          if (missing.length) throw new Error(`${missing.join(', ')} went missing while planning`);
+          madeAgents = !existsSync(this.agentsDir);
+          mkdirSync(this.agentsDir, { recursive: true, mode: 0o700 });
+          // A stage left by an earlier run that stopped is only ever a copy: the originals move last.
+          rmSync(stage, { recursive: true, force: true });
+          mkdirSync(stage, { mode: 0o700 });
+          for (const f of files) cpSync(join(this.dir, f), join(stage, f), { recursive: true, errorOnExist: true, force: false, preserveTimestamps: true });
+          const copy = new Home(stage);
+          if (!readFileSync(copy.agentPath).equals(readFileSync(this.home.agentPath)) || copy.readAgentState().card.id !== id) {
+            throw new Error('the copy did not read back as the same agent');
+          }
+          renameSync(stage, target.dir);
+          placed = true;
+          mkdirSync(kept, { mode: 0o700 });
+          for (const f of files) {
+            renameSync(join(this.dir, f), join(kept, f));
+            moved.push(f);
+          }
+          bound = true;
+          await rebind(from, to);
+          return { name: to, id, dir: target.dir, kept, files };
+        } catch (err) {
+          const left = await undo();
+          throw new AgentError(
+            left.length
+              ? `agent migrate failed (${(err as Error).message}) and could not put everything back: ${left.join('; ')}. The originals that did not go back are in ${kept}; the copy is in ${target.dir}. Fix this by hand before starting the gateway.`
+              : `agent migrate failed (${(err as Error).message}); everything was put back as it was`,
+          );
+        }
       });
     } finally {
       lock.release();

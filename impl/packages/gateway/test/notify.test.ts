@@ -15,6 +15,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { appendEvents, Home, initHome } from '@rendezvous/cli/lib';
+import { agentIdFromPublicKey, generateKey } from '@rendezvous/core';
 import { startTestRelay } from '@rendezvous/core/testing';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
@@ -231,7 +232,11 @@ describe('signature', () => {
     expect(sig2.split(',v1=')).toHaveLength(2);
     expect(verifyRdvSignature(SECRET, sig2, rcv.hits[1].body, { now: Math.floor(clock.t / 1000) })).toBe(false);
     expect(verifyRdvSignature(SECRET2, sig2, rcv.hits[1].body, { now: Math.floor(clock.t / 1000) })).toBe(true);
+    // Its 24 h over, the previous secret is deleted from disk.
+    expect(existsSync(`${kept}.prev`)).toBe(false);
     // clear deletes both secret files.
+    await store.set('omer', local(rcv.url), Buffer.from(SECRET), 0, new Date(clock.t));
+    expect(existsSync(`${kept}.prev`)).toBe(true);
     await store.clear('omer');
     expect(existsSync(kept) || existsSync(`${kept}.prev`)).toBe(false);
   });
@@ -274,6 +279,10 @@ describe('URL rules and SSRF', () => {
     expect(() => checkNotifyUrl('file:///etc/passwd')).toThrow(/https/);
     expect(checkInsecureHost('100.64.0.0/10')).toBe('100.64.0.0/10');
     expect(checkInsecureHost('[FD7A:115C:A1E0::]/48')).toBe('fd7a:115c:a1e0::/48');
+    // IPv6 entries are stored in canonical form, so the same address is one entry and matches its own URL.
+    expect(checkInsecureHost('FD7A:115C:A1E0:0:0:0:0:0/48')).toBe('fd7a:115c:a1e0::/48');
+    expect(checkInsecureHost('FD7A:0115:C0A8:0000:0000:0000:0000:0001')).toBe('fd7a:115:c0a8::1');
+    expect(checkNotifyUrl('http://[fd7a:115:c0a8::1]:8080/rdv', [checkInsecureHost('FD7A:0115:C0A8:0:0:0:0:1')])).toBe('http://[fd7a:115:c0a8::1]:8080/rdv');
     for (const bad of ['http://x', 'x:8080', '10.0.0.0/33', '', 'a b']) expect(() => checkInsecureHost(bad), bad).toThrow(/--allow-insecure-host/);
     // The show and log form: scheme and host only.
     expect(receiverName('https://hooks.example.com/rdv/SECRET-TOKEN?k=v')).toBe('https://hooks.example.com');
@@ -299,6 +308,10 @@ describe('URL rules and SSRF', () => {
     expect(embeddedV4('::ffff:169.254.169.254')).toBe('169.254.169.254');
     expect(embeddedV4('2002:7f00:1::')).toBe('127.0.0.1');
     expect(embeddedV4('::a9fe:a9fe')).toBe('169.254.169.254');
+    // IPv4-translated (::ffff:0:0/96) and local-use NAT64 (64:ff9b:1::/48).
+    expect(embeddedV4('::ffff:0:a9fe:a9fe')).toBe('169.254.169.254');
+    expect(embeddedV4('64:ff9b:1::7f00:1')).toBe('127.0.0.1');
+    for (const ip of ['::ffff:0:a9fe:a9fe', '64:ff9b:1::a9fe:a9fe', '240.0.0.1', '255.255.255.255', '::ffff:255.255.255.255']) expect(wide(ip), ip).toBe(false);
     for (const ip of ['::ffff:169.254.169.254', '64:ff9b::a9fe:a9fe', '2002:a9fe:a9fe::1', '::169.254.169.254', '64:ff9b::7f00:1']) {
       expect(wide(ip), ip).toBe(false);
       expect(named(ip), ip).toBe(false);
@@ -661,6 +674,140 @@ function bin(args: string[]): Promise<{ code: number; stdout: string; stderr: st
     child.stdin!.end();
   });
 }
+
+describe('fairness and floods (re-review of PR #131)', () => {
+  it("one agent's hung receiver never holds back another's: a slot per agent, agents take turns", { timeout: 30_000 }, async () => {
+    const { root, list } = await agents(['alice', 'bob']);
+    const good = await receiver();
+    const hang = createServer(() => {}); // never answers
+    servers.push(hang);
+    await new Promise<void>((r) => hang.listen(0, '127.0.0.1', () => r()));
+    hang.on('connection', (s) => s.unref());
+    const store = new NotifyStore(new Home(root));
+    const [alice, bob] = list;
+    await store.set('alice', local(good.url), KEY, 0);
+    await store.set('bob', local(`http://127.0.0.1:${(hang.address() as AddressInfo).port}/`), KEY, 0);
+    // Bob has 40 distinct invite events waiting (none coalesce), all due before alice's.
+    await appendEvents(bob.home, Array.from({ length: 40 }, (_, i) => redeemed(`${i}`.padStart(16, 'b'))));
+    const n = notifier(store, list, { t: Date.now() }, [], { timeoutMs: 1500 });
+    await n.tick();
+    await appendEvents(alice.home, [redeemed()]);
+    const t0 = Date.now();
+    await n.tick();
+    while (good.hits.length === 0 && Date.now() - t0 < 10_000) await new Promise((r) => setTimeout(r, 20));
+    expect(good.hits).toHaveLength(1);
+    // Well within one of bob's timeouts: alice never queued behind bob's slots.
+    expect(Date.now() - t0).toBeLessThan(1000);
+    expect(JSON.parse(good.hits[0].body).agent).toBe(alice.id);
+    hang.closeAllConnections();
+  });
+
+  it("a stranger flood (a new key per request) never evicts the agent's invite_redeemed: requests roll into one event", async () => {
+    const { root, list } = await agents(['omer']);
+    const rcv = await receiver(Array(10_000).fill(503));
+    const store = new NotifyStore(new Home(root));
+    await store.set('omer', local(rcv.url, ['invite_redeemed', 'contact_request']), KEY, 0);
+    const clock = { t: Date.now() };
+    const n = notifier(store, list, clock);
+    await appendEvents(list[0].home, [redeemed()]);
+    await round(n);
+    const key = (_i: number) => agentIdFromPublicKey(generateKey().publicKey);
+    let k = 0;
+    for (let r = 0; r < 60; r++) {
+      await appendEvents(
+        list[0].home,
+        Array.from({ length: 10 }, () => ({ event: 'request', id: '6f1c1d2e-3b4a-4c5d-8e9f-0a1b2c3d4e5f', from: key(k++), binding: 'claimed', greeting: 'hi' })),
+      );
+      clock.t += 1000;
+      await round(n);
+    }
+    const d = store.read();
+    expect(d.outbox.some((i) => i.event === 'invite_redeemed')).toBe(true);
+    const req = d.outbox.filter((i) => i.event === 'contact_request');
+    expect(req).toHaveLength(1);
+    const body = JSON.parse(req[0].body);
+    expect(body.data.count).toBe(600);
+    expect(body.data.recent_fingerprints).toHaveLength(5);
+    expect(body.data.from_fingerprint).toBe(body.data.recent_fingerprints[0]);
+    expect(d.dead).toHaveLength(0);
+  });
+
+  it('when over its cap an agent loses requests and messages first, invites last', async () => {
+    const { root, list } = await agents(['omer']);
+    const store = new NotifyStore(new Home(root));
+    const id = list[0].id;
+    await store.update((d) => {
+      d.outbox.push({ id: evt(1), agent: 'omer', agentId: id, event: 'invite_redeemed', body: '{}', attempts: 0, first: 0, next: 9e15 });
+      d.outbox.push({ id: evt(2), agent: 'omer', agentId: id, event: 'contact', body: '{}', attempts: 0, first: 0, next: 9e15 });
+      for (let i = 0; i < OUTBOX_PER_AGENT + 10; i++) d.outbox.push({ id: evt(100 + i), agent: 'omer', agentId: id, event: 'message', body: '{}', attempts: 0, first: 0, next: 9e15 });
+      d.dead.push(dead(3, 'omer', id));
+      for (let i = 0; i < DEAD_LETTER_PER_AGENT + 10; i++) d.dead.push({ ...dead(1000 + i, 'omer', id), event: 'message' });
+    });
+    const d = store.read();
+    expect(d.outbox.map((i) => i.id)).toEqual(expect.arrayContaining([evt(1), evt(2)]));
+    expect(d.outbox).toHaveLength(OUTBOX_PER_AGENT);
+    expect(d.dead.some((i) => i.id === evt(3))).toBe(true);
+    expect(d.dead).toHaveLength(DEAD_LETTER_PER_AGENT);
+  });
+});
+
+describe('agent migrate with a webhook (re-review H1)', () => {
+  it('moves the root agent, renames its secrets (also .prev) through rebind only, and keeps the webhook', { timeout: 60_000 }, async () => {
+    const root = tmp();
+    const id = (await initHome(new Home(root), { profile: 'omer', emails: ['omer@example.com'] })).id;
+    await appendEvents(new Home(root), [redeemed()]);
+    const store = new NotifyStore(new Home(root));
+    await store.set(ROOT_BINDING, { url: 'https://hooks.example.com/rdv', events: ['invite_redeemed'], insecureHosts: [] }, KEY, 1);
+    await store.set(ROOT_BINDING, { url: 'https://hooks.example.com/rdv', events: ['invite_redeemed'], insecureHosts: [] }, Buffer.from(SECRET2), 1);
+    expect(existsSync(join(root, 'notify-_root.secret.prev'))).toBe(true);
+    const m = await bin(['agent', 'migrate', '--home', root]);
+    expect(m.code, m.stderr).toBe(0);
+    expect(readFileSync(join(root, 'notify-omer.secret'), 'utf8')).toBe(SECRET2);
+    expect(readFileSync(join(root, 'notify-omer.secret.prev'), 'utf8')).toBe(SECRET);
+    expect(existsSync(join(root, 'notify-_root.secret')) || existsSync(join(root, 'notify-_root.secret.prev'))).toBe(false);
+    const d = new NotifyStore(new Home(root)).read();
+    expect(Object.keys(d.agents)).toEqual(['omer']);
+    expect(d.state.omer.cursor).toBe(1);
+    expect(new Home(join(root, 'agents', 'omer')).readAgentState().card.id).toBe(id);
+    // The secrets were never copied into the agent's folder or the kept originals.
+    const kept = (await import('node:fs')).readdirSync(root).find((f) => f.startsWith('.premigrate-'))!;
+    for (const dir of [join(root, 'agents', 'omer'), join(root, kept)]) {
+      expect((await import('node:fs')).readdirSync(dir).filter((f) => f.startsWith('notify-')), dir).toEqual([]);
+    }
+  });
+
+  it('a failure halfway puts everything back as it was, and says so once', async () => {
+    const root = tmp();
+    await initHome(new Home(root), { profile: 'omer', emails: ['omer@example.com'] });
+    const store = new NotifyStore(new Home(root));
+    await store.set(ROOT_BINDING, { url: 'https://hooks.example.com/rdv', events: ['invite_redeemed'], insecureHosts: [] }, KEY, 0);
+    const fs = await import('node:fs');
+    const listing = () => fs.readdirSync(root).filter((f) => !/lock$/.test(f)).sort();
+    const before = listing();
+    const keyBefore = readFileSync(new Home(root).agentPath);
+    let unbound = 0;
+    await expect(
+      new AgentRoot(root).migrate(
+        undefined,
+        async (_from, to) => {
+          await store.rebind(ROOT_BINDING, to);
+          throw new Error('disk full');
+        },
+        new Date(),
+        async (_from, to) => {
+          unbound++;
+          await store.rebind(to, ROOT_BINDING);
+        },
+      ),
+    ).rejects.toThrow(/^agent migrate failed \(disk full\); everything was put back as it was$/);
+    expect(unbound).toBe(1);
+    expect(listing()).toEqual(before);
+    expect(readFileSync(new Home(root).agentPath).equals(keyBefore)).toBe(true);
+    expect(existsSync(join(root, 'agents', 'omer'))).toBe(false);
+    expect(Object.keys(store.read().agents)).toEqual([ROOT_BINDING]);
+    expect(existsSync(join(root, 'notify-_root.secret'))).toBe(true);
+  });
+});
 
 describe('rdv-gateway notify', () => {
   it('set, show, dead-letter and clear, per agent, in the gateway root', { timeout: 60_000 }, async () => {
