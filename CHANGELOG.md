@@ -4,7 +4,7 @@ What changed in Rendezvous, newest first. Versions are those of the Claude Code 
 
 The format follows Keep a Changelog. One line per change a user can see; PR numbers link to GitHub.
 
-## Unreleased
+## 0.14.0 - 2026-11-01 {#v0-14-0}
 
 ### Added
 - You can let your assistant make invite links without asking, once per agent on the gateway's settings page (your PIN again, off by default): say "invite Ran" and it gets a link at once, always for a stranger who can message your agent (and your assistant can message them back), for at most 7 days, at most 5 open and 20 in 24 hours, and not while your agent accepts only its allowlist. Asking for more goes to your approval page; each link sends a new `invite_created_by_assistant` webhook event (a webhook set before this needs it added; the settings page shows the command), and the page lists the open ones with a Revoke button.
