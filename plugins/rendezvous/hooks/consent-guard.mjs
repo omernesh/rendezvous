@@ -368,7 +368,13 @@ function couldBe(w, name, cwd) {
   return braces(w).some((x) => x.toLowerCase() === name || (GLOB_CHARS.test(x) && globRe(x).test(name) && existsSync(join(cwd, name))));
 }
 
-const dynamic = (w) => w.includes(SUB) || /\$[\w{(]|%\w+%/.test(w);
+/**
+ * A word whose value is only known when it runs (re-review of PR #122): a substitution, a variable (`$x`, `${x}`,
+ * `%x%`), a shell special parameter (`$@`, `"$@"`, `$*`, `$#`, `$?`, `$!`, `$$`, `$-`), a PowerShell splat (`@a`,
+ * `@args`, `@(…)`), a PowerShell expression argument (`('se'+'t')`, `(-join …)`, `(gc f)`) or a type literal or cast
+ * (`[string]…`). In a subcommand's place each one is refused, whatever it would turn out to be.
+ */
+const dynamic = (w) => w.includes(SUB) || /\$[\w{(@*#?!$-]|%\w+%/.test(w) || /^@[\w{(]/.test(w) || /^[([]/.test(w);
 
 const progName = (w) =>
   basename(w.replace(/[\\/]+$/, ''))
@@ -547,12 +553,47 @@ const COMMAND_RUN = /^[a-z0-9-]+(\s+[a-z0-9-]+)+$/i;
  * `rdv "contact label" …` and `rdv contact "alias add" …` are matched like `rdv contact label …`. The CLI refuses such
  * a word too (main.ts), so this only keeps the guard's message where the CLI's would be.
  */
+/**
+ * rdv (any name, after any global options) and up to two plain command words, then an expression, a splat or a cast
+ * where the next command word goes: `rdv contact ('grant') …`, `node bin.js agent-name (-join …) …`, `rdv @a`.
+ */
+const DYNAMIC_SUBCOMMAND =
+  /(?:^|[\s;|&{(])(?:rdv(?:\.cmd|\.ps1|\.exe)?|bin\.js|@rendezvous\/cli\S*)(?:\s+--(?:home|profile)(?:=\S+|\s+\S+)|\s+--json|\s+--)*(?:\s+["']?[a-z0-9][a-z0-9-]*["']?){0,2}\s+["']?[(@[]/i;
+/** Words of rdv and rdv-gateway after which another command word follows. */
+const GROUP_WORDS = new Set([...HUMAN_GROUPS.map(([g]) => g), 'address', 'card', 'alias', 'pin', 'token', 'oauth']);
+
 function splitCommandRuns(words) {
   const at = words.findIndex((w) => isRdv(w) || isGateway(w));
   if (at < 0) return words;
   // A word padded with white space (`"grant "`) is a command word too.
   const run = (w) => /\s/.test(w) && (COMMAND_RUN.test(w.trim()) || /^[a-z0-9-]+$/i.test(w.trim()));
-  return [...words.slice(0, at + 1), ...words.slice(at + 1).flatMap((w) => (run(w) ? w.trim().split(/\s+/) : [w]))];
+  // Only in command position (re-review L1): the up to 3 command words right after rdv and its global options.
+  // Further on, a quoted string is an argument (a message, a greeting) and stays one word.
+  const out = words.slice(0, at + 1);
+  let k = at + 1;
+  let named = 0;
+  // A command word is followed by another only after a group word (`contact`, `contact alias`, `pin`, …).
+  const more = () => named === 0 || GROUP_WORDS.has(String(out[out.length - 1]).toLowerCase());
+  while (k < words.length && named < 3 && more()) {
+    const w = words[k];
+    if (w === '--' || /^-{1,2}(json|help|h)$/i.test(w) || /^--(home|profile)=/i.test(w)) {
+      out.push(w);
+      k++;
+    } else if (/^--(home|profile)$/i.test(w)) {
+      out.push(w, ...(k + 1 < words.length ? [words[k + 1]] : []));
+      k += 2;
+    } else if (run(w)) {
+      const parts = w.trim().split(/\s+/);
+      out.push(...parts);
+      named += parts.length;
+      k++;
+    } else if (/^[a-z0-9-]+$/i.test(w)) {
+      out.push(w);
+      named++;
+      k++;
+    } else break;
+  }
+  return [...out, ...words.slice(k)];
 }
 
 function checkWords(words, ctx, depth) {
@@ -678,6 +719,10 @@ function checkWords(words, ctx, depth) {
   const rdvAt = words.findIndex((w, k) => isRdv(w) || (k === 0 && dynamic(w)));
   if (rdvAt >= 0) {
     const initAt = words.findIndex((w, k) => k > rdvAt && couldBe(w, 'init', ctx.cwd));
+    // `--agent-name` puts a name on the card that every contact sees: the owner's, through rdv_agent_name's form (re-review L2).
+    if (initAt > 0 && words.slice(initAt + 1).some((w) => braces(w).some((x) => /^--agent-name(=|$)/i.test(x)))) {
+      throw new Refusal(`rdv init --agent-name: ${AGENT_NAME}`);
+    }
     if (initAt > 0 && words.slice(initAt + 1).some((w) => braces(w).some((x) => /^--force(=|$)/i.test(x)))) {
       throw new Refusal(
         'rdv init --force replaces the agent key. Only the human may do that, in their own terminal. ' +
@@ -734,6 +779,10 @@ function checkCode(code, ctx, depth) {
 }
 
 function check(src, ctx, depth) {
+  // `rdv contact ('grant') …`, `node bin.js agent-name (-join …) …`: the parser makes a parenthesized argument a
+  // command of its own, so the subcommand built in it is never seen as one (re-review of PR #122). In the place of a
+  // subcommand, or of rdv's first word, an expression, a splat or a cast is refused.
+  if (mentionsRdv(src) && DYNAMIC_SUBCOMMAND.test(src)) throw new Refusal(OPAQUE);
   if (depth > MAX_DEPTH) throw new Refusal(NESTED);
   if (SECRET_MENTION.test(src)) throw new Refusal(SECRET_REFUSAL);
   if (SERVICE_MENTION.test(src)) throw new Refusal(SERVICE_SHELL);

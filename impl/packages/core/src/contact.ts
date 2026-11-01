@@ -790,7 +790,7 @@ export class ContactBook {
    */
   trackOutstanding(req: ContactRequestBody, binding: Binding = 'claimed', to?: string, label?: string): void {
     // A probe is labeled with the address our human probed, unless they named the peer otherwise.
-    const l = label !== undefined ? cleanLabel(label) : to ? undefined : req.to_hint;
+    const l = label !== undefined ? this.freeLabel(label, to) : to ? undefined : req.to_hint;
     const card = typeof req.card?.created === 'string' ? { card_created: req.card.created } : {};
     this.state.outstanding[req.id] = to
       ? { to_hint: req.to_hint, sent: req.ts, binding, to, ...(l ? { label: l } : {}), ...card }
@@ -860,6 +860,20 @@ export class ContactBook {
     return Object.values(this.state.contacts).find(
       (c) => c.peer !== except && !isPast(c.expires, now) && (which === 'names' ? contactNames(c) : contactNames({ aliases: c.aliases })).some((n) => keysMeet(n, name)),
     );
+  }
+
+  /**
+   * A label our human gives (a request, a grant, a probe answer, an invite;
+   * re-review L4), cleaned: refused when another contact's nickname already
+   * reaches it, so it never shadows one. A label that comes by default (the
+   * probed address) is kept as is: when it is alike another contact's name,
+   * rdv_status flags it and sending by it is refused as ambiguous.
+   */
+  freeLabel(label: string, peer: string | undefined, now = new Date()): string {
+    const l = cleanLabel(label);
+    const other = this.nameClash(l, peer ?? '', 'aliases', now);
+    if (other) throw new Error(`"${l}" is already a nickname of another contact (fingerprint ${fingerprint(other.peer)}): pick another label, or remove the nickname there first`);
+    return l;
   }
 
   /**
@@ -934,6 +948,7 @@ export class ContactBook {
     if (!isTier(opts.tier)) throw new Error(`unknown tier ${String(opts.tier)}`);
     if (!(INVITE_TIERS as readonly string[]).includes(opts.tier)) throw new Error(`an invite can give tiers ${INVITE_TIERS.join(', ')}; grant "${opts.tier}" to the contact afterwards`);
     const scope = grantScope(opts.scope); // throws on a malformed invoke
+    if (opts.label !== undefined) this.freeLabel(opts.label, undefined, now);
     const exp = parseTimestamp(opts.expires);
     if (exp === null || exp <= now.getTime()) throw new Error('an invite must expire in the future');
     if (exp > now.getTime() + INVITE_MAX_TTL_MS + 60_000) throw new Error('an invite may last at most 30 days');
@@ -1030,6 +1045,7 @@ export class ContactBook {
   /** The human approved (or the allowlist did): record the relationship we granted. */
   recordIssuedGrant(grant: ContactGrantBody, request: ContactRequestBody, binding: Binding, label?: string): Contact {
     const prev = this.state.contacts[request.from];
+    // The human's grant checks its label first (Agent.grant, freeLabel); an invite's, set when it was made, is kept here.
     const l = label !== undefined ? cleanLabel(label) : prev?.label;
     const contact: Contact = {
       peer: request.from,
@@ -1109,7 +1125,7 @@ export class ContactBook {
   confirmCandidate(grantId: string, now = new Date(), label?: string): Contact {
     const c = this.state.candidates[grantId];
     // The probed address is what our human looked for; the candidate's card only claims it.
-    const l = label !== undefined ? cleanLabel(label) : (this.state.outstanding[c?.request_ref]?.label ?? c?.to_hint);
+    const l = label !== undefined ? this.freeLabel(label, c?.grant.from, now) : (this.state.outstanding[c?.request_ref]?.label ?? c?.to_hint);
     if (!c) throw new Error(`no grant candidate ${grantId}`);
     if (isPast(c.grant.expires, now)) throw new Error(`grant ${grantId} has expired`);
     if (this.isBlocked(c.grant.from)) throw new Error(`${c.grant.from} is blocked`);

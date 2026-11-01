@@ -642,14 +642,15 @@ export async function main(argv: string[]): Promise<number> {
   }
   let name = argv[0];
   let rest = argv.slice(1);
-  if (plain(argv[1]) && plain(argv[2]) && `${argv[0]} ${argv[1]} ${argv[2]}` in COMMANDS) {
+  if (plain(argv[1]) && plain(argv[2]) && Object.hasOwn(COMMANDS, `${argv[0]} ${argv[1]} ${argv[2]}`)) {
     name = `${argv[0]} ${argv[1]} ${argv[2]}`;
     rest = argv.slice(3);
-  } else if (plain(argv[1]) && `${argv[0]} ${argv[1]}` in COMMANDS) {
+  } else if (plain(argv[1]) && Object.hasOwn(COMMANDS, `${argv[0]} ${argv[1]}`)) {
     name = `${argv[0]} ${argv[1]}`;
     rest = argv.slice(2);
   }
-  const command = COMMANDS[name];
+  // Own keys only (re-review L5): `rdv constructor` or `rdv __proto__` is an unknown command, not Object's.
+  const command = Object.hasOwn(COMMANDS, name) ? COMMANDS[name] : undefined;
   if (!command) {
     const two = `${argv[0]} ${argv[1]} `;
     const deeper = Object.keys(COMMANDS).filter((k) => k.startsWith(two));

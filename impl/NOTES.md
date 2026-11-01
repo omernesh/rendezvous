@@ -4471,7 +4471,16 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       (`nameKeys`: "Ran's agent" here and "Ran" there). Adding such a
       nickname is refused, and so is a label that another contact's
       nickname reaches; rdv_status flags shared names by the same rule.
-      Lengths count characters (code points), not UTF-16 units.
+      Lengths count characters (code points), not UTF-16 units. A label our
+      human types (a request, a grant, a probe answer, an invite) may not be
+      another contact's nickname either (`freeLabel`); a default one (the
+      probed address) is kept, flagged in rdv_status and refused as
+      ambiguous when used.
+    - **Guard.** `rdv contact alias …`, `rdv agent-name …` and `rdv init
+      --agent-name` are the human's. The CLI takes a command name only from
+      plain words, and the guard splits a quoted run of command words in
+      command position and refuses a subcommand built at run time (`$@`,
+      `@args`, `(expr)`, `[cast]`).
     - **Matching.** Names compare as before by canonical address when they
       are one, else NFKC-normalized, trimmed, white space collapsed and
       case-folded (`labelKey`). A query also matches through its possessive

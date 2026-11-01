@@ -827,7 +827,7 @@ export async function lookup({ home, out, positionals }: Ctx): Promise<void> {
     const id = agentIdArg(target);
     const card = await withAgent(home, (agent) => fetchCardById(home, agent, id), { save: false });
     if (!card) throw new CliError(notFoundById(id));
-    out.emit({ event: 'card', id: card.id, fingerprint: fingerprint(card.id), card }, cardText(card));
+    out.emit({ event: 'card', id: card.id, fingerprint: fingerprint(card.id), ...calledItself(card), card }, cardText(card));
     return;
   }
   const address = target;
@@ -846,7 +846,16 @@ export async function lookup({ home, out, positionals }: Ctx): Promise<void> {
     { save: false },
   );
   if (cards.length === 0) throw new CliError(`no public pointer found for ${address}`);
-  for (const card of cards) out.emit({ event: 'card', id: card.id, fingerprint: fingerprint(card.id), card }, cardText(card));
+  for (const card of cards) out.emit({ event: 'card', id: card.id, fingerprint: fingerprint(card.id), ...calledItself(card), card }, cardText(card));
+}
+
+/**
+ * What a card's agent calls itself, marked as peer text (re-review L3): the card is printed as signed (so it can be
+ * saved and used), and beside it the name is the peer's claim, never a way to pick a recipient.
+ */
+function calledItself(card: AddressCard): { calls_itself?: { untrusted_peer_text: string } } {
+  const n = cardAgentName(card);
+  return n === null ? {} : { calls_itself: { untrusted_peer_text: n } };
 }
 
 /** Whether a target is meant as an agent ID (it may still be malformed: then `agentIdArg` says so). */

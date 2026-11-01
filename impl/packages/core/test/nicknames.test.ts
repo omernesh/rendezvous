@@ -117,6 +117,30 @@ describe('contact nicknames', () => {
     expect(nameKeys("Ran's agent").sort()).toEqual([labelKey("Ran's agent"), labelKey('Ran')].sort());
   });
 
+  it('a label our human gives anywhere may not shadow another contact\'s nickname; a default one is kept (re-review L4)', () => {
+    const me = generateKey();
+    const book = new ContactBook();
+    const a = befriend(book, me);
+    book.addAlias(a, 'joe');
+    const card = createCard(me, { rendezvous: hints });
+    const peer = generateKey();
+    // A request by card, with the label typed.
+    expect(() => book.trackOutstanding(createContactRequest(me, card, { toHint: peer.id, greeting: 'hi' }), 'claimed', peer.id, 'Joe')).toThrow(/nickname of another contact/);
+    expect(() => befriend(book, me, peer, "joe's agent")).toThrow(/nickname of another contact/);
+    // An invite made with that label.
+    expect(() => book.addInvite({ tier: 'friend', scope: {}, expires: new Date(Date.now() + 3_600_000).toISOString(), label: 'JOE' })).toThrow(/nickname of another contact/);
+    // A probe answer confirmed with it.
+    const probe = createContactRequest(me, card, { toHint: 'joe@example.com', greeting: 'hi' });
+    book.trackOutstanding(probe);
+    const claimant = generateKey();
+    const g = createGrant(claimant, createCard(claimant, { rendezvous: hints, discovery: { addresses: [{ type: 'email', value: 'joe@example.com' }], public_pointer: false } }), probe, { tier: 'friend', scope: {} });
+    book.receiveGrant(g, me.id);
+    expect(() => book.confirmCandidate(g.id, new Date(), 'joe')).toThrow(/nickname of another contact/);
+    expect(book.contact(claimant.id)).toBeUndefined();
+    // The default label (the probed address) is no one's nickname here: kept.
+    expect(book.confirmCandidate(g.id).label).toBe('joe@example.com');
+  });
+
   it('counts lengths in characters (code points), not UTF-16 units (security review L5)', () => {
     expect(cleanAlias('\u{1F600}'.repeat(64))).toHaveLength(128);
     expect(() => cleanAlias('\u{1F600}'.repeat(65))).toThrow(/64/);

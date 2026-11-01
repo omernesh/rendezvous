@@ -248,7 +248,7 @@ The signed, self-describing document an agent publishes about itself. Schema
 Rules:
 - `owner` fields are **opt-in and minimized**. A public card need not name
   its owner at all.
-- `agent_name` (**spec change**, NOTES 102) is OPTIONAL: what the owner
+- `agent_name` (**spec change**, NOTES 103) is OPTIONAL: what the owner
   calls their agent, 1 to 64 printable characters. Like `owner`, it is the
   card holder's own claim and peer text (§5.6): a receiver shows it marked as
   untrusted ("calls itself Sammie"), ignores a malformed one without
