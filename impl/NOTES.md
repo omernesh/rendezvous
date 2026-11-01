@@ -4480,7 +4480,14 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       --agent-name` are the human's. The CLI takes a command name only from
       plain words, and the guard splits a quoted run of command words in
       command position and refuses a subcommand built at run time (`$@`,
-      `@args`, `(expr)`, `[cast]`).
+      `%i`, and in PowerShell unquoted `@args`, `(expr)` and `[cast]`, which
+      its tokenizer marks like `$(…)`; quoted text stays text). One word that
+      holds a whole command line naming rdv, as the argument of any program
+      (`sh -c '…'`, `awk` `system()`, `-ArgumentList`, `ssh host '…'`), is
+      checked as a command of its own. What is left of the older class (an
+      alias or function defined on one line and used on the next, a script
+      file) is accepted under issue #51: the guard is defence in depth, not a
+      security boundary.
     - **Matching.** Names compare as before by canonical address when they
       are one, else NFKC-normalized, trimmed, white space collapsed and
       case-folded (`labelKey`). A query also matches through its possessive

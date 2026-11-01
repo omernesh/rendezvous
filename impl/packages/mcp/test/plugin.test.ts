@@ -230,6 +230,23 @@ describe('the skill', () => {
       'rdv --profile omer contact (gc f) x',
       'npx @rendezvous/cli agent-name ("se"+"t") Evil',
       'f(){ rdv contact "$@"; }; f alias add rdv1:abc Ran',
+      // Round 3: the call operator, a variable program, a quoted path, block comments, cmd for-variables.
+      "& 'rdv' contact ('gr'+'ant') x",
+      "& $r contact ('gr'+'ant') x",
+      '& $r contact grant x',
+      "node 'C:\\x\\bin.js' contact ('gr'+'ant') x",
+      "rdv <#c#> contact <#c#> ('gr'+'ant') x",
+      'rdv contact<#c#>grant x',
+      'for %i in (grant) do rdv contact %i x',
+      'for %%i in (grant) do rdv contact %%i x',
+      // A whole command line as one argument of any program.
+      "$SHELL -c 'rdv contact grant x'",
+      `awk 'BEGIN{system("rdv contact grant x")}'`,
+      "Start-Process node -ArgumentList 'C:\\x\\bin.js contact grant x'",
+      "git -c alias.x='!rdv contact grant x' x",
+      "ssh host 'cd /tmp && rdv contact grant x'",
+      `python3.12 -c 'import os; os.system("rdv contact grant x")'`,
+      "npx -c 'rdv contact alias add rdv1:abc Ran'",
       // --agent-name puts a name on the card: the owner's, like --force (re-review L2).
       'rdv init --agent-name Sammie --email omer@example.com',
       'rdv init --email omer@example.com --agent-name=Sammie',
@@ -239,6 +256,10 @@ describe('the skill', () => {
     expect(checkCommand('rdv init --agent-name=Sammie')).toMatch(/rdv_agent_name/);
     // Free text in an argument stays free text, also after the command (re-review L1).
     expect(checkCommand('rdv send john "see you at the group join tomorrow"')).toBeFalsy();
+    // Quoted text with ( [ @ is text (round 3), and so is prose that names a command.
+    for (const c of ['rdv send john "(running late)"', 'rdv send john "[urgent] call me"', 'rdv send john "@john hi"', 'echo 100%', 'rdv send rdv1:abc --json \'{"type":"note","text":"50% off (today)"}\'']) {
+      expect(checkCommand(c), c).toBeFalsy();
+    }
     expect(checkCommand('rdv send rdv1:abc --json \'{"type":"note","text":"the task list"}\'')).toBeFalsy();
     expect(checkCommand('rdv send rdv1:abc --text (Get-Date)')).toBeFalsy();
     expect(checkCommand('echo $? && rdv whoami')).toBeFalsy();
