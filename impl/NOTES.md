@@ -4736,6 +4736,23 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       new sinks; the copy lines are built from the regex-checked fragment
       only. Outside a browser it only exposes its decoder
       (`rdvInviteDecode`, `rdvInviteCheck`) for the tests.
+    - **Security review of PR #129** (0 critical/high/medium, 7 low, all
+      fixed). L1: a whole pasted message may hold other `#`s ("Re issue
+      #12: <link>", a name like "Team #3" in the share text) and "…"
+      ("Hey… <link>"): the reader tries the word after each `/i#` first,
+      then after every other `#`, then `rdv-invite:`, then the text alone,
+      and the first that reads wins (otherwise the first one's error); the
+      ellipsis check runs on that word only. L2: "..." is checked before
+      trailing punctuation is dropped, so a link ending in "..." is cut. L3,
+      L4: relays are written and read in one spelling,
+      `canonicalInviteRelay` (the WHATWG href: lowercase host, punycode, no
+      default port, no lone "/" path; ASCII, at most 200 characters), so a
+      record's length byte never wraps and `wss://RELAY.nesher.co/` is the
+      table's bit, never a record. L5: the expiry is capped at the year 3000,
+      as in v1, made or read. L6: `cleanInviteName` also refuses line and
+      paragraph separators, private-use and unassigned characters. L7: the
+      landing page checks the same structure as the agent (stray low bits,
+      record syntax, repeats, spellings, the cap).
     - **Vectors.** `vectors/invite-v2.json` (new; `v1.json` does not cover
       invites and is untouched): fixed inputs (seed 32 × `0x07`, secret
       16 × `0xa5`) and the exact URL for one known relay, three known

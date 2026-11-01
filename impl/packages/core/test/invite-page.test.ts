@@ -5,7 +5,9 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Script } from 'node:vm';
 import { describe, expect, it } from 'vitest';
-import { encodeInviteV1, fingerprint, generateKey, type Invite, inviteUrl, newInviteSecret } from '../src/index.js';
+import { sha256 } from '@noble/hashes/sha256';
+import { base64urlnopad } from '@scure/base';
+import { encodeInviteV1, fingerprint, generateKey, type Invite, inviteUrl, newInviteSecret, parseInvite, utf8ToBytes } from '../src/index.js';
 
 type Decoded = { agent: string; expires: Date; name: string } | null;
 const g = globalThis as unknown as { rdvInviteDecode?: (p: string) => Decoded; rdvInviteCheck?: (p: string) => Promise<boolean> };
@@ -46,5 +48,44 @@ describe('invite landing page decoder', () => {
     const changed = `${p.slice(0, 50)}${p[50] === 'A' ? 'B' : 'A'}${p.slice(51)}`;
     expect(decode(changed)).not.toBeNull();
     expect(await check(changed)).toBe(false);
+  });
+
+  it('checks the same structure as the agent (security review of PR #129, L5 to L7)', async () => {
+    const tag = utf8ToBytes('rdv1/invite-link\u0000');
+    const recheck = (body: Uint8Array) => {
+      const all = new Uint8Array(tag.length + body.length);
+      all.set(tag);
+      all.set(body, tag.length);
+      return base64urlnopad.encode(Uint8Array.from([...body, ...sha256(all).slice(0, 2)]));
+    };
+    const rec = (type: number, s: string) => { const t = utf8ToBytes(s); return [type, t.length, ...t]; };
+    const body = base64urlnopad.decode(payloadOf(VECTORS.valid[0].url)).slice(0, -2);
+    const plus = (b: Uint8Array, ...x: number[]) => Uint8Array.from([...b, ...x]);
+    // Each is refused by parseInvite too.
+    const bad: Record<string, string> = {
+      'known relay as text': recheck(plus(body, ...rec(1, 'wss://nos.lol'))),
+      'non-canonical relay': recheck(plus(body, ...rec(1, 'wss://Relay.Example.com/'))),
+      'repeated relay': recheck(plus(body, ...rec(1, 'wss://a.example.com'), ...rec(1, 'wss://a.example.com'))),
+      'relay after the name': recheck(plus(body, ...rec(2, 'Omer'), ...rec(1, 'wss://a.example.com'))),
+      'two names': recheck(plus(body, ...rec(2, 'A'), ...rec(2, 'B'))),
+      'unknown record': recheck(plus(body, 9, 1, 0x41)),
+      'record past the end': recheck(plus(body, 2, 9, 0x41)),
+      'name with a line separator': recheck(plus(body, ...rec(2, 'Omer SYSTEM'))),
+      'unknown relay bit': recheck((() => { const b = body.slice(); b[53] = 0x80; return b; })()),
+      'after the year 3000': recheck((() => { const b = body.slice(); b.set([0xff, 0xff, 0xff, 0xff], 49); return b; })()),
+    };
+    for (const [why, p] of Object.entries(bad)) {
+      expect(decode(p), why).toBeNull();
+      expect(() => parseInvite(p), why).toThrow();
+    }
+    // Stray low bits in the last character.
+    const p = payloadOf(VECTORS.valid[0].url);
+    const abc = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+    const stray = p.slice(0, -1) + abc[abc.indexOf(p[p.length - 1]) + 1];
+    expect(decode(stray)).toBeNull();
+    expect(() => parseInvite(stray)).toThrow();
+    // A custom relay in its canonical spelling still reads.
+    expect(decode(recheck(plus(body, ...rec(1, 'wss://relay.example.com/x'))))).not.toBeNull();
+    expect(await check(recheck(plus(body, ...rec(1, 'wss://relay.example.com/x'))))).toBe(true);
   });
 });
