@@ -5342,7 +5342,11 @@ export class RdvMcpServer {
     if (!a.agent_id) throw new ToolError('agent_id (or to) is required to propose');
     await this.applySettings(a);
     const opts = this.negotiateOpts();
-    if (!opts) throw new ToolError('no calendar configured: pass calendar (a JSON calendar file path)');
+    if (!opts) {
+      throw new ToolError(this.remote
+        ? 'no calendar configured for this agent: your user sets one on the gateway (rdv-gateway --calendar, see the gateway docs)'
+        : 'no calendar configured: pass calendar (a JSON calendar file path)');
+    }
     if (a.window) opts.window = a.window;
     if (a.expires !== undefined && parseInstant(a.expires) === null) throw new ToolError('expires must be an RFC 3339 date-time with an offset');
     const place = { ...(a.place ? { name: a.place } : {}), ...(a.area ? { area: a.area } : {}) };

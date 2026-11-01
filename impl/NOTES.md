@@ -5259,7 +5259,7 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       `script-src 'sha256-<hash of the exact text>'` (`COPY_PAGE_CSP`,
       computed at module load): no `unsafe-inline`, no nonce, no file. Every
       other page (unlock, list, approval, consent, settings, the done pages
-      without held values) keeps `PAGE_CSP`, with no `script-src` and so
+      without held values) keeps a CSP with no `script-src` and so
       `default-src 'none'`. The settings page's token-shown-once box is
       untouched.
     - **What it does.** No network. On click it writes the `textContent` of
