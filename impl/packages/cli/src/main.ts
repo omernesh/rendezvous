@@ -146,7 +146,7 @@ const COMMANDS: Record<string, Command> = {
   'contact list': { usage: 'rdv contact list', summary: 'List contacts', args: 0, run: cmd.contactList },
   'invite create': {
     usage: 'rdv invite create [--tier friend|colleague|business|stranger] [--expires 7d] [--name Omer] [--label "Dana"] [--no-meetings] [--invoke <capability-uri>]...',
-    summary: 'Make a one-time invite link: whoever opens it first becomes your contact on these terms (default: tier friend, meetings, 7 days)',
+    summary: 'Make a one-time invite link: whoever opens it first becomes your contact on these terms (default: tier friend, meetings, 7 days, no name in the link)',
     args: 0,
     options: {
       tier: { type: 'string' },

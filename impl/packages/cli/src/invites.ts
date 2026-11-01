@@ -66,8 +66,12 @@ export interface InviteResult {
   label?: string;
 }
 
-/** Make an invite (the owner's decision, already taken). Call inside `withAgent`. */
-export function createInviteIn(agent: Agent, opts: { tier: Tier; scope?: GrantScope; expires: string; name?: string; label?: string }): InviteResult {
+/**
+ * Make an invite (the owner's decision, already taken). Call inside `withAgent`.
+ * `name` goes into the link (only when the human asked: it makes the link
+ * longer, NOTES 105); `from` names the inviter in the share text only.
+ */
+export function createInviteIn(agent: Agent, opts: { tier: Tier; scope?: GrantScope; expires: string; name?: string; label?: string; from?: string }): InviteResult {
   let made: CreatedInvite;
   try {
     made = agent.createInvite({ tier: opts.tier, scope: opts.scope, expires: opts.expires, name: opts.name, label: opts.label });
@@ -77,7 +81,7 @@ export function createInviteIn(agent: Agent, opts: { tier: Tier; scope?: GrantSc
   return {
     invite_id: made.invite.id,
     url: made.url,
-    share_text: inviteShareText(made.url, { name: made.invite.name, expires: made.invite.expires }),
+    share_text: inviteShareText(made.url, { name: made.invite.name ?? opts.from, expires: made.invite.expires }),
     expires: made.invite.expires,
     tier: made.invite.tier,
     scope: made.invite.scope,
@@ -149,13 +153,14 @@ export async function inviteCreate({ home, out, values }: Ctx): Promise<void> {
   const scope = invokeScope(undefined, values.invoke, values['no-meetings'] === true);
   const expires = parseInviteExpiry(str(values.expires));
   const r = await withAgent(home, async (agent, config) =>
-    createInviteIn(agent, { tier, scope, expires, name: str(values.name) ?? (config.profile === 'default' ? undefined : config.profile), label: str(values.label) }),
+    createInviteIn(agent, { tier, scope, expires, name: str(values.name), label: str(values.label), from: config.profile === 'default' ? undefined : config.profile }),
   );
   out.emit(
     { event: 'invite', ...r },
     [
       `invite ${r.invite_id}: whoever opens this link first becomes your contact (tier ${r.tier}), until ${r.expires}.`,
       'It is shown only now; anyone you forward it to can use it. Revoke it with "rdv invite revoke ' + r.invite_id + '".',
+      'Send the whole link, exactly as it is: a shortened or cut link does not work.',
       '',
       r.url,
       '',
