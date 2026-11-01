@@ -18,6 +18,7 @@ import { existsSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { acquireLock, type Home, writeAtomic } from '@rendezvous/cli/lib';
 import { randomToken, safeEqual, sha256 } from './http.js';
+import { isRootBinding } from './agents.js';
 import { isScope, type Scope } from './scopes.js';
 
 /** Approved clients and grants: a cap, never an eviction (the owner revokes). */
@@ -77,7 +78,7 @@ export interface OAuthGrant {
   /** Hashes of refresh tokens rotated out: presenting one again ends the grant (reuse detection). */
   retired: string[];
   access: AccessToken[];
-  /** The one agent the owner connected it to on the consent page (NOTES 104). Absent before that: the root agent only. */
+  /** The one agent the owner connected it to on the consent page (NOTES 104): its name, or the root marker. Absent before that: the root agent. */
   agent?: string;
 }
 
@@ -258,7 +259,7 @@ export class OAuthStore {
    * refresh token rotated out before, presented again, means two parties hold
    * it: the whole grant ends (its tokens and its pending approvals).
    */
-  async refresh(ref: string, token: string, scopes: Scope[] | undefined, resource: string | undefined, now: number): Promise<RefreshResult> {
+  async refresh(ref: string, token: string, scopes: Scope[] | undefined, resourceOk: ((g: OAuthGrant) => boolean) | undefined, now: number): Promise<RefreshResult> {
     const h = sha256(token);
     const accessToken = `rdvo_${randomToken(32)}`;
     const refreshToken = `rdvr_${randomToken(32)}`;
@@ -275,7 +276,7 @@ export class OAuthStore {
         return { error: 'invalid_grant', reused };
       }
       if (!current || current.clientId !== ref || current.refresh.expires <= now) return { error: 'invalid_grant' };
-      if (resource !== undefined && resource !== current.resource) return { error: 'invalid_target' };
+      if (resourceOk && !resourceOk(current)) return { error: 'invalid_target' };
       const granted = scopes ?? current.scopes;
       if (granted.length === 0 || granted.some((s) => !current!.scopes.includes(s))) return { error: 'invalid_scope' };
       current.retired = [...current.retired, current.refresh.hash].slice(-MAX_RETIRED);
@@ -351,13 +352,17 @@ export class OAuthStore {
     });
   }
 
-  /** `agent migrate`: grants of the root agent (named `from`, or made before NOTES 104) now reach `to`. */
+  /**
+   * `agent migrate`: grants of the root agent (the root marker, none, or its name `from`) now reach `to`, and a
+   * resource naming the old agent's URL names the new one (the gateway's own resource stays).
+   */
   async rebindAgent(from: string, to: string): Promise<number> {
     return this.update((d) => {
       let n = 0;
       for (const g of Object.values(d.grants)) {
-        if (g.agent === undefined || g.agent === from) {
+        if (isRootBinding(g.agent) || g.agent === from) {
           g.agent = to;
+          if (g.resource.endsWith(`/a/${from}/mcp`)) g.resource = `${g.resource.slice(0, -`/a/${from}/mcp`.length)}/a/${to}/mcp`;
           n += 1;
         }
       }
