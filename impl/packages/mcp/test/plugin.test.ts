@@ -210,7 +210,38 @@ describe('the skill', () => {
     ]) {
       expect(checkCommand(c), c).toBeTruthy();
     }
-    // Free text in an argument stays free text.
+    // A subcommand built at run time, in its place, is refused (re-review of PR #122, HIGH): shell special parameters,
+    // PowerShell splatting, expression arguments and casts, and a function wrapping rdv on the same line.
+    for (const c of [
+      "node bin.js agent-name ('se'+'t') Evil",
+      'rdv contact $@',
+      'rdv contact "$@"',
+      'rdv contact $* x',
+      'rdv agent-name $1 Evil',
+      'rdv contact $# x',
+      'rdv contact $? x',
+      'rdv contact @a',
+      'rdv @args',
+      "rdv contact ('grant') x",
+      'rdv contact ("gr"+"ant") x',
+      "rdv contact (-join('g','rant')) x",
+      'rdv contact (gc f) x',
+      'rdv contact [string]grant x',
+      'rdv --profile omer contact (gc f) x',
+      'npx @rendezvous/cli agent-name ("se"+"t") Evil',
+      'f(){ rdv contact "$@"; }; f alias add rdv1:abc Ran',
+      // --agent-name puts a name on the card: the owner's, like --force (re-review L2).
+      'rdv init --agent-name Sammie --email omer@example.com',
+      'rdv init --email omer@example.com --agent-name=Sammie',
+    ]) {
+      expect(checkCommand(c), c).toBeTruthy();
+    }
+    expect(checkCommand('rdv init --agent-name=Sammie')).toMatch(/rdv_agent_name/);
+    // Free text in an argument stays free text, also after the command (re-review L1).
+    expect(checkCommand('rdv send john "see you at the group join tomorrow"')).toBeFalsy();
+    expect(checkCommand('rdv send rdv1:abc --json \'{"type":"note","text":"the task list"}\'')).toBeFalsy();
+    expect(checkCommand('rdv send rdv1:abc --text (Get-Date)')).toBeFalsy();
+    expect(checkCommand('echo $? && rdv whoami')).toBeFalsy();
     expect(checkCommand('rdv contact request john@doe.com --greeting "please grant me contact"')).toBeFalsy();
     expect(checkCommand('git commit -m "docs: rdv contact grant is for the human"')).toBeFalsy();
     expect(checkCommand('rdv contact alias add rdv1:abc Ran')).toMatch(/rdv_label/);

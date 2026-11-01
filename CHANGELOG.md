@@ -15,7 +15,7 @@ The format follows Keep a Changelog. One line per change a user can see; PR numb
 
 ### Fixed
 - **Security:** a relay can no longer inject text into your assistant's connection to Rendezvous or into `rdv --json` output: messages a relay sends for display (NOTICE) are dropped instead of printed, and anything a library prints goes to the error stream as one cleaned line. Before, a hostile relay (one named in a contact's card, or now in an invite link) could forge tool results or approval prompts.
-- **Security:** `rdv` no longer runs a command whose name was given as one quoted word (such as `"contact grant"`), which slipped past the plugin's check that keeps your assistant away from commands that are yours alone; that check now also reads such words.
+- **Security:** `rdv` no longer runs a command whose name was given as one quoted word (such as `"contact grant"`), which slipped past the plugin's check that keeps your assistant away from commands that are yours alone; that check now also reads such words, and refuses a subcommand built while the command runs (shell parameters such as `$@`, PowerShell splatting and expressions).
 - Rendezvous no longer crashes when its error stream is closed (for example when `rdv` is piped into a program that exits early); the line is dropped instead.
 - `rdv --version`, the MCP server and the gateway's API document now report the real release version instead of 0.1.0, and the site's `llms.txt` takes it from the plugin manifest.
 - The backup form and `rdv backup` now tell you the passphrase rules up front (length, variety, no common words) instead of only after you submit.

@@ -46,6 +46,11 @@ describe('rdv contact alias and rdv agent-name', () => {
       await rdv(['contact', 'request', danaId], omerHome);
       await omerL.waitFor((l) => l.event === 'contact' && l.peer === danaId, 'dana', 10_000);
 
+      // A card looked up shows what its agent calls itself only as peer text, beside the card as signed (re-review L3).
+      const looked = (await rdv(['lookup', johnId], omerHome)).lines[0];
+      expect(looked.calls_itself).toEqual({ untrusted_peer_text: 'Sammie' });
+      expect((await rdv(['lookup', 'john@doe.com'], omerHome)).lines[0].calls_itself).toEqual({ untrusted_peer_text: 'Sammie' });
+
       const added = await rdv(['contact', 'alias', 'add', johnId, 'Ran'], omerHome);
       expect(added.lines[0]).toMatchObject({ event: 'alias-added', peer: johnId, aliases: ['Ran'], calls_itself: { untrusted_peer_text: 'Sammie' } });
       // Unique across contacts, valid like a label, at most 64 characters.
@@ -101,6 +106,9 @@ describe('rdv contact alias and rdv agent-name', () => {
         expect(r.code, args.join('|')).toBe(2);
       }
       expect((await rdv(['contact', 'alias', 'list'], omerHome)).lines.find((l) => l.peer === johnId)?.aliases).toBeUndefined();
+
+      // Object's own properties are no commands (re-review L5).
+      for (const w of ['constructor', 'toString', 'hasOwnProperty']) expect((await rdv([w], omerHome, { check: false })).stderr, w).toMatch(/unknown command/);
 
       const sub = await rdv(['contact', 'alias'], omerHome, { check: false });
       expect(sub.code).toBe(2);

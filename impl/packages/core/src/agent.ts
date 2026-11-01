@@ -834,6 +834,8 @@ export class Agent extends EventEmitter<AgentEvents> {
   async grant(requestId: string, opts: { tier?: Tier; scope?: GrantScope; expires?: string | null; label?: string } = {}): Promise<Contact> {
     const pending = this.book.state.pending[requestId];
     if (!pending) throw new Error(`no pending request ${requestId}`);
+    // The label our human typed may not shadow another contact's nickname (re-review L4): refused before anything is sent.
+    if (opts.label !== undefined) this.book.freeLabel(opts.label, pending.request.from);
     return this.issueGrant(pending.request, pending.binding, opts);
   }
 
