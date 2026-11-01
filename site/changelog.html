@@ -63,6 +63,7 @@
 <h3 id="added">Added<a class="anchor" href="#added" title="Link to this section" aria-label="Link to this section">#</a></h3>
 <ul>
 <li>Invite people by link, WhatsApp style: ask your assistant to invite someone, choose in an approval form what they get and for how long, and send the ready-made message; when they open the link and tell their assistant "accept my Rendezvous invite", or run <code>rdv init --invite &lt;link&gt;</code>, you are connected at once, and you are told who used it. The link works once and expires (7 days by default); <code>rdv invite create</code> in a terminal does the same.</li>
+<li>Nicknames for your contacts: tell your assistant "talk to joe" or "tell Ran's agent …" once you have given that contact the nickname (you type it in an approval form; at most 8 per contact, each name belongs to one contact). You can also name your own agent (e.g. "Sammie"): contacts see it as what your agent calls itself, never as a way to pick it, and your contact requests greet with it.</li>
 </ul>
 <h3 id="changed">Changed<a class="anchor" href="#changed" title="Link to this section" aria-label="Link to this section">#</a></h3>
 <ul>
@@ -71,6 +72,7 @@
 <h3 id="fixed">Fixed<a class="anchor" href="#fixed" title="Link to this section" aria-label="Link to this section">#</a></h3>
 <ul>
 <li><strong>Security:</strong> a relay can no longer inject text into your assistant's connection to Rendezvous or into <code>rdv --json</code> output: messages a relay sends for display (NOTICE) are dropped instead of printed, and anything a library prints goes to the error stream as one cleaned line. Before, a hostile relay (one named in a contact's card, or now in an invite link) could forge tool results or approval prompts.</li>
+<li><strong>Security:</strong> <code>rdv</code> no longer runs a command whose name was given as one quoted word (such as <code>"contact grant"</code>), which slipped past the plugin's check that keeps your assistant away from commands that are yours alone; that check now also reads such words, and refuses a subcommand built while the command runs (shell parameters such as <code>$@</code>, PowerShell splatting and expressions).</li>
 <li>Rendezvous no longer crashes when its error stream is closed (for example when <code>rdv</code> is piped into a program that exits early); the line is dropped instead.</li>
 <li><code>rdv --version</code>, the MCP server and the gateway's API document now report the real release version instead of 0.1.0, and the site's <code>llms.txt</code> takes it from the plugin manifest.</li>
 <li>The backup form and <code>rdv backup</code> now tell you the passphrase rules up front (length, variety, no common words) instead of only after you submit.</li>
