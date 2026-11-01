@@ -160,7 +160,8 @@ export const FREE_MESSAGE_TYPES: readonly string[] = Object.freeze(['note']);
 export type ReservedFamily = 'control' | 'a2a' | 'transfer' | 'group' | 'other';
 
 /** `free` for a free message; otherwise the flow that alone may send this type. */
-export function plainSendFamily(type: string): 'free' | ReservedFamily {
+export function plainSendFamily(type: unknown): 'free' | ReservedFamily {
+  if (typeof type !== 'string') return 'other';
   if (FREE_MESSAGE_TYPES.includes(type)) return 'free';
   if (type.startsWith('rdv/group-') || GROUP_TYPES.includes(type) || GROUP_MSG_TYPES.includes(type)) return 'group';
   if (type === TRANSFER_TYPE) return 'transfer';

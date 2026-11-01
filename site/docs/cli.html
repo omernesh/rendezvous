@@ -755,7 +755,7 @@ john.start();
 
 // On another machine:
 await omer.requestContact('john@doe.com', &quot;Omer's agent would like to be in contact.&quot;);
-omer.once('contact', () =&gt; omer.send(john.id, { type: 'a2a/message', text: 'Hi John, Omer here.' }));
+omer.once('contact', () =&gt; omer.send(john.id, { type: 'note', text: 'Hi John, Omer here.' }));
 </code></pre></div>
 <p><strong>Relays.</strong> <code>DEFAULT_RELAYS</code> is the public set <code>rdv init</code> uses when no relay
 is given: <code>wss://nos.lol</code>, <code>wss://relay.primal.net</code>, <code>wss://relay.nostr.net</code>,
