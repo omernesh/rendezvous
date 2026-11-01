@@ -134,7 +134,10 @@ describe.skipIf(noSh !== null)('install-gateway.sh: helpers', () => {
     ['system_dir', '/volume1', true],
     ['system_dir', '/volume1/docker', true],
     ['system_dir', '/gw', true],
-    ['system_dir', '/volume1/docker/rendezvous-gateway', false],
+    ['system_dir', '/volume1/docker/rendezvous-gateway', false], // a share's subfolder: the ancestor check refuses it
+    ['system_dir', '/volume1/rendezvous-gateway', false], // beside the shares: the recommended NAS place
+    ['system_dir', '/volume1/homes', true],
+    ['system_dir', '/volume1/@appstore', true],
     ['system_dir', '/srv/rendezvous-gateway', false],
     ['valid_path', '/home/omer/rendezvous-gateway', true],
     ['valid_path', '/home/omer/my gateway', false],
@@ -218,22 +221,36 @@ describe.skipIf(noSh !== null)('install-gateway.sh: helpers', () => {
     expect(yes('has_acl', `${fake('drwx------')}; syno_acl_tool() { echo synofake; }; synofake() { echo "It's Linux mode"; return 255; }`)).toBe('no');
   });
 
-  it('a shared parent (the NAS docker share) is allowed with a warning; the install folder itself must be private', () => {
+  it('refuses any ancestor others could rename entries in (the NAS docker share); the folder itself must be private', () => {
     if (process.platform === 'win32') return; // chmod and ownership need a POSIX filesystem
     const tmp = mkdtempSync(join(tmpdir(), 'rdv-gw-share-'));
     try {
       const share = join(tmp, 'docker');
       mkdirSync(share, { mode: 0o777 });
       spawnSync('chmod', ['777', share]);
-      const r = lib(`DRY_RUN=0 YES=1 DIR="${share}/rendezvous-gateway"; check_install_dir "$DIR" 2>&1; make_install_dir 2>&1; ls -ld "$DIR" | cut -c1-10; echo ok`);
-      expect(r.out).toMatch(/is shared \(others can write it, or it has an ACL\)/);
+      // The share as the parent, and as a grandparent: both refused, since a rename there swaps the whole install.
+      for (const d of [`${share}/rendezvous-gateway`, `${share}/apps/rendezvous-gateway`]) {
+        const r = lib(`check_install_dir "${d}" 2>&1; echo reached`);
+        expect(r.out, d).toMatch(/can be written by other users, who could swap the install/);
+        expect(r.out, d).not.toContain('reached');
+      }
+      // With the sticky bit others cannot rename your entries: allowed.
+      const sticky = join(tmp, 'sticky');
+      mkdirSync(sticky);
+      spawnSync('chmod', ['1777', sticky]);
+      expect(lib(`check_install_dir "${sticky}/rendezvous-gateway" 2>&1; echo reached`).out).toMatch(/reached$/);
+      // A private folder: made 700 and passes.
+      const ok = join(tmp, 'mine');
+      mkdirSync(ok, { mode: 0o755 });
+      const r = lib(`DRY_RUN=0 YES=1 DIR="${ok}/rendezvous-gateway"; check_install_dir "$DIR" 2>&1; make_install_dir 2>&1; ls -ld "$DIR" | cut -c1-10; echo ok`);
       expect(r.out).toMatch(/drwx------\nok$/);
+      // The checks below create folders in the shared one directly, to test what happens during a run.
       // An install folder others can write is refused, shared parent or not.
       mkdirSync(join(share, 'open'));
       spawnSync('chmod', ['777', join(share, 'open')]);
       expect(lib(`check_install_dir "${share}/open" 2>&1; echo reached`).out).toMatch(/can be written by other users/);
       // Swapped for a symlink before a write: the recheck stops it.
-      const s = lib(`DRY_RUN=0 DIR="${share}/rendezvous-gateway"; mv "$DIR" "$DIR.real"; ln -s "$DIR.real" "$DIR"; printf x | write_file "$DIR/x" 600 2>&1; echo reached`);
+      const s = lib(`DRY_RUN=0 DIR="${share}/rendezvous-gateway"; make_install_dir; mv "$DIR" "$DIR.real"; ln -s "$DIR.real" "$DIR"; printf x | write_file "$DIR/x" 600 2>&1; echo reached`);
       expect(s.out).toMatch(/symbolic link/);
       expect(s.out).not.toContain('reached');
       // Renamed and replaced by someone else's folder after the checks: we work from inside ours by relative
@@ -267,6 +284,44 @@ describe.skipIf(noSh !== null)('install-gateway.sh: helpers', () => {
     }
     // The helper passes agent commands to rdv-gateway (the human runs them, then restarts).
     expect(src).toContain('pin | token | oauth | agent) exec');
+  });
+
+  it('reads who an ACL lets write: DSM synoacltool (the real docker share) and getfacl', () => {
+    const plus = `ls() { echo "drwxrwxrwx+ 1 0 0 74 Oct 26 20:52 x"; }`;
+    const yes = (pre: string) => lib(`${pre}; if acl_lets_others_write /x; then echo yes; else echo no; fi`).out;
+    // As seen on the NAS's /volume1/docker: anon and administrators may write.
+    const share = `syno_acl_tool() { echo synofake; }; synofake() { printf '%s\\n' 'ACL version: 1' '	 [0] group:administrators:allow:rwxpdDaARWc--:fd-- (level:0)' '	 [1] user:anon:allow:rwxpdDaARWc--:fd-- (level:0)' '	 [2] everyone::allow:r-x---a-R-c--:fd-- (level:0)'; }`;
+    expect(yes(`${plus}; ${share}`)).toBe('yes');
+    const readOnly = `syno_acl_tool() { echo synofake; }; synofake() { printf '%s\\n' '	 [0] everyone::allow:r-x---a-R-c--:fd-- (level:0)' '	 [1] user:root:allow:rwxpdDaARWc--:fd-- (level:0)'; }`;
+    expect(yes(`${plus}; ${readOnly}`)).toBe('no');
+    // No ACL at all ("It's Linux mode"): nothing to read.
+    expect(yes(`ls() { echo "drwxr-xr-x 1 0 0 74 Oct 26 20:52 x"; }; syno_acl_tool() { echo synofake; }; synofake() { echo "It's Linux mode"; return 255; }`)).toBe('no');
+    // getfacl: a named user with write is someone else.
+    const gf = (lines: string) => `syno_acl_tool() { return 1; }; have_getfacl() { return 0; }; getfacl() { printf '%s\\n' ${lines}; }`;
+    expect(yes(`${plus}; ${gf(`'user::rwx' 'user:nobody:rwx' 'group::r-x' 'mask::rwx' 'other::r-x'`)}`)).toBe('yes');
+    expect(yes(`${plus}; ${gf(`'user::rwx' 'user:nobody:r-x' 'group::r-x' 'other::r-x'`)}`)).toBe('no');
+    // An ACL neither tool can read counts as a yes.
+    expect(yes(`${plus}; syno_acl_tool() { return 1; }; have_getfacl() { return 1; }`)).toBe('yes');
+    // The NAS hint names a folder outside the shares.
+    expect(lib('is_dsm() { return 0; }; nas_hint').out).toContain('--dir /volume1/rendezvous-gateway');
+    expect(lib('is_dsm() { return 1; }; nas_hint').out).toBe('');
+  });
+
+  it('the Node.js build runs npm with --prefix from the install folder, so the recheck passes', () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'rdv-gw-node-'));
+    try {
+      mkdirSync(join(tmp, 'repo', 'impl'), { recursive: true });
+      const t = process.platform === 'win32' ? spawnSync('cygpath', ['-u', tmp], { encoding: 'utf8' }).stdout.trim() : tmp;
+      const r = lib(
+        `npm() { printf 'npm %s\\n' "$*"; }; cd "${t}" && DIR=$(env pwd -P) && DRY_RUN=0 && D=. && build_node 2>&1; echo "exit=$?"`,
+      );
+      expect(r.out).toContain('npm --prefix ./repo/impl ci --no-audit --no-fund');
+      expect(r.out).toContain('npm --prefix ./repo/impl run build');
+      expect(r.out).toMatch(/exit=0$/);
+      expect(src).not.toMatch(/\(cd "\$D\/repo\/impl"/);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
   });
 
   it('refuses to build or run code another user owns (./gw update would run it)', () => {

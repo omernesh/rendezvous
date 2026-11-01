@@ -83,8 +83,10 @@ Verify: the chosen runtime's check passes.
 
 Why: the code, the agent's key and the settings live in one folder.
 
-Ask one question: where should it go (default `~/rendezvous-gateway`)? No
-spaces in the path. Verify: say the folder back; `repo/` will hold the
+Ask one question: where should it go (default `~/rendezvous-gateway`; on a
+Synology NAS `/volume1/rendezvous-gateway`, beside the shares, never inside
+a share such as `/volume1/docker`, which the installer refuses)? No spaces
+in the path. Verify: say the folder back; `repo/` will hold the
 code, `data/` the agent.
 
 ## Step 4 of 8: the public address
