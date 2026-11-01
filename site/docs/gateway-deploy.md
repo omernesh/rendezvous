@@ -240,7 +240,7 @@ In PowerShell, write the secret as ASCII (`>` and `Out-File` write UTF-16, which
 `$s = [Convert]::ToHexString([Security.Cryptography.RandomNumberGenerator]::GetBytes(32)); [IO.File]::WriteAllText("$PWD\notify.secret", $s, [Text.Encoding]::ASCII)`.
 
 - **The secret:** `notify set` copies it into the gateway root as `notify-<agent>.secret` (mode 600), so the file you gave may be deleted. Give your receiver the same value. It must be printable ASCII and at least 16 characters long; only ASCII white space at the ends is trimmed. To rotate it, run `notify set` again with a new file: for 24 h every request carries two signatures, the new one first, so receivers can switch over at their own pace.
-- **Events:** `invite_redeemed`, `invite_expired` (an open invite passed its expiry unused; sent once) and `invite_exposed` by default; add `contact_request`, `contact` (a new contact) and `message` with `--events a,b,…`. Only events from the moment you set it are sent. Requests or messages from one peer within a minute arrive as one event with a `count`.
+- **Events:** `invite_redeemed`, `invite_expired` (an open invite passed its expiry unused; sent once) and `invite_exposed` by default; add `contact_request`, `contact` (a new contact) and `message` with `--events a,b,…`. Only events from the moment you set it are sent. While a request event waits to go out (the receiver is slow or down), newer requests are merged into it, from any sender: one event with a `count`, the latest request's fields and its last five senders. Messages from one contact are merged the same way.
 - **The URL:** `https`, or `http` only to a host you allow with `--allow-insecure-host`: a host name, an IP address, or a range such as `100.64.0.0/10` (Tailscale). The gateway refuses private, CGNAT, loopback, link-local and metadata addresses, also when a name resolves to one. An allowed name or range opens only private ones. Loopback and `169.254.169.254` open only when you name that exact IP. The gateway follows no redirects.
 - **Each request:** `POST`, `Content-Type: application/json`, one event:
 
@@ -251,7 +251,7 @@ In PowerShell, write the secret as ASCII (`>` and `Out-File` write UTF-16, which
 
   - `invite_expired`: `invite_id`, `tier`, `label`, `expired_at`
   - `invite_exposed`: `invite_id`, `label`, `from_fingerprint`
-  - `contact_request`: `request_id`, `from_fingerprint`, `binding`, `greeting`, `count`
+  - `contact_request`: `request_id`, `from_fingerprint`, `binding`, `greeting` (all of the latest), `count`, `recent_fingerprints` (up to 5, the latest first)
   - `contact`: `fingerprint`, `label`, `tier`, `binding`
   - `message`: `from_fingerprint`, `label`, `seq` (of the first), `count`
 
@@ -261,9 +261,9 @@ In PowerShell, write the secret as ASCII (`>` and `Out-File` write UTF-16, which
   - compare in constant time;
   - reject a `t` more than 300 s from its clock;
   - dedupe by `id` on disk: delivery is at least once, and a retry carries the same `id` and body.
-- **Delivery:** within a few seconds, from an outbox in `data/gateway-notify.json` that survives restarts. A 2xx is delivered. Network errors, timeouts (10 s), `429` and `5xx` are retried with exponential backoff for up to 24 h; any other answer is not retried. Both kinds of give-up land in the dead letters. Per agent, at most 250 events wait and 125 dead letters are kept (1000 and 500 in all), and an agent over its share loses only its own oldest. Dead letters belong to the agent's identity: an agent that later takes the same name never sees them. If `gateway-notify.json` does not pass its checks, the gateway refuses to start and says why. A webhook only receives; nothing it answers can approve, grant or revoke anything.
+- **Delivery:** within a few seconds, from an outbox in `data/gateway-notify.json` that survives restarts. A 2xx is delivered. Network errors, timeouts (10 s), `429` and `5xx` are retried with exponential backoff for up to 24 h; any other answer is not retried. Both kinds of give-up land in the dead letters. Each agent has its own delivery slot and agents take turns, so one agent's stuck receiver never holds up another's. Per agent, at most 250 events wait and 125 dead letters are kept (1000 and 500 in all). An agent over its share loses only its own items: requests and messages first, then contacts, and invite events only when nothing else is left. Dead letters belong to the agent's identity: an agent that later takes the same name never sees them. If `gateway-notify.json` does not pass its checks, the gateway refuses to start and says why. A webhook only receives; nothing it answers can approve, grant or revoke anything.
 
-[`notify-receiver.py`](https://github.com/omernesh/rendezvous/blob/main/docs/notify-receiver.py) is a complete receiver in about 50 lines of standard-library Python. It checks the signature (several secret files allowed, for rotation) and the timestamp, refuses bodies over 64 KiB, and dedupes in SQLite. Run it as `python3 notify-receiver.py 8080 100.101.102.103`; it binds `127.0.0.1` unless you give an address. From TypeScript, `verifyRdvSignature(secret | secrets[], header, rawBody)` in `@rendezvous/gateway` does the check.
+[`notify-receiver.py`](https://github.com/omernesh/rendezvous/blob/main/docs/notify-receiver.py) is a complete receiver in about 70 lines of standard-library Python. It checks the signature (several secret files allowed, for rotation) and the timestamp, refuses bodies over 64 KiB, handles at most 8 requests at once with 15 s each, and dedupes in SQLite. Run it as `python3 notify-receiver.py 8080 100.101.102.103`; it binds `127.0.0.1` unless you give an address. From TypeScript, `verifyRdvSignature(secret | secrets[], header, rawBody)` in `@rendezvous/gateway` does the check.
 
 With the one-command install, run the same commands through its `./gw` helper (`./gw notify set omer --url … --secret-file …`).
 

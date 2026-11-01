@@ -4862,10 +4862,19 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       address the SSRF check refuses are not retried. Both kinds of give-up
       become dead letters. Caps: 250 waiting and 125 dead letters per agent,
       1000 and 500 in all; over a cap the agent with the most loses its own
-      oldest (waiting ones become dead letters), never another agent's.
-      `contact_request` and `message` from one peer within 60 s that have not
-      gone out yet are one event with a `count` (the body is rebuilt; it is
-      fixed once sent). Every item carries its agent's identity
+      items, never another agent's: `contact_request` and `message` first,
+      then `contact`, `invite_*` only when nothing else is left, the oldest
+      of a kind first (waiting ones become dead letters). One request in
+      flight per agent, and agents take turns (round-robin over the agents
+      with due items), so one agent's hung receiver holds one slot of four
+      and never delays another agent's events (re-review of PR #131).
+      Coalescing: a new `contact_request` merges into the agent's waiting
+      one, whatever its sender (a stranger's keys are free, so per sender
+      would bound nothing): `count`, the latest request's fields and
+      `recent_fingerprints` (up to 5, the latest first). A `message` merges
+      into the waiting one from the same contact (`count`, the first `seq`).
+      Merging also goes into an item that failed a try (it keeps its id; its
+      body is rebuilt), never into one in flight. Every item carries its agent's identity
       (`agentId`): it is sent, shown and re-queued only while that identity
       holds the binding; `agent add` and `agent remove` drop the binding's
       dead letters too, `notify clear` keeps them. `dead-letter --retry`
@@ -4914,9 +4923,23 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       The installer's `./gw` passes `notify` through to `rdv-gateway` like
       `pin` and `token` (human-only; not in GATEWAY_SAFE).
     - **Embedded IPv4.** An IPv6 answer that carries an IPv4 address
-      (mapped `::ffff:`, compatible `::/96`, NAT64 `64:ff9b::/96`, 6to4
-      `2002::/16`) is also judged by that address: `::ffff:169.254.169.254`
-      and `64:ff9b::a9fe:a9fe` are refused unless named exactly.
+      (mapped `::ffff:`, compatible `::/96`, translated `::ffff:0:0/96`,
+      NAT64 `64:ff9b::/96` and local-use `64:ff9b:1::/48`, 6to4 `2002::/16`)
+      is also judged by that address: `::ffff:169.254.169.254` and
+      `64:ff9b::a9fe:a9fe` are refused unless named exactly; so are
+      `240.0.0.0/4` and `255.255.255.255`, whatever range is allowed.
+      `--allow-insecure-host` IPv6 entries are stored in canonical form.
+    - **Migrate with a webhook** (re-review H1). The webhook secrets
+      (`notify-*.secret[.prev]`) are the gateway's, not the agent's: `agent
+      migrate` leaves them off its file list and only `rebind` renames them
+      (`notify-_root.secret` to `notify-<name>.secret`). The migrate is all
+      or nothing: plan the files, check they are there, copy and verify,
+      place, move the originals, then rebind; any failure undoes every step
+      (a rebind that started is reversed: tokens, grants and webhooks go back
+      to the root agent) and one error says so. An expired previous secret
+      (`….secret.prev` past `previousUntil`) is deleted at the next send.
+      The example receiver bounds itself: 8 requests at once, 15 s per
+      request in all, a Content-Length of ASCII digits only.
     - **Isolation.** Outbound only: the notifier reads the agent's event log
       and state and never writes them or takes their locks; it runs on its
       own timer, so a slow receiver never delays the agent. Nothing a

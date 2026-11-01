@@ -32,7 +32,7 @@ import { BlockList, isIP } from 'node:net';
 import { join } from 'node:path';
 import { acquireLock, clean, eventsStamp, type Home, type LoggedEvent, readEvents, writeAtomic } from '@rendezvous/cli/lib';
 import { fingerprint, guardedLookup, isAgentId, isBlockedAddress, type Resolver } from '@rendezvous/core';
-import { AGENT_NAME_RE, ROOT_BINDING } from './agents.js';
+import { AGENT_NAME_RE, NOTIFY_SECRET_RE, ROOT_BINDING } from './agents.js';
 
 export const NOTIFY_FILE = 'gateway-notify.json';
 export const NOTIFY_LOCK = 'gateway-notify.lock';
@@ -58,8 +58,12 @@ export const OUTBOX_PER_AGENT = 250;
 /** Dead letters kept: in all, and per agent; the oldest of the agent with the most are dropped first. */
 export const DEAD_LETTER_MAX = 500;
 export const DEAD_LETTER_PER_AGENT = 125;
-/** contact_request and message events from one peer within this window are one event with a count. */
+/** contact_request events of one agent, and message events from one peer, waiting to go out are one event with a count. */
 export const COALESCE_MS = 60_000;
+/** The senders a merged contact_request names (the latest first). */
+export const RECENT_SENDERS = 5;
+/** Requests in flight per agent: a receiver that hangs holds only its own agent's slot. */
+export const NOTIFY_PER_AGENT = 1;
 /** The previous secret signs too for this long after `notify set` replaced it. */
 export const SECRET_OVERLAP_MS = 24 * 60 * 60_000;
 /** Invite ids whose expiry was sent, kept per agent (an agent has at most 32 open invites). */
@@ -222,7 +226,7 @@ export function readSecretFile(path: string): Buffer {
 /** The fixed file an agent's secret is kept in, in the gateway root: `notify-<agent>.secret` (`notify-_root.secret` for the root agent). */
 export const secretFileName = (binding: string) => `notify-${binding === ROOT_BINDING ? '_root' : binding}.secret`;
 /** Every name a secret file of ours may have (the consent guard refuses the same pattern). */
-export const SECRET_FILE_RE = /^notify-[a-z0-9_][a-z0-9_-]{0,31}\.secret(\.prev)?$/;
+export const SECRET_FILE_RE = NOTIFY_SECRET_RE;
 
 // --- URL rules -----------------------------------------------------------------
 
@@ -239,9 +243,14 @@ export function checkInsecureHost(h: string): string {
   if (cidr) {
     const fam = isIP(cidr[1]);
     const bits = Number(cidr[2]);
-    if (fam && bits <= (fam === 4 ? 32 : 128)) return `${cidr[1]}/${bits}`;
-  } else if (v && v.length <= 253 && (isIP(v) || HOSTNAME_RE.test(v))) return v;
+    if (fam && bits <= (fam === 4 ? 32 : 128)) return `${canonIp(cidr[1])}/${bits}`;
+  } else if (v && v.length <= 253 && (isIP(v) || HOSTNAME_RE.test(v))) return isIP(v) ? canonIp(v) : v;
   throw new NotifyError(`--allow-insecure-host ${JSON.stringify(h)}: a host name, an IP address or a CIDR range only (no scheme, no port)`);
+}
+
+/** An IP address in canonical form (IPv6 compressed and lowercased, as a URL writes it). */
+function canonIp(ip: string): string {
+  return isIP(ip) === 6 ? new URL(`http://[${ip}]/`).hostname.slice(1, -1) : ip;
 }
 
 interface Allowed {
@@ -251,7 +260,7 @@ interface Allowed {
   hasRanges: boolean;
 }
 
-const normIp = (ip: string) => (isIP(ip) === 6 ? ip.toLowerCase() : ip);
+const normIp = (ip: string) => canonIp(ip);
 
 function allowList(entries: readonly string[]): Allowed {
   const a: Allowed = { names: new Set(), ips: new Set(), ranges: new BlockList(), hasRanges: false };
@@ -270,7 +279,7 @@ const inRange = (a: Allowed, ip: string) => a.hasRanges && a.ranges.check(ip, is
 
 /** Loopback, link-local (the cloud metadata address among them), unspecified, multicast: reached only when named as that exact IP. */
 const NEVER = new BlockList();
-for (const [n, p] of [['0.0.0.0', 8], ['127.0.0.0', 8], ['169.254.0.0', 16], ['224.0.0.0', 4]] as const) NEVER.addSubnet(n, p, 'ipv4');
+for (const [n, p] of [['0.0.0.0', 8], ['127.0.0.0', 8], ['169.254.0.0', 16], ['224.0.0.0', 4], ['240.0.0.0', 4]] as const) NEVER.addSubnet(n, p, 'ipv4');
 for (const [n, p] of [['::', 128], ['::1', 128], ['fe80::', 10], ['fec0::', 10], ['ff00::', 8]] as const) NEVER.addSubnet(n, p, 'ipv6');
 
 /**
@@ -308,7 +317,10 @@ function hextets(ip: string): number[] | undefined {
   return all.length === 8 && all.every((x) => Number.isInteger(x) && x >= 0 && x <= 0xffff) ? all : undefined;
 }
 
-/** The IPv4 address an IPv6 address embeds: ::ffff:a.b.c.d, ::a.b.c.d, 64:ff9b::a.b.c.d, 2002:aabb:ccdd::. */
+/**
+ * The IPv4 address an IPv6 address embeds: mapped ::ffff:a.b.c.d, compatible ::a.b.c.d, translated ::ffff:0:a.b.c.d,
+ * NAT64 64:ff9b::a.b.c.d and its local-use 64:ff9b:1::/48 (the last 32 bits), 6to4 2002:aabb:ccdd::.
+ */
 export function embeddedV4(ip: string): string | undefined {
   if (isIP(ip) !== 6) return undefined;
   const w = hextets(ip);
@@ -316,6 +328,8 @@ export function embeddedV4(ip: string): string | undefined {
   const v4 = (hi: number, lo: number) => `${hi >> 8}.${hi & 0xff}.${lo >> 8}.${lo & 0xff}`;
   const zero = (from: number, to: number) => w.slice(from, to).every((x) => x === 0);
   if (zero(0, 5) && (w[5] === 0xffff || w[5] === 0)) return v4(w[6], w[7]);
+  if (zero(0, 4) && w[4] === 0xffff && w[5] === 0) return v4(w[6], w[7]);
+  if (w[0] === 0x64 && w[1] === 0xff9b && w[2] === 1) return v4(w[6], w[7]);
   if (w[0] === 0x64 && w[1] === 0xff9b && zero(2, 6)) return v4(w[6], w[7]);
   if (w[0] === 0x2002) return v4(w[1], w[2]);
   return undefined;
@@ -474,7 +488,13 @@ export function validateNotifyData(raw: unknown, path = NOTIFY_FILE): NotifyData
   return d;
 }
 
-/** Per-agent and total caps: an agent over its share loses its own oldest first, never another agent's. */
+/** What goes first when an agent is over its cap: requests and messages, then contacts; invites only when nothing else is left. */
+const PRIORITY: Record<NotifyEvent, number> = { contact_request: 0, message: 0, contact: 1, invite_redeemed: 2, invite_expired: 2, invite_exposed: 2 };
+
+/**
+ * Per-agent and total caps: an agent over its share loses its own items, never another agent's: the lowest priority
+ * first (PRIORITY), the oldest of those.
+ */
 function enforceCaps(d: NotifyData, now: number): void {
   const busiest = (items: OutboxItem[]) => {
     const n = new Map<string, number>();
@@ -485,7 +505,11 @@ function enforceCaps(d: NotifyData, now: number): void {
     for (;;) {
       const [agent, n] = busiest(items) ?? ['', 0];
       if (n <= per && items.length <= total) return items;
-      const at = items.findIndex((i) => i.agent === agent);
+      let at = -1;
+      for (let k = 0; k < items.length; k++) {
+        if (items[k].agent !== agent) continue;
+        if (at < 0 || PRIORITY[items[k].event] < PRIORITY[items[at].event]) at = k;
+      }
       evict(items[at]);
       items = [...items.slice(0, at), ...items.slice(at + 1)];
     }
@@ -551,7 +575,10 @@ export class NotifyStore {
   secrets(binding: string, now = Date.now()): Buffer[] {
     const out = [readSecretFile(this.secretPath(binding))];
     const until = this.config(binding)?.previousUntil;
-    if (until && Date.parse(until) > now && existsSync(`${this.secretPath(binding)}.prev`)) {
+    const prev = `${this.secretPath(binding)}.prev`;
+    // Its 24 h are over: the previous secret is deleted, not kept on disk.
+    if (until && Date.parse(until) <= now) rmSync(prev, { force: true });
+    if (until && Date.parse(until) > now && existsSync(prev)) {
       try {
         out.push(readSecretFile(`${this.secretPath(binding)}.prev`));
       } catch {
@@ -725,6 +752,8 @@ export interface NotifierOptions {
   settleMs?: number;
   timeoutMs?: number;
   concurrency?: number;
+  /** In flight per agent (default NOTIFY_PER_AGENT). */
+  perAgent?: number;
   maxAgeMs?: number;
   baseDelayMs?: number;
   /** Replaces the system resolver (tests). */
@@ -740,6 +769,9 @@ export class Notifier {
   private lastError?: string;
   private readonly stamps = new Map<string, string>();
   private readonly inflight = new Map<string, Promise<void>>();
+  /** The agent (binding) of each item in flight, for the per-agent slots. */
+  private readonly inflightAgent = new Map<string, string>();
+  private turn = 0;
   /** Outcomes not yet written: their items stay out of dispatch until they are. */
   private readonly outcomes: Outcome[] = [];
   private readonly settling = new Set<string>();
@@ -804,14 +836,25 @@ export class Notifier {
   private enqueue(d: NotifyData, a: NotifyAgent, event: NotifyEvent, at: string, data: Record<string, unknown>): void {
     if (!a.id) return;
     const now = this.now();
-    // A burst from one peer (requests, messages) is one event with a count while it has not gone out yet.
-    const key = event === 'contact_request' || event === 'message' ? `${event}:${String(data.from_fingerprint)}` : undefined;
+    // Requests are one rolling event per agent (strangers' keys are free, so per sender would be no bound), messages
+    // one per peer (only contacts send them): merged into a waiting item, also one that failed a try, while it is not
+    // in flight. A request's item carries the latest one's fields and its last few senders.
+    const key = event === 'contact_request' ? 'contact_request' : event === 'message' ? `message:${String(data.from_fingerprint)}` : undefined;
+    if (event === 'contact_request') data = { ...data, recent_fingerprints: data.from_fingerprint ? [data.from_fingerprint] : [] };
     if (key) {
-      const same = d.outbox.find((i) => i.agent === a.binding && i.agentId === a.id && i.key === key && i.attempts === 0 && now - i.first < COALESCE_MS && !this.inflight.has(i.id) && !this.settling.has(i.id));
+      const same = d.outbox.find((i) => i.agent === a.binding && i.agentId === a.id && i.key === key && !this.inflight.has(i.id) && !this.settling.has(i.id));
       if (same) {
         same.count = (same.count ?? 1) + 1;
         const body = JSON.parse(same.body) as { at: string; data: Record<string, unknown> };
-        same.body = eventBody({ id: same.id, event, agent: a.id, agentName: a.name, at: body.at, data: { ...body.data, count: same.count } });
+        const merged =
+          event === 'contact_request'
+            ? {
+                ...data,
+                count: same.count,
+                recent_fingerprints: [...new Set([...((data.recent_fingerprints as string[]) ?? []), ...((body.data.recent_fingerprints as string[]) ?? [])])].slice(0, RECENT_SENDERS),
+              }
+            : { ...body.data, count: same.count };
+        same.body = eventBody({ id: same.id, event, agent: a.id, agentName: a.name, at: event === 'contact_request' ? at : body.at, data: merged });
         return;
       }
     }
@@ -904,8 +947,36 @@ export class Notifier {
     } catch {
       return; // tick() reports a bad file
     }
-    const due = outbox.filter((i) => i.next <= now && !this.inflight.has(i.id) && !this.settling.has(i.id)).slice(0, room);
+    // At most NOTIFY_PER_AGENT in flight per agent, and agents take turns, so one agent's stuck receiver or long
+    // queue never holds back another's events.
+    const per = this.opts.perAgent ?? NOTIFY_PER_AGENT;
+    const busy = new Map<string, number>();
+    for (const b of this.inflightAgent.values()) busy.set(b, (busy.get(b) ?? 0) + 1);
+    const queues = new Map<string, OutboxItem[]>();
+    for (const i of outbox) {
+      if (i.next > now || this.inflight.has(i.id) || this.settling.has(i.id)) continue;
+      const q = queues.get(i.agent) ?? [];
+      q.push(i);
+      queues.set(i.agent, q);
+    }
+    const order = [...queues.keys()].sort();
+    const start = order.length ? this.turn++ % order.length : 0;
+    const turns = [...order.slice(start), ...order.slice(0, start)];
+    const due: OutboxItem[] = [];
+    for (let progress = true; progress && due.length < room; ) {
+      progress = false;
+      for (const b of turns) {
+        if (due.length >= room) break;
+        if ((busy.get(b) ?? 0) >= per) continue;
+        const next = queues.get(b)!.shift();
+        if (!next) continue;
+        due.push(next);
+        busy.set(b, (busy.get(b) ?? 0) + 1);
+        progress = true;
+      }
+    }
     for (const item of due) {
+      this.inflightAgent.set(item.id, item.agent);
       this.settling.add(item.id);
       const p = this.deliver(item)
         .catch((err) => {
@@ -914,6 +985,7 @@ export class Notifier {
         })
         .finally(() => {
           this.inflight.delete(item.id);
+          this.inflightAgent.delete(item.id);
           this.dispatch();
         });
       this.inflight.set(item.id, p);

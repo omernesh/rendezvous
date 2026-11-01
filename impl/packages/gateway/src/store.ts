@@ -12,7 +12,7 @@ import { existsSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { acquireLock, type Home, writeAtomic } from '@rendezvous/cli/lib';
 import { randomToken, safeEqual, sha256 } from './http.js';
-import { isRootBinding } from './agents.js';
+import { isRootBinding, ROOT_BINDING } from './agents.js';
 import { isScope, SCOPES, type Scope } from './scopes.js';
 
 export const MAX_TOKENS = 50;
@@ -235,6 +235,20 @@ export class GatewayStore {
       for (const t of Object.values(d.tokens)) {
         if (isRootBinding(t.agent)) {
           t.agent = to;
+          n += 1;
+        }
+      }
+      return n;
+    });
+  }
+
+  /** Undoes rebindAgent when `agent migrate` fails after it: tokens bound to `to` are the root agent's again. */
+  async unbindAgent(to: string): Promise<number> {
+    return this.update((d) => {
+      let n = 0;
+      for (const t of Object.values(d.tokens)) {
+        if (t.agent === to) {
+          t.agent = ROOT_BINDING;
           n += 1;
         }
       }

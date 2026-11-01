@@ -18,7 +18,7 @@ import { existsSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { acquireLock, type Home, writeAtomic } from '@rendezvous/cli/lib';
 import { randomToken, safeEqual, sha256 } from './http.js';
-import { isRootBinding } from './agents.js';
+import { isRootBinding, ROOT_BINDING } from './agents.js';
 import { isScope, type Scope } from './scopes.js';
 
 /** Approved clients and grants: a cap, never an eviction (the owner revokes). */
@@ -364,6 +364,21 @@ export class OAuthStore {
         if (isRootBinding(g.agent)) {
           g.agent = to;
           if (g.resource.endsWith(`/a/${from}/mcp`)) g.resource = `${g.resource.slice(0, -`/a/${from}/mcp`.length)}/a/${to}/mcp`;
+          n += 1;
+        }
+      }
+      return n;
+    });
+  }
+
+  /** Undoes rebindAgent when `agent migrate` fails after it: grants bound to `to` are the root agent's (`from`) again. */
+  async unbindAgent(from: string, to: string): Promise<number> {
+    return this.update((d) => {
+      let n = 0;
+      for (const g of Object.values(d.grants)) {
+        if (g.agent === to) {
+          g.agent = ROOT_BINDING;
+          if (g.resource.endsWith(`/a/${to}/mcp`)) g.resource = `${g.resource.slice(0, -`/a/${to}/mcp`.length)}/a/${from}/mcp`;
           n += 1;
         }
       }

@@ -9,8 +9,9 @@ HMAC-SHA256(secret, t + "." + body)>, several v1= while a secret rotates), rejec
 timestamp more than 300 s from now, and handles each event id once (delivery is at
 least once), remembering ids in SQLite. RDV_NOTIFY_SECRET_FILES may list several
 files (separated by os.pathsep), to accept an old and a new secret while you rotate.
+At most 8 requests are handled at once, and each gets 15 s in all.
 """
-import hashlib, hmac, json, os, sqlite3, sys, threading, time
+import hashlib, hmac, json, os, socket, sqlite3, sys, threading, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 FILES = os.environ.get("RDV_NOTIFY_SECRET_FILES", "notify.secret").split(os.pathsep)
@@ -23,7 +24,7 @@ def verify(header, body):
     parts = [p.split("=", 1) for p in (header or "").split(",") if "=" in p]
     ts = [v.strip() for k, v in parts if k.strip() == "t"]
     sigs = [v.strip() for k, v in parts if k.strip() == "v1"]
-    if len(ts) != 1 or not ts[0].isdigit() or abs(time.time() - int(ts[0])) > 300:
+    if len(ts) != 1 or not (ts[0].isascii() and ts[0].isdigit()) or abs(time.time() - int(ts[0])) > 300:
         return False
     wants = [hmac.new(s, ts[0].encode() + b"." + body, hashlib.sha256).hexdigest() for s in SECRETS]
     return any(hmac.compare_digest(w, s) for w in wants for s in sigs)
@@ -32,14 +33,21 @@ def handle(event):  # data is metadata only; a peer's words come as {"untrusted_
     print(f"{event['at']} {event['agent_name']}: {event['event']} {json.dumps(event['data'])}", flush=True)
 
 class Hook(BaseHTTPRequestHandler):
-    timeout = 10  # a slow or stuck client cannot hold a thread
+    timeout = 10  # per read; the timer below bounds the whole request
+    def setup(self):
+        super().setup()
+        self.deadline = threading.Timer(15, lambda: self.connection.shutdown(socket.SHUT_RDWR))
+        self.deadline.start()
+    def finish(self):
+        self.deadline.cancel()
+        super().finish()
     def answer(self, status):
         self.send_response(status)
         self.end_headers()
     def do_POST(self):
         n = self.headers.get("Content-Length", "")
-        if not n.isdigit():
-            return self.answer(411)  # missing or negative: 4xx, never retried
+        if not (n.isascii() and n.isdigit()):
+            return self.answer(411)  # missing or not a plain number: 4xx, never retried
         if int(n) > 65536:
             return self.answer(413)
         body = self.rfile.read(int(n))
@@ -51,5 +59,16 @@ class Hook(BaseHTTPRequestHandler):
                 handle(event)
         self.answer(204)  # answer 5xx or 429 instead to have the gateway try again later
 
+class Server(ThreadingHTTPServer):
+    slots = threading.BoundedSemaphore(8)  # at most 8 requests at once; the rest wait to be accepted
+    def process_request(self, request, address):
+        self.slots.acquire()
+        super().process_request(request, address)
+    def process_request_thread(self, request, address):
+        try:
+            super().process_request_thread(request, address)
+        finally:
+            self.slots.release()
+
 port = int(sys.argv[1]) if len(sys.argv) > 1 else 8080
-ThreadingHTTPServer((sys.argv[2] if len(sys.argv) > 2 else "127.0.0.1", port), Hook).serve_forever()
+Server((sys.argv[2] if len(sys.argv) > 2 else "127.0.0.1", port), Hook).serve_forever()
