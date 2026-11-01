@@ -3,7 +3,9 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, it, assert } from 'vitest';
+import { afterEach, describe, it, assert, vi } from 'vitest';
+import { Home } from '@rendezvous/cli/lib';
+import { GatewayStore } from '../src/store.js';
 import type { Gateway } from '../src/index.js';
 import { Browser, hidden, PIN, startGateway, type TestGateway } from './helpers.js';
 
@@ -54,7 +56,7 @@ describe('a PIN change racing a PIN check', () => {
     const csrf = hidden((await b.get('/approve/admin')).text, 'csrf');
     changeDuringNextCheck(g, 'new-pin-7731');
     const r = await b.post('/approve/admin/token/create', { agent: 'omer', name: 'late', s_read: '1', pin: PIN, csrf });
-    assert.include([401, 409], r.status);
+    assert.equal(r.status, 409);
     assert.equal(g.gw.store.listTokens().length, 0);
   });
 
@@ -65,5 +67,35 @@ describe('a PIN change racing a PIN check', () => {
     await g.gw.store.changePin(PIN, 'third-pin-9902', Date.now()).catch((e: Error) => void (err = e.message));
     assert.match(err, /changed meanwhile/);
     assert.equal((await g.gw.store.checkPin('new-pin-7731', Date.now())).ok, true);
+  });
+});
+
+describe('PIN set ordering', () => {
+  it('created only grows when the clock steps back', async () => {
+    root = mkdtempSync(join(tmpdir(), 'rdv-gw-clock-'));
+    const store = new GatewayStore(new Home(join(root, 'h')));
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2030-01-01T00:00:10Z'));
+      await store.setPin('first-pin-4417');
+      const a = store.pinSetAt()!;
+      vi.setSystemTime(new Date('2030-01-01T00:00:05Z')); // the clock stepped back
+      await store.setPin('second-pin-5528');
+      const b = store.pinSetAt()!;
+      assert.isAbove(Date.parse(b), Date.parse(a));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('two first-time PIN sets at once: one wins, the other fails cleanly', async () => {
+    root = mkdtempSync(join(tmpdir(), 'rdv-gw-first-'));
+    const home = new Home(join(root, 'h'));
+    const a = new GatewayStore(home);
+    const b = new GatewayStore(new Home(join(root, 'h')));
+    const res = await Promise.allSettled([a.changePin(undefined, 'first-pin-4417', Date.now()), b.changePin(undefined, 'other-pin-6639', Date.now())]);
+    assert.equal(res.filter((r) => r.status === 'fulfilled').length, 1);
+    const lost = res.find((r) => r.status === 'rejected') as PromiseRejectedResult;
+    assert.match(lost.reason.message, /changed meanwhile/);
   });
 });

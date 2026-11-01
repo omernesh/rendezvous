@@ -58,7 +58,7 @@ import { openApi } from './openapi.js';
 import { BRAND_CSS, FAVICON_SVG } from './brand.js';
 import { type AgentLabel, approvalPage, consentCsp, consentPage, CSS, donePage, errorPage, type Flash, listPage, PAGE_CSP, unlockPage } from './pages.js';
 import { authorizeCall, SCOPES, type Scope, toolScopes } from './scopes.js';
-import { GatewayStore, pinRuleError, StoreError } from './store.js';
+import { GatewayStore, PinChangedError, pinRuleError, StoreError } from './store.js';
 import { Notifier, type NotifierOptions, NotifyStore, receiverName } from './notify.js';
 import { type AdminAgent, type AdminGrant, type AdminToken, adminPage, tokenMadePage } from './admin.js';
 
@@ -998,13 +998,12 @@ export class Gateway {
       // A token is lasting access: making one asks for the PIN again, with the same backoff as the unlock.
       const check = await this.ownerPin(who, form.get('pin') ?? '', 'gateway settings page (token create)');
       if (!check.ok) return bad(check.status, `${check.text} No token was made.`);
-      // The PIN checked must still be the PIN in place: one changed while this check ran authorizes nothing.
-      if (this.store.pinSetAt() !== check.pinSetAt) return bad(409, 'The PIN changed meanwhile; no token was made. Unlock again.');
       if (!rt.id) return bad(409, `Agent ${rt.name}'s identity cannot be read; no token was made.`);
       let made;
       try {
-        made = await this.store.createToken(form.get('name') ?? '', scopes, rt.root ? ROOT_BINDING : rt.name, rt.id);
+        made = await this.store.createToken(form.get('name') ?? '', scopes, rt.root ? ROOT_BINDING : rt.name, rt.id, check.pinSetAt); // under the lock: the PIN checked must still be in place
       } catch (err) {
+        if (err instanceof PinChangedError) return bad(409, 'The PIN changed meanwhile; no token was made. Unlock again.');
         if (err instanceof StoreError) return bad(400, `${err.message}; no token was made.`);
         throw err;
       }
