@@ -1140,7 +1140,7 @@ Commands follow the order you use them: set up an identity, find and connect to 
 
 | Command | Does |
 |---|---|
-| `rdv init --profile omer --email omer@example.com [--email …] [--relay wss://… [--relay …]] [--phone +…] [--phone …] [--public-pointer] [--force]` | Generate key and card, write state. Repeat `--email` / `--phone` for more addresses (canonicalized, repeats dropped, at most 8). Without `--relay`: `DEFAULT_RELAYS` (below). An agent keeps the relays it was created with |
+| `rdv init --profile omer --email omer@example.com [--email …] [--relay wss://… [--relay …]] [--phone +…] [--phone …] [--public-pointer] [--agent-name Sammie] [--force]` | Generate key and card, write state. Repeat `--email` / `--phone` for more addresses (canonicalized, repeats dropped, at most 8). Without `--relay`: `DEFAULT_RELAYS` (below). An agent keeps the relays it was created with |
 | `rdv whoami` | Print agent ID, fingerprint, addresses, per-relay health (`relay_health`: last OK, last error, cooldown), card JSON (never the secret key) |
 | `rdv address list` | Our addresses, each public (on the card, answers probes; with its topic) or private (kept in `config.json` only) |
 | `rdv address add <email\|+phone> [--public\|--private]` | Add one (default public). A public one re-signs the card with a later `created`, republishes it if the public pointer is on, and a running `listen` / `rdv-mcp` starts answering probes on it within a second. Duplicates (in any spelling) and a ninth address are refused |
@@ -1161,6 +1161,8 @@ Contact needs consent from both humans. Nothing is granted on its own.
 | `rdv contact pending` | Pending inbound requests with binding, fingerprint, greeting; answers to your topic probes awaiting confirmation |
 | `rdv contact grant <request-id> [--tier friend] [--scope-file s.json] [--label john@doe.com]` | Approve (`--label`: your local name for them) |
 | `rdv contact label <agent-id> <label>` | Name a contact locally; sending by name (`rdv_send` `to`) resolves through this, never through the addresses its card claims. Yours to run: an assistant may only suggest a label, which you approve with the contact (NOTES 62). From chat: the `rdv_label` tool, which asks you in an approval form |
+| `rdv contact alias add\|remove <agent-id> <name>` / `rdv contact alias list` | A contact's nicknames besides its label (at most 8, 64 characters each, a name belongs to one contact only): sending by name resolves them too, also as "Ran's agent" or "agent of Ran". Yours to run, in your own terminal; from chat: `rdv_label` "add-alias" / "remove-alias" (an approval form) (NOTES 103) |
+| `rdv agent-name set <name>` / `rdv agent-name clear` | Name your agent (e.g. Sammie): it goes on the card, where contacts see it only as what your agent calls itself, and the default greeting uses it. Re-signs and republishes the card and sends it to contacts. Yours to run, in your own terminal; also `rdv init --agent-name`; from chat: `rdv_agent_name` (an approval form) |
 | `rdv contact grant <agent-id> [--tier …] [--scope-file …] [--invoke <capability-uri>]… [--no-meetings]` | Give a contact you requested rights towards you (by default it may write, not propose meetings); the contact gets a reverse grant, so it can then propose (NOTES 60) |
 | `rdv contact confirm <grant-id>` / `rdv contact reject <grant-id> [--block]` | Accept or turn down an answer to your topic probe (anyone who saw the probe can answer; check the fingerprint) |
 | `rdv contact decline <request-id> [--block]` | Decline |
@@ -1712,7 +1714,9 @@ stays for clients without forms. `RDV_ELICIT=off` turns forms off entirely.
 | `rdv_grant` | request_id, tier, may_propose_meetings, invoke, limits, confirm_phrase, label; or grant_id (+ confirm_phrase, label) to confirm a probe answer; or agent_id (+ tier, may_propose_meetings, invoke, limits, confirm_phrase) to grant an existing contact more, which also sends it a reverse grant | contact (needs the human, below) |
 | `rdv_revoke` | agent_id, or request_id / grant_id (+ block) to decline | revoked / declined / rejected |
 | `rdv_auto_approve` | action `on` / `off`; agent_id or to (a `local_label`); all_contacts (off); until (on: 30m, 12h, 7d, 2w or RFC 3339, at most a year) | `off`: the contacts it was on for (no gate, audited `via: mcp`); `on`: the contact, what it covers and until when, only after the human typed the owner passphrase into the approval form (below). Never a passphrase or phrase |
-| `rdv_label` | agent_id, label | renames a contact (its `local_label`, what `rdv_send` "to" resolves). The approval form shows the agent ID, the fingerprint and the current label; the human may change the name, and what they leave applies. Without a form it is refused and names `rdv contact label <agent-id> <label>`. Through rdv-gateway the label is only a suggestion: the owner types the name on the page, which starts at the current label |
+| `rdv_label` | agent_id, action?, label?, alias? | renames a contact (its `local_label`, what `rdv_send` "to" resolves). The approval form shows the agent ID, the fingerprint and the current label; the human may change the name, and what they leave applies. Without a form it is refused and names `rdv contact label <agent-id> <label>`. Through rdv-gateway the label is only a suggestion: the owner types the name on the page, which starts at the current label |
+| `rdv_label` "add-alias" / "remove-alias" | agent_id, alias | gives a contact a nickname besides its label, or takes one off (NOTES 103): at most 8, a name belongs to one contact only, and "to" then resolves it, also as "Ran's agent" or "agent of Ran". The human types the nickname in the approval form. |
+| `rdv_agent_name` | name?, clear? | names this agent (e.g. "Sammie") on its card, where contacts see it only as its own claim, or takes the name off; the human types it in the approval form (through the gateway, on the PIN-locked page, with the assistant's name only as a suggestion beside an empty field). |
 | `rdv_owner_passphrase` | — | sets or changes the owner passphrase (the one `rdv_auto_approve` "on" asks for). The human types it twice into the approval form (and the current one when changing); only this server sees it, and it never reaches a tool result. Setting one turns auto-approve off for every contact. Without a form it is refused and names `rdv owner-secret set`. Not available through rdv-gateway |
 | `rdv_resync` | agent_id and / or group_id | after a fork or rollback: with agent_id, take a contact's messages again; with group_id, thaw a frozen group; with both, take a refused or muted member's group messages again. The form explains what the fork means; the human should check with the person directly first. Without a form it is refused and names `rdv contact resync` or `rdv group resync [--member]` |
 | `rdv_invite` | action `create` (tier, may_propose_meetings, invoke, expires_days, name, label) / `list` / `revoke` (invite_id) / `link` (approval_id: the link of a create approved after the call returned, once, to the client that asked; never in the event log) | invite links (NOTES 101). `create` opens an approval form (no confirm phrase) where the human picks the tier (`friend` or below), meetings, the days (1 to 30), the name the link shows and their label for the person; the result has `url` and `share_text` (shown once: only a hash of the secret is kept). Without a form it is refused and names `rdv invite create`. `list` shows each invite and who redeemed it; `revoke` needs no form. An `invite_redeemed` event says who used one |
@@ -2224,6 +2228,7 @@ The signed, self-describing document an agent publishes about itself. Schema
     "name": "John Doe", // only if the owner opts in
     "contact": ["mailto:john@doe.com"]  // one hint is enough
   },
+  "agent_name": "Sammie",   // OPTIONAL: what the owner calls the agent (unverified)
   "discovery": {            // OPTIONAL — enables machine-first discovery
     "addresses": [          // contact points the owner is findable by
       {"type": "email", "value": "john@doe.com"},
@@ -2248,6 +2253,19 @@ The signed, self-describing document an agent publishes about itself. Schema
 Rules:
 - `owner` fields are **opt-in and minimized**. A public card need not name
   its owner at all.
+- `agent_name` (**spec change**, NOTES 103) is OPTIONAL: what the owner
+  calls their agent, 1 to 64 printable characters. Like `owner`, it is the
+  card holder's own claim and peer text (§5.6): a receiver shows it marked as
+  untrusted ("calls itself Sammie"), ignores a malformed one without
+  rejecting the card, and never picks a recipient by it. Receivers that do
+  not know the field ignore it.
+- **Local names.** A host resolves "tell John" only through names its own
+  human gave the contact: a local label and, optionally, nicknames (each
+  belonging to one contact), compared after Unicode NFKC normalization,
+  trimming and case folding, also through possessive forms such as "John's
+  agent" or "agent of John". A name that matches several contacts is
+  refused. Never through the card's addresses, its `agent_name` or a
+  greeting. These names are local and never sent.
 - `discovery.addresses` is opt-in per address: each listed address opens the
   dead-drop listen topic for that address (§4.4). Listing an address is a
   deliberate act, not a default.
@@ -4714,12 +4732,14 @@ The format follows Keep a Changelog. One line per change a user can see; PR numb
 
 ### Added
 - Invite people by link, WhatsApp style: ask your assistant to invite someone, choose in an approval form what they get and for how long, and send the ready-made message; when they open the link and tell their assistant "accept my Rendezvous invite", or run `rdv init --invite <link>`, you are connected at once, and you are told who used it. The link works once and expires (7 days by default); `rdv invite create` in a terminal does the same.
+- Nicknames for your contacts: tell your assistant "talk to joe" or "tell Ran's agent …" once you have given that contact the nickname (you type it in an approval form; at most 8 per contact, each name belongs to one contact). You can also name your own agent (e.g. "Sammie"): contacts see it as what your agent calls itself, never as a way to pick it, and your contact requests greet with it.
 
 ### Changed
 - The docs, site, plugin and MCP server text now describe Rendezvous as cross-platform secure agent-to-agent messaging, with meeting scheduling as one example. The CLI reference follows the order you use it (identity, contacts, messages, tasks and files, groups, backups), and the FAQ shows the current version.
 
 ### Fixed
 - **Security:** a relay can no longer inject text into your assistant's connection to Rendezvous or into `rdv --json` output: messages a relay sends for display (NOTICE) are dropped instead of printed, and anything a library prints goes to the error stream as one cleaned line. Before, a hostile relay (one named in a contact's card, or now in an invite link) could forge tool results or approval prompts.
+- **Security:** `rdv` no longer runs a command whose name was given as one quoted word (such as `"contact grant"`), which slipped past the plugin's check that keeps your assistant away from commands that are yours alone; that check now also reads such words, and refuses a subcommand built while the command runs (shell parameters such as `$@`, PowerShell splatting and expressions).
 - Rendezvous no longer crashes when its error stream is closed (for example when `rdv` is piped into a program that exits early); the line is dropped instead.
 - `rdv --version`, the MCP server and the gateway's API document now report the real release version instead of 0.1.0, and the site's `llms.txt` takes it from the plugin manifest.
 - The backup form and `rdv backup` now tell you the passphrase rules up front (length, variety, no common words) instead of only after you submit.
