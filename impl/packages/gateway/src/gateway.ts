@@ -37,7 +37,7 @@ import type { Home } from '@rendezvous/cli/lib';
 import { RdvMcpServer } from '@rendezvous/mcp';
 import { fingerprint } from '@rendezvous/core';
 import { AgentError, AgentRoot, AGENT_NAME_RE, type AgentEntry, isRootBinding, ROOT_BINDING } from './agents.js';
-import { Approvals, FormInputError, type PendingApproval, typeContent } from './approvals.js';
+import { Approvals, bootTagOf, FormInputError, newBootTag, type PendingApproval, typeContent } from './approvals.js';
 import {
   HttpError,
   hmac,
@@ -161,6 +161,9 @@ export const GLOBAL_FREE_TRIES_PER_CLIENT_MODE = 20;
 const CLIENT_MAX_WAIT_MS = 60 * 60_000;
 const CLIENT_FORGET_MS = 24 * 60 * 60_000;
 
+/** A time as "2026-11-01 13:25 UTC". */
+const stampUtc = (ms: number): string => `${new Date(ms).toISOString().slice(0, 16).replace('T', ' ')} UTC`;
+
 export class Gateway {
   readonly store: GatewayStore;
   /** Outbound webhooks (NOTES 106): the owner's settings per agent, the outbox and the dead letters. */
@@ -185,6 +188,10 @@ export class Gateway {
   /** Signs CSRF tokens; per process, like the owner sessions it protects. */
   private readonly key = randomBytes(32);
   private readonly now: () => number;
+  /** When this process started: approvals and held links are in memory only (issue #140). */
+  private readonly bootedAt: number;
+  /** This process's tag in the approval ids it makes. */
+  private readonly bootTag = newBootTag();
   private readonly log: (line: string) => void;
   private readonly tokenLimiter: RateLimiter;
   private readonly pageLimiter: RateLimiter;
@@ -195,6 +202,7 @@ export class Gateway {
 
   constructor(private readonly opts: GatewayOptions) {
     this.now = opts.now ?? Date.now;
+    this.bootedAt = this.now();
     this.log = opts.humanLog ?? ((line) => process.stderr.write(`[rdv-gateway] ${line}\n`));
     this.store = new GatewayStore(opts.home);
     this.notifyStore = new NotifyStore(opts.home);
@@ -263,6 +271,7 @@ export class Gateway {
         (p) => p === undefined || this.principalAgent(p) === a.name,
         // Across every agent too: a gateway of many agents is still one page and one process.
         () => this.agents.reduce((n, x) => n + x.approvals.size, 0),
+        this.bootTag,
       );
       const server = new RdvMcpServer({
         home: a.home,
@@ -276,6 +285,8 @@ export class Gateway {
           // The owner's standing choice for this agent (NOTES 113), read at each use, bound to the identity like a token.
           // The identity is the one the server reads from the home at that moment, not the one read at startup.
           assistantInvites: (liveId: string) => this.store.assistantInvitesOn(a.root ? ROOT_BINDING : a.name, liveId),
+          // When this process started (issue #140): shown by rdv_status and awaiting_human results, named in a lost held link's error.
+          bootedAt: this.bootedAt,
         },
         calendar: calendars.get(a.name),
         calendarDirs: opts.calendarDirs,
@@ -928,7 +939,7 @@ export class Gateway {
     }
     if (path === '/approve') {
       if (req.method !== 'GET') throw new HttpError(405, 'GET only', 'method_not_allowed');
-      return this.html(res, 200, listPage({ agents: this.agents.map((a) => ({ ...this.label(a), items: a.approvals.list() })), csrf }));
+      return this.html(res, 200, listPage({ agents: this.agents.map((a) => ({ ...this.label(a), items: a.approvals.list() })), csrf, restartedOn: stampUtc(this.bootedAt) }));
     }
     if (path.startsWith('/approve/oauth/')) return this.consent(req, res, path.slice('/approve/oauth/'.length), sid, csrf);
     if (isAdminPath(path)) return this.admin(req, res, path, sid, csrf, who);
@@ -945,7 +956,16 @@ export class Gateway {
         }
       }
     }
-    if (!item || !rt) return this.html(res, 404, errorPage('Nothing waits here', 'Nothing waits for you under this link: it was decided already, or it expired. Your assistant can ask again.'));
+    if (!item || !rt) {
+      // An id another process made (no tag, or not ours) may have been lost in a restart; one of ours cannot have been.
+      const tag = bootTagOf(id);
+      const text = !id.startsWith('apr_')
+        ? 'Nothing waits for you under this link. Your assistant can ask again.'
+        : tag === this.bootTag
+          ? 'Nothing waits for you under this link: it was decided or it expired, or the assistant that asked was disconnected. Your assistant can ask again.'
+          : `Nothing waits for you under this link: it was decided or it expired, or it was lost in a gateway restart (this gateway started on ${stampUtc(this.bootedAt)}). Your assistant can ask again.`;
+      return this.html(res, 404, errorPage('Nothing waits here', text));
+    }
     if (req.method === 'GET') return this.html(res, 200, approvalPage({ item, agent: this.label(rt), csrf }));
     if (req.method !== 'POST') throw new HttpError(405, 'GET or POST', 'method_not_allowed');
     const form = await readForm(req, FORM_BODY_MAX);

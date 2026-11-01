@@ -68,6 +68,7 @@
 </ul>
 <h3 id="changed">Changed<a class="anchor" href="#changed" title="Link to this section" aria-label="Link to this section">#</a></h3>
 <ul>
+<li>An approval link the gateway no longer knows now says it may have been lost when the gateway restarted (with the time), instead of only "decided or expired", and <code>rdv_status</code> through the gateway shows when it started so your assistant can ask again (issue #140).</li>
 <li>(Security) An invite link you armed with "Don't ask again" is no longer given to the assistant that asked for it on the gateway: it is shown only on your approval page, so an injected assistant cannot pass it on. A new <code>auto_approve_on</code> webhook event (on by default for new webhooks) tells you straight away when such a link is used. "Turn everything off" now also disarms open armed invites, and the gateway's settings page lists them with a Disarm button.</li>
 <li>On approval forms the label field is now "What you call them, e.g. Ran" (your name for the other person, not your own assistant's), and browsers no longer autofill the gateway page's text inputs.</li>
 </ul>
