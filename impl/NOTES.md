@@ -5012,14 +5012,15 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
 
 107. **The human-only commands need an interactive terminal** (issue #126).
     The plugin's consent guard reads shell text and is, by its own header,
-    not a boundary: review rounds kept finding spellings it missed
+    not a boundary: review rounds kept finding forms of the command it missed
     (PowerShell expressions, awk `system()`, `Start-Process`, aliases).
     Now the commands refuse by themselves unless `process.stdin.isTTY` and
     `process.stdout.isTTY` are both true, before the home is resolved or
     anything is read or written. **This raises the bar; it is not a proof.**
     A shell tool without a terminal (Claude Code's Bash and PowerShell
-    tools, MCP clients) is refused in any spelling. A launcher that opens a
-    new console (Windows `Start-Process -WindowStyle Hidden`, `cmd /c start
+    tools, MCP clients) is refused when it runs the `rdv` or `rdv-gateway`
+    commands. Another interpreter calling the library directly (e.g. `node -e`
+    importing `dist/src/main.js`) or a launcher that opens a new console (Windows `Start-Process -WindowStyle Hidden`, `cmd /c start
     /min`, conhost) or a pseudo-terminal (tmux, screen, python `pty`) passes
     `isTTY`, and that stays an accepted limit under #51; the consent guard is
     the layer that names those launchers. A typed confirmation prompt was

@@ -233,7 +233,7 @@ const COMMANDS: Record<string, Command> = {
   backup: {
     usage: 'rdv backup <file> [--stdin]',
     summary:
-      'Write an encrypted backup of this agent (key, contacts, grants, settings; never open approvals) to a new file, under a passphrase you type twice (your own terminal; --stdin: read a piped line, ignored on a terminal, which uses the hidden prompt)',
+      'Write an encrypted backup of this agent (key, contacts, grants, settings; never open approvals) to a new file, under a passphrase you type twice (your own terminal only; --stdin uses the same hidden prompt there, and a pipe is refused)',
     args: 1,
     options: { stdin: { type: 'boolean' } },
     run: cmd.backupCmd,
