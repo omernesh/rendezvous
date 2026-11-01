@@ -223,6 +223,50 @@ Each agent has its own MCP address, `https://gw.example.com/a/kids/mcp` (REST un
 
 With the one-command install, the same commands run through its `./gw` helper (`./gw agent add kids new --email kids@example.com`, `./gw agent list`, `./gw token create --agent kids …`, in your own terminal), then `./gw restart`. The installer prints each agent's MCP address at the end.
 
+### Notifications (webhooks)
+
+Your assistant only hears about an accepted invite when it next reads its inbox. To be told the moment it happens, have the gateway POST each event to a receiver of yours (a small service that messages you, for example). Per agent:
+
+```bash
+openssl rand -hex 32 > data/notify.secret && chmod 600 data/notify.secret
+./gw notify set omer --url https://hooks.example.com/rdv --secret-file /data/notify.secret
+./gw notify set omer --url http://100.101.102.103:8080/rdv --allow-insecure-host 100.101.102.103 --secret-file /data/notify.secret
+./gw notify show                     # every agent's receiver (scheme and host), events, waiting events and dead letters
+./gw notify dead-letter omer         # events given up on; --retry sends them again (same ids)
+./gw notify clear omer
+```
+
+In PowerShell, write the secret as ASCII (`>` and `Out-File` write UTF-16, which is refused):
+`$s = [Convert]::ToHexString([Security.Cryptography.RandomNumberGenerator]::GetBytes(32)); [IO.File]::WriteAllText("$PWD\notify.secret", $s, [Text.Encoding]::ASCII)`.
+
+- **The secret:** `notify set` copies it into the gateway root as `notify-<agent>.secret` (mode 600), so the file you gave may be deleted. Give your receiver the same value. It must be printable ASCII and at least 16 characters long; only ASCII white space at the ends is trimmed. To rotate it, run `notify set` again with a new file: for 24 h every request carries two signatures, the new one first, so receivers can switch over at their own pace.
+- **Events:** `invite_redeemed`, `invite_expired` (an open invite passed its expiry unused; sent once) and `invite_exposed` by default; add `contact_request`, `contact` (a new contact) and `message` with `--events a,b,…`. Only events from the moment you set it are sent. Requests or messages from one peer within a minute arrive as one event with a `count`.
+- **The URL:** `https`, or `http` only to a host you allow with `--allow-insecure-host`: a host name, an IP address, or a range such as `100.64.0.0/10` (Tailscale). The gateway refuses private, CGNAT, loopback, link-local and metadata addresses, also when a name resolves to one. An allowed name or range opens only private ones. Loopback and `169.254.169.254` open only when you name that exact IP. The gateway follows no redirects.
+- **Each request:** `POST`, `Content-Type: application/json`, one event:
+
+  ```json
+  {"v":1,"id":"evt_…","event":"invite_redeemed","agent":"rdv1:…","agent_name":"omer","at":"2026-11-01T09:30:00.000Z",
+   "data":{"invite_id":"0123456789abcdef","tier":"friend","label":"Dana","redeemer_fingerprint":"…"}}
+  ```
+
+  - `invite_expired`: `invite_id`, `tier`, `label`, `expired_at`
+  - `invite_exposed`: `invite_id`, `label`, `from_fingerprint`
+  - `contact_request`: `request_id`, `from_fingerprint`, `binding`, `greeting`, `count`
+  - `contact`: `fingerprint`, `label`, `tier`, `binding`
+  - `message`: `from_fingerprint`, `label`, `seq` (of the first), `count`
+
+  `label` is your own name for the person, or `null`. Text a peer wrote (a greeting) comes only as `{"untrusted_peer_text": "…"}`. A request never carries an invite link or its secret, a key, or message text.
+- **Signature:** `X-Rdv-Signature: t=<unix seconds>,v1=<hex HMAC-SHA256(secret, t + "." + raw body)>`, with a second `v1=` during a rotation. Your receiver must:
+  - check the signature on the raw bytes before parsing, and accept the request when any `v1=` matches;
+  - compare in constant time;
+  - reject a `t` more than 300 s from its clock;
+  - dedupe by `id` on disk: delivery is at least once, and a retry carries the same `id` and body.
+- **Delivery:** within a few seconds, from an outbox in `data/gateway-notify.json` that survives restarts. A 2xx is delivered. Network errors, timeouts (10 s), `429` and `5xx` are retried with exponential backoff for up to 24 h; any other answer is not retried. Both kinds of give-up land in the dead letters. Per agent, at most 250 events wait and 125 dead letters are kept (1000 and 500 in all), and an agent over its share loses only its own oldest. Dead letters belong to the agent's identity: an agent that later takes the same name never sees them. If `gateway-notify.json` does not pass its checks, the gateway refuses to start and says why. A webhook only receives; nothing it answers can approve, grant or revoke anything.
+
+[`notify-receiver.py`](notify-receiver.py) is a complete receiver in about 50 lines of standard-library Python. It checks the signature (several secret files allowed, for rotation) and the timestamp, refuses bodies over 64 KiB, and dedupes in SQLite. Run it as `python3 notify-receiver.py 8080 100.101.102.103`; it binds `127.0.0.1` unless you give an address. From TypeScript, `verifyRdvSignature(secret | secrets[], header, rawBody)` in `@rendezvous/gateway` does the check.
+
+With the one-command install, run the same commands through its `./gw` helper (`./gw notify set omer --url … --secret-file …`).
+
 ### 7. Update
 
 ```bash

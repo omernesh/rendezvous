@@ -12,14 +12,18 @@
 //   rdv-gateway oauth list | oauth revoke <client-id|grant-id>   OAuth clients the owner connected on the page
 //   rdv-gateway agent list | agent add <name> (new … | --restore <file>) | agent remove <name> [--force] | agent migrate [--name <n>]
 //                                            the agents this gateway serves (NOTES 104): --home is the gateway's root
+//   rdv-gateway notify set <agent> --url <url> --secret-file <path> [--events a,b] [--allow-insecure-host <host>]…
+//   rdv-gateway notify show [<agent>] | notify clear <agent> | notify dead-letter <agent> [--retry]
+//                                            signed outbound webhooks per agent (NOTES 106)
 //
 // Every command here is the owner's, in their own terminal: an assistant
 // never runs them. Home resolution is the same as rdv and rdv-mcp.
 // First: stdout carries the command's output, never a dependency's console text (review of PR #120).
 import '@rendezvous/core/safe-console';
 import { parseArgs } from 'node:util';
-import { describeBackup, Home, initHome, readBackupFile, restoreBackup } from '@rendezvous/cli/lib';
-import { AgentError, AgentRoot, checkAgentName } from './agents.js';
+import { describeBackup, Home, initHome, readBackupFile, readEvents, restoreBackup } from '@rendezvous/cli/lib';
+import { AgentError, AgentRoot, checkAgentName, ROOT_BINDING } from './agents.js';
+import { checkInsecureHost, checkNotifyUrl, DEFAULT_NOTIFY_EVENTS, NOTIFY_EVENTS, type NotifyEvent, NotifyError, NotifyStore, readSecretFile, receiverName, secretFileName } from './notify.js';
 import { DEFAULT_PORT, Gateway } from './gateway.js';
 import { SCOPE_TEXT, SCOPES } from './scopes.js';
 import { OAuthStore, OAuthStoreError } from './oauth-store.js';
@@ -42,6 +46,12 @@ const USAGE = `usage:
   rdv-gateway agent remove <name> [--force]  moves it to agents/.removed/ (key kept); --force also revokes its tokens and OAuth grants
   rdv-gateway agent migrate [--name <name>]  move the root's own agent into agents/<name>/ (gateway stopped; originals kept)
   serve --calendar <agent>=<file> (repeatable) when the gateway serves several agents
+  rdv-gateway notify set <agent> --url https://… --secret-file <path> [--events a,b] [--allow-insecure-host <host>]…
+                                             POST a signed event when it happens (default events: ${DEFAULT_NOTIFY_EVENTS.join(', ')})
+  rdv-gateway notify show [<agent>]          the webhook settings, and how many events wait or are dead letters
+  rdv-gateway notify clear <agent>           stop: its settings, secret and waiting events go (dead letters stay)
+  rdv-gateway notify dead-letter <agent> [--retry]   events given up on; --retry queues them again (same ids)
+  notify events: ${NOTIFY_EVENTS.join(', ')}
 Scopes (none of them can approve anything; approvals happen only on the PIN-locked page):
 ${SCOPES.map((s) => `  ${s.padEnd(16)} ${SCOPE_TEXT[s]}`).join('\n')}
 `;
@@ -70,6 +80,11 @@ const { values, positionals } = parseArgs({
     'public-pointer': { type: 'boolean' },
     restore: { type: 'string' },
     force: { type: 'boolean' },
+    url: { type: 'string' },
+    events: { type: 'string' },
+    'secret-file': { type: 'string' },
+    'allow-insecure-host': { type: 'string', multiple: true },
+    retry: { type: 'boolean' },
     help: { type: 'boolean', short: 'h' },
   },
   strict: true,
@@ -129,6 +144,7 @@ async function main(): Promise<void> {
   const [cmd, sub, arg] = positionals;
 
   if (cmd === 'agent') return agentCommand(root, store, sub, arg);
+  if (cmd === 'notify') return notifyCommand(root, sub, arg);
 
   if (cmd === 'pin' && sub === 'set') {
     // Changing a PIN needs the current one, so whoever reaches this terminal can't take over the approval page.
@@ -241,6 +257,7 @@ function calendarOption(given: string[]): string | Record<string, string> | unde
 /** `rdv-gateway agent …`: the agents this gateway serves. The owner's, in their own terminal, like every command here. */
 async function agentCommand(root: AgentRoot, store: GatewayStore, sub: string | undefined, name: string | undefined): Promise<void> {
   const oauth = new OAuthStore(root.home);
+  const notify = new NotifyStore(root.home);
   const tokensOf = (n: string) => store.listTokens().filter((t) => root.nameOf(t.agent) === n);
   const grantsOf = (n: string) => oauth.list().grants.filter((g) => root.nameOf(g.agent) === n);
   /**
@@ -283,6 +300,8 @@ async function agentCommand(root: AgentRoot, store: GatewayStore, sub: string | 
     const t = await store.revokeAgent(name!);
     const g = await oauth.revokeAgent(name!);
     if (t.length || g.length) process.stderr.write(`Revoked ${t.length} token(s) and ${g.length} OAuth grant(s) left bound to "${name}".\n`);
+    // Webhook settings left under this name would carry the new agent's events to the old one's receiver.
+    if ((await notify.clear(name!, { dead: true })).had) process.stderr.write(`Cleared the webhook settings left under "${name}".\n`);
     if (fresh) {
       const r = await initHome(home, { profile: name!, relays: values.relay, emails: values.email, phones: values.phone, publicPointer: values['public-pointer'] === true });
       process.stderr.write(`Added agent ${name} at ${home.dir}\nid:          ${r.id}\nfingerprint: ${r.fingerprint}\n`);
@@ -314,6 +333,7 @@ async function agentCommand(root: AgentRoot, store: GatewayStore, sub: string | 
     const { kept } = root.remove(name!);
     const t = await store.revokeAgent(name!);
     const g = await oauth.revokeAgent(name!);
+    if ((await notify.clear(name!, { dead: true })).had) process.stderr.write('Cleared its webhook settings (rdv-gateway notify).\n');
     process.stderr.write(
       `Removed agent ${name} from this gateway${t.length || g.length ? `, and revoked ${t.length} token(s) and ${g.length} OAuth grant(s)` : ''}.\n` +
         `Its folder, WITH ITS KEY, is now ${kept}. Back it up (rdv backup --home ${kept}) or keep it; delete it yourself only once you are sure.\n` +
@@ -330,10 +350,12 @@ async function agentCommand(root: AgentRoot, store: GatewayStore, sub: string | 
       const t = await store.revokeAgent(to);
       const g = await oauth.revokeAgent(to);
       if (t.length || g.length) process.stderr.write(`Revoked ${t.length} token(s) and ${g.length} OAuth grant(s) left bound to "${to}".\n`);
+      await notify.clear(to, { dead: true });
     }
     const r = await root.migrate(values.name, async (from, to) => {
       await store.rebindAgent(from, to);
       await oauth.rebindAgent(from, to);
+      await notify.rebind(ROOT_BINDING, to);
     });
     process.stderr.write(
       `Moved the root agent (${fingerprint(r.id)}) into ${r.dir} as "${r.name}"; its tokens and OAuth grants follow it.\n` +
@@ -344,4 +366,93 @@ async function agentCommand(root: AgentRoot, store: GatewayStore, sub: string | 
   die('agent: list, add, remove or migrate', 2);
 }
 
-main().catch((err) => die(err instanceof StoreError || err instanceof OAuthStoreError || err instanceof AgentError ? err.message : (err as Error).message));
+/**
+ * `rdv-gateway notify …`: signed outbound webhooks per agent (NOTES 106). The owner's, like every command here: the
+ * consent guard keeps an assistant from running set, clear and dead-letter.
+ */
+async function notifyCommand(root: AgentRoot, sub: string | undefined, name: string | undefined): Promise<void> {
+  const notify = new NotifyStore(root.home);
+  const agentNamed = (n: string | undefined) => {
+    if (!n) die(`notify ${sub} needs the agent's name (rdv-gateway agent list)`, 2);
+    const a = root.find(n!);
+    if (!a) die(`no agent "${n}" here (rdv-gateway agent list)`, 2);
+    return a!;
+  };
+  /** The agent's identity now: dead letters count, show and retry only for it. */
+  const identity = (a: { home: Home }) => {
+    try {
+      return a.home.readAgentState().card.id;
+    } catch {
+      return '';
+    }
+  };
+  if (sub === 'set') {
+    const a = agentNamed(name);
+    if (!values.url) die('notify set needs --url https://…', 2);
+    if (!values['secret-file']) die('notify set needs --secret-file <path> (a file only you can read: openssl rand -hex 32 > notify.secret; chmod 600 notify.secret)', 2);
+    const insecureHosts = [...new Set((values['allow-insecure-host'] ?? []).map(checkInsecureHost))];
+    const url = checkNotifyUrl(values.url!, insecureHosts);
+    const events = values.events === undefined ? [...DEFAULT_NOTIFY_EVENTS] : [...new Set(values.events.split(',').map((e) => e.trim()).filter(Boolean))];
+    const bad = events.filter((e) => !(NOTIFY_EVENTS as readonly string[]).includes(e));
+    if (bad.length || events.length === 0) die(`--events: one or more of ${NOTIFY_EVENTS.join(', ')}${bad.length ? ` (not ${bad.join(', ')})` : ''}`, 2);
+    // Copied into the gateway root under a fixed name (the consent guard protects it there); the file given may go.
+    const secret = readSecretFile(values['secret-file']!);
+    const ev = readEvents(a.home);
+    const b = root.bindingOf(a.name);
+    const cfg = await notify.set(b, { url, events: events as NotifyEvent[], insecureHosts }, secret, ev.length ? ev[ev.length - 1].n : 0);
+    process.stderr.write(
+      `Agent ${a.name} now posts ${cfg.events.join(', ')} to ${receiverName(url)}, signed with the secret now kept in ${secretFileName(b)} in the gateway root` +
+        `${cfg.previousUntil ? ` (the previous secret signs too until ${cfg.previousUntil})` : ''}.\n` +
+        'A serving gateway picks this up within seconds; only events from now on are sent. Check it with: rdv-gateway notify show\n',
+    );
+    return;
+  }
+  if (sub === 'show') {
+    const d = notify.read();
+    const agents = name ? [agentNamed(name)] : root.list();
+    for (const a of agents) {
+      const b = root.bindingOf(a.name);
+      const id = identity(a);
+      const cfg = Object.hasOwn(d.agents, b) ? d.agents[b] : undefined;
+      const waiting = d.outbox.filter((i) => i.agent === b && i.agentId === id).length;
+      const dead = d.dead.filter((i) => i.agent === b && i.agentId === id).length;
+      if (!cfg) {
+        process.stdout.write(`${a.name}  (no webhook)${dead ? `  dead letters ${dead}` : ''}\n`);
+        continue;
+      }
+      // Scheme and host only: a path or query may hold the receiver's own token.
+      process.stdout.write(
+        `${a.name}  ${receiverName(cfg.url)}  events ${cfg.events.join(',')}${cfg.insecureHosts.length ? `  insecure hosts ${cfg.insecureHosts.join(',')}` : ''}  since ${cfg.created}  waiting ${waiting}  dead letters ${dead}\n`,
+      );
+    }
+    return;
+  }
+  if (sub === 'clear') {
+    const a = agentNamed(name);
+    const r = await notify.clear(root.bindingOf(a.name));
+    process.stderr.write(r.had ? `Agent ${a.name} posts nothing now${r.dropped ? ` (${r.dropped} waiting event(s) dropped)` : ''}; its secret file is deleted.\n` : `agent ${a.name} had no webhook\n`);
+    return;
+  }
+  if (sub === 'dead-letter') {
+    const a = agentNamed(name);
+    const b = root.bindingOf(a.name);
+    const id = identity(a);
+    if (values.retry) {
+      const r = await notify.retryDead(b, id);
+      process.stderr.write(
+        `${r.queued} event(s) of agent ${a.name} queued again, with the same ids; a serving gateway sends them within seconds.\n` +
+          (r.refused ? `${r.refused} dead letter(s) of an earlier agent under that name were not queued.\n` : ''),
+      );
+      return;
+    }
+    const dead = notify.deadLetters(b, id);
+    if (!dead.length) process.stderr.write(`no dead letters for agent ${a.name}\n`);
+    for (const x of dead) process.stdout.write(`${x.id}  ${x.event}  ${x.deadAt}  tries ${x.attempts}  ${x.reason}\n`);
+    return;
+  }
+  die('notify: set, show, clear or dead-letter', 2);
+}
+
+main().catch((err) =>
+  die(err instanceof StoreError || err instanceof OAuthStoreError || err instanceof AgentError || err instanceof NotifyError ? err.message : (err as Error).message),
+);

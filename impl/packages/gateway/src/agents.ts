@@ -1,6 +1,7 @@
 // The agents one gateway serves (NOTES 104). The gateway's root (`--home`,
 // /data in the container) holds its own state (gateway.json: the owner's PIN
-// and the tokens; gateway-oauth.json: the OAuth key, clients and grants) and
+// and the tokens; gateway-oauth.json: the OAuth key, clients and grants;
+// gateway-notify.json: the outbound webhooks, NOTES 106) and
 // the agents:
 //
 //   <root>/                    the root agent, when the root is itself a home (every gateway before NOTES 104)
@@ -28,7 +29,7 @@ export const ROOT_BINDING = ':root';
 /** Whether a stored binding means the root agent. */
 export const isRootBinding = (b: string | undefined): boolean => b === undefined || b === ROOT_BINDING;
 /** The gateway's own files in its root: never an agent's, never migrated. */
-export const GATEWAY_FILES = ['gateway.json', 'gateway.lock', 'gateway-oauth.json', 'gateway-oauth.lock'];
+export const GATEWAY_FILES = ['gateway.json', 'gateway.lock', 'gateway-oauth.json', 'gateway-oauth.lock', 'gateway-notify.json', 'gateway-notify.lock'];
 /** A home's lock files: held by whoever runs, never copied. */
 const LOCK_FILES = ['lock', 'listener.lock', 'events.lock'];
 

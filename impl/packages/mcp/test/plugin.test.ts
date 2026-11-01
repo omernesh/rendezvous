@@ -1134,13 +1134,71 @@ describe('the direct-transfer setting is the human’s (issue #26)', () => {
     expect(consentViolations('Turn it on: `rdv file direct-transfer on`.')).toHaveLength(1);
   });
 
+  it('a multi-agent gateway root is protected like a home: its own files, the webhook state and secrets (review of PR #131)', () => {
+    const root = mkdtempSync(join(tmpdir(), 'rdv-guard-gwroot-'));
+    try {
+      // A root after `agent migrate`: no agent of its own, only the gateway's files and agents/<name>/.
+      mkdirSync(join(root, 'agents', 'omer'), { recursive: true });
+      writeFileSync(join(root, 'agents', 'omer', 'config.json'), '{}');
+      writeFileSync(join(root, 'agents', 'omer', 'agent.json'), '{}');
+      for (const f of ['gateway.json', 'gateway-oauth.json', 'gateway-notify.json', 'notify-omer.secret', 'notify-omer.secret.prev', 'notify-_root.secret']) {
+        expect(checkToolInput('Write', { file_path: join(root, f), content: '{}' }), f).toBeTruthy();
+        expect(checkToolInput('Read', { file_path: join(root, f) }), f).toBeTruthy();
+        expect(checkCommand(`cat ${join(root, f)}`), f).toBeTruthy();
+        expect(checkCommand(`cp /tmp/evil ${join(root, f)}`), f).toBeTruthy();
+      }
+      // Named in an inline script, where no path is classified.
+      expect(checkCommand(`node -e "require('fs').writeFileSync('${join(root, 'gateway-notify.json').replace(/\\/g, '/')}','{}')"`)).toBeTruthy();
+      // The webhook secret by its names anywhere (the owner's own copy is notify.secret in the docs).
+      for (const p of [join(tmpdir(), 'notify-omer.secret'), join(tmpdir(), 'notify.secret')]) expect(checkToolInput('Read', { file_path: p }), p).toBeTruthy();
+      // Spellings Windows opens as the same file: a trailing dot or space, an alternate data stream, the case.
+      for (const f of ['notify-kids.secret.', 'notify-kids.secret ', 'gateway-notify.json::$DATA', 'GATEWAY-NOTIFY.JSON', 'gateway.json.']) {
+        expect(checkToolInput('Write', { file_path: join(root, f), content: '{}' }), f).toBeTruthy();
+      }
+      expect(checkToolInput('Read', { file_path: join(tmpdir(), 'notify-kids.secret.') })).toBeTruthy();
+      // Wildcards that could name a webhook secret (anywhere) or a gateway root's file.
+      for (const c of [`cat ${join(tmpdir(), 'notify-*.secret')}`, 'cat notify-?ids.secret', `cat ${join(root, 'gateway-*')}`, `cp x ${join(root, '*.json')}`]) {
+        expect(checkCommand(c), c).toBeTruthy();
+      }
+      expect(checkToolInput('Glob', { pattern: 'notify-*.secret' })).toBeTruthy();
+      // Conservative: any wildcard last part that mentions "secret" or starts with "n".
+      for (const c of ['cat n*', 'cat N?tify-kids.secret', 'cat *SECRET*', 'cp x */*secret*', 'cat [n]otify-kids.secret']) expect(checkCommand(c), c).toBeTruthy();
+      for (const c of ['cat *.md', 'ls src/*.ts', 'cat README*']) expect(checkCommand(c), c).toBeUndefined();
+      // An 8.3 short name (where the volume makes them): expanded before the name check.
+      if (process.platform === 'win32') {
+        writeFileSync(join(root, 'gateway-notify.json'), '{}');
+        const r = spawnSync('cmd', ['/d', '/c', `for %I in ("${join(root, 'gateway-notify.json')}") do @echo %~sI`], { encoding: 'utf8', windowsVerbatimArguments: true });
+        const short = r.stdout.trim();
+        if (short && !/gateway-notify\.json$/i.test(short)) {
+          expect(short).toMatch(/GATEWA~\d\.JSO$/i);
+          expect(checkToolInput('Write', { file_path: short, content: '{}' }), short).toBeTruthy();
+          expect(checkToolInput('Read', { file_path: short }), short).toBeTruthy();
+        }
+      }
+      // A root that holds only gateway.json is one too (no agents yet).
+      const bare = mkdtempSync(join(tmpdir(), 'rdv-guard-gwroot2-'));
+      writeFileSync(join(bare, 'gateway.json'), '{}');
+      expect(checkToolInput('Write', { file_path: join(bare, 'gateway-notify.json'), content: '{}' })).toBeTruthy();
+      rmSync(bare, { recursive: true, force: true });
+      // Any project's agents/ folder (no home in it) is not a gateway root.
+      const proj = mkdtempSync(join(tmpdir(), 'rdv-guard-proj-'));
+      mkdirSync(join(proj, 'agents', 'reviewer'), { recursive: true });
+      writeFileSync(join(proj, 'agents', 'reviewer', 'README.md'), 'x');
+      expect(checkToolInput('Write', { file_path: join(proj, 'tasks.json'), content: '{}' })).toBeUndefined();
+      expect(checkCommand(`cat ${join(proj, 'agents', 'reviewer', 'README.md')}`)).toBeUndefined();
+      rmSync(proj, { recursive: true, force: true });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('the setting, file keys and drafts in a home are refused to every tool, and inline_files paths are checked (security review)', () => {
     const root = mkdtempSync(join(tmpdir(), 'rdv-guard-owner-'));
     try {
       const h = join(root, 'omer');
       mkdirSync(h);
       for (const f of ['agent.json', 'config.json']) writeFileSync(join(h, f), '{}');
-      for (const f of ['owner.json', 'files.json', 'tasks.json', 'gateway.json', 'gateway-oauth.json']) {
+      for (const f of ['owner.json', 'files.json', 'tasks.json', 'gateway.json', 'gateway-oauth.json', 'gateway-notify.json']) {
         expect(checkToolInput('Write', { file_path: join(h, f), content: '{"direct_transfer":true}' }), f).toBeTruthy();
         expect(checkToolInput('Edit', { file_path: join(h, f) }), f).toBeTruthy();
         expect(checkToolInput('Read', { file_path: join(h, f) }), f).toBeTruthy();
@@ -1517,8 +1575,24 @@ describe('the skill covers general tasks, files and auto-approve (issue #29)', (
     ]) {
       expect(checkCommand(c), c).toBeTruthy();
     }
+    // Outbound webhooks (NOTES 106): where the agent's events go, and re-sending dead letters.
+    for (const c of [
+      'rdv-gateway notify set omer --url https://hooks.example.com/rdv --secret-file ~/notify.secret',
+      'rdv-gateway --home /data notify set kids --url http://100.101.102.103:8080/rdv --allow-insecure-host 100.101.102.103 --secret-file s',
+      'rdv-gateway notify clear omer',
+      'rdv-gateway notify dead-letter omer',
+      'rdv-gateway notify dead-letter omer --retry',
+      'rdv-gateway notify --home x set omer',
+      'node packages/gateway/dist/src/bin.js notify set omer --url https://x.example --secret-file s',
+      'npm run rdv-gateway -- notify clear omer',
+      'rdv-gateway notify $SUB omer',
+      'rdv-gateway "notify set" omer',
+    ]) {
+      expect(checkCommand(c), c).toBeTruthy();
+    }
+    expect(checkCommand('rdv-gateway notify set omer --url https://x.example --secret-file s')).toMatch(/notify set, clear and dead-letter are for the human/);
     // Reading, serving, and other programs' own pin/token commands are not refused.
-    for (const c of ['rdv-gateway token list', 'rdv-gateway oauth list', 'rdv-gateway agent list', 'rdv-gateway serve --port 8787', 'npm token create', 'git pin set', 'gh auth revoke', 'docker compose rm agent']) {
+    for (const c of ['rdv-gateway token list', 'rdv-gateway oauth list', 'rdv-gateway agent list', 'rdv-gateway notify show', 'rdv-gateway notify show omer', 'rdv-gateway serve --port 8787', 'curl -X POST https://hooks.example.com/notify', 'git clear', 'npm token create', 'git pin set', 'gh auth revoke', 'docker compose rm agent']) {
       expect(checkCommand(c), c).toBeUndefined();
     }
   });

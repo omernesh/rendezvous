@@ -4787,6 +4787,159 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       (no name by default, `--name`, the share text, the verbatim
       instructions, a shortened link's error).
 
+## Gateway notifications (outbound webhooks)
+
+106. **The gateway POSTs a signed event to the owner's own URL when an
+    invite is used, expires or is exposed** (and, if asked, on contact
+    requests, new contacts and messages). Before, `invite_redeemed` only
+    reached the owner through `rdv_inbox`, that is when their assistant next
+    looked.
+    - **Settings.** `rdv-gateway notify set <agent> --url <url> --secret-file
+      <path> [--events a,b] [--allow-insecure-host <host>]…`, `notify show
+      [<agent>]`, `notify clear <agent>`, `notify dead-letter <agent>
+      [--retry]`: the owner's, in a terminal. The consent guard refuses set,
+      clear and dead-letter (show is read-only) and any tool access to
+      `gateway-notify.json`, which is also a secret file name for `rdv file`.
+      The settings live in the gateway root (`gateway-notify.json`, mode 600,
+      under `gateway-notify.lock`; not migrated, not in an agent's home),
+      keyed by the agent's binding like tokens: the root marker for the root
+      agent, else its name. `agent remove` and `agent add` clear a name's
+      settings, `agent migrate` moves the root's to the new name. Default
+      events: `invite_redeemed`, `invite_expired`, `invite_exposed`; optional
+      `contact_request`, `contact`, `message`. A new setting starts at the end
+      of the agent's event log: history is never sent.
+    - **Source.** Each agent's shared `events.jsonl` (whoever holds its
+      listener lock writes it: the gateway's own listener or an `rdv listen`),
+      read past a cursor kept per agent, enqueued in the same locked write
+      that moves the cursor, so a crash neither loses nor doubles a line. A
+      log whose counter went back (restored, deleted) is followed from its
+      end. `invite_expired` comes from a sweep (every 60 s) of the agent's
+      invites: an open one (not used, not revoked) whose expiry passed after
+      the setting was made, once per invite id (kept per agent, persisted).
+    - **Wire format (v1).** `POST`, `Content-Type: application/json`, one
+      event per request: `{"v":1,"id":"evt_<32 hex>","event":…,"agent":"rdv1:…",
+      "agent_name":<the gateway's name for it>,"at":<ISO, when it
+      happened>,"data":{…}}`. Data: `invite_redeemed` {invite_id, tier,
+      label, redeemer_fingerprint}; `invite_expired` {invite_id, tier, label,
+      expired_at}; `invite_exposed` {invite_id, label, from_fingerprint};
+      `contact_request` {request_id, from_fingerprint, binding, greeting};
+      `contact` {fingerprint, label, tier, binding}; `message`
+      {from_fingerprint, label, seq}. Every field is checked against its shape
+      and is `null` when it fails; `label` is the owner's own text (control
+      characters replaced, 200 characters); the greeting, the only peer text,
+      is `{"untrusted_peer_text": …}` (500 characters). Never an invite link
+      or secret, a key, or message text. The id is made when the event is
+      queued, so it and the body bytes are the same on every retry.
+    - **Signature.** `X-Rdv-Signature: t=<unix seconds>,v1=<hex
+      HMAC-SHA256(secret, t + "." + raw body)>`; during a rotation a second
+      `v1=` (the previous secret's) follows the new one. The secret is raw
+      bytes: ASCII white space trimmed at the ends, then printable ASCII
+      only, at least 16; a byte-order mark or UTF-16 (PowerShell's `>`) is
+      refused with a hint (`[IO.File]::WriteAllText(…, [Text.Encoding]::ASCII)`).
+      `notify set` reads the owner's file (refused if group or others may read
+      it, POSIX) and copies the secret into the gateway root as
+      `notify-<agent>.secret` (`notify-_root.secret` for the root agent; an
+      agent name never starts with `_`), mode 600: a fixed name the consent
+      guard knows. A different secret moves the old one to `….secret.prev`,
+      which signs too for 24 h (`previousUntil`). Never logged; never in
+      `gateway-notify.json`. Receivers reject |now − t| > 300 s, compare in
+      constant time, accept any matching `v1=` and dedupe by `id` on disk;
+      `verifyRdvSignature(secret | secrets[], header, rawBody)` is exported
+      for them. `docs/notify-receiver.py` is a stdlib Python receiver (several
+      secret files, ThreadingHTTPServer, 10 s timeout, 411/413 for a missing
+      or over-64-KiB body, binds 127.0.0.1 unless given an address). Test
+      vector: secret `rdv-test-secret-0123456789abcdef`, t `1700000000`, body
+      `{"v":1,"id":"evt_00","event":"invite_redeemed"}` →
+      `e55b0f7eb9b3378f13cae1cb9993dfd604eeec9b3301dcb7af6e5a82c2dc8276`.
+    - **Delivery.** At least once, from the persisted outbox, 4 in flight
+      (dispatch runs again as each one ends, so throughput is not one batch
+      per tick), 10 s per request, no redirect followed, the answer's body
+      ignored. Outcomes are written in batches (compact JSON, one write per
+      100 ms at most); an item stays out of dispatch until its outcome is on
+      disk. 2xx delivered; network errors, timeouts, 429 and 5xx retried with
+      exponential backoff (5 s doubling, capped at 1 h, ±20 % jitter) until
+      24 h after the first try; any other status (3xx and 4xx) and an
+      address the SSRF check refuses are not retried. Both kinds of give-up
+      become dead letters. Caps: 250 waiting and 125 dead letters per agent,
+      1000 and 500 in all; over a cap the agent with the most loses its own
+      oldest (waiting ones become dead letters), never another agent's.
+      `contact_request` and `message` from one peer within 60 s that have not
+      gone out yet are one event with a `count` (the body is rebuilt; it is
+      fixed once sent). Every item carries its agent's identity
+      (`agentId`): it is sent, shown and re-queued only while that identity
+      holds the binding; `agent add` and `agent remove` drop the binding's
+      dead letters too, `notify clear` keeps them. `dead-letter --retry`
+      queues this identity's again with their ids, due now, with a new 24 h,
+      and refuses (keeps) another identity's. An unreadable secret file is
+      retried like a network error (the owner can fix it). Cleared settings
+      or an event no longer subscribed drop an item.
+    - **The file is schema-checked.** Every read validates the whole of
+      `gateway-notify.json` (bindings, events, times, the URL and allow rules
+      in normal form, every outbox and dead-letter item); bad JSON or a bad
+      shape is a NotifyError naming the file. The gateway refuses to start on
+      one (fail closed); a running notifier logs it once and sends nothing
+      until it is fixed.
+    - **URL rules.** https; http only to a host allowed with
+      `--allow-insecure-host`: a host name, an IP address or a CIDR range
+      (`100.64.0.0/10`; the URL's host must be that name, or an IP literal
+      equal to or inside the entry). No user name or password in the URL.
+      Connections resolve through core's `guardedLookup`, pinned to the
+      checked address; an IP literal is checked directly. An answer is
+      allowed when it is public, equal to an IP entry, or private (LAN,
+      CGNAT, ULA) and inside a range entry or for a named host. Loopback,
+      link-local (169.254.169.254 among them), unspecified and multicast
+      addresses are allowed only when named as that exact IP, whatever the
+      ranges say. `notify show` and the log name a receiver by scheme and
+      host only (a path or query may hold the receiver's token) and never
+      show the secret's path.
+    - **Guard** (review of PR #131). A folder holding `gateway.json`,
+      `gateway-oauth.json` or `gateway-notify.json`, or an `agents/` folder
+      with a home in it, counts as a home: a multi-agent root (no agent of
+      its own after `agent migrate`) was not protected before. In it the
+      gateway's files and `notify-<agent>.secret[.prev]` are owner files; the
+      secret names (and `notify.secret`, the owner's copy in the docs) are
+      refused anywhere, and a command that names any of these files in its
+      text (an inline script) is refused. A bare `agents/` folder (any
+      project's) is not a root. Every name check reads the name as Windows
+      opens it: realpath where the file exists (an 8.3 short name such as
+      `GATEWA~1.JSO` expanded), cut at the first `:` (an alternate data
+      stream), trailing dots and spaces dropped, lowercased. A wildcard is
+      refused when its prefix is in a gateway root, when its last part could
+      name a secret or owner file, and anywhere (conservatively) when its
+      last part mentions "secret" or starts with "n" (`notify-*.secret`,
+      `n*`). `rdv file` refuses the same: the webhook secret names anywhere
+      (pattern-based, with the same normalization, the real path checked
+      too so an 8.3 name is expanded; on Windows a `~1` name in a home or
+      gateway root is refused unresolved), and anything in a gateway root.
+      The installer's `./gw` passes `notify` through to `rdv-gateway` like
+      `pin` and `token` (human-only; not in GATEWAY_SAFE).
+    - **Embedded IPv4.** An IPv6 answer that carries an IPv4 address
+      (mapped `::ffff:`, compatible `::/96`, NAT64 `64:ff9b::/96`, 6to4
+      `2002::/16`) is also judged by that address: `::ffff:169.254.169.254`
+      and `64:ff9b::a9fe:a9fe` are refused unless named exactly.
+    - **Isolation.** Outbound only: the notifier reads the agent's event log
+      and state and never writes them or takes their locks; it runs on its
+      own timer, so a slow receiver never delays the agent. Nothing a
+      receiver answers is read beyond the status: it cannot approve, grant
+      or revoke anything.
+    - **Tests.** `notify.test.ts`: the vector and the verify helper (stale,
+      future, tampered, wrong secret, malformed, rotated), the secret file
+      checks, event shapes (no link, secret or text; junk fields null; peer
+      text wrapped), URL rules, SSRF refusals (loopback, metadata, private,
+      CGNAT, a name resolving to loopback) and the allowed host, no redirect,
+      the timeout, 503/429 retried with the same id and body, 400 a dead
+      letter, `--retry`, 24 h of network errors a dead letter, the dead-letter
+      cap, the outbox across a restart, history not sent, expiry once (also
+      across a restart; used, revoked and earlier ones not), per-agent
+      isolation, a serving gateway end to end, and the CLI. After the review:
+      the fixed secret file and rotation (two v1 values for 24 h, then one),
+      BOM and UTF-16 refused, CIDR and named-host allow rules (loopback and
+      metadata only by exact IP), the schema check failing closed (also at
+      gateway start, logged once by a running notifier), dead letters bound
+      to their identity (no --retry or send for another), per-agent caps,
+      coalescing a 30-message burst into one event with a count, ten events
+      out in one tick, and the guard on a multi-agent root.
+
 ## Not implemented yet
 
 

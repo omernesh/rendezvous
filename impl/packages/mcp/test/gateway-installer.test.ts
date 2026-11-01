@@ -285,7 +285,7 @@ describe.skipIf(noSh !== null)('install-gateway.sh: helpers', () => {
       rmSync(tmp, { recursive: true, force: true });
     }
     // The helper passes agent commands to rdv-gateway (the human runs them, then restarts).
-    expect(src).toContain('pin | token | oauth | agent) exec');
+    expect(src).toContain('pin | token | oauth | agent | notify) exec');
   });
 
   it('reads who an ACL lets write: DSM synoacltool (the real docker share) and getfacl', () => {
