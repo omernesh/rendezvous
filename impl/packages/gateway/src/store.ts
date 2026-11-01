@@ -32,6 +32,12 @@ export interface ApiToken {
   hash: string;
   scopes: Scope[];
   created: string;
+  /**
+   * The one agent this token reaches (NOTES 104). Absent on a token made
+   * before multi-agent gateways: it reaches the root agent only, and nothing
+   * once the root holds none.
+   */
+  agent?: string;
 }
 
 export interface StoreData {
@@ -181,15 +187,22 @@ export class GatewayStore {
 
   // --- API tokens ----------------------------------------------------------------
 
-  /** A new token: returned once, stored only as its hash. */
-  async createToken(name: string, scopes: string[]): Promise<{ token: string; info: ApiToken }> {
+  /** A new token for one agent: returned once, stored only as its hash. */
+  async createToken(name: string, scopes: string[], agent?: string): Promise<{ token: string; info: ApiToken }> {
     const n = name.trim();
     if (!/^[A-Za-z0-9][A-Za-z0-9 ._-]{0,47}$/.test(n)) throw new StoreError('a token name is 1 to 48 letters, digits, spaces, dots, dashes or underscores');
     const bad = scopes.filter((s) => !isScope(s));
     if (bad.length) throw new StoreError(`unknown scope ${JSON.stringify(bad[0])}: the scopes are ${SCOPES.join(', ')} (none of them can approve anything)`);
     if (scopes.length === 0) throw new StoreError(`give at least one scope (${SCOPES.join(', ')})`);
     const token = `rdvg_${randomToken(32)}`;
-    const info: ApiToken = { id: `tok_${randomToken(6)}`, name: n, hash: sha256(token), scopes: [...new Set(scopes as Scope[])], created: new Date().toISOString() };
+    const info: ApiToken = {
+      id: `tok_${randomToken(6)}`,
+      name: n,
+      hash: sha256(token),
+      scopes: [...new Set(scopes as Scope[])],
+      created: new Date().toISOString(),
+      ...(agent !== undefined ? { agent } : {}),
+    };
     await this.update((d) => {
       if (Object.keys(d.tokens).length >= MAX_TOKENS) throw new StoreError(`at most ${MAX_TOKENS} tokens; revoke one first`);
       // Names tell tokens apart on the approval page: one name, one token.
@@ -208,6 +221,29 @@ export class GatewayStore {
       if (!Object.hasOwn(d.tokens, id)) return false;
       delete d.tokens[id];
       return true;
+    });
+  }
+
+  /** `agent migrate`: tokens of the root agent (named `from`, or made before NOTES 104) now reach `to`. */
+  async rebindAgent(from: string, to: string): Promise<number> {
+    return this.update((d) => {
+      let n = 0;
+      for (const t of Object.values(d.tokens)) {
+        if (t.agent === undefined || t.agent === from) {
+          t.agent = to;
+          n += 1;
+        }
+      }
+      return n;
+    });
+  }
+
+  /** `agent remove --force`: every token of that agent is revoked. */
+  async revokeAgent(agent: string): Promise<string[]> {
+    return this.update((d) => {
+      const gone = Object.values(d.tokens).filter((t) => t.agent === agent).map((t) => t.id);
+      for (const id of gone) delete d.tokens[id];
+      return gone;
     });
   }
 

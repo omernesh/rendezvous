@@ -177,6 +177,23 @@ OAuth connectors send your browser to the gateway's consent page. **Check the re
 
 See and end connections with `./gw oauth list` and `./gw oauth revoke <cli_...|grt_...>`.
 
+## Several agents on one gateway
+
+One gateway can serve several agents: yours and a second one for another assistant, or a family's. `data/` becomes the gateway's root: the PIN, tokens and OAuth state stay there, and each further agent is a normal home in `data/agents/<name>/`. Your existing agent in `data/` keeps working as it is. Every token and every OAuth connection reaches exactly one agent and nothing of the others. One PIN unlocks the approval page for all of them, and every approval says which agent it is for (name and fingerprint), so only put agents on one gateway that you would trust to one machine.
+
+```bash
+./gw agent add kids new --email kids@example.com      # a new identity
+./gw agent list
+docker compose restart gateway                        # agents are read at start
+./gw token create --agent kids --name kids-claude --scope read,send
+```
+
+To bring an existing agent instead, restore its backup as a new agent, with the backup folder mounted as in "Moving to your real identity" above: `docker compose run --rm -v "$PWD/backup:/backup:ro" gateway node packages/gateway/dist/src/bin.js agent add kids --restore /backup/kids.backup --home /data`. Stop `rdv listen` or `rdv-mcp` for it on the old machine.
+
+Each agent has its own MCP address, `https://gw.example.com/a/kids/mcp` (REST under `/a/kids/api/v1`, OpenAPI at `/a/kids/openapi.json`). `https://gw.example.com/mcp` still works for any token, and serves that token's own agent. An OAuth client connected to an agent's address is fixed to it on the consent page; one connected to `/mcp` makes you pick the agent there. With several agents, give each its own calendar: `--calendar kids=/data/kids-cal.json`.
+
+`./gw agent remove kids` moves the agent to `data/agents/.removed/`, key and all (delete it yourself once you have a backup); it refuses while the gateway runs or while tokens or connections still reach it (`--force` revokes them). To have your first agent in `data/agents/` too, stop the gateway and run `./gw agent migrate`: it copies, checks the copy, and keeps the originals in `data/.premigrate-<time>/`. Migrating is optional.
+
 ## 7. Update
 
 ```bash

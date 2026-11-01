@@ -19,6 +19,12 @@
 // own check under the home lock binds the commit). Auth is one seam
 // (`authenticate`): a static token or an OAuth access token, each a principal
 // with scopes; neither can approve anything.
+//
+// One gateway serves several agents (NOTES 104, agents.ts): one RdvMcpServer,
+// one listener and one set of pending approvals per agent, in this process.
+// Every principal is bound to exactly one agent and reaches nothing of any
+// other: /mcp, /sse and /api/v1 serve the caller's own agent, and
+// /a/<name>/… the named one, only to its own principals.
 import { randomBytes, randomUUID } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -28,6 +34,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 import type { Home } from '@rendezvous/cli/lib';
 import { RdvMcpServer } from '@rendezvous/mcp';
+import { AgentError, AgentRoot, AGENT_NAME_RE, type AgentEntry } from './agents.js';
 import { Approvals, FormInputError, type PendingApproval, typeContent } from './approvals.js';
 import {
   HttpError,
@@ -47,7 +54,7 @@ import {
 import { OAuthServer } from './oauth.js';
 import { openApi } from './openapi.js';
 import { BRAND_CSS, FAVICON_SVG } from './brand.js';
-import { approvalPage, consentCsp, consentPage, CSS, donePage, errorPage, type Flash, listPage, PAGE_CSP, unlockPage } from './pages.js';
+import { type AgentLabel, approvalPage, consentCsp, consentPage, CSS, donePage, errorPage, type Flash, listPage, PAGE_CSP, unlockPage } from './pages.js';
 import { authorizeCall, SCOPES, type Scope, toolScopes } from './scopes.js';
 import { GatewayStore } from './store.js';
 
@@ -66,6 +73,7 @@ const OWNER_MAX_MS = 60 * 60_000;
 const MAX_OWNER_SESSIONS = 16;
 
 export interface GatewayOptions {
+  /** The gateway's root: its own state, and the agents it serves (the root itself, if it is a home, and agents/<name>/). */
   home: Home;
   /** Bind address; loopback by default. Anything else needs `allowRemoteBind`. */
   host?: string;
@@ -73,7 +81,11 @@ export interface GatewayOptions {
   allowRemoteBind?: boolean;
   /** The public base URL the owner's tunnel serves (https; http only for loopback). Approval links use it. */
   publicUrl?: string;
-  calendar?: string;
+  /**
+   * The calendar dinner proposals are answered from. One file for a gateway with one agent; with several, a file
+   * per agent by name (a calendar is one person's: another agent never answers from it).
+   */
+  calendar?: string | Record<string, string>;
   calendarDirs?: string[];
   window?: string;
   tz?: string;
@@ -97,14 +109,34 @@ export interface Principal {
   id: string;
   name: string;
   scopes: Scope[];
+  /** The one agent it reaches (NOTES 104). */
+  agent: string;
+}
+
+/** One agent this gateway serves: its own MCP server (and listener), its own approvals. */
+export interface AgentRuntime {
+  name: string;
+  home: Home;
+  /** The gateway root is this agent's home (a gateway from before NOTES 104). */
+  root: boolean;
+  /** Its identity, read at start. */
+  id?: string;
+  fingerprint?: string;
+  server: RdvMcpServer;
+  approvals: Approvals;
+  openapi?: string;
 }
 
 interface McpSession {
   transport: StreamableHTTPServerTransport | SSEServerTransport;
   mcp: McpServer;
   principal: string;
+  agent: string;
   lastSeen: number;
 }
+
+/** A path under one agent: /a/<name>/<rest>. */
+const AGENT_PATH = /^\/a\/([^/]{1,64})(\/.*)$/;
 
 interface OwnerSession {
   created: number;
@@ -121,9 +153,11 @@ const CLIENT_FORGET_MS = 24 * 60 * 60_000;
 
 export class Gateway {
   readonly store: GatewayStore;
-  readonly approvals: Approvals;
-  readonly server: RdvMcpServer;
   readonly oauth: OAuthServer;
+  readonly root: AgentRoot;
+  /** Every agent served, the root agent (or else the first by name) first. */
+  readonly agents: readonly AgentRuntime[];
+  private readonly byName = new Map<string, AgentRuntime>();
   private http?: Server;
   private sweeper?: NodeJS.Timeout;
   private base = '';
@@ -141,7 +175,6 @@ export class Gateway {
   private readonly unlockLimiter: RateLimiter;
   /** Wrong PINs per client (only told apart with clientIpHeader): a backoff, in memory, bounded. */
   private readonly clientFailures = new Map<string, { failures: number; until?: number; last: number }>();
-  private openapi?: string;
   private readonly secure: boolean;
 
   constructor(private readonly opts: GatewayOptions) {
@@ -174,31 +207,79 @@ export class Gateway {
       clientKey: (req) => this.client(req),
       log: this.log,
       onGrantEnded: (id) => this.endPrincipal(id),
+      agents: () => this.agents.map((a) => a.name),
     });
-    // An ask from a token or OAuth grant that was revoked since is dropped: its owner said no more to that client.
-    this.approvals = new Approvals(
-      (id) => `${this.base}/approve/${id}`,
-      this.now,
-      (p) => p === undefined || this.store.listTokens().some((t) => t.id === p) || this.oauth.store.hasGrant(p),
-    );
-    this.server = new RdvMcpServer({
-      home: opts.home,
-      role: 'rdv-gateway',
-      remote: {
-        ask: (a) => {
-          const url = this.approvals.ask(a, a.principal ? this.principalName(a.principal) : undefined);
-          this.log(`waiting for you: ${a.form.message.split('\n')[0]} (${url})`);
-          return url;
+    this.root = new AgentRoot(opts.home.dir);
+    // No agent yet: the root stands in, so start() can say so.
+    const found: AgentEntry[] = this.root.list();
+    const entries = found.length ? found : [{ name: 'default', home: opts.home, root: true }];
+    const multi = entries.length > 1;
+    const calendars = this.calendars(opts.calendar, entries.map((a) => a.name));
+    this.agents = entries.map((a) => {
+      const label = (l: string) => (multi ? `[${a.name}] ${l}` : l);
+      // An ask from a token or OAuth grant that was revoked since (or never was this agent's) is dropped.
+      const approvals = new Approvals(
+        (id) => `${this.base}/approve/${id}`,
+        this.now,
+        (p) => p === undefined || this.principalAgent(p) === a.name,
+      );
+      const server = new RdvMcpServer({
+        home: a.home,
+        role: 'rdv-gateway',
+        remote: {
+          ask: (x) => {
+            const url = approvals.ask(x, x.principal ? this.principalName(x.principal) : undefined);
+            this.log(label(`waiting for you: ${x.form.message.split('\n')[0]} (${url})`));
+            return url;
+          },
         },
-      },
-      calendar: opts.calendar,
-      calendarDirs: opts.calendarDirs,
-      window: opts.window,
-      tz: opts.tz,
-      humanLog: this.log,
-      pollMs: opts.pollMs,
-      sweepMs: opts.sweepMs,
+        calendar: calendars.get(a.name),
+        calendarDirs: opts.calendarDirs,
+        window: opts.window,
+        tz: opts.tz,
+        humanLog: (l) => this.log(label(l)),
+        pollMs: opts.pollMs,
+        sweepMs: opts.sweepMs,
+      });
+      const rt: AgentRuntime = { name: a.name, home: a.home, root: a.root, server, approvals };
+      this.byName.set(a.name, rt);
+      return rt;
     });
+  }
+
+  /** Which calendar each agent answers from: one file only for a single agent, else one per agent by name. */
+  private calendars(given: GatewayOptions['calendar'], names: string[]): Map<string, string> {
+    const out = new Map<string, string>();
+    if (given === undefined) return out;
+    if (typeof given === 'string') {
+      if (names.length > 1) throw new AgentError(`this gateway serves ${names.length} agents: say whose calendar it is (--calendar <agent>=<file>), since a calendar is one person's`);
+      out.set(names[0], given);
+      return out;
+    }
+    for (const [name, file] of Object.entries(given)) {
+      if (!names.includes(name)) throw new AgentError(`--calendar names "${name}", which is not an agent here (rdv-gateway agent list)`);
+      out.set(name, file);
+    }
+    return out;
+  }
+
+  /** The first agent: the root agent, or else the first by name (what a gateway of one agent serves). */
+  get primary(): AgentRuntime {
+    return this.agents[0];
+  }
+
+  /** The first agent's MCP server (a gateway of one agent has only this one). */
+  get server(): RdvMcpServer {
+    return this.primary.server;
+  }
+
+  /** The first agent's pending approvals. */
+  get approvals(): Approvals {
+    return this.primary.approvals;
+  }
+
+  agent(name: string): AgentRuntime | undefined {
+    return this.byName.get(name);
   }
 
   /** The base URL approval links use. */
@@ -207,9 +288,18 @@ export class Gateway {
   }
 
   async start(): Promise<string> {
-    if (!this.opts.home.initialized()) throw new Error(`no agent at ${this.opts.home.dir} yet: create it first in your own terminal (rdv init)`);
+    if (!this.primary.home.initialized()) {
+      throw new Error(`no agent at ${this.opts.home.dir} yet: create one first in your own terminal (rdv-gateway agent add <name> new, or rdv init)`);
+    }
     if (!this.store.hasPin()) throw new Error('set the approval PIN first, in your own terminal: rdv-gateway pin set');
-    this.server.startListening();
+    // Two folders with one identity would be two receivers for one key: refused (identities() throws).
+    for (const a of this.root.identities()) {
+      const rt = this.byName.get(a.name);
+      if (!rt) throw new AgentError(`agent "${a.name}" was added after this gateway was made; start it again`);
+      rt.id = a.id;
+      rt.fingerprint = a.fingerprint;
+    }
+    for (const rt of this.agents) rt.server.startListening();
     const http = createServer((req, res) => void this.handle(req, res));
     http.requestTimeout = 120_000;
     http.headersTimeout = 20_000;
@@ -233,6 +323,9 @@ export class Gateway {
     } else this.base = local;
     this.origins.add(this.base);
     this.log(`serving on ${local} (MCP at /mcp, REST at /api/v1, approvals at ${this.base}/approve)`);
+    if (this.agents.length > 1) {
+      for (const a of this.agents) this.log(`agent ${a.name} (${a.fingerprint}): ${this.base}/a/${a.name}/mcp, REST ${this.base}/a/${a.name}/api/v1`);
+    }
     // A token or grant revoked from a terminal is refused at the next request; this also ends its open streams.
     this.sweeper = setInterval(() => this.sweepSessions(), SESSION_SWEEP_MS);
     this.sweeper.unref();
@@ -247,27 +340,56 @@ export class Gateway {
       this.http.closeAllConnections?.();
       await new Promise<void>((r) => this.http!.close(() => r()));
     }
-    await this.server.close().catch(() => {});
+    for (const a of this.agents) await a.server.close().catch(() => {});
   }
 
   // --- auth: the seam --------------------------------------------------------------
 
   /** The caller of an API or MCP request: a static token, or an OAuth access token the owner's consent minted. */
-  authenticate(req: IncomingMessage, endpoint: 'mcp' | 'sse' = 'mcp'): Principal {
+  authenticate(req: IncomingMessage, endpoint: 'mcp' | 'sse' = 'mcp', route?: string): Principal {
     const h = String(req.headers.authorization ?? '');
     const m = /^Bearer ([A-Za-z0-9_-]{16,200})$/.exec(h);
+    let who: (Omit<Principal, 'agent'> & { agent?: string }) | undefined;
     if (m?.[1].startsWith('rdvo_')) {
-      const who = this.oauth.verifyAccess(m[1]);
-      if (who) return who;
+      who = this.oauth.verifyAccess(m[1]);
     } else if (m) {
       const t = this.store.findToken(m[1]);
-      if (t) return { id: t.id, name: t.name, scopes: t.scopes };
+      if (t) who = { id: t.id, name: t.name, scopes: t.scopes, agent: t.agent };
     }
+    // One made before NOTES 104 names no agent: it reaches the root agent, and nothing once the root holds none.
+    const agent = who ? this.boundAgent(who.agent) : undefined;
+    if (who && agent !== undefined) return { ...who, agent };
     // RFC 9728 §5.1: where an OAuth client finds out how to get a token.
-    const challenge = `Bearer realm="rendezvous", resource_metadata="${this.oauth.resourceMetadataUrl(endpoint)}", scope="${SCOPES.join(' ')}"${h ? ', error="invalid_token"' : ''}`;
+    const challenge = `Bearer realm="rendezvous", resource_metadata="${this.oauth.resourceMetadataUrl(endpoint, route)}", scope="${SCOPES.join(' ')}"${h ? ', error="invalid_token"' : ''}`;
     throw new HttpError(401, 'a valid bearer token is required (connect with OAuth, or your user makes a token with "rdv-gateway token create")', 'unauthorized', {
       'WWW-Authenticate': challenge,
     });
+  }
+
+  /** The agent a principal's stored binding names: its own, or (none stored) the root agent, if there is one. */
+  private boundAgent(stored: string | undefined): string | undefined {
+    if (stored !== undefined) return stored;
+    const first = this.primary;
+    return first.root ? first.name : undefined;
+  }
+
+  /** The agent a principal id reaches, if the principal still exists. */
+  private principalAgent(id: string): string | undefined {
+    const t = this.store.listTokens().find((x) => x.id === id);
+    if (t) return this.boundAgent(t.agent);
+    const g = this.oauth.store.grant(id);
+    return g ? this.boundAgent(g.agent) : undefined;
+  }
+
+  /**
+   * The agent a call reaches: the principal's own. Under /a/<name>/ the name must be that agent: a principal of
+   * another agent is refused there, never served (and it never learns whose the URL is).
+   */
+  private runtimeFor(who: Principal, route: string | undefined): AgentRuntime {
+    if (route !== undefined && route !== who.agent) throw new HttpError(403, 'this token is for another agent: use /mcp (or /api/v1), or that agent\'s own URL', 'wrong_agent');
+    const rt = this.byName.get(who.agent);
+    if (!rt) throw new HttpError(403, 'the agent this token is for is not served here (added since the gateway started? your user restarts it)', 'agent_unavailable');
+    return rt;
   }
 
   /** How the page names a principal: a token's name and id, or an OAuth client's registered name and grant id. */
@@ -279,9 +401,9 @@ export class Gateway {
     return c && g ? `${c.name} (OAuth ${g.id})` : undefined;
   }
 
-  /** Whether a principal still exists: a static token, or a live OAuth grant. */
-  private principalAlive(id: string): boolean {
-    return this.store.listTokens().some((t) => t.id === id) || this.oauth.store.hasGrant(id);
+  /** Whether a principal still exists (a static token, or a live OAuth grant) and still reaches this agent. */
+  private principalAlive(id: string, agent: string): boolean {
+    return this.principalAgent(id) === agent;
   }
 
   /** A principal ended (an OAuth grant revoked or reused): close its MCP sessions now. */
@@ -302,7 +424,23 @@ export class Gateway {
       // DNS rebinding: a page elsewhere that resolves its own name to 127.0.0.1 still sends its own Host.
       if (!this.allowedHosts.has(host)) throw new HttpError(421, 'unknown host', 'misdirected');
       const url = new URL(req.url ?? '/', 'http://gateway.invalid');
-      const path = url.pathname;
+      const full = url.pathname;
+      // /a/<name>/… is one agent's: its MCP, SSE, REST and OpenAPI, the same routes as at the root (NOTES 104).
+      const under = AGENT_PATH.exec(full);
+      let route: string | undefined;
+      let path = full;
+      if (under) {
+        if (!AGENT_NAME_RE.test(under[1]) || !this.byName.has(under[1])) throw new HttpError(404, 'no such agent', 'not_found');
+        route = under[1];
+        path = under[2];
+        if (!['/mcp', '/sse', '/messages', '/openapi.json', '/api/v1/tools'].includes(path) && !path.startsWith('/api/v1/tools/')) throw new HttpError(404, 'not found', 'not_found');
+      }
+      const wk = /^\/\.well-known\/oauth-protected-resource\/a\/([^/]{1,64})\/(mcp|sse)$/.exec(full);
+      if (wk) {
+        if (req.method !== 'GET') throw new HttpError(405, 'GET only', 'method_not_allowed');
+        if (!AGENT_NAME_RE.test(wk[1]) || !this.byName.has(wk[1])) throw new HttpError(404, 'no such agent', 'not_found');
+        return sendJson(res, 200, this.oauth.protectedResourceMetadata(wk[2] as 'mcp' | 'sse', wk[1]));
+      }
       if (path === '/healthz' && req.method === 'GET') return sendJson(res, 200, { ok: true });
       if (path === '/assets/gateway.css' && req.method === 'GET') {
         const css = CSS + BRAND_CSS;
@@ -320,9 +458,10 @@ export class Gateway {
         return void res.end(FAVICON_SVG);
       }
       if (path === '/openapi.json' && req.method === 'GET') {
-        this.openapi ??= JSON.stringify(openApi(this.server.tools, this.base));
-        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Content-Length': Buffer.byteLength(this.openapi) });
-        return void res.end(this.openapi);
+        const rt = route === undefined ? this.primary : this.byName.get(route)!;
+        rt.openapi ??= JSON.stringify(openApi(rt.server.tools, route === undefined ? this.base : `${this.base}/a/${route}`));
+        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Content-Length': Buffer.byteLength(rt.openapi) });
+        return void res.end(rt.openapi);
       }
       if (path === '/.well-known/oauth-protected-resource' || path === '/.well-known/oauth-protected-resource/mcp' || path === '/.well-known/oauth-protected-resource/sse') {
         if (req.method !== 'GET') throw new HttpError(405, 'GET only', 'method_not_allowed');
@@ -336,9 +475,9 @@ export class Gateway {
       if (path === '/oauth/token') return await this.oauth.token(req, res);
       if (path === '/oauth/revoke') return await this.oauth.revoke(req, res);
       if (path === '/oauth/authorize') return await this.page(req, res, path, url);
-      if (path === '/mcp') return await this.mcp(req, res);
-      if (path === '/sse' || path === '/messages') return await this.sse(req, res, path, url);
-      if (path === '/api/v1/tools' || path.startsWith('/api/v1/tools/')) return await this.api(req, res, path);
+      if (path === '/mcp') return await this.mcp(req, res, route);
+      if (path === '/sse' || path === '/messages') return await this.sse(req, res, path, url, route);
+      if (path === '/api/v1/tools' || path.startsWith('/api/v1/tools/')) return await this.api(req, res, path, route);
       if (path === '/approve' || path.startsWith('/approve/')) return await this.page(req, res, path, url);
       throw new HttpError(404, 'not found', 'not_found');
     } catch (err) {
@@ -354,21 +493,22 @@ export class Gateway {
 
   // --- REST ------------------------------------------------------------------------
 
-  private async api(req: IncomingMessage, res: ServerResponse, path: string): Promise<void> {
-    const who = this.authenticate(req);
+  private async api(req: IncomingMessage, res: ServerResponse, path: string, route?: string): Promise<void> {
+    const who = this.authenticate(req, 'mcp', route);
     this.tokenLimiter.check(who.id, 'requests');
+    const { server } = this.runtimeFor(who, route);
     if (path === '/api/v1/tools') {
       if (req.method !== 'GET') throw new HttpError(405, 'GET only', 'method_not_allowed');
       return sendJson(res, 200, {
-        tools: this.server.tools.filter((t) => toolScopes(t.name).some((s) => who.scopes.includes(s))).map((t) => ({ name: t.name, description: t.description, scopes: toolScopes(t.name) })),
+        tools: server.tools.filter((t) => toolScopes(t.name).some((s) => who.scopes.includes(s))).map((t) => ({ name: t.name, description: t.description, scopes: toolScopes(t.name) })),
       });
     }
     if (req.method !== 'POST') throw new HttpError(405, 'POST only', 'method_not_allowed');
     const name = path.slice('/api/v1/tools/'.length);
-    if (!/^rdv_[a-z_]{1,40}$/.test(name) || !this.server.tools.some((t) => t.name === name)) throw new HttpError(404, 'no such tool', 'not_found');
+    if (!/^rdv_[a-z_]{1,40}$/.test(name) || !server.tools.some((t) => t.name === name)) throw new HttpError(404, 'no such tool', 'not_found');
     const body = await readJson(req, API_BODY_MAX);
     let denied = false;
-    const r = await this.server.invoke(name, body, {
+    const r = await server.invoke(name, body, {
       principal: who.id,
       authorize: (tool, args) => {
         const why = authorizeCall(who.scopes, tool, args);
@@ -383,38 +523,39 @@ export class Gateway {
 
   // --- MCP over Streamable HTTP --------------------------------------------------------
 
-  private async mcp(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    const who = this.authenticate(req);
+  private async mcp(req: IncomingMessage, res: ServerResponse, route?: string): Promise<void> {
+    const who = this.authenticate(req, 'mcp', route);
     this.tokenLimiter.check(who.id, 'requests');
+    const rt = this.runtimeFor(who, route);
     const sid = req.headers['mcp-session-id'];
     let body: unknown;
     if (req.method === 'POST') body = await readJson(req, API_BODY_MAX);
     else if (req.method !== 'GET' && req.method !== 'DELETE') throw new HttpError(405, 'POST, GET or DELETE', 'method_not_allowed');
     if (typeof sid === 'string') {
       const s = this.sessions.get(sid);
-      // A session belongs to the token that opened it; another token sees no such session.
-      if (!s || s.principal !== who.id || !(s.transport instanceof StreamableHTTPServerTransport)) throw new HttpError(404, 'no such session', 'not_found');
+      // A session belongs to the token that opened it, on its agent; another token sees no such session.
+      if (!s || s.principal !== who.id || s.agent !== rt.name || !(s.transport instanceof StreamableHTTPServerTransport)) throw new HttpError(404, 'no such session', 'not_found');
       s.lastSeen = this.now();
       return s.transport.handleRequest(req, res, body);
     }
     if (req.method !== 'POST' || !isInitializeRequest(body)) throw new HttpError(400, 'start a session with an initialize request', 'bad_request');
-    const mcp = await this.openSession(who);
+    const mcp = await this.openSession(who, rt);
     const transport: StreamableHTTPServerTransport = new StreamableHTTPServerTransport({
       sessionIdGenerator: () => randomUUID(),
       onsessioninitialized: (id) => {
-        this.sessions.set(id, { transport, mcp, principal: who.id, lastSeen: this.now() });
+        this.sessions.set(id, { transport, mcp, principal: who.id, agent: rt.name, lastSeen: this.now() });
       },
     });
     transport.onclose = () => {
       if (transport.sessionId) this.sessions.delete(transport.sessionId);
-      this.server.endSession(mcp);
+      rt.server.endSession(mcp);
     };
     await mcp.connect(transport);
     await transport.handleRequest(req, res, body);
   }
 
-  /** Room for a new session of this principal (its own oldest closes past the cap), and its MCP server. */
-  private async openSession(who: Principal): Promise<McpServer> {
+  /** Room for a new session of this principal (its own oldest closes past the cap), and its MCP server on its agent. */
+  private async openSession(who: Principal, rt: AgentRuntime): Promise<McpServer> {
     this.sweepSessions();
     // One principal may hold a few sessions: a new one closes its own least recently used, never another's.
     const mine = [...this.sessions].filter(([, s]) => s.principal === who.id).sort((x, y) => x[1].lastSeen - y[1].lastSeen);
@@ -422,8 +563,11 @@ export class Gateway {
       this.sessions.delete(id);
       await s.transport.close().catch(() => {});
     }
-    if (this.sessions.size >= MAX_MCP_SESSIONS) throw new HttpError(503, 'too many open sessions; close one or retry later', 'busy', { 'Retry-After': '60' });
-    return this.server.newSession({
+    // Per agent: one agent's clients never use up another's room.
+    if ([...this.sessions.values()].filter((s) => s.agent === rt.name).length >= MAX_MCP_SESSIONS) {
+      throw new HttpError(503, 'too many open sessions; close one or retry later', 'busy', { 'Retry-After': '60' });
+    }
+    return rt.server.newSession({
       allow: (tool) => toolScopes(tool).some((s) => who.scopes.includes(s)),
       caller: { principal: who.id, authorize: (tool, args) => authorizeCall(who.scopes, tool, args) },
     });
@@ -432,24 +576,25 @@ export class Gateway {
   // --- MCP over the legacy HTTP+SSE transport ------------------------------------------
 
   /** GET /sse opens the event stream; its client POSTs to /messages?sessionId=… with the same bearer. */
-  private async sse(req: IncomingMessage, res: ServerResponse, path: string, url: URL): Promise<void> {
-    const who = this.authenticate(req, 'sse');
+  private async sse(req: IncomingMessage, res: ServerResponse, path: string, url: URL, route?: string): Promise<void> {
+    const who = this.authenticate(req, 'sse', route);
     this.tokenLimiter.check(who.id, 'requests');
+    const rt = this.runtimeFor(who, route);
     if (path === '/messages') {
       if (req.method !== 'POST') throw new HttpError(405, 'POST only', 'method_not_allowed');
       const s = this.sessions.get(url.searchParams.get('sessionId') ?? '');
-      if (!s || s.principal !== who.id || !(s.transport instanceof SSEServerTransport)) throw new HttpError(404, 'no such session', 'not_found');
+      if (!s || s.principal !== who.id || s.agent !== rt.name || !(s.transport instanceof SSEServerTransport)) throw new HttpError(404, 'no such session', 'not_found');
       const body = await readJson(req, API_BODY_MAX);
       s.lastSeen = this.now();
       return s.transport.handlePostMessage(req, res, body);
     }
     if (req.method !== 'GET') throw new HttpError(405, 'GET only', 'method_not_allowed');
-    const mcp = await this.openSession(who);
-    const transport = new SSEServerTransport('/messages', res);
-    this.sessions.set(transport.sessionId, { transport, mcp, principal: who.id, lastSeen: this.now() });
+    const mcp = await this.openSession(who, rt);
+    const transport = new SSEServerTransport(route === undefined ? '/messages' : `/a/${route}/messages`, res);
+    this.sessions.set(transport.sessionId, { transport, mcp, principal: who.id, agent: rt.name, lastSeen: this.now() });
     transport.onclose = () => {
       this.sessions.delete(transport.sessionId);
-      this.server.endSession(mcp);
+      rt.server.endSession(mcp);
     };
     await mcp.connect(transport);
   }
@@ -457,7 +602,7 @@ export class Gateway {
   private sweepSessions(): void {
     const t = this.now();
     for (const [id, s] of this.sessions) {
-      if (t - s.lastSeen > MCP_IDLE_MS || !this.principalAlive(s.principal)) {
+      if (t - s.lastSeen > MCP_IDLE_MS || !this.principalAlive(s.principal, s.agent)) {
         this.sessions.delete(id);
         void s.transport.close().catch(() => {});
       }
@@ -602,17 +747,33 @@ export class Gateway {
     }
     if (path === '/approve') {
       if (req.method !== 'GET') throw new HttpError(405, 'GET only', 'method_not_allowed');
-      return this.html(res, 200, listPage({ items: this.approvals.list(), csrf }));
+      return this.html(res, 200, listPage({ agents: this.agents.map((a) => ({ ...this.label(a), items: a.approvals.list() })), csrf }));
     }
     if (path.startsWith('/approve/oauth/')) return this.consent(req, res, path.slice('/approve/oauth/'.length), sid, csrf);
     const id = path.slice('/approve/'.length);
-    const item = /^apr_[A-Za-z0-9_-]{8,64}$/.test(id) ? this.approvals.get(id) : undefined;
-    if (!item) return this.html(res, 404, errorPage('Nothing waits here', 'Nothing waits for you under this link: it was decided already, or it expired. Your assistant can ask again.'));
-    if (req.method === 'GET') return this.html(res, 200, approvalPage({ item, csrf }));
+    let rt: AgentRuntime | undefined;
+    let item: PendingApproval | undefined;
+    // Approval ids are random and unique across agents; each agent's approvals know which agent they are for.
+    if (/^apr_[A-Za-z0-9_-]{8,64}$/.test(id)) {
+      for (const a of this.agents) {
+        item = a.approvals.get(id);
+        if (item) {
+          rt = a;
+          break;
+        }
+      }
+    }
+    if (!item || !rt) return this.html(res, 404, errorPage('Nothing waits here', 'Nothing waits for you under this link: it was decided already, or it expired. Your assistant can ask again.'));
+    if (req.method === 'GET') return this.html(res, 200, approvalPage({ item, agent: this.label(rt), csrf }));
     if (req.method !== 'POST') throw new HttpError(405, 'GET or POST', 'method_not_allowed');
     const form = await readForm(req, FORM_BODY_MAX);
     this.checkPost(req, form, `owner:${sid}`);
-    return this.decide(res, item, form, csrf);
+    return this.decide(res, rt, item, form, csrf);
+  }
+
+  /** How the page names an agent: its name here and its fingerprint. */
+  private label(a: AgentRuntime): AgentLabel {
+    return { name: a.name, fingerprint: a.fingerprint ?? '' };
   }
 
   /**
@@ -645,8 +806,9 @@ export class Gateway {
       );
     }
     const client = this.oauth.store.client(item.clientId);
+    const agents = this.agents.map((a) => this.label(a));
     const show = (status: number, message?: Flash) =>
-      sendHtml(res, status, consentPage({ item, csrf, registered: client?.created, message }), consentCsp(item.redirectUri));
+      sendHtml(res, status, consentPage({ item, csrf, registered: client?.created, message, agents }), consentCsp(item.redirectUri));
     if (req.method === 'GET') return show(200);
     if (req.method !== 'POST') throw new HttpError(405, 'GET or POST', 'method_not_allowed');
     const form = await readForm(req, FORM_BODY_MAX);
@@ -654,7 +816,9 @@ export class Gateway {
     const decision = form.get('decision');
     if (decision !== 'approve' && decision !== 'decline') return show(400, { text: 'Choose connect or no.', bad: true });
     const kept = SCOPES.filter((s) => form.get(`s_${s}`) === '1');
-    const out = this.oauth.decide(item, form.get('digest') ?? '', decision, kept);
+    // The agent the owner picked (OAuthServer.decide checks it): with one agent, or one the client asked for, that one.
+    const agent = form.get('agent') || item.agent || (this.agents.length === 1 ? this.primary.name : undefined);
+    const out = this.oauth.decide(item, form.get('digest') ?? '', decision, kept, agent);
     if ('error' in out) {
       if (this.oauth.consent(item.id)) return show(409, { text: out.error, bad: true });
       return this.html(res, 409, donePage({ title: 'Not connected', text: out.error, csrf, bad: true }));
@@ -663,50 +827,52 @@ export class Gateway {
   }
 
   /** The owner's answer to one approval: bound to the digest of the form the page showed. */
-  private async decide(res: ServerResponse, item: PendingApproval, form: URLSearchParams, csrf: string): Promise<void> {
+  private async decide(res: ServerResponse, rt: AgentRuntime, item: PendingApproval, form: URLSearchParams, csrf: string): Promise<void> {
+    const agent = this.label(rt);
     const decision = form.get('decision');
-    if (decision !== 'approve' && decision !== 'decline') return this.html(res, 400, approvalPage({ item, csrf, message: { text: 'Choose approve or no.', bad: true } }));
+    if (decision !== 'approve' && decision !== 'decline') return this.html(res, 400, approvalPage({ item, agent, csrf, message: { text: 'Choose approve or no.', bad: true } }));
     if (!safeEqual(form.get('digest') ?? '', item.form.digest)) {
       // The page was older than the ask (it was asked again, or changed): nothing was done; show it as it is now.
-      return this.html(res, 409, approvalPage({ item, csrf, message: { text: 'This changed since you opened the page. Nothing was done; review it again.', bad: true } }));
+      return this.html(res, 409, approvalPage({ item, agent, csrf, message: { text: 'This changed since you opened the page. Nothing was done; review it again.', bad: true } }));
     }
-    if (item.busy) return this.html(res, 409, donePage({ title: 'Already running', text: 'Your answer to this is already being carried out.', csrf, bad: true }));
+    if (item.busy) return this.html(res, 409, donePage({ agent, title: 'Already running', text: 'Your answer to this is already being carried out.', csrf, bad: true }));
     let content: Record<string, unknown> = {};
     if (decision === 'approve') {
       try {
         content = typeContent(item.form.properties, form);
       } catch (err) {
-        if (err instanceof FormInputError) return this.html(res, 400, approvalPage({ item, csrf, message: { text: `Nothing was done: ${err.message}.`, bad: true } }));
+        if (err instanceof FormInputError) return this.html(res, 400, approvalPage({ item, agent, csrf, message: { text: `Nothing was done: ${err.message}.`, bad: true } }));
         throw err;
       }
     }
     item.busy = true;
     let out;
     try {
-      out = await this.server.answer(item, { digest: item.form.digest, decision, content }, item.id);
+      out = await rt.server.answer(item, { digest: item.form.digest, decision, content }, item.id);
     } finally {
       item.busy = false;
     }
     if (out.kind === 'changed') {
-      this.approvals.replaceForm(item.id, out.form);
-      return this.html(res, 409, approvalPage({ item: this.approvals.get(item.id) ?? item, csrf }));
+      rt.approvals.replaceForm(item.id, out.form);
+      return this.html(res, 409, approvalPage({ item: rt.approvals.get(item.id) ?? item, agent, csrf }));
     }
-    this.approvals.drop(item.id);
+    rt.approvals.drop(item.id);
     if (out.kind === 'error') {
-      this.log(`approval ${item.id} (${item.tool}) failed: ${out.error}`);
-      return this.html(res, 422, donePage({ title: 'Not done', text: out.error, csrf, bad: true }));
+      this.log(`approval ${item.id} for ${rt.name} (${item.tool}) failed: ${out.error}`);
+      return this.html(res, 422, donePage({ agent, title: 'Not done', text: out.error, csrf, bad: true }));
     }
     if (out.unneeded) {
-      this.log(`approval ${item.id} (${item.tool}): it no longer needed you; the call ran as your assistant asked`);
-      return this.html(res, 200, donePage({ title: 'No longer needed you', text: 'This changed so that it no longer needed your decision: it ran as your assistant asked, and your answer decided nothing. Your assistant sees the result in its inbox.', csrf }));
+      this.log(`approval ${item.id} for ${rt.name} (${item.tool}): it no longer needed you; the call ran as your assistant asked`);
+      return this.html(res, 200, donePage({ agent, title: 'No longer needed you', text: 'This changed so that it no longer needed your decision: it ran as your assistant asked, and your answer decided nothing. Your assistant sees the result in its inbox.', csrf }));
     }
     const v = out.value as { approved?: boolean; answer?: string } | undefined;
     const no = decision === 'decline' || v?.approved === false;
-    this.log(`approval ${item.id} (${item.tool}): ${no ? 'declined' : 'approved'} on the approval page`);
+    this.log(`approval ${item.id} for ${rt.name} (${item.tool}): ${no ? 'declined' : 'approved'} on the approval page`);
     return this.html(
       res,
       200,
       donePage({
+        agent,
         title: no ? 'Declined' : 'Approved',
         text: no ? 'You said no; nothing was approved. Your assistant sees this in its inbox.' : 'Done. Your assistant sees the outcome in its inbox.',
         csrf,

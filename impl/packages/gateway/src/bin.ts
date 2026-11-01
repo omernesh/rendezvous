@@ -10,28 +10,38 @@
 //   rdv-gateway token create --name <n> --scope read,send[,contact:request,negotiate]
 //   rdv-gateway token list | token revoke <id>
 //   rdv-gateway oauth list | oauth revoke <client-id|grant-id>   OAuth clients the owner connected on the page
+//   rdv-gateway agent list | agent add <name> (new … | --restore <file>) | agent remove <name> [--force] | agent migrate [--name <n>]
+//                                            the agents this gateway serves (NOTES 104): --home is the gateway's root
 //
 // Every command here is the owner's, in their own terminal: an assistant
 // never runs them. Home resolution is the same as rdv and rdv-mcp.
 // First: stdout carries the command's output, never a dependency's console text (review of PR #120).
 import '@rendezvous/core/safe-console';
 import { parseArgs } from 'node:util';
-import { Home } from '@rendezvous/cli/lib';
+import { describeBackup, Home, initHome, readBackupFile, restoreBackup } from '@rendezvous/cli/lib';
+import { AgentError, AgentRoot, checkAgentName } from './agents.js';
 import { DEFAULT_PORT, Gateway } from './gateway.js';
 import { SCOPE_TEXT, SCOPES } from './scopes.js';
 import { OAuthStore, OAuthStoreError } from './oauth-store.js';
 import { GatewayStore, StoreError } from './store.js';
+import { fingerprint } from '@rendezvous/core';
 
 const USAGE = `usage:
   rdv-gateway serve [--home <dir> | --profile <name>] [--port ${DEFAULT_PORT}] [--public-url https://rdv.example.com]
                     [--client-ip-header cf-connecting-ip] [--host 127.0.0.1] [--allow-remote-bind] [--calendar cal.json] [--calendar-dir <dir>]… [--window "next week evenings"] [--tz +02:00]
   rdv-gateway pin set [--home <dir>] [--stdin]   asks the current PIN first when one is set
   rdv-gateway pin unlock [--home <dir>]      clear the wait after wrong PINs
-  rdv-gateway token create --name <name> --scope <scope,…> [--home <dir>]
+  rdv-gateway token create --name <name> --scope <scope,…> [--agent <name>] [--home <dir>]   --agent: which agent it reaches (needed with several)
   rdv-gateway token list [--home <dir>]
   rdv-gateway token revoke <id> [--home <dir>]
   rdv-gateway oauth list [--home <dir>]      OAuth clients (ChatGPT, claude.ai, …) and the grants you approved
   rdv-gateway oauth revoke <cli_…|grt_…> [--home <dir>]   a client and all its grants, or one grant
+  rdv-gateway agent list [--home <dir>]      the agents this gateway serves (--home is the gateway's root)
+  rdv-gateway agent add <name> new [--email <a>]… [--phone <p>]… [--relay <url>]… [--public-pointer]
+  rdv-gateway agent add <name> --restore <backup-file> [--stdin]   a new agent under <root>/agents/<name>/
+  rdv-gateway agent remove <name> [--force]  moves it to agents/.removed/ (key kept); --force also revokes its tokens and OAuth grants
+  rdv-gateway agent migrate [--name <name>]  move the root's own agent into agents/<name>/ (gateway stopped; originals kept)
+  serve --calendar <agent>=<file> (repeatable) when the gateway serves several agents
 Scopes (none of them can approve anything; approvals happen only on the PIN-locked page):
 ${SCOPES.map((s) => `  ${s.padEnd(16)} ${SCOPE_TEXT[s]}`).join('\n')}
 `;
@@ -46,13 +56,20 @@ const { values, positionals } = parseArgs({
     'public-url': { type: 'string' },
     'allow-remote-bind': { type: 'boolean' },
     'client-ip-header': { type: 'string' },
-    calendar: { type: 'string' },
+    calendar: { type: 'string', multiple: true },
     'calendar-dir': { type: 'string', multiple: true },
     window: { type: 'string' },
     tz: { type: 'string' },
     name: { type: 'string' },
     scope: { type: 'string' },
     stdin: { type: 'boolean' },
+    agent: { type: 'string' },
+    email: { type: 'string', multiple: true },
+    phone: { type: 'string', multiple: true },
+    relay: { type: 'string', multiple: true },
+    'public-pointer': { type: 'boolean' },
+    restore: { type: 'string' },
+    force: { type: 'boolean' },
     help: { type: 'boolean', short: 'h' },
   },
   strict: true,
@@ -108,7 +125,10 @@ async function main(): Promise<void> {
   }
   const home = Home.resolve({ home: values.home, profile: values.profile });
   const store = new GatewayStore(home);
+  const root = new AgentRoot(home.dir);
   const [cmd, sub, arg] = positionals;
+
+  if (cmd === 'agent') return agentCommand(root, store, sub, arg);
 
   if (cmd === 'pin' && sub === 'set') {
     // Changing a PIN needs the current one, so whoever reaches this terminal can't take over the approval page.
@@ -128,13 +148,22 @@ async function main(): Promise<void> {
   if (cmd === 'token' && sub === 'create') {
     if (!values.name) die('token create needs --name', 2);
     if (!values.scope) die(`token create needs --scope (${SCOPES.join(', ')})`, 2);
-    const { token, info } = await store.createToken(values.name!, values.scope!.split(',').map((s) => s.trim()).filter(Boolean));
-    process.stderr.write(`Token ${info.id} ("${info.name}", scopes ${info.scopes.join(', ')}). It is shown once; give it only to the assistant you mean:\n`);
+    // Every new token reaches exactly one agent: the one named, or the only one.
+    const agents = root.list();
+    let agent = values.agent;
+    if (agent === undefined) {
+      if (agents.length > 1) die(`this gateway serves ${agents.length} agents (${agents.map((a) => a.name).join(', ')}): say which one the token reaches with --agent <name>`, 2);
+      agent = agents[0]?.name;
+      if (agent === undefined) die('no agent here yet: add one first (rdv-gateway agent add <name> new)', 2);
+    } else if (!agents.some((a) => a.name === agent)) die(`no agent "${agent}" here (rdv-gateway agent list)`, 2);
+    const { token, info } = await store.createToken(values.name!, values.scope!.split(',').map((s) => s.trim()).filter(Boolean), agent);
+    process.stderr.write(`Token ${info.id} ("${info.name}", agent ${agent}, scopes ${info.scopes.join(', ')}). It is shown once; give it only to the assistant you mean:\n`);
     process.stdout.write(`${token}\n`);
     return;
   }
   if (cmd === 'token' && sub === 'list') {
-    for (const t of store.listTokens()) process.stdout.write(`${t.id}  ${t.name}  ${t.scopes.join(',')}  ${t.created}\n`);
+    const rootName = root.rootAgentName();
+    for (const t of store.listTokens()) process.stdout.write(`${t.id}  ${t.name}  agent ${t.agent ?? rootName ?? '(none)'}  ${t.scopes.join(',')}  ${t.created}\n`);
     return;
   }
   if (cmd === 'token' && sub === 'revoke') {
@@ -148,7 +177,9 @@ async function main(): Promise<void> {
       const grants = o.grants.filter((g) => g.clientId === c.id);
       const hosts = c.redirectUris.map((u) => new URL(u).host).join(',');
       process.stdout.write(`${c.id}  ${JSON.stringify(c.name)}  returns to ${hosts}  registered ${c.created}${grants.length ? '' : c.approved ? '  (no grant left)' : '  (never approved)'}\n`);
-      for (const g of grants) process.stdout.write(`  ${g.id}  ${g.scopes.join(',')}  since ${g.created}  last refresh ${new Date(g.lastUsed).toISOString()}\n`);
+      for (const g of grants) {
+        process.stdout.write(`  ${g.id}  agent ${g.agent ?? root.rootAgentName() ?? '(none)'}  ${g.scopes.join(',')}  since ${g.created}  last refresh ${new Date(g.lastUsed).toISOString()}\n`);
+      }
     }
     return;
   }
@@ -172,7 +203,7 @@ async function main(): Promise<void> {
       allowRemoteBind: values['allow-remote-bind'] === true,
       clientIpHeader: values['client-ip-header'],
       publicUrl: values['public-url'] ?? process.env.RDV_GATEWAY_PUBLIC_URL,
-      calendar: values.calendar ?? process.env.RDV_CALENDAR,
+      calendar: calendarOption(values.calendar ?? (process.env.RDV_CALENDAR ? [process.env.RDV_CALENDAR] : [])),
       calendarDirs: [...(values['calendar-dir'] ?? []), ...(process.env.RDV_CALENDAR_DIR ? [process.env.RDV_CALENDAR_DIR] : [])],
       window: values.window ?? process.env.RDV_WINDOW,
       tz: values.tz ?? process.env.RDV_TZ,
@@ -192,4 +223,105 @@ async function main(): Promise<void> {
   die(`unknown command\n${USAGE}`, 2);
 }
 
-main().catch((err) => die(err instanceof StoreError || err instanceof OAuthStoreError ? err.message : (err as Error).message));
+/** --calendar: one file (a gateway of one agent), or <agent>=<file> per agent. */
+function calendarOption(given: string[]): string | Record<string, string> | undefined {
+  if (given.length === 0) return undefined;
+  const named = given.filter((c) => /^[a-z0-9][a-z0-9_-]{0,31}=/.test(c));
+  if (named.length === 0 && given.length === 1) return given[0];
+  if (named.length !== given.length) die('--calendar: one file for a gateway of one agent, or <agent>=<file> for each agent', 2);
+  const out: Record<string, string> = {};
+  for (const c of named) {
+    const i = c.indexOf('=');
+    if (Object.hasOwn(out, c.slice(0, i))) die(`--calendar names ${c.slice(0, i)} twice`, 2);
+    out[c.slice(0, i)] = c.slice(i + 1);
+  }
+  return out;
+}
+
+/** `rdv-gateway agent …`: the agents this gateway serves. The owner's, in their own terminal, like every command here. */
+async function agentCommand(root: AgentRoot, store: GatewayStore, sub: string | undefined, name: string | undefined): Promise<void> {
+  const oauth = new OAuthStore(root.home);
+  const rootName = root.rootAgentName();
+  const tokensOf = (n: string) => store.listTokens().filter((t) => (t.agent ?? rootName) === n);
+  const grantsOf = (n: string) => oauth.list().grants.filter((g) => (g.agent ?? rootName) === n);
+  if (sub === 'list') {
+    const agents = root.list();
+    if (agents.length === 0) process.stderr.write(`no agent in ${root.dir} yet: rdv-gateway agent add <name> new\n`);
+    for (const a of agents) {
+      let who = 'unreadable';
+      try {
+        const id = a.home.readAgentState().card.id;
+        who = `${id}  ${fingerprint(id)}`;
+      } catch {
+        // shown as unreadable
+      }
+      process.stdout.write(`${a.name}  ${who}  ${a.root ? '(the root home)' : a.home.dir}  tokens ${tokensOf(a.name).length}  oauth grants ${grantsOf(a.name).length}\n`);
+    }
+    return;
+  }
+  if (sub === 'add') {
+    if (!name) die('agent add needs a name: rdv-gateway agent add <name> new | --restore <file>', 2);
+    const restore = values.restore;
+    const fresh = positionals[3] === 'new';
+    if (fresh === (restore !== undefined)) die('agent add needs exactly one of "new" (a new identity) or --restore <backup-file>', 2);
+    const home = root.checkNewName(checkAgentName(name!));
+    if (fresh) {
+      const r = await initHome(home, { profile: name!, relays: values.relay, emails: values.email, phones: values.phone, publicPointer: values['public-pointer'] === true });
+      process.stderr.write(`Added agent ${name} at ${home.dir}\nid:          ${r.id}\nfingerprint: ${r.fingerprint}\n`);
+    } else {
+      const { abs, bytes, header } = readBackupFile(home, restore!);
+      // One identity, one agent: a second copy of an agent here would be two receivers for one key.
+      const twin = root.holdsIdentity(header.agent);
+      if (twin) die(`that backup is agent "${twin}", which this gateway serves already; nothing was restored`);
+      if (!values.stdin) process.stderr.write(['', `Restore this agent as "${name}":`, describeBackup(header, abs), ''].join('\n') + '\n');
+      const pass = await secretLine('Backup passphrase (not shown; Enter cancels): ');
+      if (pass === '') die('canceled: nothing was restored');
+      const r = await restoreBackup(home, bytes, pass, { via: 'cli', expectAgent: header.agent });
+      process.stderr.write(`Restored ${r.id} (${r.fingerprint}) as agent ${name} at ${home.dir}: ${r.contacts} contact(s), ${r.groups} group(s). Its contacts are told when it starts.\n`);
+    }
+    process.stderr.write(
+      [
+        'Next, in your own terminal:',
+        '  restart the gateway, so it serves the new agent (it reads its agents when it starts)',
+        `  rdv-gateway token create --agent ${name} --name … --scope read,send   or connect an OAuth client and pick "${name}" on the consent page`,
+        `  its MCP address: <public-url>/a/${name}/mcp (or /mcp with its own token)`,
+        '',
+      ].join('\n'),
+    );
+    return;
+  }
+  if (sub === 'remove') {
+    if (!name) die('agent remove needs a name (rdv-gateway agent list)', 2);
+    const tokens = tokensOf(name!);
+    const grants = grantsOf(name!);
+    if ((tokens.length || grants.length) && !values.force) {
+      die(
+        `agent "${name}" still has ${tokens.length} token(s) (${tokens.map((t) => t.id).join(', ') || 'none'}) and ${grants.length} OAuth grant(s) (${grants.map((g) => g.id).join(', ') || 'none'}): ` +
+          'revoke them first, or pass --force to revoke them with it; nothing changed',
+      );
+    }
+    const { kept } = root.remove(name!);
+    const t = await store.revokeAgent(name!);
+    const g = await oauth.revokeAgent(name!);
+    process.stderr.write(
+      `Removed agent ${name} from this gateway${t.length || g.length ? `, and revoked ${t.length} token(s) and ${g.length} OAuth grant(s)` : ''}.\n` +
+        `Its folder, WITH ITS KEY, is now ${kept}. Back it up (rdv backup --home ${kept}) or keep it; delete it yourself only once you are sure.\n` +
+        'Restart the gateway so it stops serving it.\n',
+    );
+    return;
+  }
+  if (sub === 'migrate') {
+    const r = await root.migrate(values.name, async (from, to) => {
+      await store.rebindAgent(from, to);
+      await oauth.rebindAgent(from, to);
+    });
+    process.stderr.write(
+      `Moved the root agent (${fingerprint(r.id)}) into ${r.dir} as "${r.name}"; its tokens and OAuth grants follow it.\n` +
+        `The original files (${r.files.length}, the key among them) are kept in ${r.kept}: delete that folder yourself once the gateway runs well.\n`,
+    );
+    return;
+  }
+  die('agent: list, add, remove or migrate', 2);
+}
+
+main().catch((err) => die(err instanceof StoreError || err instanceof OAuthStoreError || err instanceof AgentError ? err.message : (err as Error).message));

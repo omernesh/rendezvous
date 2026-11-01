@@ -475,10 +475,14 @@ const GROUP_SUBS = {
 // Revoking an OAuth client or grant (slice 2) is the owner's too: which assistants stay connected is their call.
 const GATEWAY_SECRET =
   'rdv-gateway pin, token and oauth commands are for the human, in their own terminal: the PIN unlocks their approval page, a token is a key to their agent, and which assistants stay connected is their decision. Never run them, and never ask for the PIN or a token.';
+const GATEWAY_AGENT =
+  'rdv-gateway agent add, remove and migrate are for the human, in their own terminal: each creates, restores or moves an agent and its key on the gateway. Never run them; give your user the command to run.';
 const GATEWAY_GROUPS = [
   ['pin', { set: GATEWAY_SECRET, unlock: GATEWAY_SECRET }],
   ['token', { create: GATEWAY_SECRET, revoke: GATEWAY_SECRET }],
   ['oauth', { revoke: GATEWAY_SECRET }],
+  // Multi-agent gateways (NOTES 104): adding, restoring, removing or migrating an agent creates or moves a key.
+  ['agent', { add: GATEWAY_AGENT, remove: GATEWAY_AGENT, migrate: GATEWAY_AGENT }],
 ];
 /** rdv-gateway under any of its names: the npm script or shim, the built bin.js, the npm package. */
 const isGateway = (w) =>

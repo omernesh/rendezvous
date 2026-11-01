@@ -479,6 +479,20 @@ node packages/gateway/dist/src/bin.js token list --home ~/.rendezvous/omer
 node packages/gateway/dist/src/bin.js token revoke <id> --home ~/.rendezvous/omer
 ```
 
+**Several agents on one gateway** (NOTES 104). `--home` is the gateway's root:
+its PIN, tokens and OAuth state, and the agents it serves (the root itself if
+it is a home, plus `agents/<name>/`). Each token and OAuth grant reaches exactly
+one agent. Restart the gateway after adding or removing one.
+
+```bash
+node packages/gateway/dist/src/bin.js agent add kids new --email kids@example.com --home /data   # or: agent add kids --restore <backup-file>
+node packages/gateway/dist/src/bin.js agent list --home /data
+node packages/gateway/dist/src/bin.js token create --agent kids --name kids-claude --scope read,send --home /data
+node packages/gateway/dist/src/bin.js agent remove kids [--force] --home /data   # moved to agents/.removed/, key kept
+node packages/gateway/dist/src/bin.js agent migrate [--name omer] --home /data   # the root's own agent into agents/<name>/ (gateway stopped)
+# MCP: /a/kids/mcp, REST /a/kids/api/v1/tools/<tool>, OpenAPI /a/kids/openapi.json; /mcp serves each token's own agent
+```
+
 ## Develop
 
 Run from `impl/` (works the same in PowerShell and bash):

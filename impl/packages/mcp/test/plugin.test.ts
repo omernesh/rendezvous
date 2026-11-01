@@ -1323,8 +1323,20 @@ describe('the skill covers general tasks, files and auto-approve (issue #29)', (
     ]) {
       expect(checkCommand(c), c).toBeTruthy();
     }
+    // Multi-agent gateways (NOTES 104): adding, restoring, removing or migrating an agent.
+    for (const c of [
+      'rdv-gateway agent add kids new --email kids@example.com',
+      'rdv-gateway agent add kids --restore /backup/kids.rdvbackup',
+      'rdv-gateway --home /data agent remove kids --force',
+      'rdv-gateway agent migrate --name omer',
+      'node packages/gateway/dist/src/bin.js agent add x new',
+      'npm run rdv-gateway -- agent remove kids',
+      'rdv-gateway agent $SUB kids',
+    ]) {
+      expect(checkCommand(c), c).toBeTruthy();
+    }
     // Reading, serving, and other programs' own pin/token commands are not refused.
-    for (const c of ['rdv-gateway token list', 'rdv-gateway oauth list', 'rdv-gateway serve --port 8787', 'npm token create', 'git pin set', 'gh auth revoke']) {
+    for (const c of ['rdv-gateway token list', 'rdv-gateway oauth list', 'rdv-gateway agent list', 'rdv-gateway serve --port 8787', 'npm token create', 'git pin set', 'gh auth revoke', 'docker compose rm agent']) {
       expect(checkCommand(c), c).toBeUndefined();
     }
   });

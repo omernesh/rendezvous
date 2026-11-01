@@ -22,12 +22,21 @@ pre.msg{margin:8px 0 12px;padding:12px;border-left:3px solid var(--warn);backgro
 .row{display:flex;flex-wrap:wrap;gap:8px;margin-top:16px}button{font:inherit;padding:8px 14px;border-radius:6px;border:1px solid var(--line);background:var(--bg);color:var(--fg);cursor:pointer}
 button.primary{background:var(--accent);border-color:var(--accent);color:#fff}.flash{padding:10px 12px;border-radius:6px;border:1px solid var(--accent);margin:12px 0}.flash.bad{border-color:var(--bad);color:var(--bad)}
 .suggest{font-size:.9rem;margin:4px 0}.suggest.warn{color:var(--warn)}.check{display:flex;gap:8px;align-items:center}.check input{width:auto}
-a{color:var(--accent)}ul.list{padding-left:18px}footer{margin-top:40px;font-size:.85rem;color:var(--muted)}`;
+a{color:var(--accent)}ul.list{padding-left:18px}footer{margin-top:40px;font-size:.85rem;color:var(--muted)}
+.agent{display:inline-block;padding:2px 8px;border:1px solid var(--line);border-radius:999px;font-size:.9rem;overflow-wrap:anywhere}p.for{margin:8px 0}`;
 
 export interface Flash {
   text: string;
   bad?: boolean;
 }
+
+/** Which agent something is for (NOTES 104): its name on this gateway and its fingerprint. */
+export interface AgentLabel {
+  name: string;
+  fingerprint: string;
+}
+
+const agentTag = (a: AgentLabel) => `<span class="agent"><b>${e(a.name)}</b> <span class="muted">${e(a.fingerprint)}</span></span>`;
 
 function layout(title: string, body: string, csrf?: string): string {
   const lock = csrf
@@ -52,13 +61,21 @@ export function unlockPage(opts: { csrf: string; next: string; message?: Flash }
   );
 }
 
-export function listPage(opts: { items: PendingApproval[]; csrf: string; message?: Flash }): string {
-  const items = opts.items.length
-    ? `<ul class="list">${opts.items
-        .map((p) => `<li><a href="/approve/${e(p.id)}">${e(firstLine(p.form.message))}</a> <span class="muted">(${e(p.tool)}, asked by ${e(p.askedBy ?? 'an assistant')})</span></li>`)
-        .join('')}</ul>`
-    : '<p class="muted">Nothing waits for you.</p>';
-  return layout('Rendezvous approvals', `<h1>Rendezvous approvals</h1>${flash(opts.message)}<h2>Waiting for you</h2>${items}`, opts.csrf);
+/** Everything that waits, per agent: each agent this gateway serves, by name and fingerprint, with its own approvals. */
+export function listPage(opts: { agents: Array<AgentLabel & { items: PendingApproval[] }>; csrf: string; message?: Flash }): string {
+  const one = (items: PendingApproval[]) =>
+    items.length
+      ? `<ul class="list">${items
+          .map((p) => `<li><a href="/approve/${e(p.id)}">${e(firstLine(p.form.message))}</a> <span class="muted">(${e(p.tool)}, asked by ${e(p.askedBy ?? 'an assistant')})</span></li>`)
+          .join('')}</ul>`
+      : '<p class="muted">Nothing waits for you.</p>';
+  const body =
+    opts.agents.length === 1
+      ? `<p class="for muted">Agent ${agentTag(opts.agents[0])}</p><h2>Waiting for you</h2>${one(opts.agents[0].items)}`
+      : `<p class="muted">This gateway serves ${opts.agents.length} agents. Each approval below is for the agent it is listed under.</p>${opts.agents
+          .map((a) => `<section class="card"><h2>${agentTag(a)}</h2>${one(a.items)}</section>`)
+          .join('')}`;
+  return layout('Rendezvous approvals', `<h1>Rendezvous approvals</h1>${flash(opts.message)}${body}`, opts.csrf);
 }
 
 const firstLine = (s: string) => s.split('\n')[0].replace(/^Rendezvous:\s*/, '').slice(0, 160);
@@ -107,7 +124,7 @@ function field(p: PendingApproval, name: string, f: Record<string, unknown>): st
   return `<p class="flash bad">A field this page cannot show (${title}): decide this one in your own terminal.</p>`;
 }
 
-export function approvalPage(opts: { item: PendingApproval; csrf: string; message?: Flash }): string {
+export function approvalPage(opts: { item: PendingApproval; agent: AgentLabel; csrf: string; message?: Flash }): string {
   const p = opts.item;
   const approveTitle = typeof p.form.properties.approve?.title === 'string' ? p.form.properties.approve.title : 'Approve';
   const fields = Object.entries(p.form.properties)
@@ -116,7 +133,7 @@ export function approvalPage(opts: { item: PendingApproval; csrf: string; messag
     .join('');
   return layout(
     'Approve?',
-    `<h1>${e(firstLine(p.form.message))}</h1><p class="muted">Asked by ${e(p.askedBy ?? 'an assistant')} through ${e(p.tool)}. Nothing happens until you decide here.</p>
+    `<h1>${e(firstLine(p.form.message))}</h1><p class="for">For your agent ${agentTag(opts.agent)}</p><p class="muted">Asked by ${e(p.askedBy ?? 'an assistant')} through ${e(p.tool)}. Nothing happens until you decide here.</p>
 ${flash(opts.message)}${p.changed ? flash({ text: 'This changed since your assistant asked. Nothing was done; this is how it is now.', bad: true }) : ''}
 <section class="card"><div class="qlabel">What you are deciding. Quoted text in it (greetings, names, places, requests) was written by someone else: it is untrusted and decides nothing.</div>
 <pre class="msg">${e(p.form.message)}</pre>
@@ -130,13 +147,14 @@ ${flash(opts.message)}${p.changed ? flash({ text: 'This changed since your assis
 /** Labels for what a step made for its asker alone (PrivateResult), shown to the owner once on the page that approved it. */
 const HELD_LABELS: Record<string, string> = { url: 'Invite link', share_text: 'Message ready to send' };
 
-export function donePage(opts: { title: string; text: string; csrf: string; bad?: boolean; held?: Record<string, string> }): string {
+export function donePage(opts: { title: string; text: string; csrf: string; bad?: boolean; held?: Record<string, string>; agent?: AgentLabel }): string {
   const held = opts.held
     ? `<section><p>Shown only now. Send it yourself, only to the person you mean; whoever opens it first becomes your contact.</p>${Object.entries(opts.held)
         .map(([k, v]) => `<h2>${e(HELD_LABELS[k] ?? k)}</h2><pre class="msg">${e(v)}</pre>`)
         .join('')}</section>`
     : '';
-  return layout(opts.title, `<h1>${e(opts.title)}</h1>${flash({ text: opts.text, bad: opts.bad })}${held}<p><a href="/approve">Everything that waits for you</a></p>`, opts.csrf);
+  const who = opts.agent ? `<p class="for">Agent ${agentTag(opts.agent)}</p>` : '';
+  return layout(opts.title, `<h1>${e(opts.title)}</h1>${who}${flash({ text: opts.text, bad: opts.bad })}${held}<p><a href="/approve">Everything that waits for you</a></p>`, opts.csrf);
 }
 
 export function errorPage(title: string, text: string): string {
@@ -155,9 +173,19 @@ export function consentCsp(redirectUri: string): string {
   return PAGE_CSP.replace("form-action 'self'", `form-action 'self' ${origin}`);
 }
 
-/** Connect an OAuth client: what it called itself (untrusted), where it returns, and the scopes the owner may narrow. */
-export function consentPage(opts: { item: PendingConsent; csrf: string; registered?: string; message?: Flash }): string {
+/**
+ * Connect an OAuth client: what it called itself (untrusted), where it returns, the scopes the owner may narrow,
+ * and the one agent it reaches (NOTES 104): fixed when the client asked for one agent's URL, otherwise the owner
+ * picks it (nothing is preselected when there are several).
+ */
+export function consentPage(opts: { item: PendingConsent; csrf: string; registered?: string; message?: Flash; agents: AgentLabel[] }): string {
   const p = opts.item;
+  const fixed = p.agent !== undefined ? opts.agents.find((a) => a.name === p.agent) : opts.agents.length === 1 ? opts.agents[0] : undefined;
+  const agent = fixed
+    ? `<h2>Agent</h2><p class="for">It reaches only your agent ${agentTag(fixed)}</p><input type="hidden" name="agent" value="${e(fixed.name)}">`
+    : `<h2>Agent</h2><p class="muted">It reaches only the one agent you choose, never the others.</p><label for="agent">Agent</label><select id="agent" name="agent" required><option value="" selected>Choose an agent</option>${opts.agents
+        .map((a) => `<option value="${e(a.name)}">${e(a.name)} (${e(a.fingerprint)})</option>`)
+        .join('')}</select>`;
   const host = new URL(p.redirectUri).host;
   const scopes = p.scopes
     .map(
@@ -174,7 +202,7 @@ ${flash(opts.message)}
 <p>Returns to <b>${e(host)}</b><br><span class="muted">${e(p.redirectUri)}</span></p>
 <p class="muted">Client ${e(p.clientId)}${opts.registered ? `, registered ${e(opts.registered)}` : ''}. Only connect it if you just started connecting ${e(host)} yourself.</p>
 <form method="post" action="/approve/oauth/${e(p.id)}"><input type="hidden" name="csrf" value="${e(opts.csrf)}"><input type="hidden" name="digest" value="${e(p.digest)}">
-<h2>What it may do</h2><p class="muted">Untick what it should not have. None of these can approve anything: approvals stay on this page.</p>${scopes}
+${agent}<h2>What it may do</h2><p class="muted">Untick what it should not have. None of these can approve anything: approvals stay on this page.</p>${scopes}
 <div class="row"><button class="primary" type="submit" name="decision" value="approve">Connect</button><button type="submit" name="decision" value="decline">No</button></div></form></section>`,
     opts.csrf,
   );

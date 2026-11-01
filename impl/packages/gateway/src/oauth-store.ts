@@ -77,6 +77,8 @@ export interface OAuthGrant {
   /** Hashes of refresh tokens rotated out: presenting one again ends the grant (reuse detection). */
   retired: string[];
   access: AccessToken[];
+  /** The one agent the owner connected it to on the consent page (NOTES 104). Absent before that: the root agent only. */
+  agent?: string;
 }
 
 export interface OAuthData {
@@ -219,7 +221,7 @@ export class OAuthStore {
    * stored if it was not yet, and a grant with its first tokens is made. A client the owner revoked after that page
    * was issued gets nothing.
    */
-  async createGrant(client: ClientMeta, scopes: Scope[], resource: string, now: number, consentAt: number, id = newGrantId()): Promise<IssuedTokens> {
+  async createGrant(client: ClientMeta, scopes: Scope[], resource: string, now: number, consentAt: number, id = newGrantId(), agent?: string): Promise<IssuedTokens> {
     const accessToken = `rdvo_${randomToken(32)}`;
     const refreshToken = `rdvr_${randomToken(32)}`;
     const grant: OAuthGrant = {
@@ -232,6 +234,7 @@ export class OAuthStore {
       refresh: { hash: sha256(refreshToken), expires: now + REFRESH_TTL_MS },
       retired: [],
       access: [{ hash: sha256(accessToken), expires: now + ACCESS_TTL_MS, scopes }],
+      ...(agent !== undefined ? { agent } : {}),
     };
     await this.update((d) => {
       if (Object.hasOwn(d.revoked, client.ref) && d.revoked[client.ref] >= consentAt) throw new OAuthStoreError('the owner removed that client since');
@@ -348,15 +351,38 @@ export class OAuthStore {
     });
   }
 
+  /** `agent migrate`: grants of the root agent (named `from`, or made before NOTES 104) now reach `to`. */
+  async rebindAgent(from: string, to: string): Promise<number> {
+    return this.update((d) => {
+      let n = 0;
+      for (const g of Object.values(d.grants)) {
+        if (g.agent === undefined || g.agent === from) {
+          g.agent = to;
+          n += 1;
+        }
+      }
+      return n;
+    });
+  }
+
+  /** `agent remove --force`: every grant of that agent ends. */
+  async revokeAgent(agent: string): Promise<string[]> {
+    return this.update((d) => {
+      const gone = Object.values(d.grants).filter((g) => g.agent === agent).map((g) => g.id);
+      for (const id of gone) delete d.grants[id];
+      return gone;
+    });
+  }
+
   async revokeGrant(id: string): Promise<void> {
     await this.update((d) => void delete d.grants[id]);
   }
 
-  list(): { clients: Array<Omit<OAuthClient, 'clientId'>>; grants: Array<Pick<OAuthGrant, 'id' | 'clientId' | 'scopes' | 'created' | 'lastUsed'>> } {
+  list(): { clients: Array<Omit<OAuthClient, 'clientId'>>; grants: Array<Pick<OAuthGrant, 'id' | 'clientId' | 'scopes' | 'created' | 'lastUsed' | 'agent'>> } {
     const d = this.read();
     return {
       clients: Object.values(d.clients).map(({ clientId: _c, ...rest }) => rest),
-      grants: Object.values(d.grants).map(({ id, clientId, scopes, created, lastUsed }) => ({ id, clientId, scopes, created, lastUsed })),
+      grants: Object.values(d.grants).map(({ id, clientId, scopes, created, lastUsed, agent }) => ({ id, clientId, scopes, created, lastUsed, ...(agent !== undefined ? { agent } : {}) })),
     };
   }
 
