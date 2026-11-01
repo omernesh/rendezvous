@@ -204,8 +204,9 @@ export function inviteSecretHash(secret: string): string {
 /**
  * A short local reference to an invite link, for the side that accepted it
  * (issue #141): the first 16 hex of the secret's hash. The inviter's invite id
- * is random and never reaches the accepter, so this is what both sides' notes
- * can't share; it reveals nothing about the secret.
+ * is random and never reaches the accepter, so the two sides share no id. The
+ * inviter holds only the full hash, so it can match a ref as a prefix compare.
+ * A ref reveals nothing about the secret.
  */
 export function inviteRef(secret: string): string {
   return inviteSecretHash(secret).slice(0, 16);

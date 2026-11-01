@@ -503,12 +503,16 @@ export interface Contact {
    */
   grantStamp?: string;
   /**
-   * Local only, never sent: this contact came from an invite link our own human
-   * gave this agent (issue #141). Set from our own outstanding request, which
-   * only `acceptInvite` marks, so nothing a peer sends can set or forge it.
-   * `ref` is `inviteRef` of the link's secret (not the inviter's invite id,
-   * which the grant doesn't carry); `accepted` is when we sent the request.
-   * Absent in older state and for every other contact.
+   * Local only, never sent: a session of this agent called `acceptInvite` at
+   * `accepted` (when the request was sent) and this contact is the grant that
+   * answered that request (issue #141). It shows neither that our human asked
+   * for it nor who the peer is. Set only from our own outstanding request,
+   * which only `acceptInvite` marks, so nothing a peer sends can set or forge
+   * it. `ref` is `inviteRef` of the link's secret (not the inviter's invite id,
+   * which the grant doesn't carry). Only the grant that answers that request
+   * carries it: a later grant, or a contact we granted ourselves, does not.
+   * Absent in older state, for requests sent before this field, and elsewhere;
+   * absence proves nothing.
    */
   viaInvite?: { ref: string; accepted: string };
 }
@@ -1317,7 +1321,7 @@ export class ContactBook {
       outboundTs: g.ts,
       ...(l ? { label: l } : {}),
       ...(prev?.aliases?.length ? { aliases: [...prev.aliases] } : {}),
-      ...((viaInvite ?? prev?.viaInvite) ? { viaInvite: viaInvite ?? prev!.viaInvite! } : {}),
+      ...(viaInvite ? { viaInvite } : {}),
       binding,
       grantId: g.id,
       expires: g.expires,
