@@ -36,7 +36,7 @@ tokens) and 93 (slice 2: the built-in OAuth 2.1 authorization server).
 | Someone who learned the PIN, from the network (NOTES 110) | unlock the page, so also the settings page | read a token's value or hash, a webhook secret or its path; set a webhook; add, remove or move an agent; clear the PIN wait |
 | A token or OAuth grant of one agent on a multi-agent gateway (NOTES 104), or whoever steers its assistant | everything its scopes allow on its own agent | call tools on, read the inbox of, see or answer approvals of, or take held results (invite links) of any other agent; open or reuse a session under another agent |
 | The owner's webhook receiver, the network to it, or a name it resolves through (NOTES 106) | receive, delay or refuse the agent's signed event notices | approve, grant or revoke anything; get an invite link, a key or message text; redirect the gateway to a private address; get another agent's events |
-| A prompt injection steering an assistant whose owner turned on "may create invites without asking" (NOTES 113), or someone holding its leaked token | make stranger-level invite links on that agent, up to 5 open, and hand them to anyone | turn the setting on or change it; give a link more than a stranger's terms (no meetings, no invoke, no standing approval, at most 7 days); name a contact, or take the name of one ("tell John"); pass the cap; act quietly (each link logs, audits and sends the owner a webhook event) |
+| A prompt injection steering an assistant whose owner turned on "may create invites without asking" (NOTES 113), or someone holding its leaked token | make stranger-level invite links on that agent, up to 5 open and 20 in 24 hours, hand them to anyone, and message whoever redeems one by agent id if the token can send (an outbound channel as well as an inbound one; `rdv_accept_invite` already makes a contact with no human) | turn the setting on or change it; give a link more than a stranger's terms (no meetings, no invoke, no standing approval, at most 7 days); name a contact, or take the name of one ("tell John"); pass the caps; bypass an allowlist-only policy; act quietly (each link logs and audits, and sends the owner a webhook event if that webhook includes `invite_created_by_assistant`, which one set before NOTES 113 does not until the owner adds it) |
 | Whoever opens such a link first (NOTES 113) | become a stranger contact, who can write to the agent (100 messages a day) | propose meetings; invoke anything; be auto-approved; answer to a name, until the owner types one |
 | Any reader of the event log or the webhook (NOTES 113) | see that an assistant made an invite, its id, tier and expiry | get the link: it goes only into the result of the call that made it |
 
@@ -330,18 +330,31 @@ no tool, REST route or scope reaches it. It is stored in `gateway.json` for one
 binding and identity, so it does not leak to another agent or to one that later
 takes the name. The server forces the terms: tier stranger, no meetings, no
 capabilities, no standing approval, at most 7 days. Asking for more is not lowered
-but goes to the ordinary page, as does a sixth open link (counted under the home
-lock). The model's `label` never names the contact: a collision check protects
-only the names that exist today, while a planted name would misroute a clean
-session's "tell my accountant" later, so it stays a note that nothing resolves, and
-the owner types any name with `rdv_label` on the page. Each link logs an `admin:`
-line and an audit line and sends a metadata-only `invite_created_by_assistant`
-event (in the webhook's default set); the settings page lists the open ones with a
-Revoke. *Limits:* used and revoked links free their slots, so the cap bounds what
-waits, not how many stranger contacts an injected assistant makes over time, and
-each new stranger is one more source of peer text reaching the assistant. Without a
-webhook, the owner learns of a link from the settings page, the log or the assistant
-itself. A link already made outlives the setting until it expires or is revoked.
+but goes to the ordinary page, as does a sixth open link or a 21st in 24 hours
+(both counted under the home lock; revoked, used and expired links count toward the
+day, so a create-and-revoke loop cannot grow `agent.json` without bound, and the
+records are kept at least that long), and any link while the agent's inbound policy
+is `allow` (an invite is checked before the allowlist and would bypass it). The
+setting is compared with the agent's identity read inside the home lock at each
+creation, not the one read at startup. The model's `label` never names the contact: a
+collision check protects only the names that exist today, while a planted name would
+misroute a clean session's "tell my accountant" later, so it stays a note that nothing
+resolves; only a short plain name (64 characters, one line, letters, digits, spaces
+and `. _ ' -`) is kept at all, it comes back to a session only under the
+`untrusted_peer_text` wrapper with a line that an assistant session wrote it and it
+proves nothing, and the owner types any name with `rdv_label` on the page. Each link
+logs an `admin:` line and an audit line and sends a metadata-only
+`invite_created_by_assistant` event (in the default set of a webhook set after
+NOTES 113; one set before it does not get the event, and the settings page says so
+with the command that adds it); the settings page lists the open ones with a Revoke.
+*Limits:* used and revoked links free their open slots, so the caps bound what waits
+and what is made in a day, not how many stranger contacts an injected assistant
+makes over a month, and each new stranger is one more source of peer text reaching
+the assistant. A redeemed link also lets an assistant with `send` message that
+contact by agent id, so it is an outbound channel as well as an inbound one (not new
+power: `rdv_accept_invite` already makes a contact with no human). Without a
+webhook that carries the event, the owner learns of a link from the settings page,
+the log or the assistant itself. A link already made outlives the setting until it expires or is revoked.
 With a shell on the gateway host the setting falls like the rest of `gateway.json`
 (#51, #126: the guard refuses the file, the real boundary is file permissions).
 

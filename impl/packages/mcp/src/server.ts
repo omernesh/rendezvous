@@ -111,6 +111,7 @@ import {
   refusedMembers,
   deliverySummary,
   type DeliverySummary,
+  INVITE_BUDGET_WINDOW_MS,
   INVITE_TIERS,
   VERSION,
 } from '@rendezvous/core';
@@ -463,14 +464,20 @@ export interface RemoteApprovals {
   /**
    * The owner's standing choice for this agent on the gateway's settings page
    * (NOTES 113): the assistant may make low-tier invites without asking. Read
-   * at each use; absent or false means every invite asks.
+   * at each use, for the identity the home has now (the one the caller read
+   * under its lock, not the one at startup); absent or false means every
+   * invite asks.
    */
-  assistantInvites?(): boolean;
+  assistantInvites?(agentId: string): boolean;
 }
 
 /** An invite the assistant makes under that choice (NOTES 113): how many may be open at once, and how long each may last at most. */
 export const ASSISTANT_INVITES_OPEN_MAX = 5;
 export const ASSISTANT_INVITE_MAX_DAYS = 7;
+/** Invites made this way in a trailing 24 hours, whether since revoked, used or expired: a create-and-revoke loop cannot grow the home without bound. */
+export const ASSISTANT_INVITES_PER_DAY_MAX = 20;
+/** What of the assistant's own word for the person is kept: a short name, one line, no markup. Anything else is not kept. */
+const NOTE_NAME_RE = /^[\p{L}\p{N}][\p{L}\p{N} ._'’-]{0,63}$/u;
 
 /** A tool as registered on every MCP session (and called by the gateway's REST API). */
 export interface ToolDef {
@@ -4742,7 +4749,8 @@ export class RdvMcpServer {
       local_label: x.label !== undefined ? safe(x.label) : null,
       ...(x.auto_approve_when_used ? { auto_approve_when_used: x.auto_approve_when_used.slice(0, 32).map(asCapability) } : {}),
       ...(x.via ? { via: x.via } : {}),
-      ...(x.suggested_label !== undefined ? { suggested_label: safe(x.suggested_label) } : {}),
+      // An assistant session wrote it when making the link: a note a clean session must not read as its user's word.
+      ...(x.suggested_label !== undefined ? { suggested_label: untrusted(x.suggested_label) } : {}),
       ...(x.redeemed_by ? { redeemed_by: safe(x.redeemed_by), redeemed_by_fingerprint: safe(x.redeemed_by_fingerprint), redeemed_at: safe(x.redeemed_at) } : {}),
       ...(x.revoked_at ? { revoked_at: safe(x.revoked_at) } : {}),
     };
@@ -4914,7 +4922,15 @@ export class RdvMcpServer {
     from: string | undefined,
     principal: string | undefined,
   ): Promise<PrivateResult | { pageNote?: string; clientNote: string }> {
-    const on = () => principal !== undefined && this.remote?.assistantInvites?.() === true;
+    // The identity is the live one, never the one the gateway read at startup (a migrate or restore since then).
+    const liveId = () => {
+      try {
+        return (this.home.readAgentState() as AgentState).card.id;
+      } catch {
+        return undefined;
+      }
+    };
+    const on = (id: string | undefined = liveId()) => principal !== undefined && id !== undefined && this.remote?.assistantInvites?.(id) === true;
     const off = {
       clientNote: 'Your user can let you make low-tier invite links without this page: "My assistant may create invites without asking" on their gateway\'s settings page, once per agent. It is their choice; you cannot turn it on.',
     };
@@ -4925,22 +4941,42 @@ export class RdvMcpServer {
       };
     }
     const days = a.expires_days ?? ASSISTANT_INVITE_MAX_DAYS;
+    // Only a short plain name is kept as a note; anything else (long, several lines, markup, prose) is not.
+    const noteOk = label !== undefined && NOTE_NAME_RE.test(label.trim());
     const made = await this.withAgent(async (agent) => {
-      if (!on()) return undefined;
-      const open = agent.book.listInvites().filter((v) => v.via === 'assistant' && v.status === 'open').length;
+      if (!on(agent.id)) return undefined;
+      // An allowlist-only agent takes nobody who is not on the list; a link would be a way around that, so it asks.
+      if (agent.book.inboundPolicy === 'allow') return { allowlistOnly: true as const };
+      const mine = agent.book.listInvites().filter((v) => v.via === 'assistant');
+      const open = mine.filter((v) => v.status === 'open').length;
       if (open >= ASSISTANT_INVITES_OPEN_MAX) return { full: open };
-      const clash = label !== undefined ? agent.book.nameClash(label, '') : undefined;
+      const since = Date.now() - INVITE_BUDGET_WINDOW_MS;
+      const day = mine.filter((v) => Date.parse(v.created) > since).length;
+      if (day >= ASSISTANT_INVITES_PER_DAY_MAX) return { budget: day };
+      const clash = noteOk ? agent.book.nameClash(label!.trim(), '') : undefined;
       const r = createInviteIn(agent, {
         tier: 'stranger',
         scope: scopeFor(false),
         expires: new Date(Date.now() + days * 86_400_000).toISOString(),
         from,
         via: 'assistant',
-        ...(label !== undefined && !clash ? { suggestedLabel: label } : {}),
+        ...(noteOk && !clash ? { suggestedLabel: label!.trim() } : {}),
       });
       return { r, clash: clash !== undefined };
     });
     if (!made) return off;
+    if ('allowlistOnly' in made) {
+      return {
+        pageNote: 'Your agent takes contacts from its allowlist only, and an invite link is a way around that, so this one needs you.',
+        clientNote: "Your user's agent accepts contacts from its allowlist only, and an invite link would bypass that, so this goes to their page.",
+      };
+    }
+    if ('budget' in made) {
+      return {
+        pageNote: `Your assistant already made ${made.budget} invite links without asking in the last 24 hours, the most it may (revoked ones count). This one needs you.`,
+        clientNote: `${made.budget} invite links were made without asking in the last 24 hours, the most your user's setting allows (revoking one does not give it back), so this one goes to their page.`,
+      };
+    }
     if ('full' in made) {
       return {
         pageNote: `Your assistant already has ${made.full} open invite links it made without asking, the most it may. This one needs you. Review or revoke those on your gateway settings page.`,
@@ -4970,12 +5006,14 @@ export class RdvMcpServer {
         ...(a.name !== undefined ? { name_note: 'The link carries no name: only your user can put one in, on the approval page. The message to send says who it is from.' } : {}),
         ...(label === undefined
           ? {}
-          : clash
+          : !noteOk
+            ? { label_note: 'That text is not a short plain name (at most 64 letters, digits, spaces and . _ apostrophes and hyphens, on one line), so it was not kept. The new contact stays unnamed; once they accept, your user can name them with rdv_label.' }
+            : clash
             ? { label_note: 'That name is already a name of one of your user\'s contacts, so it was not kept. The new contact stays unnamed; once they accept, your user can name them with rdv_label.' }
-            : { suggested_label: safe(label), label_note: 'The contact stays unnamed: a label on a link you make could let whoever opens it answer to that name. Your name for them is kept only as a note. Once they accept, offer rdv_label: your user types the name on their approval page.' }),
+            : { suggested_label: untrusted(label!.trim()), label_note: 'The contact stays unnamed: a label on a link you make could let whoever opens it answer to that name. Your name for them is kept only as a note. Once they accept, offer rdv_label: your user types the name on their approval page.' }),
         next_step:
           'This went without a page because your user allows it: use it only because they themselves asked you to invite someone. Give them url or share_text in this chat, or email it only to the person they named, exactly as returned and in full (the link on its own line or in a code block; never shortened, abbreviated, summarized or re-typed: a link with "…" in it does not work). ' +
-          'It is shown only now: do not post it anywhere public, send it to anyone else, or repeat it later. Whoever opens it first becomes a contact who may write to your user, and nothing more. ' +
+          'It is shown only now: do not post it anywhere public, send it to anyone else, or repeat it later. Whoever opens it first becomes a stranger contact: it may write to your user, and if you can send, you can message it by its agent id (the same as rdv_accept_invite does with no human). ' +
           'An "invite_redeemed" event with via "assistant" arrives in rdv_inbox when it is used: tell your user who accepted (fingerprint).',
       },
       { url: r.url, share_text: r.share_text },

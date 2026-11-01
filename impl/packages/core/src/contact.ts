@@ -7,7 +7,7 @@ import type { AgentKey } from './identity.js';
 import { fingerprint, isAgentId } from './identity.js';
 import { canonicalize, isPast, parseTimestamp } from './encoding.js';
 import { type Signed, signDoc, verifyDoc } from './sign.js';
-import { INVITE_KEEP_MS, INVITE_TIERS, INVITE_MAX_TTL_MS, INVITES_OPEN_MAX, cleanInviteName, inviteSecretHash, isInviteSecret, newInviteSecret, sameHash } from './invite.js';
+import { INVITE_BUDGET_WINDOW_MS, INVITE_KEEP_MS, INVITE_TIERS, INVITE_MAX_TTL_MS, INVITES_OPEN_MAX, cleanInviteName, inviteSecretHash, isInviteSecret, newInviteSecret, sameHash } from './invite.js';
 
 export type Tier = 'spouse' | 'family' | 'friend' | 'colleague' | 'business' | 'stranger';
 /** The tier enum, closest first. A grant with any other tier is rejected. */
@@ -1075,6 +1075,11 @@ export class ContactBook {
     for (const r of Object.values(this.state.invites ?? {})) if (r.standing && inviteStatus(r, now) !== 'open') delete r.standing;
   }
 
+  /** Whom we answer when no invite or allowlist entry applies (§5.4): `allow` means the allowlist alone. */
+  get inboundPolicy(): InboundPolicy {
+    return this.state.policy;
+  }
+
   /** Drop used, revoked and expired invites INVITE_KEEP_MS after they ended. */
   private pruneInvites(now: Date): void {
     const invites = this.state.invites;
@@ -1083,7 +1088,9 @@ export class ContactBook {
     for (const [id, r] of Object.entries(invites)) {
       if (inviteStatus(r, now) === 'open') continue;
       const ended = parseTimestamp(r.used?.at ?? r.revoked ?? r.expires) ?? 0;
-      if (ended + INVITE_KEEP_MS < now.getTime()) delete invites[id];
+      // An assistant's record stays at least as long as its creation budget counts it (NOTES 113).
+      const keep = r.via === 'assistant' ? Math.max(INVITE_KEEP_MS, INVITE_BUDGET_WINDOW_MS) : INVITE_KEEP_MS;
+      if (ended + keep < now.getTime()) delete invites[id];
     }
   }
 

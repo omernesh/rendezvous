@@ -72,6 +72,8 @@ export interface AdminAgent extends AgentLabel {
   armedInvites: AdminArmedInvite[];
   /** When the owner let the assistant make invites without asking; absent: it asks. */
   assistantInvitesSince?: string;
+  /** The command that adds `invite_created_by_assistant` to this agent's webhook, set when it has one that omits the event. */
+  inviteEventCommand?: string;
   assistantInvites: AdminAssistantInvite[];
   webhook?: AdminWebhook;
   dead: number;
@@ -150,6 +152,11 @@ function armedRows(list: AdminArmedInvite[], agent: string, csrf: string): strin
     .join('')}</tbody></table>`;
 }
 
+/** The terminal command that adds the event to a webhook set before it existed (NOTES 113). `events` are the webhook's own. */
+export function inviteEventCommand(agent: string, events: string[]): string {
+  return `rdv-gateway notify set ${agent} --url https://… --secret-file <path> --events ${[...events, 'invite_created_by_assistant'].join(',')}`;
+}
+
 /** "My assistant may create invites without asking" (NOTES 113): on needs the PIN again, off only the session. */
 function assistantInvitesPart(a: AdminAgent, csrf: string): string {
   const open = a.assistantInvites.length
@@ -161,15 +168,18 @@ function assistantInvitesPart(a: AdminAgent, csrf: string): string {
         .join('')}</tbody></table>`
     : '<p class="muted">No open link made this way.</p>';
   const what =
-    '<p class="muted">With this on, when you say "invite Ran" your assistant gets the link right away, with no page and no PIN, and can give it to you in chat or email it. Every such link makes a <b>stranger</b>: they can message your agent, but cannot propose meetings, cannot invoke anything and get no standing approval, and the link lasts at most 7 days. Your assistant cannot pick more: asking for more comes here for your approval, as does a sixth open link.</p>' +
-    '<p class="muted"><b>The risk:</b> an assistant steered by a prompt injection could make these links too and hand them to someone. Whoever opens one becomes a stranger contact who can message your agent. You hear about each one by webhook if you set one, and you can revoke it below. The contact stays unnamed until you name it.</p>';
+    '<p class="muted">With this on, when you say "invite Ran" your assistant gets the link right away, with no page and no PIN, and can give it to you in chat or email it. Every such link makes a <b>stranger</b>: they can message your agent, but cannot propose meetings, cannot invoke anything and get no standing approval, and the link lasts at most 7 days. Your assistant cannot pick more: asking for more comes here for your approval, as does a sixth open link, a 21st link in 24 hours (revoked ones count), or any link while your agent accepts only its allowlist.</p>' +
+    '<p class="muted"><b>The risk:</b> an assistant steered by a prompt injection could make these links too and hand them to someone. Whoever opens one becomes a stranger contact who can message your agent, and your assistant, if it can send, can message that contact back by its agent id: it is an outbound channel as well as an inbound one (your assistant can already make a contact this way by accepting a link, with no one asking you). You hear about each link by webhook if your webhook includes the <code>invite_created_by_assistant</code> event, and you can revoke each below. The contact stays unnamed until you name it.</p>';
   const id = `aip_${a.name}`;
   const toggle = a.assistantInvitesSince
     ? `<p>On since ${e(when(a.assistantInvitesSince))}.</p>${button('/approve/admin/assistant-invites/off', csrf, { agent: a.name }, 'Turn this off')}<p class="muted">Off: every new invite asks you again. Links already made keep working until you revoke them.</p>`
     : `<p>Off: every invite asks you on an approval page.</p><form method="post" action="/approve/admin/assistant-invites/on">${hidden('csrf', csrf)}${hidden('agent', a.name)}
 <label for="${e(id)}">Your PIN, again (this lasts until you turn it off)</label><input type="password" id="${e(id)}" name="pin" maxlength="128" required autocomplete="current-password">
 <div class="row"><button class="primary" type="submit">Let my assistant create invites</button></div></form>`;
-  return `<h3>My assistant may create invites without asking</h3>${what}${toggle}${open}`;
+  const hook = a.assistantInvitesSince && a.inviteEventCommand
+    ? `<p class="warn">Your webhook for this agent was set before this version and does not send <code>invite_created_by_assistant</code>, so you will not hear about each link. In your terminal: <code>${e(a.inviteEventCommand)}</code></p>`
+    : '';
+  return `<h3>My assistant may create invites without asking</h3>${what}${hook}${toggle}${open}`;
 }
 
 function createForm(agent: string, csrf: string): string {

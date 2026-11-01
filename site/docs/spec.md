@@ -714,8 +714,12 @@ standing approval, a short life (the reference: at most 7 days). The host MUST
 NOT take the assistant's words for the owner's label: it does not name the
 contact, since a link goes to whoever opens it first and a name decides who
 "tell John" reaches. A request for more goes to the ordinary approval and is
-never lowered in silence; the host MUST cap the number open at once, and SHOULD
-tell the owner of each one without going through the assistant. Turning the
+never lowered in silence; the host MUST cap the number open at once and the number made in a day
+(the reference: 5 open, 20 in 24 hours, revoked ones counted), MUST NOT use
+this for an agent whose inbound policy is `allow` (an invite would bypass the
+allowlist), and SHOULD tell the owner of each one without going through the
+assistant. A link also lets an assistant that can send message that contact, so
+it is an outbound channel too. Turning the
 approval on is an owner's approval under §5.5, which no assistant can give.
 Nothing of this is on the wire.
 
