@@ -600,6 +600,8 @@ class PrivateResult {
   constructor(
     readonly view: Record<string, unknown>,
     readonly secret: Record<string, string>,
+    /** Remote only: the asking client never gets `secret` at all, not even once; the owner's page shows it (an armed invite, NOTES 112). */
+    readonly ownerOnly = false,
   ) {}
 }
 
@@ -609,6 +611,8 @@ interface HeldResult {
   tool: string;
   secret: Record<string, string>;
   until: number;
+  /** Nothing was kept for the client: the link is shown only to the owner. */
+  ownerOnly?: boolean;
 }
 const HELD_MAX = 64;
 const HELD_TTL_MS = 24 * 3_600_000;
@@ -1272,6 +1276,7 @@ export class RdvMcpServer {
     /** A run with a human's answer after its call returned: a PrivateResult's secret part goes to `held`, not the result. */
     deferred?: boolean;
     held?: Record<string, string>;
+    heldOwnerOnly?: boolean;
   }>();
   /** Private results waiting for the principal that asked (PrivateResult), by approval id. */
   private readonly held = new Map<string, HeldResult>();
@@ -1427,7 +1432,9 @@ export class RdvMcpServer {
       if (ctx.held) {
         // Held for the one who asked, never in the shared event log (every client of the home reads it).
         const id = approvalId ?? randomBytes(8).toString('hex');
-        this.holdResult(id, { principal: ask.principal, tool: ask.tool, secret: ctx.held, until: Date.now() + HELD_TTL_MS });
+        this.holdResult(id, ctx.heldOwnerOnly
+          ? { principal: ask.principal, tool: ask.tool, secret: {}, until: Date.now() + HELD_TTL_MS, ownerOnly: true }
+          : { principal: ask.principal, tool: ask.tool, secret: ctx.held, until: Date.now() + HELD_TTL_MS });
         out = { kind: 'done', value: out.value, held: ctx.held };
       }
     } catch (err) {
@@ -1460,7 +1467,11 @@ export class RdvMcpServer {
             outcome,
             result: out.value,
             ...(out.held
-              ? { held_for_you: `${Object.keys(out.held).join(' and ')} are not in this event: only the client that asked can take them, once, with rdv_invite action "link" and this approval_id.` }
+              ? {
+                  held_for_you: ctx.heldOwnerOnly
+                    ? `${Object.keys(out.held).join(' and ')} are not in this event and not available to you at all: your user ticked "Don't ask again", so the link is shown only to them, on the approval page. Tell them to send it themselves; do not ask for it.`
+                    : `${Object.keys(out.held).join(' and ')} are not in this event: only the client that asked can take them, once, with rdv_invite action "link" and this approval_id.`,
+                }
               : {}),
           }
         : { type: 'approval', approval_id: approvalId, tool: ask.tool, outcome, error: (out as { error: string }).error };
@@ -1473,6 +1484,14 @@ export class RdvMcpServer {
     const v = await d.fn(args);
     if (!(v instanceof PrivateResult)) return this.remoteSafe(v);
     const call = this.calls.getStore();
+    if (v.ownerOnly) {
+      // Never into a direct result either: a link that carries a standing approval is not for the model.
+      if (call?.deferred) {
+        call.held = v.secret;
+        call.heldOwnerOnly = true;
+      }
+      return this.remoteSafe(v.view);
+    }
     if (!call?.deferred) return this.remoteSafe({ ...v.view, ...v.secret });
     call.held = v.secret;
     return this.remoteSafe(v.view);
@@ -1491,6 +1510,9 @@ export class RdvMcpServer {
     const principal = this.calls.getStore()?.principal;
     if (!h || h.until <= Date.now() || h.tool !== tool || h.principal !== principal) {
       throw new ToolError(`nothing is held for approval ${safe(id)} for you: it was already taken, it expired, or another client asked for it. Your user can make a new invite.`);
+    }
+    if (h.ownerOnly) {
+      throw new ToolError('your user ticked "Don\'t ask again" on this invite, so the link is shown only to them on the approval page and is not available to you. Ask them to send it themselves; do not make another invite to get around this.');
     }
     this.held.delete(id);
     return h.secret;
@@ -3626,6 +3648,35 @@ export class RdvMcpServer {
     }
   }
 
+  private auditDisarm(list: ReadonlyArray<{ id: string }>, via: 'mcp' | 'settings'): void {
+    if (!list.length) return;
+    const ts = new Date().toISOString();
+    this.home.appendAudit(list.map((d) => ({ ts, peer: '*', gate: 'auto-approve' as const, by: 'human' as const, action: 'disarm' as const, invite: d.id, via })));
+  }
+
+  /** For the settings page (NOTES 112): open invite links that would put whoever uses them on auto-approve. Never the link or its secret. */
+  armedInvites(): Array<{ id: string; label?: string; expires: string; covers: string[] }> {
+    try {
+      const state = this.home.readAgentState() as AgentState;
+      const now = Date.now();
+      return Object.values(state.book?.invites ?? {})
+        .filter((r) => r.standing && !r.used && !r.revoked && Date.parse(r.expires) > now)
+        .map((r) => ({ id: r.id, ...(r.label ? { label: r.label } : {}), expires: r.expires, covers: r.standing!.covers.slice(0, 32) }));
+    } catch {
+      return [];
+    }
+  }
+
+  /** The owner's Disarm on the settings page: reduce-only; the invite stays open as an ordinary one. Never a tool. False when it was not armed. */
+  async disarmInviteFromSettings(inviteId: string): Promise<boolean> {
+    if (!/^[0-9a-f]{16}$/.test(inviteId)) return false;
+    return this.withAgent(async (agent) => {
+      const d = agent.book.disarmInvites(inviteId);
+      this.auditDisarm(d, 'settings');
+      return d.length > 0;
+    });
+  }
+
   /**
    * The owner's Turn off on the gateway's settings page (NOTES 112): the same
    * off path as rdv_auto_approve "off" (reduce-only, an `auto_approve_off`
@@ -3642,17 +3693,31 @@ export class RdvMcpServer {
   /** rdv_auto_approve "off": reduce-only, no gate (SPEC §5.5.1). Audited `via: mcp`. */
   private async autoApproveOff(agentIdArg: string | undefined, to: string | undefined, all: boolean) {
     if ([agentIdArg, to, all || undefined].filter((x) => x !== undefined).length !== 1) throw new ToolError('give exactly one of agent_id, to or all_contacts: true');
+    let disarmed: Array<{ id: string; label?: string; expires: string }> = [];
     const off = await this.withAgent(async (agent) => {
-      if (all) return turnOffAllAutoApprove(this.home, new Date(), 'mcp');
+      if (all) {
+        // "Everything off" also takes the choice off open invite links (NOTES 112): none is left to switch it on later.
+        disarmed = agent.book.disarmInvites();
+        this.auditDisarm(disarmed, 'mcp');
+        return turnOffAllAutoApprove(this.home, new Date(), 'mcp');
+      }
       const peer = this.autoApprovePeer(agent, agentIdArg ?? to!, agentIdArg !== undefined);
       return turnOffAutoApprove(this.home, peer, new Date(), 'mcp') ? [peer] : [];
     });
     if (off.length) await this.publish(off.map((p) => ({ type: 'auto_approve_off', peer: safe(p), fingerprint: safe(fingerprint(p)), reason: 'owner', next_step: AUTO_OFF_NEXT })));
     this.humanLog(off.length ? `auto-approve turned OFF through your assistant for ${off.map((p) => fingerprint(p)).join(', ')} (audited)` : 'your assistant asked to turn auto-approve off; it was not on');
+    if (disarmed.length) this.humanLog(`invite link(s) ${disarmed.map((d) => d.id).join(', ')} no longer put whoever uses them on auto-approve (turned off through your assistant); they still work as ordinary invites`);
     return {
       auto_approve: 'off',
       turned_off: off.map((p) => ({ agent_id: safe(p), fingerprint: safe(fingerprint(p)) })),
-      note: off.length ? "Off now, audited: those contacts' tasks and dinners need your user's approval again. Tell your user." : 'It was not on for that contact; nothing changed.',
+      ...(all ? { invites_disarmed: disarmed.map((d) => ({ invite_id: d.id, expires: d.expires })) } : {}),
+      note:
+        (off.length
+          ? "Off now, audited: those contacts' tasks and dinners need your user's approval again. Tell your user."
+          : all
+            ? 'It was not on for any contact.'
+            : 'It was not on for that contact; nothing changed.') +
+        (disarmed.length ? ` ${disarmed.length} open invite link(s) were set to put nobody on auto-approve when used (invites_disarmed); they still work as ordinary invites.` : ''),
     };
   }
 
@@ -4741,6 +4806,8 @@ export class RdvMcpServer {
     this.humanLog(`invite ${r.invite_id} made through the approval form (tier ${r.tier}, until ${r.expires}); whoever opens it first becomes your contact`);
     if (standing) this.humanLog(`whoever uses invite ${r.invite_id} goes on auto-approve for ${standing.covers.join(', ')} at that moment, until you turn it off. Revoke the invite and nothing is left of this.`);
     // The link goes only to the caller (and, through the gateway, to the owner's approval page): never into the shared event log.
+    // Remote and armed: the link would carry a standing approval, so it goes only to the owner's page, never to the asking assistant (NOTES 112).
+    const ownerOnly = this.remote !== undefined && standing !== undefined;
     return new PrivateResult(
       {
         created: true,
@@ -4758,13 +4825,16 @@ export class RdvMcpServer {
                 : { state: 'not_turned_on', note: 'Your user ticked "Don\'t ask again for this contact", but what they left in the form allows nothing it covers, or their owner passphrase file cannot be used, so it was not set. The link itself was made. Tell them.' },
             }
           : {}),
-        next_step:
-          'Give your user share_text (or url) to send to the person themselves, by WhatsApp, SMS or email, exactly as returned and in full: put the link on its own line or in a code block, and never shorten, abbreviate, summarize or re-type it (a link with "…" in it does not work). ' +
+        next_step: ownerOnly
+          ? 'The link is shown only to your user, on the approval page, because they ticked the "Don\'t ask again" box: you do not get it and cannot fetch it. Tell them to send it to that one person themselves. ' +
+            'An "invite_redeemed" event arrives in rdv_inbox when it is used: tell your user who used it (fingerprint).'
+          : 'Give your user share_text (or url) to send to the person themselves, by WhatsApp, SMS or email, exactly as returned and in full: put the link on its own line or in a code block, and never shorten, abbreviate, summarize or re-type it (a link with "…" in it does not work). ' +
           'It is shown only now: do not post it anywhere public, do not send it to anyone else, and do not repeat it later. ' +
           'If this came as an "approval" event, the link is not in it: take it once with rdv_invite action "link" and the approval_id. ' +
           'An "invite_redeemed" event arrives in rdv_inbox when it is used: tell your user who used it (fingerprint).',
       },
       { url: r.url, share_text: r.share_text },
+      ownerOnly,
     );
   }
 
@@ -6342,6 +6412,7 @@ export class RdvMcpServer {
       `This lasts until you turn it off: ${off}. ` +
       (on.editable ? 'Anything you untick above is not covered. ' : '') +
       (on.peer ? '' : 'It starts when the link is used, and if someone else gets the link first it applies to them; nothing is left if you revoke the link or it expires. ') +
+      (on.peer ? '' : this.remote ? 'With this box ticked the link is shown only on the next page, to you: your assistant never sees it, so send it yourself. ' : 'Your assistant sees this link too, since it has to pass it on to you. ') +
       'It never covers new contacts, groups, changing this grant, or calling off an agreed meeting. ' +
       "Risk: a prompt injection from this contact then gets your agent's tools for these, with nobody checking.";
     return { fields: { [ALWAYS_ALLOW_FIELD]: { type: 'boolean', title: "Don't ask again for this contact", description: text, default: false } }, offered };

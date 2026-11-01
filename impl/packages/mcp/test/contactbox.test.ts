@@ -284,6 +284,9 @@ describe('the box on rdv_invite "create"', () => {
     expect(box.description).toContain('if someone else gets the link first it applies to them');
     expect(box.description).toContain(REQUEST_URI);
     expect(box.description).toContain('Anything you untick above is not covered');
+    // Locally the assistant must carry the link, so the box says it sees it.
+    expect(box.description).toContain('Your assistant sees this link too');
+    expect(made.url).toMatch(/^https:/);
     expect(made.auto_approve_when_used).toMatchObject({ state: 'chosen' });
     expect(made.auto_approve_when_used.covers.sort()).toEqual([MEETINGS_CAPABILITY, REQUEST_URI].sort());
     // Nothing on yet, and the link's owner record stays out of what the model sees.
@@ -383,6 +386,34 @@ describe('the box on rdv_invite "create"', () => {
     expect(autoApproveFile(omer)).toEqual({});
     await ok(omer, 'rdv_grant', { request_id: a.request_id });
     expect(autoApproveFile(omer)).toEqual({});
+  }, 60_000);
+
+  it('"turn everything off" also disarms open armed invites and says how many; the links still work as ordinary invites', async () => {
+    fresh();
+    const h = human({ [BOX]: true }, { [BOX]: true }, {});
+    const omer = await side('omer', h.handler);
+    const a = await ok(omer, 'rdv_invite', { action: 'create' });
+    const b = await ok(omer, 'rdv_invite', { action: 'create' });
+    const plain = await ok(omer, 'rdv_invite', { action: 'create' });
+    expect(standings(omer)).toHaveLength(2);
+    // Nothing else is on auto-approve: the message must not claim nothing changed.
+    const off = await ok(omer, 'rdv_auto_approve', { action: 'off', all_contacts: true });
+    expect(off.invites_disarmed.map((d: { invite_id: string }) => d.invite_id).sort()).toEqual([a.invite_id, b.invite_id].sort());
+    expect(off.note).toContain('2 open invite link(s)');
+    expect(off.note).not.toContain('nothing changed');
+    expect(standings(omer)).toEqual([]);
+    expect(omer.home.readAudit().filter((x) => x.gate === 'auto-approve' && x.action === 'disarm')).toHaveLength(2);
+    // A second time there is nothing to disarm.
+    const again = await ok(omer, 'rdv_auto_approve', { action: 'off', all_contacts: true });
+    expect(again.invites_disarmed).toEqual([]);
+    // The link works as an ordinary invite and puts nobody on auto-approve.
+    const dana = await side('dana');
+    await ok(dana, 'rdv_accept_invite', { invite: a.url });
+    const danaId = (await ok(dana, 'rdv_status')).agent_id as string;
+    await waitEvent(omer, (e) => e.type === 'invite_redeemed', 'redeemed', T);
+    expect(autoApproveFile(omer)).toEqual({});
+    expect((await statusOf(omer, danaId)).auto_approve).toBeNull();
+    expect(plain.invite_id).toBeTruthy();
   }, 60_000);
 
   it('a passphrase set since the invite was made ends the choice: the contact stands, auto-approve does not', async () => {

@@ -10,6 +10,11 @@ timestamp more than 300 s from now, and handles each event id once (delivery is 
 least once), remembering ids in SQLite. RDV_NOTIFY_SECRET_FILES may list several
 files (separated by os.pathsep), to accept an old and a new secret while you rotate.
 At most 8 requests are handled at once, and each gets 15 s in all.
+
+Events by default: invite_redeemed, invite_expired, invite_exposed and
+auto_approve_on (someone used an invite link you armed with "Don't ask again":
+data has invite_id, fingerprint, covers, until). The last one reaches you without
+your assistant in between, so make handle() alert you (a message, a push) for it.
 """
 import hashlib, hmac, json, os, socket, sqlite3, sys, threading, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer

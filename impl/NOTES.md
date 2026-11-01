@@ -5336,7 +5336,37 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       `auto_approve_off` event (reason `owner-secret`) says so.
     - **The bearer risk is real and accepted.** An invite is a bearer link: if
       someone else gets there first, they get the standing approval too. The
-      box says exactly that, and the events tell the human at once.
+      box says exactly that. The events reach the human through the asking
+      assistant (`auto_approve_on` in `rdv_inbox`) or, on a gateway with a
+      webhook, straight to the human (below); they are not instant on their own.
+    - **The asking assistant does not get an armed link** (review of this
+      step, M1). An injected model could pass a link that carries a standing
+      approval to an attacker. *Gateway:* when the owner ticked the box, the
+      link is shown only on the owner's result page and is not held for the
+      asking principal; `rdv_invite` "link" for that approval says so and
+      returns nothing, the approval event says "shown only to your user", and
+      no url or share_text is in any tool output or the shared log. Un-armed
+      invites are unchanged. *Local:* the assistant has to carry the link, so
+      the box says "Your assistant sees this link too". *Webhook:*
+      `auto_approve_on` is a gateway webhook event (fingerprint, `invite_id`,
+      `covers`, `until`; metadata only) and part of the default set, since its
+      point is to reach the human without going through the assistant. Only
+      new `notify set` calls get the new default; an existing webhook keeps the
+      events it was set with.
+    - **"Turn everything off" disarms open invites** (review, M2). `rdv_auto_approve`
+      "off" with `all_contacts` also clears the choice on every open invite and
+      reports how many (`invites_disarmed`); the "not on" message no longer says
+      nothing changed when invites were disarmed. The invite itself stays open
+      as an ordinary one. The settings page lists each agent's armed open
+      invites (id, the owner's label, expiry, coverage; never the link or
+      secret) with a Disarm button: reduce-only, behind the session, CSRF and
+      agent checks, logs an `admin:` line and an audit line (`action: disarm`,
+      `via: settings`/`mcp`); no bearer reaches it. There is no terminal
+      "off for everyone" command, so there is no terminal path to extend.
+    - **Accepted (review, L1): no per-capability limits on armed invites.** A
+      redeemer goes on the standing approval under the invite's grant limits
+      (the 100 messages a day cap the form states) rather than separate
+      per-capability ones. Not built; the box states the cap.
     - **Later forms.** `alwaysAllowOffer` already offers nothing once covered,
       and still offers for a capability not covered yet. Unchanged.
     - **Settings page** (`/approve/admin`, NOTES 110): per agent, each

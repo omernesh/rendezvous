@@ -14,7 +14,7 @@ import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { appendEvents, Home, initHome } from '@rendezvous/cli/lib';
-import { agentIdFromPublicKey, generateKey } from '@rendezvous/core';
+import { agentIdFromPublicKey, fingerprint, generateKey } from '@rendezvous/core';
 import { startTestRelay } from '@rendezvous/core/testing';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
@@ -262,6 +262,12 @@ describe('event shapes', () => {
     expect(junk.data).toEqual({ invite_id: null, tier: null, label: null, redeemer_fingerprint: null });
     expect(eventData({ event: 'invite-exposed', invite_id: '0123456789abcdef', from: PEER }, () => undefined)?.event).toBe('invite_exposed');
     expect(eventData({ event: 'contact', peer: PEER, tier: 'friend', binding: 'in-person' }, () => undefined)?.event).toBe('contact');
+    // auto_approve_on (NOTES 112): metadata only, whatever else the log line carries; junk is nulled or dropped.
+    const armed = eventData({ event: 'auto-approve-on', peer: PEER, invite_id: '0123456789abcdef', covers: ['https://rendezvous.nesher.co/m/1', 'bad uri <x>', 5], until: 'until your user turns it off', human: 'secret text' } as never, () => undefined)!;
+    expect(armed.event).toBe('auto_approve_on');
+    expect(armed.data).toEqual({ invite_id: '0123456789abcdef', fingerprint: expect.any(String), covers: ['https://rendezvous.nesher.co/m/1'], until: 'until your user turns it off' });
+    expect(JSON.stringify(armed)).not.toContain('secret text');
+    expect(eventData({ event: 'auto-approve-on', peer: 'nope', invite_id: '../x' } as never, () => undefined)!.data).toEqual({ invite_id: null, fingerprint: null, covers: [], until: null });
     expect(eventData({ event: 'relay-down', relay: 'wss://x' }, () => undefined)).toBeUndefined();
   });
 });
@@ -543,6 +549,29 @@ describe('delivery', () => {
     ]);
     await round(n);
     expect(rcv.hits.map((h) => JSON.parse(h.body).event)).toEqual(['invite_exposed']);
+  });
+});
+
+describe('auto_approve_on', () => {
+  it('is posted when an armed invite was used: fingerprint and coverage, no peer text, no link', async () => {
+    const { root, list } = await agents(['omer']);
+    const rcv = await receiver();
+    const store = new NotifyStore(new Home(root));
+    await store.set('omer', local(rcv.url, ['auto_approve_on']), KEY, 0);
+    await store.update((d) => {
+      delete d.state.omer;
+    });
+    const n = notifier(store, list, { t: Date.now() });
+    await round(n);
+    await appendEvents(list[0].home, [
+      { event: 'auto-approve-on', peer: PEER, covers: ['https://rendezvous.nesher.co/m/1'], until: 'until you turn it off', invite_id: '3333333333333333' },
+      { event: 'invite-exposed', invite_id: '2222222222222222', from: PEER },
+    ]);
+    await round(n);
+    expect(rcv.hits).toHaveLength(1);
+    const body = JSON.parse(rcv.hits[0].body);
+    expect(body.event).toBe('auto_approve_on');
+    expect(body.data).toMatchObject({ invite_id: '3333333333333333', fingerprint: fingerprint(PEER), covers: ['https://rendezvous.nesher.co/m/1'] });
   });
 });
 
@@ -1104,7 +1133,7 @@ describe('rdv-gateway notify', () => {
     expect((await bin(['notify', 'set', 'nobody', '--home', root, '--url', 'https://hooks.example.com/rdv', '--secret-file', sf])).stderr).toMatch(/no agent "nobody"/);
     const ok = await bin(['notify', 'set', 'omer', '--home', root, '--url', 'http://100.101.102.103:8080/rdv/TOKEN123', '--allow-insecure-host', '100.64.0.0/10', '--secret-file', sf]);
     expect(ok.code, ok.stderr).toBe(0);
-    expect(ok.stderr).toContain('invite_redeemed, invite_expired, invite_exposed');
+    expect(ok.stderr).toContain('invite_redeemed, invite_expired, invite_exposed, auto_approve_on');
     expect(ok.stderr).toContain('notify-omer.secret');
     expect(ok.stderr).not.toContain(SECRET);
     expect(ok.stderr).not.toContain('TOKEN123');
@@ -1112,12 +1141,12 @@ describe('rdv-gateway notify', () => {
     rmSync(sf);
     expect(readFileSync(join(root, 'notify-omer.secret'), 'utf8')).toBe(SECRET);
     const d = new NotifyStore(new Home(root)).read();
-    expect(d.agents.omer).toMatchObject({ url: 'http://100.101.102.103:8080/rdv/TOKEN123', events: ['invite_redeemed', 'invite_expired', 'invite_exposed'], insecureHosts: ['100.64.0.0/10'] });
+    expect(d.agents.omer).toMatchObject({ url: 'http://100.101.102.103:8080/rdv/TOKEN123', events: ['invite_redeemed', 'invite_expired', 'invite_exposed', 'auto_approve_on'], insecureHosts: ['100.64.0.0/10'] });
     expect(d.state.omer.cursor).toBe(1);
     expect(readFileSync(join(root, 'gateway-notify.json'), 'utf8')).not.toContain(SECRET);
     const show = await bin(['notify', 'show', '--home', root]);
     expect(show.stdout).toMatch(/^kids {2}\(no webhook\)$/m);
-    expect(show.stdout).toMatch(/^omer {2}http:\/\/100\.101\.102\.103:8080 {2}events invite_redeemed,invite_expired,invite_exposed {2}insecure hosts 100\.64\.0\.0\/10/m);
+    expect(show.stdout).toMatch(/^omer {2}http:\/\/100\.101\.102\.103:8080 {2}events invite_redeemed,invite_expired,invite_exposed,auto_approve_on {2}insecure hosts 100\.64\.0\.0\/10/m);
     expect(show.stdout).not.toMatch(/TOKEN123|secret/);
 
     const omerId = list[1].id;

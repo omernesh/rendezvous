@@ -37,10 +37,10 @@ import { AGENT_NAME_RE, NOTIFY_SECRET_RE, ROOT_BINDING } from './agents.js';
 export const NOTIFY_FILE = 'gateway-notify.json';
 export const NOTIFY_LOCK = 'gateway-notify.lock';
 /** Every event a webhook can carry. */
-export const NOTIFY_EVENTS = ['invite_redeemed', 'invite_expired', 'invite_exposed', 'contact_request', 'contact', 'message'] as const;
+export const NOTIFY_EVENTS = ['invite_redeemed', 'invite_expired', 'invite_exposed', 'auto_approve_on', 'contact_request', 'contact', 'message'] as const;
 export type NotifyEvent = (typeof NOTIFY_EVENTS)[number];
 /** What `notify set` subscribes to without --events. */
-export const DEFAULT_NOTIFY_EVENTS: readonly NotifyEvent[] = ['invite_redeemed', 'invite_expired', 'invite_exposed'];
+export const DEFAULT_NOTIFY_EVENTS: readonly NotifyEvent[] = ['invite_redeemed', 'invite_expired', 'invite_exposed', 'auto_approve_on'];
 /** The signature header, and how far a receiver should let its timestamp be from its own clock. */
 export const SIGNATURE_HEADER = 'X-Rdv-Signature';
 export const SIGNATURE_TOLERANCE_S = 300;
@@ -493,7 +493,7 @@ export function validateNotifyData(raw: unknown, path = NOTIFY_FILE): NotifyData
 }
 
 /** What goes first when an agent is over its cap: requests and messages, then contacts; invites only when nothing else is left. */
-const PRIORITY: Record<NotifyEvent, number> = { contact_request: 0, message: 0, contact: 1, invite_redeemed: 2, invite_expired: 2, invite_exposed: 2 };
+const PRIORITY: Record<NotifyEvent, number> = { contact_request: 0, message: 0, contact: 1, invite_redeemed: 2, invite_expired: 2, invite_exposed: 2, auto_approve_on: 2 };
 
 /**
  * Per-agent and total caps: an agent over its share loses its own items, never another agent's: the lowest priority
@@ -726,6 +726,17 @@ export function eventData(obj: LoggedEvent['obj'], contactLabel: (peer: string) 
       };
     case 'invite-exposed':
       return { event: 'invite_exposed', data: { invite_id: inviteId(obj.invite_id), label: ownText(obj.invite_label), from_fingerprint: fp(obj.from) } };
+    case 'auto-approve-on':
+      // An invite the owner armed with the "Don't ask again" box was used (NOTES 112): metadata only, so the human hears it without the assistant.
+      return {
+        event: 'auto_approve_on',
+        data: {
+          invite_id: inviteId(obj.invite_id),
+          fingerprint: fp(obj.peer),
+          covers: (Array.isArray(obj.covers) ? obj.covers : []).slice(0, 32).filter((c): c is string => typeof c === 'string' && c.length <= 200 && /^[A-Za-z0-9:/._~%+@=-]+$/.test(c)),
+          until: typeof obj.until === 'string' ? clean(obj.until).slice(0, 64) : null,
+        },
+      };
     case 'request':
       return {
         event: 'contact_request',

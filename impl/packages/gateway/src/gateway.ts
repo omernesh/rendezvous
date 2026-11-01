@@ -1052,6 +1052,15 @@ export class Gateway {
       return show(200, { text: `Auto-approve is off for ${shown?.label ?? who}. Everything from them asks you again.` });
     }
 
+    if (action === 'invite/disarm') {
+      const rt = this.byName.get(agentName);
+      if (!rt) return bad(400, 'No such agent; nothing changed.');
+      const id = form.get('id') ?? '';
+      if (!(await rt.server.disarmInviteFromSettings(id))) return bad(404, 'That invite was not armed (it may have been used, revoked or expired); nothing changed.');
+      this.log(`admin: invite ${id} of agent ${rt.name} disarmed on the gateway settings page`);
+      return show(200, { text: `Invite ${id} no longer puts whoever uses it on auto-approve. The link still works as an ordinary invite.` });
+    }
+
     if (action === 'notify/clear') {
       const rt = this.byName.get(agentName);
       if (!rt) return bad(400, 'No such agent; nothing changed.');
@@ -1114,6 +1123,7 @@ export class Gateway {
         tokens: tokens.filter((t) => this.bindingIsFor(t.agent, rt.name)).map((t) => tokenView(t, rt.name)),
         grants: o.grants.filter((g) => this.bindingIsFor(g.agent, rt.name)).map((g) => grantView(g, rt.name)),
         autoApproved: rt.server.autoApprovedContacts(),
+        armedInvites: rt.server.armedInvites(),
         ...(cfg
           ? {
               webhook: {

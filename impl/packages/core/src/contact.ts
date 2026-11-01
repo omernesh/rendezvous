@@ -1043,6 +1043,20 @@ export class ContactBook {
     return hit;
   }
 
+  /**
+   * Our human takes the "Don't ask again" choice off open invites (NOTES 112, reduce-only): every armed open
+   * invite, or just `id`. The invite itself stays open as an ordinary one. Returns what was disarmed.
+   */
+  disarmInvites(id?: string, now = new Date()): Array<{ id: string; label?: string; expires: string }> {
+    const out: Array<{ id: string; label?: string; expires: string }> = [];
+    for (const r of Object.values(this.state.invites ?? {})) {
+      if (!r.standing || (id !== undefined && r.id !== id)) continue;
+      delete r.standing;
+      if (inviteStatus(r, now) === 'open') out.push({ id: r.id, ...(r.label ? { label: r.label } : {}), expires: r.expires });
+    }
+    return out;
+  }
+
   /** An invite that ended keeps no standing choice (NOTES 112): none is left behind for anything to find later. */
   dropEndedStanding(now = new Date()): void {
     for (const r of Object.values(this.state.invites ?? {})) if (r.standing && inviteStatus(r, now) !== 'open') delete r.standing;
