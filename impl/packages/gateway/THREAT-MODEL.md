@@ -237,10 +237,14 @@ one person (or household) would trust one machine with all of them.
 or the root marker for the root agent, whose name follows its profile); one
 made before multi-agent gateways reaches the root agent only, and nothing once
 the root holds none, so no principal ever falls through to "a default". A
-name that tokens or grants are still bound to cannot be taken by a new agent
-without `--force` (which revokes them), and the gateway warns at start about
-bindings to an agent it does not have. An agent whose state cannot be read is
-skipped with an error in the log; the others are served. Caps hold per agent
+binding left on a name (its agent deleted by hand) reaches no agent that later
+takes that name: `agent add` and `agent migrate --name` refuse such a name
+without `--force` (which revokes those bindings first), and a binding equal to
+the root's current name (a restore renamed the root to it) is treated as
+stale and reaches nothing, since root bindings store the marker. The gateway
+warns at start about every binding that reaches no agent here. An agent whose
+state cannot be read is skipped with an error in the log; any others are
+served. Caps hold per agent
 (32 MCP sessions, 64 approvals) and across all agents (128 sessions, 256
 approvals), so one agent's clients cannot exhaust the process for the others
 beyond that. Each agent

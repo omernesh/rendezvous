@@ -305,6 +305,42 @@ describe('review of PR #127', () => {
     expect((await api(base, left, 'rdv_status')).status).toBe(401);
   });
 
+  it('re-review MED: a stale binding never reaches the root agent that takes its name (migrate --name, or a restore)', { timeout: 120_000 }, async () => {
+    const { gw, ids } = await multi(['kids'], { legacy: 'omer' });
+    const stale = await tok(gw, 'kids', ['read'], 'old-kids');
+    const mine = await tok(gw, undefined, ['read'], 'omer-own');
+    await gw.close();
+    gws = [];
+    rmSync(join(root, 'agents', 'kids'), { recursive: true, force: true });
+
+    // Path 2: a restore renames the root to "kids". The stale kids token reaches nothing; the root's own still works.
+    const home = new Home(root);
+    home.writeConfig({ ...home.readConfig(), profile: 'kids' });
+    const r1 = await restart();
+    expect(r1.gw.agents.map((a) => a.name)).toEqual(['kids']);
+    expect(r1.log.join('\n')).toMatch(/WARNING: tok_\S+ is bound to agent kids, which is not here/);
+    expect((await api(r1.base, stale, 'rdv_status')).status).toBe(401);
+    expect((await api(`${r1.base}/a/kids`, stale, 'rdv_status')).status).toBe(401);
+    expect((await api(r1.base, mine, 'rdv_status')).body.result.agent_id).toBe(ids.omer);
+    expect(new AgentRoot(root).nameOf('kids')).toBeUndefined();
+    await r1.gw.close();
+    gws = [];
+
+    // Path 1: migrate --name kids is refused while the stale token exists; --force revokes it first.
+    home.writeConfig({ ...home.readConfig(), profile: 'omer' });
+    const refused = await bin(['agent', 'migrate', '--name', 'kids', '--home', root]);
+    expect(refused.code).not.toBe(0);
+    expect(refused.stderr).toMatch(/still has 1 token/);
+    expect(existsSync(join(root, 'agent.json'))).toBe(true);
+    const forced = await bin(['agent', 'migrate', '--name', 'kids', '--force', '--home', root]);
+    expect(forced.code, forced.stderr).toBe(0);
+    expect(forced.stderr).toMatch(/Revoked 1 token/);
+    const r2 = await restart();
+    expect(r2.gw.agents.map((a) => a.name)).toEqual(['kids']);
+    expect((await api(r2.base, stale, 'rdv_status')).status).toBe(401);
+    expect((await api(`${r2.base}/a/kids`, mine, 'rdv_status')).body.result.agent_id).toBe(ids.omer);
+  });
+
   it('LOW-1: migrate --name rewrites a grant\'s agent resource, and its refresh keeps working', { timeout: 90_000 }, async () => {
     const { gw, base, ids } = await multi([], { legacy: 'omer' });
     const c = await connect(base, new Browser(base), `${base}/a/omer/mcp`);

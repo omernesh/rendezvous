@@ -225,12 +225,15 @@ export class GatewayStore {
     });
   }
 
-  /** `agent migrate`: tokens of the root agent (the root marker, none, or its name `from`) now reach `to`. */
-  async rebindAgent(from: string, to: string): Promise<number> {
+  /**
+   * `agent migrate`: tokens of the root agent (the root marker, or none) now reach `to`. A token naming the root's
+   * name itself is stale (root tokens store the marker), so it is not moved.
+   */
+  async rebindAgent(_from: string, to: string): Promise<number> {
     return this.update((d) => {
       let n = 0;
       for (const t of Object.values(d.tokens)) {
-        if (isRootBinding(t.agent) || t.agent === from) {
+        if (isRootBinding(t.agent)) {
           t.agent = to;
           n += 1;
         }
