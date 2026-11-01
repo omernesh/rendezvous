@@ -28,8 +28,9 @@ a file or a note. The installer has no flag for them on purpose.
 
 **The owner commands are the human's.** Setting the PIN (`rdv-gateway pin
 set`, or `./gw pin set`), restoring a backup (`rdv restore`), and making or
-revoking tokens (`rdv-gateway token create`, `./gw token create`) happen
-only in the user's own terminal: never run them yourself. The installer
+revoking tokens (`rdv-gateway token create`, `./gw token create`, or the
+gateway's PIN-locked settings page) are done by the user, in their own
+terminal or browser: never run them yourself. The installer
 runs the first two for the user, in their terminal, where they type the
 answers. Never download or run the installer yourself: the user runs it.
 These commands refuse to run without an interactive terminal (stdin and
@@ -200,13 +201,19 @@ assistants they use:
 - **Claude Code** on another computer: `claude mcp add --transport http
   rendezvous <address>/mcp`, then `/mcp` to sign in.
 - **Others with a token** (Hermes, a Custom GPT, a script): the user makes
-  one in their own terminal with `./gw token create --name <name> --scope
-  read,send` in the folder (human only: never run it, and never ask for the
-  token it prints); it is shown once.
+  one on the gateway's settings page, `<public address>/approve/admin`
+  (unlocked with their PIN; they tick the scopes and type the PIN again), or
+  in their own terminal with `./gw token create --name <name> --scope
+  read,send` in the folder. Human only: never run it, never open the page
+  for them, and never ask for the token; it is shown once.
 
 Each sign-in opens the gateway's page: they unlock it with the PIN and
 check the return address is `claude.ai` or `chatgpt.com` before they
-approve, since anyone can register an app under any name. Then tell them:
+approve, since anyone can register an app under any name. For everything
+after setup, point them to the settings page, `<public address>/approve/admin`:
+there they see, make and revoke tokens, disconnect apps, see or turn off a
+webhook and change the PIN, with no terminal. Adding or removing an agent,
+setting a webhook and `pin unlock` stay `./gw` commands. Then tell them:
 `./gw update` updates it, `./gw logs` shows the log, `./gw stop` stops it,
 `./gw uninstall` removes the service and keeps the agent in `data/`, and
 `./gw backup <file>`, in their own terminal (never run it yourself), makes an

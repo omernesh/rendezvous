@@ -23,7 +23,9 @@ pre.msg{margin:8px 0 12px;padding:12px;border-left:3px solid var(--warn);backgro
 button.primary{background:var(--accent);border-color:var(--accent);color:#fff}.flash{padding:10px 12px;border-radius:6px;border:1px solid var(--accent);margin:12px 0}.flash.bad{border-color:var(--bad);color:var(--bad)}
 .suggest{font-size:.9rem;margin:4px 0}.suggest.warn{color:var(--warn)}.check{display:flex;gap:8px;align-items:center}.check input{width:auto}
 a{color:var(--accent)}ul.list{padding-left:18px}footer{margin-top:40px;font-size:.85rem;color:var(--muted)}
-.agent{display:inline-block;padding:2px 8px;border:1px solid var(--line);border-radius:999px;font-size:.9rem;overflow-wrap:anywhere}p.for{margin:8px 0}`;
+.agent{display:inline-block;padding:2px 8px;border:1px solid var(--line);border-radius:999px;font-size:.9rem;overflow-wrap:anywhere}p.for{margin:8px 0}
+h3{font-size:1rem;margin:20px 0 6px}form.inline{display:inline;margin:0}code{font:13px/1.4 ui-monospace,Consolas,monospace;overflow-wrap:anywhere}details{margin:10px 0}summary{cursor:pointer;color:var(--accent)}
+table.admin{width:100%;border-collapse:collapse;font-size:.92rem;display:block;overflow-x:auto}table.admin th,table.admin td{text-align:left;vertical-align:top;padding:6px 8px;border-top:1px solid var(--line);overflow-wrap:anywhere}table.admin th{font-weight:600;color:var(--muted)}`;
 
 export interface Flash {
   text: string;
@@ -36,9 +38,9 @@ export interface AgentLabel {
   fingerprint: string;
 }
 
-const agentTag = (a: AgentLabel) => `<span class="agent"><b>${e(a.name)}</b> <span class="muted">${e(a.fingerprint)}</span></span>`;
+export const agentTag = (a: AgentLabel) => `<span class="agent"><b>${e(a.name)}</b> <span class="muted">${e(a.fingerprint)}</span></span>`;
 
-function layout(title: string, body: string, csrf?: string): string {
+export function layout(title: string, body: string, csrf?: string): string {
   const lock = csrf
     ? `<form method="post" action="/approve/lock" class="row"><input type="hidden" name="csrf" value="${e(csrf)}"><button type="submit">Lock (sign out)</button><span class="muted">Ends this session on this device. You'll need your PIN again next time.</span></form>`
     : '';
@@ -49,7 +51,7 @@ function layout(title: string, body: string, csrf?: string): string {
   );
 }
 
-const flash = (f?: Flash) => (f ? `<p class="flash${f.bad ? ' bad' : ''}" role="status">${e(f.text)}</p>` : '');
+export const flash = (f?: Flash) => (f ? `<p class="flash${f.bad ? ' bad' : ''}" role="status">${e(f.text)}</p>` : '');
 
 export function unlockPage(opts: { csrf: string; next: string; message?: Flash }): string {
   return layout(
@@ -75,7 +77,11 @@ export function listPage(opts: { agents: Array<AgentLabel & { items: PendingAppr
       : `<p class="muted">This gateway serves ${opts.agents.length} agents. Each approval below is for the agent it is listed under.</p>${opts.agents
           .map((a) => `<section class="card"><h2>${agentTag(a)}</h2>${one(a.items)}</section>`)
           .join('')}`;
-  return layout('Rendezvous approvals', `<h1>Rendezvous approvals</h1>${flash(opts.message)}${body}`, opts.csrf);
+  return layout(
+    'Rendezvous approvals',
+    `<h1>Rendezvous approvals</h1>${flash(opts.message)}${body}<p><a href="/approve/admin">Gateway settings</a> <span class="muted">(access tokens, connected apps, your PIN, webhooks)</span></p>`,
+    opts.csrf,
+  );
 }
 
 const firstLine = (s: string) => s.split('\n')[0].replace(/^Rendezvous:\s*/, '').slice(0, 160);

@@ -940,6 +940,14 @@ refresh token that is reused ends that connection. To see or end connections:</p
 <div class="codeblock"><pre tabindex="0"><code class="language-bash">node packages/gateway/dist/src/bin.js oauth list --home ~/.rendezvous/omer
 node packages/gateway/dist/src/bin.js oauth revoke &lt;cli_…|grt_…&gt; --home ~/.rendezvous/omer   # a whole app, or one grant
 </code></pre></div>
+<p><strong>The settings page</strong> (<code>/approve/admin</code>, NOTES 110). After the first <code>pin set</code>,
+routine administration is on the gateway's own PIN-locked page: per agent, list,
+make (shown once) and revoke tokens, list and disconnect OAuth apps, show and
+turn off the webhook, and change the PIN. It uses the approval page's unlock,
+session, CSRF token and CSP, refuses any request with an <code>Authorization</code>
+header, and writes through the same stores and locks as the commands below,
+which stay as the fallback. Setting a webhook, <code>pin unlock</code> and <code>agent
+add|remove|migrate</code> are terminal only.</p>
 <p><strong>Static tokens</strong>, for assistants without OAuth (Muse, scripts):</p>
 <div class="codeblock"><pre tabindex="0"><code class="language-bash">node packages/gateway/dist/src/bin.js token create --name muse --scope read,send,contact:request --home ~/.rendezvous/omer
 node packages/gateway/dist/src/bin.js token list --home ~/.rendezvous/omer

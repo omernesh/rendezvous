@@ -481,6 +481,15 @@ node packages/gateway/dist/src/bin.js oauth list --home ~/.rendezvous/omer
 node packages/gateway/dist/src/bin.js oauth revoke <cli_…|grt_…> --home ~/.rendezvous/omer   # a whole app, or one grant
 ```
 
+**The settings page** (`/approve/admin`, NOTES 110). After the first `pin set`,
+routine administration is on the gateway's own PIN-locked page: per agent, list,
+make (shown once) and revoke tokens, list and disconnect OAuth apps, show and
+turn off the webhook, and change the PIN. It uses the approval page's unlock,
+session, CSRF token and CSP, refuses any request with an `Authorization`
+header, and writes through the same stores and locks as the commands below,
+which stay as the fallback. Setting a webhook, `pin unlock` and `agent
+add|remove|migrate` are terminal only.
+
 **Static tokens**, for assistants without OAuth (Muse, scripts):
 
 ```bash
