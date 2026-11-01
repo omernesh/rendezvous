@@ -5498,6 +5498,60 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
         Owner-approved invites are unchanged. SPEC 5.2.3 says so.
     - **Covered by.** `gateway/test/assistantinvites.test.ts`.
 
+114. **A gateway restart is named, not blamed on the owner** (issue #140)
+    - **Gap.** Pending approvals (`Approvals.byId`) and held invite links
+      (`RdvMcpServer.held`) live in memory by design (no secrets on disk), so a
+      restart drops them. The approval page said only "decided already, or it
+      expired", which blamed the owner and left the assistant unable to tell.
+    - **Choice.** Each gateway process tags the approval ids it makes:
+      `apr_<6 hex boot tag>_<random>` (the random part is unchanged, 18 bytes).
+      An unknown id with another or no tag says "lost in a gateway restart
+      (this gateway started on YYYY-MM-DD HH:MM UTC)", which names this
+      process's start and claims nothing about which restart took it; one with
+      this process's tag says only "decided or expired, or the assistant that
+      asked was disconnected" (a revoked token drops its asks). Both pages are
+      behind the PIN as before. The empty approvals list says when this
+      gateway started and that an approval open across a restart may not have
+      been carried out (a process can die mid-answer).
+    - **Status.** Remote `rdv_status` and every `awaiting_human` result carry
+      `gateway_started_at` (ISO, per process, authenticated callers only; local
+      mode has none). The assistant compares for equality, not clocks, and
+      never re-asks on its own: if it differs from the value in the
+      `awaiting_human` result it tells its user the gateway restarted and the
+      ask may have been lost, and asks again only if they want it. (No
+      approval id in the result and no inbox filter: the log is finite and a
+      narrow token cannot read it.)
+    - **Held links.** Only the assistant's copy is lost; the invite stays in
+      the agent's state until it is used, expires or is revoked, and may
+      already be with someone (the owner could have copied it from the page),
+      so the error says to ask the user before revoking (also an armed one:
+      after a restart the "shown only to your user" refusal no longer applies,
+      so the text does not call the old link dead). It points to `rdv_invite`
+      "list"; the secret is never shown. The wrong-client branch gives no
+      revoke advice.
+    - **Not done.** Persisting approvals or held results.
+    - **Covered by.** `gateway/test/restart.test.ts` (a second `Gateway` on the
+      same home).
+
+## Not implemented yet
+
+
+Mailbox probe and the mail invite (§5.2.1, §5.2.2), directories and suggestions (§4.5), DNS TXT
+lookup, key rotation, ntfy/MQTT fallbacks, direct (ICE/WebRTC) channels,
+and `rdv/forget`.
+
+## Environment
+
+- Node's built-in WebSocket (undici) overflows the stack inside nostr-tools
+  when a relay connection fails, so the transport installs the `ws` package
+  as the WebSocket implementation.
+- On a Windows checkout with `core.autocrlf=true`, a file that starts with a
+  shebang and has CRLF breaks: `#!/usr/bin/env node\r` doesn't run, and
+  vitest can't import `consent-guard.mjs` at all (SyntaxError, so
+  `plugin.test.ts` was not collected). `.gitattributes` keeps `*.mjs`,
+  `*.py`, the `bin.ts` entry points and `plugins/**` LF, and `plugin.test.ts`
+  checks every shebang file in the working tree.
+
 115. **A contact that answers an invite request this agent sent says so (issue #141)**
     - **Choice.** `acceptInvite` marks its outstanding request with
       `invite_ref`, the first 16 hex of the link secret's hash (`inviteRef`).

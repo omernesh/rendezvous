@@ -404,6 +404,7 @@ Rules:
 - ${UNTRUSTED_NOTE}
 - ${INVITE_LINK_NOTE}
 - Negotiations and approvals finish on their own; follow them with rdv_inbox (use wait_seconds to wait for news; an "approval" event says what your user decided) and tell your user what happened in plain language.
+- Pending approvals, and your copy of an invite link you may take (rdv_invite "link"), live in the gateway's memory and are lost when it restarts. An invite that was already made is not lost: it works until it is used, expires or is revoked, and may already be with someone, so ask your user before you revoke it (rdv_invite "list" shows it). "awaiting_human" results and rdv_status carry gateway_started_at. Never ask again on your own after a restart: when it differs from the value in the awaiting_human result, tell your user the gateway restarted and the ask may have been lost or may not have been carried out, and ask again only if they want it.
 - ${DELIVERY_NOTE}
 - Some of your user's settings go through the approval page too, when they ask for them: renaming a contact or giving it a nickname (rdv_label; your label or alias is only a suggestion, they type the name), naming their agent (rdv_agent_name; your name is only a suggestion, they type it), accepting a contact's or a group's messages again after a fork (rdv_resync), and turning direct file transfers on (rdv_file "direct-transfer"). Each returns an approve_url like any approval.
 - Setting up the agent (addresses, relays, auto-approve "on", local files, backups and restores), the owner passphrase, and replacing this agent's identity are your user's on their own machine (their local assistant's approval forms, or their own terminal), never through this gateway. On the approval page that makes a contact (rdv_grant, rdv_invite "create"), or for a contact's task or a dinner it proposed, your user may also tick "Don't ask again for this contact"; you never can, and never suggest it. When an "approval" result or an "auto_approve_on" event says it was turned on, tell them what it covers and that rdv_auto_approve "off" or their gateway's settings page turns it off.
@@ -469,6 +470,8 @@ export interface RemoteApprovals {
    * invite asks.
    */
   assistantInvites?(agentId: string): boolean;
+  /** When this gateway process started (ms): approvals and held links live in memory and do not survive a restart (issue #140). */
+  bootedAt?: number;
 }
 
 /** An invite the assistant makes under that choice (NOTES 113): how many may be open at once, and how long each may last at most. */
@@ -534,6 +537,9 @@ export function formDigest(tool: string, args: Record<string, unknown>, message:
 
 /** A gate's binding for an item it read before the form (formDigest's `bind`). */
 const bindOf = (v: unknown): string => createHash('sha256').update(`rdv1/form-bind\u0000${stableJson(v)}`).digest('hex');
+
+/** A time as "2026-11-01 13:25 UTC". */
+const utcStamp = (ms: number): string => `${new Date(ms).toISOString().slice(0, 16).replace('T', ' ')} UTC`;
 
 export interface RdvMcpOptions {
   home: Home;
@@ -1532,8 +1538,15 @@ export class RdvMcpServer {
   private takeHeld(id: string, tool: string): Record<string, string> {
     const h = this.held.get(id);
     const principal = this.calls.getStore()?.principal;
-    if (!h || h.until <= Date.now() || h.tool !== tool || h.principal !== principal) {
-      throw new ToolError(`nothing is held for approval ${safe(id)} for you: it was already taken, it expired, or another client asked for it. Your user can make a new invite.`);
+    if (h && h.until > Date.now() && (h.tool !== tool || h.principal !== principal)) {
+      throw new ToolError(`nothing is held for approval ${safe(id)} for you: another client asked for it. Your user can make a new invite.`);
+    }
+    if (!h || h.until <= Date.now()) {
+      const lost = this.remote?.bootedAt ? `, or it was lost in a gateway restart (this gateway started on ${utcStamp(this.remote.bootedAt)})` : '';
+      throw new ToolError(
+        `nothing is held for approval ${safe(id)} for you: it was already taken, it expired${lost}. Your copy of the link is gone. ` +
+          'The invite itself, if it was made, may already be with someone and works until it is used, expires or is revoked: rdv_invite "list" shows it. Ask your user before you revoke it.',
+      );
     }
     if (h.ownerOnly) {
       throw new ToolError('your user ticked "Don\'t ask again" on this invite, so the link is shown only to them on the approval page and is not available to you. Ask them to send it themselves. If your user no longer has the link, they can revoke this invite and make a new one.');
@@ -2444,6 +2457,7 @@ export class RdvMcpServer {
     return {
       status: 'awaiting_human',
       approve_url: url,
+      ...(this.remote?.bootedAt ? { gateway_started_at: new Date(this.remote.bootedAt).toISOString() } : {}),
       note:
         'Nothing was done yet. Give your user this link: they decide on their gateway\'s own approval page, unlocked with their PIN, never in this chat. ' +
         'Never ask them for the PIN, a code or a phrase. Follow the outcome with rdv_inbox (an "approval" event).' +
@@ -3607,6 +3621,8 @@ export class RdvMcpServer {
         ? { calendar: this.remote ? 'configured' : this.settings.calendar, window: this.settings.window ?? DEFAULT_LISTEN_WINDOW, tz: this.settings.tz ?? '(calendar or machine offset)' }
         : 'no calendar configured: incoming dinner proposals are listed but not answered',
       approval: this.approvalMode(),
+      // Remote only (issue #140): approvals and one-time links wait in memory, so a restart drops them; the assistant tells its user and asks again only if they want it.
+      ...(this.remote?.bootedAt ? { gateway_started_at: new Date(this.remote.bootedAt).toISOString() } : {}),
       tasks: this.taskCounts(),
     };
   }

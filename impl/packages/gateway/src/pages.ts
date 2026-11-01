@@ -82,7 +82,7 @@ export function unlockPage(opts: { csrf: string; next: string; message?: Flash }
 }
 
 /** Everything that waits, per agent: each agent this gateway serves, by name and fingerprint, with its own approvals. */
-export function listPage(opts: { agents: Array<AgentLabel & { items: PendingApproval[] }>; csrf: string; message?: Flash }): string {
+export function listPage(opts: { agents: Array<AgentLabel & { items: PendingApproval[] }>; csrf: string; message?: Flash; restartedOn?: string }): string {
   const one = (items: PendingApproval[]) =>
     items.length
       ? `<ul class="list">${items
@@ -95,9 +95,14 @@ export function listPage(opts: { agents: Array<AgentLabel & { items: PendingAppr
       : `<p class="muted">This gateway serves ${opts.agents.length} agents. Each approval below is for the agent it is listed under.</p>${opts.agents
           .map((a) => `<section class="card"><h2>${agentTag(a)}</h2>${one(a.items)}</section>`)
           .join('')}`;
+  // Nothing waits: an approval left open across a restart is gone (issue #140), so say when it was, and that nothing ran.
+  const restart =
+    opts.restartedOn && opts.agents.every((a) => a.items.length === 0)
+      ? `<p class="muted">This gateway started on ${e(opts.restartedOn)}. An approval that was open across a restart may not have been carried out; your assistant can ask again.</p>`
+      : '';
   return layout(
     'Rendezvous approvals',
-    `<h1>Rendezvous approvals</h1>${flash(opts.message)}${body}<p><a href="/approve/admin">Gateway settings</a> <span class="muted">(access tokens, connected apps, auto-approved contacts, your PIN, webhooks)</span></p>`,
+    `<h1>Rendezvous approvals</h1>${flash(opts.message)}${body}${restart}<p><a href="/approve/admin">Gateway settings</a> <span class="muted">(access tokens, connected apps, auto-approved contacts, your PIN, webhooks)</span></p>`,
     opts.csrf,
   );
 }

@@ -3,7 +3,13 @@
 // in memory and bounded; a restart drops them (the client asks again). The
 // page shows exactly the stored form, and an answer is bound to its digest.
 import { type ApprovalAsk, type ApprovalForm, ToolError } from '@rendezvous/mcp';
+import { randomBytes } from 'node:crypto';
 import { randomToken, sha256 } from './http.js';
+
+/** The tag one process puts in every approval id it makes: `apr_<tag>_<random>`, so a later process knows the id is not its own (issue #140). */
+export const newBootTag = (): string => randomBytes(3).toString('hex');
+/** The boot tag in an approval id, or undefined for an id without one. */
+export const bootTagOf = (id: string): string | undefined => /^apr_([0-9a-f]{6})_/.exec(id)?.[1];
 
 export const MAX_APPROVALS = 64;
 /** Pending approvals across every agent of one gateway (NOTES 104): one page holds them all. */
@@ -33,6 +39,8 @@ export class Approvals {
     private readonly alive: (principal: string | undefined) => boolean = () => true,
     /** How many wait across every agent of the gateway (this one's included). */
     private readonly total: () => number = () => this.byId.size,
+    /** This process's tag in the ids it makes. */
+    private readonly bootTag: string = newBootTag(),
   ) {}
 
   /** How many wait here now (expired ones not yet swept may count until the next ask). */
@@ -60,7 +68,7 @@ export class Approvals {
     if (this.byId.size >= MAX_APPROVALS || this.total() >= MAX_APPROVALS_TOTAL) {
       throw new ToolError('too many approvals already wait for your user; nothing new was asked. Let them decide those first.');
     }
-    const id = `apr_${randomToken(18)}`;
+    const id = `apr_${this.bootTag}_${randomToken(18)}`;
     this.byId.set(id, { ...a, id, askedBy, created: this.now() });
     return this.urlFor(id);
   }
