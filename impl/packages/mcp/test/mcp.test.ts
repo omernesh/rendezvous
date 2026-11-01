@@ -908,6 +908,9 @@ describe('rdv-mcp over stdio', () => {
     const client = new Client({ name: 'stdio-test', version: '0' });
     await client.connect(transport);
     try {
+      // One release version: the plugin manifest is the source of truth.
+      const manifest = JSON.parse(readFileSync(join(import.meta.dirname, '..', '..', '..', '..', 'plugins', 'rendezvous', '.claude-plugin', 'plugin.json'), 'utf8'));
+      expect(client.getServerVersion()).toMatchObject({ name: 'rendezvous', version: manifest.version });
       const tools = (await client.listTools()).tools.map((t) => t.name).sort();
       expect(tools).toEqual(
         [
