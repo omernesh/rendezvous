@@ -250,6 +250,7 @@ export function checkInsecureHost(h: string): string {
 
 /** An IP address in canonical form (IPv6 compressed and lowercased, as a URL writes it). */
 function canonIp(ip: string): string {
+  if (ip.includes('%')) throw new NotifyError(`--allow-insecure-host ${JSON.stringify(ip)}: no IPv6 zone id`);
   return isIP(ip) === 6 ? new URL(`http://[${ip}]/`).hostname.slice(1, -1) : ip;
 }
 
@@ -837,12 +838,13 @@ export class Notifier {
     if (!a.id) return;
     const now = this.now();
     // Requests are one rolling event per agent (strangers' keys are free, so per sender would be no bound), messages
-    // one per peer (only contacts send them): merged into a waiting item, also one that failed a try, while it is not
-    // in flight. A request's item carries the latest one's fields and its last few senders.
+    // one per peer (only contacts send them): merged into a waiting item that was never sent (a try may have reached
+    // the receiver, which then drops a retry with new content under the same id). A request's item carries the latest
+    // one's fields and its last few senders.
     const key = event === 'contact_request' ? 'contact_request' : event === 'message' ? `message:${String(data.from_fingerprint)}` : undefined;
     if (event === 'contact_request') data = { ...data, recent_fingerprints: data.from_fingerprint ? [data.from_fingerprint] : [] };
     if (key) {
-      const same = d.outbox.find((i) => i.agent === a.binding && i.agentId === a.id && i.key === key && !this.inflight.has(i.id) && !this.settling.has(i.id));
+      const same = d.outbox.find((i) => i.agent === a.binding && i.agentId === a.id && i.key === key && i.attempts === 0 && !this.inflight.has(i.id) && !this.settling.has(i.id));
       if (same) {
         same.count = (same.count ?? 1) + 1;
         const body = JSON.parse(same.body) as { at: string; data: Record<string, unknown> };

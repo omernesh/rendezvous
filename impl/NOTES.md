@@ -4873,8 +4873,12 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       would bound nothing): `count`, the latest request's fields and
       `recent_fingerprints` (up to 5, the latest first). A `message` merges
       into the waiting one from the same contact (`count`, the first `seq`).
-      Merging also goes into an item that failed a try (it keeps its id; its
-      body is rebuilt), never into one in flight. Every item carries its agent's identity
+      Merging goes only into an item never tried (and not in flight): a
+      tried one may have reached the receiver, which would drop a retry
+      carrying new content under the same id (narrow review of PR #131). So
+      while a receiver fails, a flood makes one item per try round; the
+      per-agent cap and eviction priority keep that bounded, and an evicted
+      item keeps its count as a dead letter. Every item carries its agent's identity
       (`agentId`): it is sent, shown and re-queued only while that identity
       holds the binding; `agent add` and `agent remove` drop the binding's
       dead letters too, `notify clear` keeps them. `dead-letter --retry`
@@ -4936,7 +4940,12 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       or nothing: plan the files, check they are there, copy and verify,
       place, move the originals, then rebind; any failure undoes every step
       (a rebind that started is reversed: tokens, grants and webhooks go back
-      to the root agent) and one error says so. An expired previous secret
+      to the root agent) and one error says so. A migrate killed between the
+      file move and the rebind leaves the bindings on a root with no agent:
+      the next `agent migrate` sees it (no root agent, the newest
+      `.premigrate-*` reads as the identity of exactly one agent under
+      agents/, root-bound tokens, grants or a webhook remain) and finishes
+      the rebind. An expired previous secret
       (`….secret.prev` past `previousUntil`) is deleted at the next send.
       The example receiver bounds itself: 8 requests at once, 15 s per
       request in all, a Content-Length of ASCII digits only.

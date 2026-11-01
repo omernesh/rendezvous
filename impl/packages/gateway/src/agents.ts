@@ -201,6 +201,39 @@ export class AgentRoot {
   }
 
   /**
+   * A migrate that stopped after moving the files and before the rebind (killed): the root holds no agent, and the
+   * newest .premigrate-<time>/ that reads as an agent is the identity of exactly one agent under agents/. Returns the
+   * old root name (`from`, for grant resources) and that agent's name (`to`), so `agent migrate` can finish the rebind.
+   */
+  interruptedMigrate(): { from: string; to: string; kept: string } | undefined {
+    if (this.home.initialized()) return undefined;
+    let kepts: string[] = [];
+    try {
+      kepts = readdirSync(this.dir).filter((f) => f.startsWith('.premigrate-')).sort().reverse();
+    } catch {
+      return undefined;
+    }
+    for (const k of kepts) {
+      const old = new AgentRoot(join(this.dir, k));
+      let id: string;
+      try {
+        id = old.home.readAgentState().card.id;
+      } catch {
+        continue;
+      }
+      const same = this.list().filter((a) => {
+        try {
+          return !a.root && a.home.readAgentState().card.id === id;
+        } catch {
+          return false;
+        }
+      });
+      if (same.length === 1) return { from: old.rootAgentName() ?? 'default', to: same[0].name, kept: old.dir };
+    }
+    return undefined;
+  }
+
+  /**
    * `rdv-gateway agent migrate`: move the root agent into agents/<name>/, so
    * the root holds only the gateway's state. All or nothing: it plans the
    * file list first (the gateway's own files, locks, agents/, dot folders and
