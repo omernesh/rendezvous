@@ -96,6 +96,8 @@ describe('rdv contact alias and rdv agent-name', () => {
         ['contact label', johnId, 'Ran'],
         ['contact', 'label ', johnId, 'Ran'],
         ['contact grant', johnId],
+        // `--` before the subcommand is not a command word either: "contact" alone needs a subcommand (final review).
+        ['contact', '--', 'grant', johnId],
         ['contact confirm', 'g1'],
         ['contact pending'],
         ['contact auto-approve', johnId, 'off'],

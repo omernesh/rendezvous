@@ -247,6 +247,20 @@ describe('the skill', () => {
       "ssh host 'cd /tmp && rdv contact grant x'",
       `python3.12 -c 'import os; os.system("rdv contact grant x")'`,
       "npx -c 'rdv contact alias add rdv1:abc Ran'",
+      // Final review: a process start whose target is rdv gets its arguments joined into rdv's command line.
+      "Start-Process rdv -ArgumentList 'contact grant x'",
+      "Start-Process rdv 'contact grant rdv1:abc'",
+      "Start-Process rdv -ArgumentList 'contact grant', 'rdv1:abc'",
+      "Start-Process -FilePath rdv -ArgumentList 'contact grant x'",
+      "saps rdv 'contact grant rdv1:abc'",
+      "start rdv 'contact grant rdv1:abc'",
+      "Start-Process node 'bin.js contact grant x'",
+      "[Diagnostics.Process]::Start('rdv','contact grant rdv1:abc')",
+      "[System.Diagnostics.Process]::Start('rdv', 'contact alias add rdv1:abc Ran')",
+      "Start-Process rdv-gateway 'pin set'",
+      // A here-string in a subcommand's place.
+      "rdv contact @'\ngrant\n'@ x",
+      'rdv contact @"\ngrant\n"@ x',
       // --agent-name puts a name on the card: the owner's, like --force (re-review L2).
       'rdv init --agent-name Sammie --email omer@example.com',
       'rdv init --email omer@example.com --agent-name=Sammie',
@@ -257,6 +271,9 @@ describe('the skill', () => {
     // Free text in an argument stays free text, also after the command (re-review L1).
     expect(checkCommand('rdv send john "see you at the group join tomorrow"')).toBeFalsy();
     // Quoted text with ( [ @ is text (round 3), and so is prose that names a command.
+    for (const c of ["Start-Process notepad 'contact grant'", "Start-Process rdv -ArgumentList 'whoami'", "Start-Process rdv 'contact list'", "rdv send rdv1:abc --text @'\nsee you\n'@"]) {
+      expect(checkCommand(c), c).toBeFalsy();
+    }
     for (const c of ['rdv send john "(running late)"', 'rdv send john "[urgent] call me"', 'rdv send john "@john hi"', 'echo 100%', 'rdv send rdv1:abc --json \'{"type":"note","text":"50% off (today)"}\'']) {
       expect(checkCommand(c), c).toBeFalsy();
     }

@@ -271,6 +271,14 @@ export function parseCommands(src, mode = 'sh', depth = 0) {
       i = end;
       continue;
     }
+    // A PowerShell here-string (`@'…'@`, `@"…"@`) is text the guard does not read as words: SUB (final review).
+    if (mode === 'ps' && c === '@' && (next === "'" || next === '"')) {
+      const close = src.indexOf(`\n${next}@`, i + 2);
+      i = close < 0 ? src.length : close + 2;
+      cur += SUB;
+      inWord = true;
+      continue;
+    }
     if (mode === 'ps' && !inWord && (c === '[' || (c === '@' && /[\w{]/.test(next ?? '')))) {
       cur += SUB + c;
       inWord = true;
@@ -628,10 +636,32 @@ function checkEmbedded(words, ctx, depth) {
   }
 }
 
+/** Programs that start another with its arguments joined into one command line (final review of PR #122). */
+const STARTERS = new Set(['start-process', 'saps', 'start']);
+/** Start-Process's own switches, which are not the started program's arguments. */
+const STARTER_SWITCHES = /^-(argumentlist|args|filepath|nonewwindow|wait|passthru|noprofile)$/i;
+
+/**
+ * `Start-Process rdv -ArgumentList 'contact grant x'`, `saps rdv 'contact grant …'`, `Start-Process node bin.js,…`, and
+ * `[Diagnostics.Process]::Start('rdv', 'contact grant …')` (parsed as rdv and its argument string): the program gets
+ * its arguments as one joined command line, so they are read as rdv's words. Also rdv whose first argument holds
+ * white space, which only such a start can split. Null when neither applies.
+ */
+function startedArgv(words) {
+  const at = words.findIndex((w) => isRdv(w) || isGateway(w));
+  if (at < 0) return null;
+  const rest = words.slice(at + 1).filter((w) => !STARTER_SWITCHES.test(w));
+  const started = words.slice(0, at).some((w) => STARTERS.has(progName(w)));
+  if (!started && !(rest.length > 0 && /\s/.test(rest[0]))) return null;
+  return [words[at], ...rest.join(' ').trim().split(/\s+/).filter(Boolean)];
+}
+
 function checkWords(words, ctx, depth) {
   if (depth > MAX_DEPTH) throw new Refusal(NESTED);
   words = splitCommandRuns(words);
   checkEmbedded(words, ctx, depth);
+  const started = startedArgv(words);
+  if (started) checkWords(started, { cwd: ctx.cwd }, depth + 1);
   const lw = words.map((w) => w.toLowerCase());
   // The background listener's task, unit or LaunchAgent, changed through the OS's own tool (re-review of PR #117).
   if (lw.some((w) => w.includes('rdv-listen-'))) {
