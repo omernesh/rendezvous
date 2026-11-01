@@ -6,7 +6,8 @@
   var MAX = 1024;
   // SPEC 5.2.3: v2's relay bits, fixed for version 2.
   var KNOWN_RELAYS = ['wss://relay.nesher.co', 'wss://nos.lol', 'wss://relay.primal.net', 'wss://relay.nostr.net', 'wss://nostr.oxtr.dev', 'wss://nostr.mom', 'wss://relay.damus.io'];
-  var BAD_NAME = /[\u0000-\u001f\u007f-\u009f\u00ad\u061c\u180e\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff]/;
+  var BAD_NAME = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Co}\p{Cn}]/u;
+  var EXPIRY_MAX_S = 32503680000; // the year 3000, as the agent
   function byId(id) { return document.getElementById(id); }
 
   function bytesOf(payload) {
@@ -34,27 +35,45 @@
     return typeof n === 'string' && n.length > 0 && n.length <= 64 && n.trim() === n && !BAD_NAME.test(n) ? n : '';
   }
 
+  function b64url(bytes) {
+    var bin = '';
+    for (var i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+    return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  }
+
+  // A custom relay in its one spelling, as the agent requires (lowercase host, no lone "/" path, ASCII).
+  function canonRelay(r) {
+    if (r.length > 200 || !/^wss?:\/\/[^\s/?#]+[^\s]*$/.test(r)) return null;
+    var u = new URL(r);
+    var href = u.pathname === '/' && !u.search && !u.hash ? u.href.slice(0, -1) : u.href;
+    return href.length <= 200 && /^[\x21-\x7e]+$/.test(href) ? href : null;
+  }
+
   // v2: version 2, Ed25519 key (32), secret (16), expiry in Unix minutes (4, big-endian), relay bits (1),
   // then records (1 type, 1 length, bytes: type 1 a relay URL, type 2 the name), then 2 check bytes.
-  // The 2 check bytes are verified by checkV2 (async: crypto.subtle).
+  // The same structure checks as the agent; the 2 check bytes are verified by checkV2 (async: crypto.subtle).
   function decodeV2(b) {
     if (b.length < 56) return null;
     var end = b.length - 2;
     var minutes = b[49] * 0x1000000 + b[50] * 0x10000 + b[51] * 0x100 + b[52];
-    if (minutes === 0 || b[53] >= 0x80) return null;
-    var relays = 0;
-    for (var i = 0; i < KNOWN_RELAYS.length; i++) if (b[53] & (1 << i)) relays++;
+    if (minutes === 0 || minutes * 60 > EXPIRY_MAX_S || b[53] >= 1 << KNOWN_RELAYS.length) return null;
+    var relays = [];
+    for (var i = 0; i < KNOWN_RELAYS.length; i++) if (b[53] & (1 << i)) relays.push(KNOWN_RELAYS[i]);
     var name = '', at = 54, utf8 = new TextDecoder('utf-8', { fatal: true });
     while (at < end) {
       var type = b[at], len = b[at + 1];
       if (!len || at + 2 + len > end) return null;
       var value = utf8.decode(b.subarray(at + 2, at + 2 + len));
-      if (type === 1 && !name) relays++;
-      else if (type === 2 && !name) { name = cleanName(value); if (!name) return null; }
-      else return null;
+      if (type === 1 && !name) {
+        if (canonRelay(value) !== value || relays.indexOf(value) >= 0 || KNOWN_RELAYS.indexOf(value) >= 0) return null;
+        relays.push(value);
+      } else if (type === 2 && !name) {
+        name = cleanName(value);
+        if (!name) return null;
+      } else return null;
       at += 2 + len;
     }
-    if (relays < 1 || relays > 3) return null;
+    if (relays.length < 1 || relays.length > 3) return null;
     return { agent: 'rdv1:' + base32(b.subarray(1, 33)), expires: new Date(minutes * 60000), name: name };
   }
 
@@ -63,7 +82,7 @@
     if (!p || typeof p !== 'object' || p.v !== 1) return null;
     if (typeof p.a !== 'string' || !/^rdv1:[a-z2-7]{52}$/.test(p.a)) return null;
     if (typeof p.s !== 'string' || !/^[A-Za-z0-9_-]{22}$/.test(p.s)) return null;
-    if (typeof p.e !== 'number' || !isFinite(p.e) || p.e <= 0) return null;
+    if (typeof p.e !== 'number' || !isFinite(p.e) || p.e <= 0 || p.e > EXPIRY_MAX_S) return null;
     if (!Array.isArray(p.r) || p.r.length === 0) return null;
     return { agent: p.a, expires: new Date(p.e * 1000), name: cleanName(p.n) };
   }
@@ -72,6 +91,8 @@
     if (!payload || payload.length > MAX || !/^[A-Za-z0-9_-]+$/.test(payload)) return null;
     try {
       var bytes = bytesOf(payload);
+      // Stray low bits in the last character: not the link the agent made.
+      if (b64url(bytes) !== payload) return null;
       if (bytes[0] === 2) return decodeV2(bytes);
       if (bytes[0] === 0x7b) return decodeV1(bytes);
       return null;

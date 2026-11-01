@@ -651,9 +651,12 @@ the secret as base64url without padding (22 characters; what a request's
 `invite` carries), `e` the expiry and `n` the name.
 
 - The link has 1 to 3 relays in all (bits and records), no repeats, each
-  at most 200 characters; a relay from the table is always its bit, never a
-  record. The name, when there is one, has 1 to 64 printable characters,
-  already trimmed; makers put one in only when their owner asks. The check
+  in its canonical spelling (the WHATWG URL serialization: lowercase host,
+  punycode, no default port, without a lone `/` path; ASCII, at most 200
+  characters); a relay from the table is always its bit, never a record.
+  The expiry is at most the year 3000. The name, when there is one, has 1 to 64 printable characters
+  (no control, format, line or paragraph separator, private-use or
+  unassigned characters), already trimmed; makers put one in only when their owner asks. The check
   catches a link that was cut or had a character changed; it is not a
   signature (anyone can compute it).
 - A reader refuses a non-canonical base64url (stray low bits in the last
@@ -662,9 +665,10 @@ the secret as base64url without padding (22 characters; what a request's
   over, invalid UTF-8, a key that is not a curve point and an expiry of 0, so
   one invite has one link. A link that contains "…", or that is cut or
   fails its check, is reported as cut, with a request to ask the sender for
-  the full link. It reads the payload as the first word after the first `#`
-  of whatever was pasted (any host), or after `rdv-invite:`, or the payload
-  alone.
+  the full link. It reads the payload from whatever was pasted (a whole message
+  may hold other `#`s): the first word after each `/i#`, then after each
+  other `#` (any host), then after `rdv-invite:`, then the text alone; the
+  first that reads is the invite.
 - **Version 1** links (NOTES 101) are still read, never made: their first
   byte is `{`, and the payload is the canonical JSON (§4.6) of
   `{ "a": "rdv1:<inviter key>", "e": <expiry, Unix seconds>, "n": "<name>",

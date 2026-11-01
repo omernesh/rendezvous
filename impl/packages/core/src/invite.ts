@@ -103,14 +103,37 @@ export interface Invite {
   name?: string;
 }
 
-/** A display name: trimmed, 1..64 characters, no control or format characters. Throws otherwise. */
+/** A display name: trimmed, 1..64 characters, no control, format, line or paragraph separator, private-use or unassigned characters. Throws otherwise. */
 export function cleanInviteName(name: string): string {
   const n = name.trim();
-  if (n.length === 0 || n.length > INVITE_NAME_MAX || /[\p{Cc}\p{Cf}]/u.test(n)) throw new Error(`an invite name must be 1 to ${INVITE_NAME_MAX} printable characters`);
+  if (n.length === 0 || n.length > INVITE_NAME_MAX || /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Co}\p{Cn}]/u.test(n)) throw new Error(`an invite name must be 1 to ${INVITE_NAME_MAX} printable characters`);
   return n;
 }
 
 const isRelayUrl = (r: unknown): r is string => typeof r === 'string' && r.length <= INVITE_RELAY_MAX && /^wss?:\/\/[^\s/?#]+[^\s]*$/.test(r);
+
+/**
+ * A relay URL's one spelling in a v2 link (security review of PR #129, L3/L4):
+ * the WHATWG href (lowercase host, punycode, default port dropped, ASCII
+ * only) without the lone "/" path, so `wss://RELAY.nesher.co/` is the table's
+ * `wss://relay.nesher.co` and a record's length always fits one byte. Null
+ * when it is not a ws:// or wss:// URL of at most 200 characters.
+ */
+export function canonicalInviteRelay(r: string): string | null {
+  if (!isRelayUrl(r)) return null;
+  let u: URL;
+  try {
+    u = new URL(r);
+  } catch {
+    return null;
+  }
+  if (u.protocol !== 'wss:' && u.protocol !== 'ws:') return null;
+  const href = u.pathname === '/' && !u.search && !u.hash ? u.href.slice(0, -1) : u.href;
+  return href.length <= INVITE_RELAY_MAX && /^[\x21-\x7e]+$/.test(href) ? href : null;
+}
+
+/** The latest expiry a link may carry, as v1: the year 3000 (Unix seconds). */
+const EXPIRY_MAX_S = 32503680000;
 
 /** Host names that only mean something inside one network: never dialled for a link from someone else. */
 const LOCAL_NAME = /(^|\.)(localhost|local|internal|intranet|lan|home|corp|localdomain|home\.arpa)$/i;
@@ -189,7 +212,7 @@ export function encodeInvite(inv: Invite): string {
   if (!secret) throw new Error('not an invite secret');
   const ms = parseTimestamp(inv.expires);
   const minutes = ms === null ? 0 : Math.floor(ms / 60_000);
-  if (minutes <= 0 || minutes > 0xffffffff) throw new Error('an invite needs an RFC 3339 expiry');
+  if (minutes <= 0 || minutes * 60 > EXPIRY_MAX_S) throw new Error('an invite needs an RFC 3339 expiry before the year 3000');
   const name = inv.name !== undefined ? utf8ToBytes(cleanInviteName(inv.name)) : undefined;
   let mask = 0;
   const custom: Uint8Array[] = [];
@@ -210,9 +233,9 @@ export function encodeInvite(inv: Invite): string {
 
 function checkedRelays(inv: Invite): string[] {
   if (!isAgentId(inv.agentId)) throw new Error('an invite needs the inviter\'s agent ID');
-  const relays = [...new Set(inv.relays)].slice(0, INVITE_RELAYS_MAX);
-  if (relays.length === 0 || !relays.every(isRelayUrl)) throw new Error(`an invite needs 1 to ${INVITE_RELAYS_MAX} ws:// or wss:// relays of at most ${INVITE_RELAY_MAX} characters`);
-  return relays;
+  const canon = inv.relays.map((r) => canonicalInviteRelay(r));
+  if (canon.length === 0 || canon.some((r) => r === null)) throw new Error(`an invite needs 1 to ${INVITE_RELAYS_MAX} ws:// or wss:// relays of at most ${INVITE_RELAY_MAX} characters`);
+  return [...new Set(canon as string[])].slice(0, INVITE_RELAYS_MAX);
 }
 
 function v2Check(body: Uint8Array): Uint8Array {
@@ -259,17 +282,43 @@ const PAYLOAD_KEYS = new Set(['v', 'a', 'r', 's', 'e', 'n']);
  */
 export function parseInvite(text: string, opts: { unsafeAllowRelays?: readonly string[] } = {}): Invite {
   if (typeof text !== 'string') throw new Error('not an invite link');
+  // A whole pasted message may hold other "#"s ("Re issue #12: <link>", "Team #3 invites you … <link>") and "…"
+  // (security review of PR #129, L1): a Rendezvous link's "/i#" first, then each "#" in turn, and the first that reads
+  // wins; with none, `rdv-invite:` or the text itself. Only the candidate word is checked for an ellipsis.
+  const words = inviteCandidates(text);
+  let first: unknown;
+  for (const w of words) {
+    try {
+      const inv = parsePayload(w);
+      checkInviteRelays(inv, opts.unsafeAllowRelays);
+      return inv;
+    } catch (err) {
+      first ??= err;
+    }
+  }
+  throw first instanceof Error ? first : new Error('not an invite link');
+}
+
+/** The words after "/i#", then after every other "#", then after `rdv-invite:`, then the text alone. */
+function inviteCandidates(text: string): string[] {
+  const after = (i: number) => text.slice(i).split(/\s/u)[0];
+  const out: string[] = [];
+  for (const m of text.matchAll(/\/i#/g)) out.push(after(m.index! + 3));
+  for (const m of text.matchAll(/#/g)) if (text.slice(Math.max(0, m.index! - 2), m.index!) !== '/i') out.push(after(m.index! + 1));
+  const lower = text.toLowerCase();
+  const tag = lower.indexOf('rdv-invite:');
+  if (tag >= 0) out.push(text.slice(tag + 'rdv-invite:'.length).trim().split(/\s/u)[0]);
+  if (out.length === 0) out.push(text.trim().split(/\s/u)[0] ?? '');
+  return out;
+}
+
+/** One candidate word: an ellipsis or cut says so; sentence punctuation after it is dropped. */
+function parsePayload(word: string): Invite {
   // An ellipsis means someone (often an assistant) shortened the link and its middle is gone (2026-11-01).
-  if (/…|%E2%80%A6/iu.test(text)) throw new Error(INVITE_CUT_MESSAGE);
-  let s = text.trim();
-  const hash = s.indexOf('#');
-  if (hash >= 0) s = s.slice(hash + 1);
-  else if (s.toLowerCase().startsWith('rdv-invite:')) s = s.slice('rdv-invite:'.length);
-  // The link is one word: what follows it in a sentence is not part of it.
-  s = s.trim().split(/\s/u)[0];
+  // Checked before the trailing punctuation goes, so "…#abc..." is a cut link, not "…#abc" (review L2).
+  if (/…|%E2%80%A6|\.\.\./iu.test(word)) throw new Error(INVITE_CUT_MESSAGE);
   // A link pasted at the end of a sentence: the punctuation is not part of it (base64url has none of these).
-  s = s.replace(/[.,;:!?)\]}"'>’”]+$/u, '');
-  if (s.includes('...')) throw new Error(INVITE_CUT_MESSAGE);
+  const s = word.replace(/[.,;:!?)\]}"'>’”]+$/u, '');
   if (s.length === 0) throw new Error('not an invite link: the part after "#" is missing. Ask the person who sent it for the full link, exactly as it was sent');
   if (s.length > INVITE_PAYLOAD_MAX || !/^[A-Za-z0-9_-]+$/.test(s)) throw new Error('not an invite link: the part after "#" is not an invite');
   let bytes: Uint8Array;
@@ -281,9 +330,7 @@ export function parseInvite(text: string, opts: { unsafeAllowRelays?: readonly s
   }
   // Stray low bits in the last character: one invite has one link. A cut payload usually ends like this.
   if (base64urlnopad.encode(bytes) !== s) throw new Error(INVITE_CUT_MESSAGE);
-  const inv = bytes[0] === 0x7b ? parseV1(bytes) : bytes[0] === V2_VERSION ? parseV2(bytes) : versionProblem(bytes[0]);
-  checkInviteRelays(inv, opts.unsafeAllowRelays);
-  return inv;
+  return bytes[0] === 0x7b ? parseV1(bytes) : bytes[0] === V2_VERSION ? parseV2(bytes) : versionProblem(bytes[0]);
 }
 
 function versionProblem(b: number | undefined): never {
@@ -302,7 +349,7 @@ function parseV2(b: Uint8Array): Invite {
   if (!isAgentId(agentId)) throw new Error('not an invite link (bad agent ID)');
   const secret = base64urlnopad.encode(body.slice(33, 49));
   const minutes = body[49] * 0x1000000 + body[50] * 0x10000 + body[51] * 0x100 + body[52];
-  if (minutes === 0) throw new Error('not an invite link (bad expiry)');
+  if (minutes === 0 || minutes * 60 > EXPIRY_MAX_S) throw new Error('not an invite link (bad expiry)');
   const mask = body[53];
   if (mask >= 1 << INVITE_KNOWN_RELAYS.length) throw new Error('not an invite link (bad relays: a relay this version does not know)');
   const relays = INVITE_KNOWN_RELAYS.filter((_, i) => (mask & (1 << i)) !== 0);
@@ -320,7 +367,8 @@ function parseV2(b: Uint8Array): Invite {
     }
     if (type === V2_RELAY && name === undefined) {
       // A known relay goes in the bitmask, never as text: one invite has one link.
-      if (!isRelayUrl(value) || relays.includes(value) || INVITE_KNOWN_RELAYS.includes(value)) throw new Error('not an invite link (bad relays)');
+      // Only the canonical spelling (canonicalInviteRelay), so a table relay cannot hide as `wss://RELAY.nesher.co/`.
+      if (canonicalInviteRelay(value) !== value || relays.includes(value) || INVITE_KNOWN_RELAYS.includes(value)) throw new Error('not an invite link (bad relays)');
       relays.push(value);
     } else if (type === V2_NAME && name === undefined) {
       try {
@@ -356,7 +404,7 @@ function parseV1(bytes: Uint8Array): Invite {
     throw new Error('not an invite link (bad relays)');
   }
   if (!isInviteSecret(p.s)) throw new Error('not an invite link (bad secret)');
-  if (typeof p.e !== 'number' || !Number.isSafeInteger(p.e) || p.e <= 0 || p.e > 32503680000) throw new Error('not an invite link (bad expiry)');
+  if (typeof p.e !== 'number' || !Number.isSafeInteger(p.e) || p.e <= 0 || p.e > EXPIRY_MAX_S) throw new Error('not an invite link (bad expiry)');
   let name: string | undefined;
   if (p.n !== undefined) {
     if (typeof p.n !== 'string') throw new Error('not an invite link (bad name)');
