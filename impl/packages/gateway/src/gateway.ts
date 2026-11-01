@@ -225,6 +225,7 @@ export class Gateway {
       agents: () => this.agents.map((a) => a.name),
       binding: (name) => (name === this.rootName ? ROOT_BINDING : name),
       nameOf: (b) => this.boundAgent(b),
+      identityOf: (name) => this.byName.get(name)?.id,
     });
     this.root = new AgentRoot(opts.home.dir);
     this.rootName = this.root.rootAgentName();

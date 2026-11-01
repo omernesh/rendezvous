@@ -4941,11 +4941,19 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       place, move the originals, then rebind; any failure undoes every step
       (a rebind that started is reversed: tokens, grants and webhooks go back
       to the root agent) and one error says so. A migrate killed between the
-      file move and the rebind leaves the bindings on a root with no agent:
-      the next `agent migrate` sees it (no root agent, the newest
-      `.premigrate-*` reads as the identity of exactly one agent under
-      agents/, root-bound tokens, grants or a webhook remain) and finishes
-      the rebind. An expired previous secret
+      file move and the rebind leaves the bindings on a root with no agent.
+      Nothing finishes that on its own: a plain `agent migrate` refuses and
+      prints `rdv-gateway agent migrate --resume <name>`. `--resume <name>`
+      looks only at the newest `.premigrate-*` folder (by name, no fallback
+      to an older one): its identity must be agents/<name>'s exactly, held by
+      no other agent folder, and every root-bound token, grant and webhook
+      must belong to it: its recorded identity equal, or (an older binding
+      that records none) made no later than that folder's time. Anything else
+      is listed and refused, and nothing changes. Tokens, OAuth grants and
+      webhook settings now record the identity (`agentId`) of the agent they
+      are made for; a plain migrate also refuses to move a root binding that
+      records another identity (narrow review of PR #131: before, a newer
+      identity's root tokens could be moved to an older migrated agent). An expired previous secret
       (`….secret.prev` past `previousUntil`) is deleted at the next send.
       The example receiver bounds itself: 8 requests at once, 15 s per
       request in all, a Content-Length of ASCII digits only.

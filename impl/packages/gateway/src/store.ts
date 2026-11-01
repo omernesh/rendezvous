@@ -39,6 +39,8 @@ export interface ApiToken {
    * before multi-agent gateways, which means the root agent too.
    */
   agent?: string;
+  /** The identity (rdv1:…) of that agent when the token was made: a migrate or resume never moves it to another. */
+  agentId?: string;
 }
 
 export interface StoreData {
@@ -189,7 +191,7 @@ export class GatewayStore {
   // --- API tokens ----------------------------------------------------------------
 
   /** A new token for one agent: returned once, stored only as its hash. */
-  async createToken(name: string, scopes: string[], agent?: string): Promise<{ token: string; info: ApiToken }> {
+  async createToken(name: string, scopes: string[], agent?: string, agentId?: string): Promise<{ token: string; info: ApiToken }> {
     const n = name.trim();
     if (!/^[A-Za-z0-9][A-Za-z0-9 ._-]{0,47}$/.test(n)) throw new StoreError('a token name is 1 to 48 letters, digits, spaces, dots, dashes or underscores');
     const bad = scopes.filter((s) => !isScope(s));
@@ -203,6 +205,7 @@ export class GatewayStore {
       scopes: [...new Set(scopes as Scope[])],
       created: new Date().toISOString(),
       ...(agent !== undefined ? { agent } : {}),
+      ...(agentId !== undefined ? { agentId } : {}),
     };
     await this.update((d) => {
       if (Object.keys(d.tokens).length >= MAX_TOKENS) throw new StoreError(`at most ${MAX_TOKENS} tokens; revoke one first`);

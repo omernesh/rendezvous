@@ -45,6 +45,7 @@ const USAGE = `usage:
   rdv-gateway agent add <name> --restore <backup-file> [--stdin]   a new agent under <root>/agents/<name>/
   rdv-gateway agent remove <name> [--force]  moves it to agents/.removed/ (key kept); --force also revokes its tokens and OAuth grants
   rdv-gateway agent migrate [--name <name>]  move the root's own agent into agents/<name>/ (gateway stopped; originals kept)
+  rdv-gateway agent migrate --resume <name>  finish a migrate that stopped before its tokens, grants and webhook followed it
   serve --calendar <agent>=<file> (repeatable) when the gateway serves several agents
   rdv-gateway notify set <agent> --url https://… --secret-file <path> [--events a,b] [--allow-insecure-host <host>]…
                                              POST a signed event when it happens (default events: ${DEFAULT_NOTIFY_EVENTS.join(', ')})
@@ -85,6 +86,7 @@ const { values, positionals } = parseArgs({
     'secret-file': { type: 'string' },
     'allow-insecure-host': { type: 'string', multiple: true },
     retry: { type: 'boolean' },
+    resume: { type: 'string' },
     help: { type: 'boolean', short: 'h' },
   },
   strict: true,
@@ -173,7 +175,13 @@ async function main(): Promise<void> {
       if (agent === undefined) die('no agent here yet: add one first (rdv-gateway agent add <name> new)', 2);
     } else if (!agents.some((a) => a.name === agent)) die(`no agent "${agent}" here (rdv-gateway agent list)`, 2);
     // The root agent is stored as the root marker, never its name (which follows its profile, NOTES 104).
-    const { token, info } = await store.createToken(values.name!, values.scope!.split(',').map((s) => s.trim()).filter(Boolean), root.bindingOf(agent!));
+    let agentId: string | undefined;
+    try {
+      agentId = root.find(agent!)?.home.readAgentState().card.id;
+    } catch {
+      agentId = undefined;
+    }
+    const { token, info } = await store.createToken(values.name!, values.scope!.split(',').map((s) => s.trim()).filter(Boolean), root.bindingOf(agent!), agentId);
     process.stderr.write(`Token ${info.id} ("${info.name}", agent ${agent}, scopes ${info.scopes.join(', ')}). It is shown once; give it only to the assistant you mean:\n`);
     process.stdout.write(`${token}\n`);
     return;
@@ -342,24 +350,65 @@ async function agentCommand(root: AgentRoot, store: GatewayStore, sub: string | 
     return;
   }
   if (sub === 'migrate') {
-    // A migrate killed between moving the files and the rebind left tokens, grants and the webhook on the root agent,
-    // which is no longer there: finish that rebind (the files are already where they belong).
-    const stopped = root.interruptedMigrate();
-    if (stopped) {
-      const tokens = store.listTokens().filter((t) => isRootBinding(t.agent)).length;
-      const grants = oauth.list().grants.filter((g) => isRootBinding(g.agent)).length;
-      const hook = notify.config(ROOT_BINDING) !== undefined;
-      if (tokens || grants || hook) {
-        if (values.name !== undefined && values.name !== stopped.to) die(`an earlier migrate moved the root agent into agents/${stopped.to}/ and stopped before its tokens followed; run "rdv-gateway agent migrate" (without --name) to finish it`, 2);
-        await store.rebindAgent(stopped.from, stopped.to);
-        await oauth.rebindAgent(stopped.from, stopped.to);
-        await notify.rebind(ROOT_BINDING, stopped.to);
-        process.stderr.write(
-          `Finished an earlier migrate that stopped halfway: ${tokens} token(s), ${grants} OAuth grant(s)${hook ? ' and the webhook' : ''} now reach agent "${stopped.to}" (its files were already in ${root.homeFor(stopped.to).dir}; the originals are in ${stopped.kept}).\n`,
-        );
-        return;
-      }
+    // Everything still bound to the root agent: tokens, OAuth grants, its webhook. Each records the identity it was
+    // made for (older ones only their time), so a migrate or a resume moves only what belongs to that identity.
+    const rootBound = () => [
+      ...store.listTokens().filter((t) => isRootBinding(t.agent)).map((t) => ({ what: `token ${t.id}`, created: t.created, agentId: t.agentId })),
+      ...oauth.list().grants.filter((g) => isRootBinding(g.agent)).map((g) => ({ what: `OAuth grant ${g.id}`, created: g.created, agentId: g.agentId })),
+      ...(notify.config(ROOT_BINDING) ? [{ what: 'the webhook', created: notify.config(ROOT_BINDING)!.created, agentId: notify.config(ROOT_BINDING)!.agentId }] : []),
+    ];
+    const rebindAll = async (from: string, to: string) => {
+      await store.rebindAgent(from, to);
+      await oauth.rebindAgent(from, to);
+      await notify.rebind(ROOT_BINDING, to);
+    };
+    const pending = root.newestPremigrate();
+    // A migrate killed between moving the files and the rebind left the bindings on a root with no agent. Never
+    // finished on its own: the owner names the agent, and only the newest kept folder counts (narrow review of PR #131).
+    if (values.resume === undefined && pending && rootBound().length) {
+      const holders = pending.id ? root.holdersOf(pending.id) : [];
+      die(
+        `an earlier migrate stopped before its tokens, grants or webhook (${rootBound().length}) followed the agent it moved (originals kept in ${pending.dir}). ` +
+          `Check which agent that is (rdv-gateway agent list), then run: rdv-gateway agent migrate --resume ${holders.length === 1 ? holders[0] : '<name>'}`,
+      );
     }
+    if (values.resume !== undefined) {
+      const name = checkAgentName(values.resume);
+      if (!pending) die('nothing to resume: the root holds an agent, or no .premigrate-* folder is there');
+      if (!pending!.id) die(`the newest kept folder ${pending!.dir} does not read as an agent; nothing to resume`);
+      const target = root.find(name);
+      let targetId: string | undefined;
+      try {
+        targetId = target && !target.root ? target.home.readAgentState().card.id : undefined;
+      } catch {
+        targetId = undefined;
+      }
+      if (targetId !== pending!.id) die(`agents/${name} is not the agent the newest migrate moved (${fingerprint(pending!.id!)}); nothing changed`);
+      const holders = root.holdersOf(pending!.id!);
+      if (holders.length !== 1) die(`${holders.length} agents hold that identity (${holders.join(', ')}); remove the extra ones first; nothing changed`);
+      const bound = rootBound();
+      if (!bound.length) die('nothing to resume: no token, grant or webhook is bound to the root agent');
+      // What could not have belonged to that migrate: another identity's, or (recording no identity) made after it.
+      const foreign = bound.filter((x) => (x.agentId !== undefined ? x.agentId !== pending!.id : Date.parse(x.created) > pending!.at));
+      if (foreign.length) {
+        die(
+          `refused: ${foreign.map((x) => `${x.what} (${x.agentId !== undefined ? 'another identity' : `made ${x.created}, after that migrate`})`).join(', ')} cannot belong to the agent that migrate moved. ` +
+            'Revoke or clear them (rdv-gateway token revoke, oauth revoke, notify clear), then resume; nothing changed',
+        );
+      }
+      await rebindAll(pending!.from, name);
+      process.stderr.write(`Finished the migrate that stopped halfway: ${bound.map((x) => x.what).join(', ')} now reach agent "${name}" (originals kept in ${pending!.dir}).\n`);
+      return;
+    }
+    // A plain migrate moves only what belongs to the root agent's identity.
+    let rootId: string | undefined;
+    try {
+      rootId = root.home.readAgentState().card.id;
+    } catch {
+      rootId = undefined;
+    }
+    const others = rootBound().filter((x) => x.agentId !== undefined && rootId !== undefined && x.agentId !== rootId);
+    if (others.length) die(`refused: ${others.map((x) => x.what).join(', ')} were made for another identity than the root agent's; revoke or clear them first; nothing changed`);
     const to = values.name ?? root.rootAgentName();
     if (to !== undefined) {
       // Stale bindings to the new name would reach the root agent once it takes that name.
@@ -372,11 +421,7 @@ async function agentCommand(root: AgentRoot, store: GatewayStore, sub: string | 
     }
     const r = await root.migrate(
       values.name,
-      async (from, to) => {
-        await store.rebindAgent(from, to);
-        await oauth.rebindAgent(from, to);
-        await notify.rebind(ROOT_BINDING, to);
-      },
+      rebindAll,
       new Date(),
       // A failure after the rebind started puts every binding back on the root agent.
       async (from, to) => {
@@ -427,7 +472,7 @@ async function notifyCommand(root: AgentRoot, sub: string | undefined, name: str
     const secret = readSecretFile(values['secret-file']!);
     const ev = readEvents(a.home);
     const b = root.bindingOf(a.name);
-    const cfg = await notify.set(b, { url, events: events as NotifyEvent[], insecureHosts }, secret, ev.length ? ev[ev.length - 1].n : 0);
+    const cfg = await notify.set(b, { url, events: events as NotifyEvent[], insecureHosts }, secret, ev.length ? ev[ev.length - 1].n : 0, new Date(), identity(a) || undefined);
     process.stderr.write(
       `Agent ${a.name} now posts ${cfg.events.join(', ')} to ${receiverName(url)}, signed with the secret now kept in ${secretFileName(b)} in the gateway root` +
         `${cfg.previousUntil ? ` (the previous secret signs too until ${cfg.previousUntil})` : ''}.\n` +

@@ -80,6 +80,8 @@ export interface OAuthGrant {
   access: AccessToken[];
   /** The one agent the owner connected it to on the consent page (NOTES 104): its name, or the root marker. Absent before that: the root agent. */
   agent?: string;
+  /** The identity (rdv1:…) of that agent at consent: a migrate or resume never moves the grant to another. */
+  agentId?: string;
 }
 
 export interface OAuthData {
@@ -222,7 +224,7 @@ export class OAuthStore {
    * stored if it was not yet, and a grant with its first tokens is made. A client the owner revoked after that page
    * was issued gets nothing.
    */
-  async createGrant(client: ClientMeta, scopes: Scope[], resource: string, now: number, consentAt: number, id = newGrantId(), agent?: string): Promise<IssuedTokens> {
+  async createGrant(client: ClientMeta, scopes: Scope[], resource: string, now: number, consentAt: number, id = newGrantId(), agent?: string, agentId?: string): Promise<IssuedTokens> {
     const accessToken = `rdvo_${randomToken(32)}`;
     const refreshToken = `rdvr_${randomToken(32)}`;
     const grant: OAuthGrant = {
@@ -236,6 +238,7 @@ export class OAuthStore {
       retired: [],
       access: [{ hash: sha256(accessToken), expires: now + ACCESS_TTL_MS, scopes }],
       ...(agent !== undefined ? { agent } : {}),
+      ...(agentId !== undefined ? { agentId } : {}),
     };
     await this.update((d) => {
       if (Object.hasOwn(d.revoked, client.ref) && d.revoked[client.ref] >= consentAt) throw new OAuthStoreError('the owner removed that client since');
@@ -399,11 +402,11 @@ export class OAuthStore {
     await this.update((d) => void delete d.grants[id]);
   }
 
-  list(): { clients: Array<Omit<OAuthClient, 'clientId'>>; grants: Array<Pick<OAuthGrant, 'id' | 'clientId' | 'scopes' | 'created' | 'lastUsed' | 'agent'>> } {
+  list(): { clients: Array<Omit<OAuthClient, 'clientId'>>; grants: Array<Pick<OAuthGrant, 'id' | 'clientId' | 'scopes' | 'created' | 'lastUsed' | 'agent' | 'agentId'>> } {
     const d = this.read();
     return {
       clients: Object.values(d.clients).map(({ clientId: _c, ...rest }) => rest),
-      grants: Object.values(d.grants).map(({ id, clientId, scopes, created, lastUsed, agent }) => ({ id, clientId, scopes, created, lastUsed, ...(agent !== undefined ? { agent } : {}) })),
+      grants: Object.values(d.grants).map(({ id, clientId, scopes, created, lastUsed, agent, agentId }) => ({ id, clientId, scopes, created, lastUsed, ...(agent !== undefined ? { agent } : {}), ...(agentId !== undefined ? { agentId } : {}) })),
     };
   }
 
