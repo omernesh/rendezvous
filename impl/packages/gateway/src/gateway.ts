@@ -823,7 +823,7 @@ export class Gateway {
    * The owner's PIN, checked the one way the page checks it (unlock, and the settings page's token create and PIN
    * change): the unlock rate, the client's own backoff, the stored backoff, one check at a time. A miss is logged.
    */
-  private async ownerPin(who: string, pin: string, where: string): Promise<{ ok: true } | { ok: false; status: number; text: string }> {
+  private async ownerPin(who: string, pin: string, where: string): Promise<{ ok: true; pinSetAt: string } | { ok: false; status: number; text: string }> {
     this.unlockLimiter.check(this.opts.clientIpHeader ? who : 'unlock', 'PIN attempts');
     const perClient = this.opts.clientIpHeader !== undefined;
     const wait = perClient ? this.clientWait(who) : 0;
@@ -841,7 +841,7 @@ export class Gateway {
       return { ok: false, status: 403, text };
     }
     if (perClient) this.clientFailures.delete(who);
-    return { ok: true };
+    return { ok: true, pinSetAt: check.pinSetAt };
   }
 
   /** The client's address: the trusted tunnel header when configured (its last entry), else the socket's. */
@@ -909,7 +909,7 @@ export class Gateway {
       if (!check.ok) return this.unlock(res, next, { text: check.text, bad: true }, check.status);
       while (this.owners.size >= MAX_OWNER_SESSIONS) this.owners.delete(this.owners.keys().next().value!);
       const id = randomToken(32);
-      this.owners.set(id, { created: this.now(), lastSeen: this.now(), pinSetAt: this.store.pinSetAt() });
+      this.owners.set(id, { created: this.now(), lastSeen: this.now(), pinSetAt: check.pinSetAt });
       return redirect(res, next, { 'Set-Cookie': [this.cookie(this.cookieName(), id, OWNER_MAX_MS / 1000), this.cookie('rdvg_pre', '', 0)] });
     }
     if (!sid) {
@@ -979,7 +979,7 @@ export class Gateway {
       const check = await this.ownerPin(who, form.get('current') ?? '', 'gateway settings page (PIN change)');
       if (!check.ok) return bad(check.status, `${check.text} Nothing changed.`);
       try {
-        await this.store.setPin(next);
+        await this.store.setPin(next, check.pinSetAt);
       } catch (err) {
         if (err instanceof StoreError) return bad(400, `${err.message}; nothing changed.`);
         throw err;
@@ -998,6 +998,8 @@ export class Gateway {
       // A token is lasting access: making one asks for the PIN again, with the same backoff as the unlock.
       const check = await this.ownerPin(who, form.get('pin') ?? '', 'gateway settings page (token create)');
       if (!check.ok) return bad(check.status, `${check.text} No token was made.`);
+      // The PIN checked must still be the PIN in place: one changed while this check ran authorizes nothing.
+      if (this.store.pinSetAt() !== check.pinSetAt) return bad(409, 'The PIN changed meanwhile; no token was made. Unlock again.');
       if (!rt.id) return bad(409, `Agent ${rt.name}'s identity cannot be read; no token was made.`);
       let made;
       try {

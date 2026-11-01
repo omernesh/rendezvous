@@ -84,7 +84,7 @@ describe('gateway settings page: the owner only', () => {
       expect(r.text).not.toContain('all-scopes');
     }
     expect(g.gw.store.listTokens().map((t) => t.name)).toEqual(['all-scopes']);
-    expect(await g.gw.store.checkPin(PIN, Date.now())).toEqual({ ok: true });
+    expect(await g.gw.store.checkPin(PIN, Date.now())).toMatchObject({ ok: true });
     expect(g.log.some((l) => /Authorization header was refused on the gateway settings page/.test(l))).toBe(true);
 
     // The bearer alone (no cookie) gets the same refusal, not an unlock form.
@@ -281,7 +281,7 @@ describe('gateway settings page: connected apps, webhooks, PIN', () => {
     expect(wrong.status).toBe(403);
     expect(wrong.text).toContain('Nothing changed');
     expect((JSON.parse(readFileSync(join(g.home.dir, 'gateway.json'), 'utf8')) as { lockout: { failures: number } }).lockout.failures).toBe(1);
-    expect(await g.gw.store.checkPin(PIN, Date.now())).toEqual({ ok: true });
+    expect(await g.gw.store.checkPin(PIN, Date.now())).toMatchObject({ ok: true });
 
     const done = await b.post('/approve/admin/pin', { current: PIN, next: NEW, again: NEW, csrf });
     expect(done.status).toBe(200);
