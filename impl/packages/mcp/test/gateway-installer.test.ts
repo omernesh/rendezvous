@@ -214,7 +214,7 @@ describe.skipIf(noSh !== null)('install-gateway.sh: helpers', () => {
     expect(yes('others_can_write', fake('drwx------'))).toBe('no');
     // Group write: refused for a shared group, fine for a user private group (group named like you, your gid).
     expect(yes('others_can_write', `${fake('drwxrwx---', '$(id -u)', '4242')}`)).toBe('yes');
-    expect(yes('others_can_write', `${fake('drwxrwx---')}; id() { case "$1" in -gn | -un) echo omer ;; -g) command id -g ;; -u) command id -u ;; esac; }`)).toBe('no');
+    expect(yes('others_can_write', `${fake('drwxrwx---')}; id() { case "$1" in -gn | -un) echo omer ;; -g) command id -g ;; -u) command id -u ;; esac; }; getent() { echo "omer:x:$(command id -g):"; }`)).toBe('no');
     // DSM: synoacltool -get lists entries for a folder with an ACL, and says "Linux mode" for one without.
     const tool = `syno_acl_tool() { echo synofake; }; synofake() { printf '%s\\n' 'ACL version: 1' '	 [0] group:administrators:allow:rwxpdDaARWc--:fd-- (level:0)'; }`;
     expect(yes('has_acl', `${fake('drwx------')}; ${tool}`)).toBe('yes');
@@ -234,11 +234,13 @@ describe.skipIf(noSh !== null)('install-gateway.sh: helpers', () => {
         expect(r.out, d).toMatch(/can be written by other users, who could swap the install/);
         expect(r.out, d).not.toContain('reached');
       }
-      // With the sticky bit others cannot rename your entries: allowed.
+      // With the sticky bit others cannot rename your entries: a folder of yours there is fine to build under...
       const sticky = join(tmp, 'sticky');
-      mkdirSync(sticky);
+      mkdirSync(join(sticky, 'mine'), { recursive: true });
       spawnSync('chmod', ['1777', sticky]);
-      expect(lib(`check_install_dir "${sticky}/rendezvous-gateway" 2>&1; echo reached`).out).toMatch(/reached$/);
+      expect(lib(`check_install_dir "${sticky}/mine/rendezvous-gateway" 2>&1; echo reached`).out).toMatch(/reached$/);
+      // ...but a folder still to be made right under it could be made first by someone else.
+      expect(lib(`check_install_dir "${sticky}/new/rendezvous-gateway" 2>&1; echo reached`).out).toMatch(/shared sticky folder/);
       // A private folder: made 700 and passes.
       const ok = join(tmp, 'mine');
       mkdirSync(ok, { mode: 0o755 });
@@ -305,6 +307,56 @@ describe.skipIf(noSh !== null)('install-gateway.sh: helpers', () => {
     // The NAS hint names a folder outside the shares.
     expect(lib('is_dsm() { return 0; }; nas_hint').out).toContain('--dir /volume1/rendezvous-gateway');
     expect(lib('is_dsm() { return 1; }; nas_hint').out).toBe('');
+  });
+
+  it('fails closed on ACLs, with fake synoacltool and getfacl on PATH', () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'rdv-gw-acl-'));
+    try {
+      const bin = join(tmp, 'bin');
+      mkdirSync(bin);
+      const t = process.platform === 'win32' ? spawnSync('cygpath', ['-u', tmp], { encoding: 'utf8' }).stdout.trim() : tmp;
+      const tool = (name: string, body: string) => writeFileSync(join(bin, name), `#!/bin/sh\n${body}\n`, { mode: 0o755 });
+      const verdict = () =>
+        lib(`PATH="${t}/bin:$PATH"; mode_of() { echo drwxr-xr-x+; }; if acl_lets_others_write /x; then echo refuse; else echo allow; fi`).out;
+      const syno = (entries: string[]) => tool('synoacltool', `printf '%s\\n' 'ACL version: 1' '---------------------' ${entries.map((e) => `'\t ${e.replace(/'/g, `'\\''`)}'`).join(' ')}`);
+      // A name with a space and a backslash (an AD group): still read, and it may write.
+      syno(['[0] group:NAS\\Domain Users:allow:rwxpdDaARWc--:fd-- (level:0)']);
+      expect(verdict()).toBe('refuse');
+      // C (change permissions) and o (take ownership) count as write.
+      syno(['[0] user:bob:allow:r-x-----R-cC-:fd-- (level:0)']);
+      expect(verdict()).toBe('refuse');
+      syno(['[0] everyone::allow:rwxpdDaARWc--:fd-- (level:1)']);
+      expect(verdict()).toBe('refuse');
+      // Read-only for others, write only for root: fine.
+      syno(['[0] everyone::allow:r-x---a-R-c--:fd-- (level:0)', '[1] user:root:allow:rwxpdDaARWc--:fd-- (level:0)']);
+      expect(verdict()).toBe('allow');
+      // A perm format we do not know, no entry at all, or the tool failing: refused.
+      syno(['[0] user:bob:allow:rwx:fd-- (level:0)']);
+      expect(verdict()).toBe('refuse');
+      tool('synoacltool', `echo 'ACL version: 1'`);
+      expect(verdict()).toBe('refuse');
+      tool('synoacltool', 'exit 1');
+      expect(verdict()).toBe('refuse');
+      rmSync(join(bin, 'synoacltool'));
+      // getfacl failing (FreeBSD without -c/-p), or showing only the base entries behind a + (NFSv4): refused.
+      const gf = (body: string) => lib(`PATH="${t}/bin:$PATH"; syno_acl_tool() { return 1; }; have_getfacl() { return 0; }; getfacl() { ${body}; }; mode_of() { echo drwxr-xr-x+; }; if acl_lets_others_write /x; then echo refuse; else echo allow; fi`).out;
+      expect(gf(`echo 'getfacl: illegal option -- c' >&2; return 1`)).toBe('refuse');
+      expect(gf(`printf '%s\\n' 'user::rwx' 'group::r-x' 'other::r-x'`)).toBe('refuse');
+      expect(gf(`printf '%s\\n' 'user::rwx' 'user:nobody:r-x' 'group::r-x' 'mask::r-x' 'other::r-x'`)).toBe('allow');
+      expect(gf(`printf '%s\\n' 'user::rwx' 'user:nobody:rwx' 'group::r-x' 'mask::rwx' 'other::r-x'`)).toBe('refuse');
+      expect(gf(`printf '%s\\n' 'owner@:rwxp--aARWcCos:-------:allow'`)).toBe('refuse');
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it('a user private group counts only with no other members (getent)', () => {
+    const yes = (getent: string) =>
+      lib(`ls() { echo "drwxrwx--- 1 $(command id -u) $(command id -g) 1 x"; }; id() { case "$1" in -gn | -un) echo omer ;; *) command id "$@" ;; esac; }; getent() { ${getent}; }; if others_can_write /x; then echo yes; else echo no; fi`).out;
+    expect(yes(`echo "omer:x:$(command id -g):"`)).toBe('no');
+    expect(yes(`echo "omer:x:$(command id -g):omer"`)).toBe('no');
+    expect(yes(`echo "omer:x:$(command id -g):omer,eve"`)).toBe('yes');
+    expect(yes('return 2')).toBe('yes'); // no getent: not assumed private
   });
 
   it('the Node.js build runs npm with --prefix from the install folder, so the recheck passes', () => {

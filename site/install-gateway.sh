@@ -758,9 +758,16 @@ check_install_dir() {
   # rules out a Synology share such as /volume1/docker (its ACL lets user:anon write); use /volume1/rendezvous-gateway.
   up=$(dirname "$1")
   case $up in /tmp | /var/tmp | /dev/shm | /private/tmp) die "$up is a temporary folder; put the gateway in a folder that is yours" ;; esac
+  # A folder still to be made under a sticky folder anyone can write (/tmp-like) could be made first by someone else.
+  below_missing=0
+  [ -e "$1" ] || [ -L "$1" ] || below_missing=1
   while :; do
     if [ -e "$up" ] || [ -L "$up" ]; then
       [ ! -L "$up" ] || die "$up is a symbolic link; give the real path"
+      if [ "$below_missing" = 1 ] && sticky "$up" && others_can_write "$up"; then
+        die "$up is a shared sticky folder (like /tmp): someone else could create the folders below it first; put the gateway in a folder that is yours"
+      fi
+      below_missing=0
       o=$(owner_of "$up")
       [ "$o" = "$(id -u)" ] || [ "$o" = 0 ] || die "$up belongs to uid $o, so it could swap the install; put the gateway under folders that are yours or root's"
       if others_can_write "$up" && ! sticky "$up"; then
@@ -769,38 +776,59 @@ check_install_dir() {
       if acl_lets_others_write "$up"; then
         die "$up has an ACL that lets other users write or delete in it, so they could swap the install; put the gateway under folders without one$(nas_hint)"
       fi
+    else
+      below_missing=1
     fi
     [ "$up" != / ] || break
     up=$(dirname "$up")
   done
 }
 # On a Synology NAS, where to put it instead of a share.
-nas_hint() { if is_dsm; then printf ' (on a Synology NAS: --dir /volume1/rendezvous-gateway, outside the shares)'; fi; }
+nas_hint() { if is_dsm; then printf ' (on a Synology NAS: --dir /volume1/rendezvous-gateway, outside the shares; only root can create it, so run the installer with sudo and --allow-root. Your DSM home is in the homes share, which other accounts can write, so it is refused too)'; fi; }
 is_dsm() { [ -f /etc/synoinfo.conf ] || [ -x /usr/syno/bin/synoacltool ]; }
 have_getfacl() { command -v getfacl >/dev/null 2>&1; }
 # The sticky bit (t or T in the last mode character): others may add entries but not rename or delete yours.
 sticky() { case $(mode_of "$1") in ?????????[tT]*) return 0 ;; esac; return 1; }
-# Does an ACL let a principal other than root or you write, append or delete? DSM's synoacltool, or getfacl; an
-# ACL neither can read counts as yes.
+# Does an ACL let a principal other than root or you write, append, delete, change the ACL or take ownership?
+# DSM's synoacltool, or getfacl. It fails closed: a tool that fails, output with no entry we can read, a format we do
+# not recognise, or a + in ls with no tool that shows the entries, all count as yes.
 acl_lets_others_write() {
   has_acl "$1" || return 1
   me=$(id -un 2>/dev/null)
   if t=$(syno_acl_tool); then
-    # Lines like: [2] user:anon:allow:rwxpdDaARWc--:fd-- (level:0)
-    "$t" -get "$1" 2>/dev/null | awk -v me="$me" '
-      /^[[:space:]]*\[[0-9]+\]/ {
-        split($2, f, ":"); kind = f[1]; name = f[2]; allow = f[3]; perm = f[4]
-        if (allow != "allow") next
+    out=$("$t" -get "$1" 2>/dev/null) || return 0
+    # Lines like: [2] group:NAS\Domain Users:allow:rwxpdDaARWc--:fd-- (level:0). Names may hold spaces and colons
+    # come last-but-two, so allow, perm and inheritance are read from the end.
+    printf '%s\n' "$out" | awk -v me="$me" '
+      /^[ \t]*\[[0-9]+\]/ {
+        line = $0
+        sub(/^[ \t]*\[[0-9]+\][ \t]*/, "", line)
+        sub(/[ \t]*\(level:[0-9]+\)[ \t]*$/, "", line)
+        n = split(line, f, ":")
+        if (n < 5) { bad = 1; next }
+        allow = f[n - 2]; perm = f[n - 1]; kind = f[1]
+        name = f[2]; for (i = 3; i <= n - 3; i++) name = name ":" f[i]
+        parsed++
+        if (perm !~ /^[-rwxpdDaARWcCo]+$/ || length(perm) != 13) { bad = 1; next }
+        if (allow == "deny") next
+        if (allow != "allow") { bad = 1; next }
         if ((kind == "user" && (name == "root" || name == me)) || kind == "owner") next
-        if (perm ~ /[wpdD]/) bad = 1
+        if (perm ~ /[wpdDCo]/) bad = 1
       }
-      END { exit bad ? 0 : 1 }'
+      END { if (!parsed) exit 0; exit bad ? 0 : 1 }'
     return
   fi
   if have_getfacl; then
-    getfacl -cp "$1" 2>/dev/null | awk -F: -v me="$me" '
-      ($1 == "user" || $1 == "group") && $2 != "" && !($1 == "user" && ($2 == "root" || $2 == me)) && $3 ~ /w/ { bad = 1 }
-      END { exit bad ? 0 : 1 }'
+    out=$(getfacl -cp "$1" 2>/dev/null) || return 0
+    # A POSIX ACL behind a + always has a named entry or a mask; with only user::, group:: and other:: shown the
+    # real ACL is something getfacl cannot show (NFSv4, a FreeBSD getfacl without -c/-p).
+    printf '%s\n' "$out" | awk -F: -v me="$me" '
+      /^[ \t]*(#|$)/ { next }
+      $0 !~ /^(default:)?(user|group|mask|other):[^:]*:[-rwx][-rwx][-rwx]([ \t]|#|$)/ { bad = 1; next }
+      { k = $1; nm = $2; p = $3; if (k == "default") { k = $2; nm = $3; p = $4 } }
+      k == "mask" || ((k == "user" || k == "group") && nm != "") { full = 1 }
+      (k == "user" || k == "group") && nm != "" && !(k == "user" && (nm == "root" || nm == me)) && p ~ /w/ { bad = 1 }
+      END { if (!full) exit 0; exit bad ? 0 : 1 }'
     return
   fi
   return 0
@@ -814,12 +842,19 @@ mode_of() { ls -lnd "$1" 2>/dev/null | awk '{print $1}'; }
 group_of() { ls -lnd "$1" 2>/dev/null | awk '{print $4}'; }
 # Writable by anyone but its owner? Group write is fine only when the group is the owner's private group (a user
 # private group home: group named like the user, with the user's own gid).
+# Your private group has no other members (getent group lists none); without getent it is not assumed.
+upg_alone() {
+  g=$(getent group "$(id -g)" 2>/dev/null) || return 1
+  [ -n "$g" ] || return 1
+  members=${g##*:}
+  [ -z "$members" ] || [ "$members" = "$(id -un 2>/dev/null)" ]
+}
 others_can_write() {
   m=$(mode_of "$1")
   case $m in ????????w*) return 0 ;; esac
   case $m in
     ?????w*)
-      [ "$(group_of "$1")" = "$(id -g)" ] && [ "$(id -gn 2>/dev/null)" = "$(id -un 2>/dev/null)" ] && [ "$(owner_of "$1")" = "$(id -u)" ] && return 1
+      [ "$(group_of "$1")" = "$(id -g)" ] && [ "$(id -gn 2>/dev/null)" = "$(id -un 2>/dev/null)" ] && [ "$(owner_of "$1")" = "$(id -u)" ] && upg_alone && return 1
       return 0 ;;
   esac
   return 1
@@ -848,7 +883,7 @@ check_private() {
 make_install_dir() {
   [ "$DRY_RUN" != 1 ] || return 0
   if [ ! -d "$DIR" ]; then
-    (umask 077 && mkdir -p "$DIR") || die "cannot create $DIR"
+    (umask 077 && mkdir -p "$DIR") || die "cannot create $DIR (a folder in a root-owned place such as /volume1 needs sudo and --allow-root)"
   fi
   chmod 700 "$DIR" || die "cannot chmod $DIR"
   if t=$(syno_acl_tool) && has_acl "$DIR"; then
@@ -891,6 +926,8 @@ choose_dir_and_settings() {
     # On a Synology NAS, beside the shares, not in one: /volume1 is root's 755 there, while a share such as
     # /volume1/docker carries an ACL that lets other accounts (even anon) write, which could swap the install.
     def="$HOME/rendezvous-gateway"
+    # Only root can create a folder in /volume1 (and a DSM home lives in the homes share, which is refused), so on
+    # DSM this is the default either way; without sudo, creating it fails with a message that says so.
     if is_dsm && [ -d /volume1 ]; then def=/volume1/rendezvous-gateway; fi
     ask --dir 'Install folder' "$def"
     DIR=$ANSWER
@@ -902,6 +939,8 @@ choose_dir_and_settings() {
   valid_path "$DIR" || die "the folder resolves to a path with special characters: $DIR"
   check_install_dir "$DIR"
   make_install_dir
+  # Again, now that every folder on the path exists (the first walk could only judge the ones that did).
+  [ "$DRY_RUN" = 1 ] || check_install_dir "$DIR"
   D=$DIR
   enter_install_dir
   load_conf
