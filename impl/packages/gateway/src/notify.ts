@@ -670,12 +670,12 @@ export class NotifyStore {
   }
 
   /** Webhook settings made before identities were recorded get the identity their agent has now. */
-  async stampIdentities(identityOf: (binding: string) => string | undefined): Promise<number> {
-    if (!Object.entries(this.read().agents).some(([b, c]) => c.agentId === undefined && identityOf(b))) return 0;
+  async stampIdentities(identityOf: (binding: string, created: string) => string | undefined): Promise<number> {
+    if (!Object.entries(this.read().agents).some(([b, c]) => c.agentId === undefined && identityOf(b, c.created))) return 0;
     return this.update((d) => {
       let n = 0;
       for (const [b, c] of Object.entries(d.agents)) {
-        const id = c.agentId === undefined ? identityOf(b) : undefined;
+        const id = c.agentId === undefined ? identityOf(b, c.created) : undefined;
         if (id) {
           c.agentId = id;
           n += 1;
@@ -786,6 +786,8 @@ export interface NotifierOptions {
   baseDelayMs?: number;
   /** Replaces the system resolver (tests). */
   resolve?: Resolver;
+  /** The identity settings that record none belong to (the gateway's shared rule; 'unknown' sends nothing). */
+  legacyIdentity?: (binding: string, created: string) => string | undefined;
 }
 
 type Outcome = { id: string; how: 'drop' | 'retry' | 'dead'; why?: string; next?: number };
@@ -1027,7 +1029,9 @@ export class Notifier {
    * replaced by another agent) send nothing: said once per binding.
    */
   private sameIdentity(cfg: NotifyConfig, a: NotifyAgent): boolean {
-    if (cfg.agentId === undefined || cfg.agentId === a.id) return true;
+    // Settings that record none (not stamped: unknowable) are judged by the gateway's rule when it gives one.
+    const id = cfg.agentId ?? this.opts.legacyIdentity?.(a.binding, cfg.created);
+    if (id === undefined || id === a.id) return true;
     if (!this.warnedIdentity.has(a.binding)) {
       this.warnedIdentity.add(a.binding);
       this.opts.log(`notify: agent ${a.name}'s webhook was set for another agent identity; nothing is sent until you set it again (rdv-gateway notify set ${a.name} …) or clear it`);

@@ -391,13 +391,18 @@ async function agentCommand(root: AgentRoot, store: GatewayStore, sub: string | 
       const bound = rootBound();
       if (!bound.length) die('nothing to resume: no token, grant or webhook is bound to the root agent');
       // What could not have belonged to that migrate: another identity's, or (recording no identity) made after it.
-      const earlier = root.premigrates().filter((p) => p.at < pending!.at && p.id !== pending!.id);
-      const foreign = bound.filter((x) =>
-        x.agentId !== undefined ? x.agentId !== pending!.id : Date.parse(x.created) > pending!.at || earlier.some((p) => Date.parse(x.created) <= p.at),
-      );
+      // The root holds no agent now, so a legacy binding with no kept folder after it belongs to nobody known.
+      const why = (x: { agentId?: string; created: string }): string | undefined => {
+        if (x.agentId !== undefined) return x.agentId === pending!.id ? undefined : 'another identity';
+        const r = root.legacyRootIdentity(x.created, undefined);
+        if (r.unknown) return `made ${x.created}; the kept folder after it cannot be read`;
+        if (r.id === undefined) return `made ${x.created}, after that migrate`;
+        return r.id === pending!.id ? undefined : `made ${x.created}, before an earlier migrate of another agent`;
+      };
+      const foreign = bound.filter((x) => why(x) !== undefined);
       if (foreign.length) {
         die(
-          `refused: ${foreign.map((x) => `${x.what} (${x.agentId !== undefined ? 'another identity' : Date.parse(x.created) > pending!.at ? `made ${x.created}, after that migrate` : `made ${x.created}, before an earlier migrate of another agent`})`).join(', ')} cannot belong to the agent that migrate moved. ` +
+          `refused: ${foreign.map((x) => `${x.what} (${why(x)})`).join(', ')} cannot belong to the agent that migrate moved. ` +
             'Revoke or clear them (rdv-gateway token revoke, oauth revoke, notify clear), then resume; nothing changed',
         );
       }
@@ -420,10 +425,11 @@ async function agentCommand(root: AgentRoot, store: GatewayStore, sub: string | 
       rootId = undefined;
     }
     // A legacy binding (no identity) made no later than an earlier migrate of another identity is that agent's, not this one's.
-    const before = root.premigrates().filter((p) => p.id !== undefined && p.id !== rootId);
-    const others = rootBound().filter((x) =>
-      x.agentId !== undefined ? rootId !== undefined && x.agentId !== rootId : before.some((p) => Date.parse(x.created) <= p.at),
-    );
+    const others = rootBound().filter((x) => {
+      if (x.agentId !== undefined) return rootId !== undefined && x.agentId !== rootId;
+      const r = root.legacyRootIdentity(x.created, rootId);
+      return r.unknown === true || r.id !== rootId;
+    });
     if (others.length) die(`refused: ${others.map((x) => x.what).join(', ')} were made for another identity than the root agent's; revoke or clear them first; nothing changed`);
     const to = values.name ?? root.rootAgentName();
     if (to !== undefined) {

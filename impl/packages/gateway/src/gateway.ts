@@ -226,6 +226,10 @@ export class Gateway {
       binding: (name) => (name === this.rootName ? ROOT_BINDING : name),
       nameOf: (b) => this.boundAgent(b),
       identityOf: (name) => this.byName.get(name)?.id,
+      identityOk: (g) => {
+        const agent = this.boundAgent(g.agent);
+        return agent !== undefined && !this.identityDiffers(g.agent, g.agentId, g.created, agent);
+      },
     });
     this.root = new AgentRoot(opts.home.dir);
     this.rootName = this.root.rootAgentName();
@@ -345,9 +349,13 @@ export class Gateway {
     // Bindings from before identities were recorded get the identity they reach now, so the time-based fallback in
     // `agent migrate --resume` no longer applies to them (NOTES 106).
     const stamped =
-      (await this.store.stampIdentities((b) => this.identityOfBinding(b))) +
-      (await this.oauth.store.stampIdentities((b) => this.identityOfBinding(b))) +
-      (await this.notifyStore.stampIdentities((b) => this.identityOfBinding(b)).catch(() => 0));
+      (await this.store.stampIdentities((b, c) => this.stampFor(b, c))) +
+      (await this.oauth.store.stampIdentities((b, c) => this.stampFor(b, c))) +
+      (await this.notifyStore.stampIdentities((b, c) => this.stampFor(b, c)).catch((err) => {
+        // A webhook file that does not read is refused just below; say what the stamp met.
+        this.log(`could not record identities on the webhook settings: ${(err as Error).message}`);
+        return 0;
+      }));
     if (stamped) this.log(`recorded the agent identity on ${stamped} older token(s), grant(s) or webhook setting(s)`);
     this.warnOrphans();
     this.warnIdentities();
@@ -394,6 +402,11 @@ export class Gateway {
       agents: this.agents.map((a) => ({ name: a.name, home: a.home, binding: a.root ? ROOT_BINDING : a.name, id: a.id })),
       log: this.log,
       now: this.opts.notify?.now ?? this.now,
+      legacyIdentity: (b, created) => {
+        const id = this.bindingIdentity(b, undefined, created);
+        // Unknowable: matches no agent, so nothing is sent.
+        return id === 'unknown' ? 'unknown' : id;
+      },
     });
     this.notifier.start();
     return this.base;
@@ -422,22 +435,22 @@ export class Gateway {
   authenticate(req: IncomingMessage, endpoint: 'mcp' | 'sse' = 'mcp', route?: string): Principal {
     const h = String(req.headers.authorization ?? '');
     const m = /^Bearer ([A-Za-z0-9_-]{16,200})$/.exec(h);
-    let who: (Omit<Principal, 'agent'> & { agent?: string; agentId?: string }) | undefined;
+    let who: (Omit<Principal, 'agent'> & { agent?: string; agentId?: string; created: string }) | undefined;
     if (m?.[1].startsWith('rdvo_')) {
       who = this.oauth.verifyAccess(m[1]);
     } else if (m) {
       const t = this.store.findToken(m[1]);
-      if (t) who = { id: t.id, name: t.name, scopes: t.scopes, agent: t.agent, ...(t.agentId !== undefined ? { agentId: t.agentId } : {}) };
+      if (t) who = { id: t.id, name: t.name, scopes: t.scopes, agent: t.agent, created: t.created, ...(t.agentId !== undefined ? { agentId: t.agentId } : {}) };
     }
     // One made before NOTES 104 names no agent: it reaches the root agent, and nothing once the root holds none.
     const agent = who ? this.boundAgent(who.agent) : undefined;
     if (who && agent !== undefined) {
       // Made for another identity than the agent served under that name now (its home was replaced or restored as
       // another agent): it reaches nothing. A backup of the same agent keeps its identity, so its tokens still work.
-      if (this.identityDiffers(who.agentId, agent)) {
+      if (this.identityDiffers(who.agent, who.agentId, who.created, agent)) {
         throw new HttpError(403, 'this token was made for another agent identity than the one served here now; your user makes a new one (rdv-gateway token create) or connects again', 'wrong_identity');
       }
-      const { agentId: _id, ...rest } = who;
+      const { agentId: _id, created: _c, ...rest } = who;
       return { ...rest, agent };
     }
     // RFC 9728 §5.1: where an OAuth client finds out how to get a token.
@@ -472,18 +485,18 @@ export class Gateway {
   /** Tokens, grants and webhooks made for another identity than the agent served under their name now: said at start. */
   private warnIdentities(): void {
     const items = [
-      ...this.store.listTokens().map((t) => ({ what: t.id, binding: t.agent, agentId: t.agentId })),
-      ...this.oauth.store.list().grants.map((g) => ({ what: g.id, binding: g.agent, agentId: g.agentId })),
+      ...this.store.listTokens().map((t) => ({ what: t.id, binding: t.agent, agentId: t.agentId, created: t.created })),
+      ...this.oauth.store.list().grants.map((g) => ({ what: g.id, binding: g.agent, agentId: g.agentId, created: g.created })),
     ];
-    let hooks: Array<{ what: string; binding: string; agentId?: string }> = [];
+    let hooks: Array<{ what: string; binding: string; agentId?: string; created: string }> = [];
     try {
-      hooks = Object.entries(this.notifyStore.read().agents).map(([b, c]) => ({ what: `the webhook of ${b === ROOT_BINDING ? 'the root agent' : b}`, binding: b, agentId: c.agentId }));
+      hooks = Object.entries(this.notifyStore.read().agents).map(([b, c]) => ({ what: `the webhook of ${b === ROOT_BINDING ? 'the root agent' : b}`, binding: b, agentId: c.agentId, created: c.created }));
     } catch {
       hooks = [];
     }
     for (const x of [...items, ...hooks]) {
       const agent = this.boundAgent(x.binding);
-      if (agent !== undefined && this.identityDiffers(x.agentId, agent)) {
+      if (agent !== undefined && this.identityDiffers(x.binding, x.agentId, x.created, agent)) {
         this.log(`WARNING: ${x.what} was made for another agent identity than agent ${agent} has now: it reaches nothing. Revoke it (or set the webhook again).`);
       }
     }
@@ -495,20 +508,36 @@ export class Gateway {
     const p = t ?? this.oauth.store.grant(id);
     if (!p) return undefined;
     const agent = this.boundAgent(p.agent);
-    return agent !== undefined && !this.identityDiffers(p.agentId, agent) ? agent : undefined;
+    return agent !== undefined && !this.identityDiffers(p.agent, p.agentId, p.created, agent) ? agent : undefined;
   }
 
-  /** A recorded identity that is not the served agent's (none recorded: legacy, judged by the binding alone). */
-  private identityDiffers(recorded: string | undefined, agent: string): boolean {
-    if (recorded === undefined) return false;
-    const rt = this.byName.get(agent);
-    return rt?.id !== undefined && rt.id !== recorded;
-  }
-
-  /** The identity a stored binding reaches now: the served agent of that name, if it has one. */
-  private identityOfBinding(binding: string | undefined): string | undefined {
+  /**
+   * The identity a stored binding belongs to: the one it records; for a legacy root binding (none recorded) the shared
+   * rule (AgentRoot.legacyRootIdentity); for a legacy binding to a named agent, that agent's now. 'unknown' when a kept
+   * folder that decides it cannot be read.
+   */
+  private bindingIdentity(binding: string | undefined, recorded: string | undefined, created: string): string | 'unknown' | undefined {
+    if (recorded !== undefined) return recorded;
     const name = this.boundAgent(binding);
-    return name === undefined ? undefined : this.byName.get(name)?.id;
+    if (name === undefined) return undefined;
+    const current = this.byName.get(name)?.id;
+    if (!isRootBinding(binding)) return current;
+    const r = this.root.legacyRootIdentity(created, current);
+    return r.unknown ? 'unknown' : r.id;
+  }
+
+  /** Whether a binding belongs to another identity than the agent served under it now (or cannot be told). */
+  private identityDiffers(binding: string | undefined, recorded: string | undefined, created: string, agent: string): boolean {
+    const id = this.bindingIdentity(binding, recorded, created);
+    if (id === 'unknown') return true;
+    const rt = this.byName.get(agent);
+    return id !== undefined && rt?.id !== undefined && rt.id !== id;
+  }
+
+  /** What stamping records on a legacy binding: its identity by the rule, nothing when unknowable. */
+  private stampFor(binding: string | undefined, created: string): string | undefined {
+    const id = this.bindingIdentity(binding, undefined, created);
+    return id === 'unknown' ? undefined : id;
   }
 
   /**

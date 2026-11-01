@@ -4960,15 +4960,28 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       agent made in an emptied root) is refused (403 `wrong_identity`) and
       drops out of sessions and approvals; a webhook set for another
       identity queues and sends nothing (said once); the gateway lists such
-      bindings at start. A backup of the same agent keeps its identity, so
-      its bindings keep working. A legacy binding (no identity) counts as
-      another agent's when it was made no later than an earlier
-      `.premigrate-*` of a different identity (for `--resume`, and for a
-      plain migrate against every kept folder whose identity is not the
-      root's). On the first start after this change the gateway stamps every
-      legacy token, grant and webhook setting with the identity it reaches
-      then (the served agent of its binding; nothing for a binding that
-      reaches no agent), so the legacy path ends for existing installs.
+      bindings at start, and an OAuth refresh of such a grant answers
+      `invalid_grant` (the client authorises again). A backup of the same
+      agent keeps its identity, so its bindings keep working.
+      One rule decides a legacy root binding (it records no identity), in
+      one helper (`AgentRoot.legacyRootIdentity`) used when serving, when
+      stamping at start, and by `agent migrate` and `--resume`: it belongs to
+      the identity of the earliest `.premigrate-*` folder at or after its
+      creation time (the agent that was in the root then and was migrated
+      away); with no such folder, to the root's current identity (for
+      `--resume`, where the root holds no agent: to nobody, so refused); a
+      deciding folder that cannot be read makes it unknowable: refused, never
+      stamped, never moved. A legacy binding to a named agent belongs to that
+      agent's current identity. On the first start after this change the
+      gateway stamps every legacy token, grant and webhook setting with the
+      identity the rule gives (nothing when unknowable), so the legacy path
+      ends for existing installs; a binding stamped with another identity
+      than the agent served under it gets 403 and the start warning (review
+      of 182291b: stamping with the current identity would have laundered an
+      older agent's token). Not detectable: a root restored as another
+      identity while the gateway was down, with no `.premigrate-*` folder
+      left behind; its legacy bindings are stamped with the new identity at
+      the next start, as they reached it before identities were recorded.
       `--resume` takes that agent's listener lock like migrate, and `token
       create` refuses when the agent's identity cannot be read. An expired previous secret
       (`….secret.prev` past `previousUntil`) is deleted at the next send.

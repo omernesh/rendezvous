@@ -244,6 +244,22 @@ export class AgentRoot {
     });
   }
 
+  /**
+   * THE rule for a root binding that records no identity (made before identities were recorded), made at `created`:
+   * it belongs to the identity of the earliest .premigrate-* folder at or after that time, the agent that was in the
+   * root then and was migrated away; with no such folder, to the root's current identity (`current`). A folder that
+   * cannot be read as an agent makes it unknowable (`unknown`: refused, never stamped). Used when serving, when
+   * stamping identities at start, and by `agent migrate` and `--resume` (NOTES 106).
+   */
+  legacyRootIdentity(created: string, current: string | undefined): { id?: string; unknown?: true } {
+    const t = Date.parse(created);
+    if (!Number.isFinite(t)) return { unknown: true };
+    const p = this.premigrates().find((x) => x.at >= t);
+    if (!p) return current === undefined ? {} : { id: current };
+    if (p.id === undefined) return { unknown: true };
+    return { id: p.id };
+  }
+
   /** The agents under agents/ that hold this identity. */
   holdersOf(id: string): string[] {
     return this.list()

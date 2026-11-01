@@ -1006,6 +1006,48 @@ describe('the identity a binding was made for (check of 797f7b8)', () => {
     }
   });
 
+  it("R1: A's legacy token, A migrated away, B made in the root: refused before and after a start, stamped with A's identity", { timeout: 120_000 }, async () => {
+    for (const startFirst of [false, true]) {
+      const root = tmp();
+      await initHome(new Home(root), { profile: 'omer', emails: ['omer@example.com'] });
+      const A = idOf(root);
+      const { token } = await new GatewayStore(new Home(root)).createToken('legacy-a', ['read'], ROOT_BINDING);
+      await new AgentRoot(root).migrate(undefined, async () => {}, new Date(Date.now() + 1000));
+      await initHome(new Home(root), { profile: 'dana', emails: ['dana@example.com'] });
+      const B = idOf(root);
+      if (startFirst) {
+        const log: string[] = [];
+        const r = await serve(root, token, log);
+        expect(r.status).toBe(403);
+        expect(r.text).toMatch(/made for another agent identity/);
+        // Stamped with the identity the rule gives (A's, from the kept folder after it), never B's.
+        expect(new GatewayStore(new Home(root)).listTokens()[0].agentId).toBe(A);
+        expect(log.some((l) => /tok_[\w-]+ was made for another agent identity/.test(l))).toBe(true);
+      }
+      const m = await bin(['agent', 'migrate', '--home', root, '--name', 'dana2']);
+      expect(m.code, `start first: ${startFirst}`).not.toBe(0);
+      expect(m.stderr).toMatch(/were made for another identity than the root agent's/);
+      const t = new GatewayStore(new Home(root)).listTokens()[0];
+      expect(t.agent).toBe(ROOT_BINDING);
+      expect(t.agentId).not.toBe(B);
+    }
+  });
+
+  it('R1 with the kept folder unreadable: the legacy token is refused, never stamped, never moved', { timeout: 90_000 }, async () => {
+    const root = tmp();
+    await initHome(new Home(root), { profile: 'omer', emails: ['omer@example.com'] });
+    const { token } = await new GatewayStore(new Home(root)).createToken('legacy-a', ['read'], ROOT_BINDING);
+    await new AgentRoot(root).migrate(undefined, async () => {}, new Date(Date.now() + 1000));
+    const kept = new AgentRoot(root).premigrates()[0].dir;
+    for (const p of [new Home(kept).agentPath, new Home(kept).agentBackupPath]) rmSync(p, { force: true });
+    await initHome(new Home(root), { profile: 'dana', emails: ['dana@example.com'] });
+    expect((await serve(root, token)).status).toBe(403);
+    expect(new GatewayStore(new Home(root)).listTokens()[0].agentId).toBeUndefined();
+    const m = await bin(['agent', 'migrate', '--home', root]);
+    expect(m.code).not.toBe(0);
+    expect(new GatewayStore(new Home(root)).listTokens()[0].agent).toBe(ROOT_BINDING);
+  });
+
   it('S5: --resume is refused while the gateway serves that agent', { timeout: 90_000 }, async () => {
     const root = tmp();
     await initHome(new Home(root), { profile: 'omer', emails: ['omer@example.com'] });
