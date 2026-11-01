@@ -1350,6 +1350,39 @@ describe('the rdv-gateway-setup skill', () => {
     'rdv contact --home h $X',
     'rdv --home h contact "$S" 0f1e',
   ])('the guard refuses an opaque subcommand: %s', (c) => expect(checkCommand(c)).toBeTruthy());
+  it('treats the installer folder like a home: no wildcard, tree walk or container command reaches into it', () => {
+    const root = mkdtempSync(join(tmpdir(), 'rdv-gwroot-'));
+    const gw = join(root, 'rendezvous-gateway');
+    const helperOnly = join(root, 'other-gw');
+    try {
+      mkdirSync(join(gw, 'data'), { recursive: true });
+      writeFileSync(join(gw, 'install.conf'), 'RUNTIME=docker\n');
+      writeFileSync(join(gw, 'cloudflared.token'), 'x');
+      writeFileSync(join(gw, 'docker-compose.yml'), 'services: {}\n');
+      mkdirSync(helperOnly);
+      writeFileSync(join(helperOnly, 'gw'), '#!/bin/sh\n# Control the Rendezvous gateway in this folder (written by install-gateway.sh).\n');
+      const refusedIn = (cwd: string, c: string) => expect(checkCommand(c, { cwd }), `${c} (in ${cwd})`).toBeTruthy();
+      const allowedIn = (cwd: string, c: string) => expect(checkCommand(c, { cwd }), `${c} (in ${cwd})`).toBeUndefined();
+      for (const c of ['cat c*', 'cat *', 'for f in *; do cat "$f"; done', 'tar czf /tmp/x.tgz .', 'zip -r /tmp/x.zip .', 'cp -r . /tmp/x', 'grep -r tok .', 'find . -exec cat {} +']) refusedIn(gw, c);
+      for (const c of ['docker compose exec tunnel cat /etc/cloudflared/x', 'docker compose cp tunnel:/etc/cloudflared /tmp', 'docker compose run --rm gateway sh', 'docker compose config', 'docker compose down -v']) refusedIn(gw, c);
+      for (const c of ['docker compose ps', 'docker compose logs tunnel', 'docker compose up -d', 'docker compose restart gateway', './gw status', 'cat docker-compose.yml']) allowedIn(gw, c);
+      refusedIn(root, `docker compose --project-directory ${gw} exec tunnel sh`);
+      allowedIn(root, `docker compose --project-directory ${gw} ps`);
+      // From above: a walk would descend into it.
+      for (const c of [`grep -r tok ${root}`, 'grep -rn tok .', 'tar cf /tmp/x.tar .', 'find . -name "*.token"', 'rsync -a . /mnt/backup']) refusedIn(root, c);
+      refusedIn(helperOnly, 'cat *');
+      // The Grep and Glob tools likewise.
+      expect(checkPath(root, { kind: 'search' })).toBeTruthy();
+      expect(checkPath(gw, { kind: 'search' })).toBeTruthy();
+      expect(checkPath(join(root, '*', '*.token'), { kind: 'glob' })).toBeTruthy();
+      expect(checkPath(join(root, '**', '*'), { kind: 'glob' })).toBeTruthy();
+      expect(checkPath(join(gw, 'docker-compose.yml'))).toBeUndefined();
+      expect(checkToolInput('Grep', { pattern: 'TOKEN' }, root)).toBeTruthy();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('the Read, Edit and Grep tools cannot reach the tunnel token either', () => {
     for (const p of ['/home/omer/rendezvous-gateway/cloudflared.token', '/srv/gw/cloudflared.env']) expect(checkPath(p), p).toBeTruthy();
     // Searching or globbing the install folder that holds it.

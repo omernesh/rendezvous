@@ -120,6 +120,12 @@ describe.skipIf(noSh !== null)('install-gateway.sh: helpers', () => {
     ['valid_ref', 'main..evil', false],
     ['valid_ref', '0123abc', true],
     ['valid_path', '/srv/gw:/etc', false],
+    ['valid_path', '/srv//gw', false],
+    ['valid_path', '/srv/./gw', false],
+    ['valid_path', '/home/omer/../../etc', false],
+    ['valid_path', '/srv/gw/.', false],
+    ['valid_path', '/srv/gw/..', false],
+    ['valid_path', '/srv/gw.d/x..y', true],
     ['valid_path', '/srv/a,b', false],
     ['system_dir', '/', true],
     ['system_dir', '/tmp', true],
@@ -194,6 +200,49 @@ describe.skipIf(noSh !== null)('install-gateway.sh: helpers', () => {
     }
   });
 
+  it('reads the whole ls mode: a trailing + is an ACL, group write is fine only for your own private group', () => {
+    const fake = (mode: string, uid = '$(id -u)', gid = '$(id -g)') => `ls() { echo "${mode} 1 ${uid} ${gid} 74 Oct 26 20:52 x"; }`;
+    const yes = (fn: string, pre: string) => lib(`${pre}; if ${fn} /x; then echo yes; else echo no; fi`).out;
+    // The Synology case, seen on a real NAS: the share has an ACL, a folder made over SSH has none.
+    expect(yes('has_acl', `${fake('drwxrwxrwx+', '0', '0')}; syno_acl_tool() { return 1; }`)).toBe('yes');
+    expect(yes('has_acl', `${fake('drwxr-xr-x', '0', '0')}; syno_acl_tool() { return 1; }`)).toBe('no');
+    expect(yes('others_can_write', fake('drwxrwxrwx+', '0', '0'))).toBe('yes');
+    expect(yes('others_can_write', fake('drwx---rwx'))).toBe('yes');
+    expect(yes('others_can_write', fake('drwx------'))).toBe('no');
+    // Group write: refused for a shared group, fine for a user private group (group named like you, your gid).
+    expect(yes('others_can_write', `${fake('drwxrwx---', '$(id -u)', '4242')}`)).toBe('yes');
+    expect(yes('others_can_write', `${fake('drwxrwx---')}; id() { case "$1" in -gn | -un) echo omer ;; -g) command id -g ;; -u) command id -u ;; esac; }`)).toBe('no');
+    // DSM: synoacltool -get lists entries for a folder with an ACL, and says "Linux mode" for one without.
+    const tool = `syno_acl_tool() { echo synofake; }; synofake() { printf '%s\\n' 'ACL version: 1' '	 [0] group:administrators:allow:rwxpdDaARWc--:fd-- (level:0)'; }`;
+    expect(yes('has_acl', `${fake('drwx------')}; ${tool}`)).toBe('yes');
+    expect(yes('has_acl', `${fake('drwx------')}; syno_acl_tool() { echo synofake; }; synofake() { echo "It's Linux mode"; return 255; }`)).toBe('no');
+  });
+
+  it('a shared parent (the NAS docker share) is allowed with a warning; the install folder itself must be private', () => {
+    if (process.platform === 'win32') return; // chmod and ownership need a POSIX filesystem
+    const tmp = mkdtempSync(join(tmpdir(), 'rdv-gw-share-'));
+    try {
+      const share = join(tmp, 'docker');
+      mkdirSync(share, { mode: 0o777 });
+      spawnSync('chmod', ['777', share]);
+      const r = lib(`DRY_RUN=0 YES=1 DIR="${share}/rendezvous-gateway"; check_install_dir "$DIR" 2>&1; make_install_dir 2>&1; ls -ld "$DIR" | cut -c1-10; echo ok`);
+      expect(r.out).toMatch(/is shared \(others can write it, or it has an ACL\)/);
+      expect(r.out).toMatch(/drwx------\nok$/);
+      // An install folder others can write is refused, shared parent or not.
+      mkdirSync(join(share, 'open'));
+      spawnSync('chmod', ['777', join(share, 'open')]);
+      expect(lib(`check_install_dir "${share}/open" 2>&1; echo reached`).out).toMatch(/can be written by other users/);
+      // Swapped for a symlink before a write: the recheck stops it.
+      const s = lib(`DRY_RUN=0 DIR="${share}/rendezvous-gateway"; mv "$DIR" "$DIR.real"; ln -s "$DIR.real" "$DIR"; printf x | write_file "$DIR/x" 600 2>&1; echo reached`);
+      expect(s.out).toMatch(/symbolic link/);
+      expect(s.out).not.toContain('reached');
+      // physical_path resolves symlinks in the existing part.
+      expect(lib(`physical_path "${share}/rendezvous-gateway/sub"`).out).toBe(`${share}/rendezvous-gateway.real/sub`);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it('refuses to build or run code another user owns (./gw update would run it)', () => {
     // A stand-in `id` makes us someone who does not own the script file.
     const r = lib(`id() { if [ "$1" = -u ]; then echo 4242; else command id "$@"; fi; }; check_owned "${SH_PATH}"; echo reached`);
@@ -239,6 +288,16 @@ describe.concurrent.skipIf(noSh !== null)('install-gateway.sh: --dry-run', () =>
     expect(dotenv).toMatch(/NODE_IMAGE=node:[^\n]+@sha256:/);
     expect(dotenv).not.toMatch(/TOKEN/);
     expect(r.out).toMatch(/Would ask for the tunnel token here \(never shown\)/);
+    // A new token means a new tunnel container: cloudflared reads the file once.
+    expect(r.out).toContain('$ compose up -d --force-recreate tunnel');
+    // The helper it writes is valid sh, and ./gw update checks the folder and the installer copy first.
+    const helper = /--- would write \S+\/gw \(mode 755\)\n([\s\S]*?)--- end of/.exec(r.out)?.[1] ?? '';
+    expect(helper).toContain('update) mine "$DIR" && mine "$DIR/install-gateway.sh" ||');
+    expect(spawnSync('sh', ['-n'], { input: helper, encoding: 'utf8' }).status).toBe(0);
+    const mine = (mode: string) => spawnSync('sh', ['-c', `${/^mine\(\) \{[\s\S]*?^\}$/m.exec(helper)?.[0]}\nls() { echo "${mode} 1 $(id -u) 0 1 x"; }\nmine /x && echo yes || echo no`], { encoding: 'utf8' }).stdout.trim();
+    expect(mine('drwx------')).toBe('yes');
+    expect(mine('drwxrwxrwx')).toBe('no');
+    expect(mine('drwx------+')).toBe('no');
     // The owner-only steps read the terminal themselves; the installer never handles the PIN.
     expect(r.out).toMatch(/\$ compose run --rm --no-deps gateway node packages\/gateway\/dist\/src\/bin\.js pin set --home \/data/);
     expect(r.out).toContain('init --email omer@example.com --relay wss://relay.nesher.co');
@@ -288,7 +347,7 @@ describe.concurrent.skipIf(noSh !== null)('install-gateway.sh: --dry-run', () =>
     expect(root.out).toContain('RDV_UID=1001');
     expect(root.out).not.toContain('safe.directory');
     expect(root.out).toContain(`$ cp ${DIR}/repo/site/install-gateway.sh ${DIR}/install-gateway.sh`);
-    expect(root.out).toContain('update) exec sh "$DIR/install-gateway.sh" --dir "$DIR" --update --allow-root --uid 1001 "$@"');
+    expect(root.out).toContain('exec sh "$DIR/install-gateway.sh" --dir "$DIR" --update --allow-root --uid 1001 "$@"');
     // Without --allow-root it refuses.
     expect(src).toMatch(/do not run this as root/);
   });

@@ -46,6 +46,20 @@ bump (bypasses are tracked in #51); the PIN check is the boundary.
 `pin unlock` only clears the wrong-PIN wait, and `token create` gives no
 approval rights.
 
+The one-command installer (`site/install-gateway.sh`) keeps a Cloudflare
+tunnel token in `cloudflared.token` (mode 600, handed to `cloudflared
+--token-file`, never in an environment variable). The guard treats the
+install folder (`install.conf`, `cloudflared.token` or its `./gw` helper)
+like a home: wildcards in it, tree walks that descend into it (recursive
+grep, find, tar, zip, cp -r, rsync, the Grep and Glob tools), and docker
+commands there other than `ps`, `logs`, `up` and `restart` are refused, as
+are the installer and `./gw update`. This is best effort too: anyone who can
+run Docker is root-equivalent on that host and can read the token or the
+agent's key, and a shell has spellings the guard does not follow (#51). The
+real boundary for an assistant with a shell on the gateway host is tracked
+in #126; the safe setup is an assistant that reaches the gateway only over
+its https address.
+
 Out of scope: malware on the owner's machine (it can read the home anyway), a
 compromised tunnel provider terminating TLS (it sees the PIN as typed: use a
 tunnel you trust, passkeys come later), and the cloud vendor reading the
