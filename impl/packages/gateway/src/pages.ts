@@ -1,7 +1,10 @@
 // Server-rendered HTML for the owner: the unlock form, the list of what
-// waits, one approval. No JavaScript at all; one same-origin stylesheet.
+// waits, one approval. No JavaScript, with one exception: the page that shows
+// a held invite link carries one small static inline snippet (COPY_SCRIPT) for
+// its Copy buttons, allowed by a CSP hash of exactly that text. One same-origin stylesheet.
 // Every dynamic value goes through escapeHtml, and text another party wrote
 // is only ever shown inside the escaped form message, labeled untrusted.
+import { createHash } from 'node:crypto';
 import { TIERS } from '@rendezvous/cli/lib';
 import type { PendingApproval } from './approvals.js';
 import type { PendingConsent } from './oauth.js';
@@ -11,6 +14,20 @@ import { BRAND_HEADER } from './brand.js';
 
 /** The page CSP: nothing but our stylesheet and same-origin forms, and never framed. */
 export const PAGE_CSP = "default-src 'none'; style-src 'self'; img-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'";
+
+/**
+ * The one inline script any page carries (NOTES 111): Copy buttons on the held values of the done page. It does no
+ * network and reads only the text of the box just before its button, by DOM position. The buttons are `hidden`
+ * until it runs.
+ */
+export const COPY_SCRIPT =
+  "for(const b of document.querySelectorAll('button.copy')){const box=b.previousElementSibling,st=b.nextElementSibling;b.hidden=false;" +
+  "b.addEventListener('click',async()=>{try{await navigator.clipboard.writeText(box.textContent);st.textContent='Copied';b.textContent='Copied';" +
+  "setTimeout(()=>{b.textContent='Copy';st.textContent=''},2000)}catch(x){const r=document.createRange();r.selectNodeContents(box);" +
+  "const g=getSelection();g.removeAllRanges();g.addRange(r);st.textContent='Press Ctrl+C'}})}";
+
+/** The CSP of the done page that shows held values: PAGE_CSP plus a script allowed only by the hash of COPY_SCRIPT. */
+export const COPY_PAGE_CSP = PAGE_CSP.replace("img-src 'self';", `img-src 'self'; script-src 'sha256-${createHash('sha256').update(COPY_SCRIPT, 'utf8').digest('base64')}';`);
 
 export const CSS = `:root{color-scheme:light dark;--bg:#fafaf9;--fg:#1c1917;--muted:#57534e;--card:#fff;--line:#e7e5e4;--accent:#0f766e;--warn:#b45309;--bad:#b91c1c}
 @media (prefers-color-scheme:dark){:root{--bg:#1c1917;--fg:#f5f5f4;--muted:#a8a29e;--card:#292524;--line:#44403c;--accent:#2dd4bf;--warn:#fbbf24;--bad:#f87171}}
@@ -25,7 +42,8 @@ button.primary{background:var(--accent);border-color:var(--accent);color:#fff}.f
 a{color:var(--accent)}ul.list{padding-left:18px}footer{margin-top:40px;font-size:.85rem;color:var(--muted)}
 .agent{display:inline-block;padding:2px 8px;border:1px solid var(--line);border-radius:999px;font-size:.9rem;overflow-wrap:anywhere}p.for{margin:8px 0}
 h3{font-size:1rem;margin:20px 0 6px}form.inline{display:inline;margin:0}code{font:13px/1.4 ui-monospace,Consolas,monospace;overflow-wrap:anywhere}details{margin:10px 0}summary{cursor:pointer;color:var(--accent)}
-table.admin{width:100%;border-collapse:collapse;font-size:.92rem;display:block;overflow-x:auto}table.admin th,table.admin td{text-align:left;vertical-align:top;padding:6px 8px;border-top:1px solid var(--line);overflow-wrap:anywhere}table.admin th{font-weight:600;color:var(--muted)}`;
+table.admin{width:100%;border-collapse:collapse;font-size:.92rem;display:block;overflow-x:auto}table.admin th,table.admin td{text-align:left;vertical-align:top;padding:6px 8px;border-top:1px solid var(--line);overflow-wrap:anywhere}table.admin th{font-weight:600;color:var(--muted)}
+.held{margin-bottom:12px}.held pre.msg{user-select:all;margin-bottom:6px}.held button[hidden]{display:none}.held .copystatus{margin-left:8px;font-size:.9rem;color:var(--muted)}button.copy:focus-visible{outline:2px solid var(--accent);outline-offset:2px}`;
 
 export interface Flash {
   text: string;
@@ -40,14 +58,14 @@ export interface AgentLabel {
 
 export const agentTag = (a: AgentLabel) => `<span class="agent"><b>${e(a.name)}</b> <span class="muted">${e(a.fingerprint)}</span></span>`;
 
-export function layout(title: string, body: string, csrf?: string): string {
+export function layout(title: string, body: string, csrf?: string, copyScript = false): string {
   const lock = csrf
     ? `<form method="post" action="/approve/lock" class="row"><input type="hidden" name="csrf" value="${e(csrf)}"><button type="submit">Lock (sign out)</button><span class="muted">Ends this session on this device. You'll need your PIN again next time.</span></form>`
     : '';
   return (
     `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer">` +
     `<title>${e(title)}</title><link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/assets/gateway.css"></head><body>${BRAND_HEADER}<main>${body}${lock}` +
-    '<footer>Rendezvous gateway. Only you approve here; your assistants can only ask. Open this page from your own bookmark or from the link your assistant gave you, and check the address: a look-alike page could ask for your PIN.</footer></main></body></html>'
+    '<footer>Rendezvous gateway. Only you approve here; your assistants can only ask. Open this page from your own bookmark or from the link your assistant gave you, and check the address: a look-alike page could ask for your PIN.</footer></main>' + (copyScript ? `<script>${COPY_SCRIPT}</script>` : '') + '</body></html>'
   );
 }
 
@@ -156,11 +174,11 @@ const HELD_LABELS: Record<string, string> = { url: 'Invite link', share_text: 'M
 export function donePage(opts: { title: string; text: string; csrf: string; bad?: boolean; held?: Record<string, string>; agent?: AgentLabel }): string {
   const held = opts.held
     ? `<section><p>Shown only now. Send it yourself, only to the person you mean; whoever opens it first becomes your contact.</p>${Object.entries(opts.held)
-        .map(([k, v]) => `<h2>${e(HELD_LABELS[k] ?? k)}</h2><pre class="msg">${e(v)}</pre>`)
+        .map(([k, v]) => `<h2>${e(HELD_LABELS[k] ?? k)}</h2><div class="held"><pre class="msg">${e(v)}</pre><button type="button" class="copy" hidden>Copy</button><span class="copystatus" role="status" aria-live="polite"></span></div>`)
         .join('')}</section>`
     : '';
   const who = opts.agent ? `<p class="for">Agent ${agentTag(opts.agent)}</p>` : '';
-  return layout(opts.title, `<h1>${e(opts.title)}</h1>${who}${flash({ text: opts.text, bad: opts.bad })}${held}<p><a href="/approve">Everything that waits for you</a></p>`, opts.csrf);
+  return layout(opts.title, `<h1>${e(opts.title)}</h1>${who}${flash({ text: opts.text, bad: opts.bad })}${held}<p><a href="/approve">Everything that waits for you</a></p>`, opts.csrf, Boolean(opts.held));
 }
 
 export function errorPage(title: string, text: string): string {

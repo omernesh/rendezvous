@@ -3021,7 +3021,7 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       id) and dropped when the token is revoked.
     - **Page.** PIN (scrypt, backoff as above, persisted), in-memory sessions (15 min idle, 1 h max), HMAC CSRF
       tokens, Origin and Sec-Fetch-Site checks, a Host allow-list against
-      DNS rebinding, no JavaScript, strict CSP. Threat model:
+      DNS rebinding, no JavaScript (one exception, NOTES 111), strict CSP. Threat model:
       `packages/gateway/THREAT-MODEL.md`.
 
 ## Relay health (issue #87)
@@ -5202,7 +5202,8 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       behind https), the `owner:<sid>` HMAC CSRF token checked by
       `checkPost` (plus Origin and `Sec-Fetch-Site`) on every post, the Host
       allow-list, the page rate limit, `PAGE_CSP` and the `no-store` every
-      response carries. No JavaScript; every value is escaped. The unlock's
+      response carries. No JavaScript (the settings page has none; NOTES 111
+      is the one exception, on the approval result page); every value is escaped. The unlock's
       `next` accepts `/approve/admin`.
     - **Bearers never reach it.** A request to `/approve/admin*` carrying an
       `Authorization` header is refused with 403 before the session is
@@ -5247,6 +5248,31 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       made or revoked, grant or client removed, webhook off, PIN changed;
       never a value, a PIN or a secret.
     - **Covered by.** `gateway/test/admin.test.ts`.
+
+111. **The one script on the gateway's pages: Copy buttons on the held
+    invite link and message** (no spec change; gateway only). The page shown
+    after the owner approves an `rdv_invite` create ("Invite link", "Message
+    ready to send") used to need a manual select; the approval pages were
+    deliberately no-JavaScript, so this is the narrowest exception.
+    - **One static inline script**, `COPY_SCRIPT` in `pages.ts`, only on a
+      done page that has held values. Its CSP is `PAGE_CSP` plus
+      `script-src 'sha256-<hash of the exact text>'` (`COPY_PAGE_CSP`,
+      computed at module load): no `unsafe-inline`, no nonce, no file. Every
+      other page (unlock, list, approval, consent, settings, the done pages
+      without held values) keeps `PAGE_CSP`, with no `script-src` and so
+      `default-src 'none'`. The settings page's token-shown-once box is
+      untouched.
+    - **What it does.** No network. On click it writes the `textContent` of
+      the box just before the button (found by DOM position; no data
+      attribute duplicates the value) with `navigator.clipboard.writeText`,
+      says "Copied" for two seconds, and on failure selects the box and says
+      "Press Ctrl+C". No `innerHTML`. The value is escaped as before and the
+      markup has no whitespace around it, so the copy is exactly the shown
+      text.
+    - **Without script** the button stays `hidden` (the script unhides it)
+      and `user-select: all` makes one click select the whole value.
+    - **Covered by.** `gateway/test/invite.test.ts`: markup, hash against
+      the served text, the exact CSP, and `PAGE_CSP` on the other pages.
 
 ## Not implemented yet
 

@@ -4,6 +4,11 @@ What changed in Rendezvous, newest first. Versions are those of the Claude Code 
 
 The format follows Keep a Changelog. One line per change a user can see; PR numbers link to GitHub.
 
+## Unreleased
+
+### Added
+- The gateway's approval result page has Copy buttons on the invite link and the message ready to send. The page stays free of JavaScript except one small fixed script for these buttons, which a content-security hash allows only on that page.
+
 ## 0.13.0 - 2026-11-01 {#v0-13-0}
 
 ### Added
