@@ -58,8 +58,8 @@ function fakeOs(dir: string) {
   const env: ServiceEnv = { platform, node: process.execPath, bin: join(dir, 'bin.js'), userHome: join(dir, 'user'), uid: 501, systemRoot: 'C:\\Windows', user: 'HOST\\omer' };
   const calls: string[][] = [];
   const tasks = new Map<string, string>();
-  const os = { env, calls, tasks, home: undefined as Home | undefined, held: undefined as (() => void) | undefined, took: false, noTake: false };
-  const registered = () => serviceDefinition(os.home!.dir, 'omer', env).registered;
+  const os = { env, calls, tasks, regOverride: undefined as string | undefined, home: undefined as Home | undefined, held: undefined as (() => void) | undefined, took: false, noTake: false };
+  const registered = () => os.regOverride ?? serviceDefinition(os.home!.dir, 'omer', env).registered;
   const take = () => {
     if (os.noTake) return;
     const l = tryLongLock(os.home!.listenerLockPath, ROLE);
@@ -257,6 +257,39 @@ describe('rdv_service', () => {
     const again = await ok(side, 'rdv_service', { action: 'install' });
     expect(String(h.asked[1].message)).toContain('The installed service was modified outside Rendezvous');
     expect(again).toMatchObject({ installed: true, changed: true, service: { state: 'current' } });
+  });
+
+  it('a registration-only change is warned once across quick and full checks; restored, then changed again, it warns again (issue #118)', { timeout: 60_000 }, async () => {
+    const { s: side, os } = await omer({ elicit: human(yes).handler });
+    await ok(side, 'rdv_service', { action: 'install' });
+    let clock = 1_000_000_000_000;
+    const timed = await makeSide('omer-clock', side.home.dir, { service: { env: os.env, run: os.run, waitMs: 500, now: () => clock } });
+    sides.push(timed);
+    const check = (timed.server as unknown as { checkService(force: boolean): Promise<void> }).checkService.bind(timed.server);
+    const warnings = () => timed.humanLog.filter((l) => l.includes('WARNING: the background listener')).length;
+    // 30 s ticks: every tick is a quick pass, every 5th minute also a full check.
+    const run = async (ms: number) => {
+      for (let t = 0; t < ms; t += 30_000) {
+        clock += 30_000;
+        await check(false);
+      }
+    };
+    const orig = os.tasks.get(NAME);
+    const tamper = (on: boolean) => {
+      if (os.env.platform === 'win32') os.tasks.set(NAME, on ? orig!.replace('</Arguments>', ' --auto-grant friend</Arguments>') : orig!);
+      else os.regOverride = on ? 'something-else' : undefined;
+    };
+    await run(5 * 60_000);
+    expect(warnings()).toBe(0);
+    tamper(true); // the files are intact; only what the OS runs changed
+    await run(16 * 60_000); // many quick passes and three full checks
+    expect(warnings()).toBe(1);
+    tamper(false);
+    await run(6 * 60_000); // the next full check finds it clean and forgets it
+    expect(warnings()).toBe(1);
+    tamper(true);
+    await run(6 * 60_000);
+    expect(warnings()).toBe(2);
   });
 
   it('a profile that cannot name a service is refused at rdv_init, and an existing one at install', { timeout: 60_000 }, async () => {

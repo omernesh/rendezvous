@@ -571,12 +571,14 @@ export interface RdvMcpOptions {
    * never register a real service; `waitMs` is how long install waits for
    * the service to take listener.lock (default 10 s).
    */
-  service?: { env?: ServiceEnv; run?: ServiceRunner; waitMs?: number; checkMs?: number };
+  service?: { env?: ServiceEnv; run?: ServiceRunner; waitMs?: number; checkMs?: number; now?: () => number };
 }
 
 /** How often rdv-mcp checks the background listener's files (no OS command), and what the OS runs (re-review of PR #117). */
 const SERVICE_QUICK_MS = 30_000;
 const SERVICE_FULL_MS = 5 * 60_000;
+/** A tamper reason the quick pass can produce itself (files and record), as opposed to the OS registration. */
+const quickReason = (r: string): boolean => / (is gone|was changed)$/.test(r) || r.startsWith('there is no record') || r.startsWith('the record of');
 
 /** How long this server leaves listener.lock free after installing the service, for the service to take it. */
 const SERVICE_YIELD_MS = 60_000;
@@ -1279,7 +1281,8 @@ export class RdvMcpServer {
   /** Until then this server does not take listener.lock: it was handed to the background service (rdv_service install). */
   private yieldUntil = 0;
   /** The last tampered-service warning given (its reasons), so one change is reported once. */
-  private tamperWarned = '';
+  /** Tamper reasons already reported and still standing: what the files show (quick pass) and what the full check showed (issue #118). */
+  private tamperWarned = new Set<string>();
 
   /** listener.lock is being left to the background service: by this server, or by another one on the home (listener.yield). */
   private yielding(): boolean {
@@ -4160,14 +4163,22 @@ export class RdvMcpServer {
 
   /** A service changed outside Rendezvous: the human log and an inbox event say so, once per change. */
   private async warnTampered(s: ServiceStatus): Promise<void> {
-    await this.warnReasons(s.name, s.tampered ? s.tamper_reasons : []);
+    await this.warnReasons(s.name, s.tampered ? s.tamper_reasons : [], true);
   }
 
-  private async warnReasons(name: string, reasons: string[]): Promise<void> {
-    const key = reasons.join('|');
-    if (key === this.tamperWarned) return;
-    this.tamperWarned = key;
-    if (!reasons.length) return;
+  /**
+   * Each standing reason is reported once. A full check (`full`) sees everything, so only it may
+   * forget what the OS registration showed; a quick pass sees only the files and the record, so a
+   * clean one forgets only those (issue #118: a registration-only change warned every 5 minutes).
+   */
+  private async warnReasons(name: string, reasons: string[], full = false): Promise<void> {
+    const fresh = reasons.filter((r) => !this.tamperWarned.has(r));
+    if (full) this.tamperWarned = new Set(reasons);
+    else {
+      for (const r of [...this.tamperWarned]) if (quickReason(r) && !reasons.includes(r)) this.tamperWarned.delete(r);
+      for (const r of reasons) this.tamperWarned.add(r);
+    }
+    if (!fresh.length) return;
     this.humanLog(`WARNING: the background listener ${name} was changed outside Rendezvous: ${reasons.join('; ')}. Remove it (rdv service remove) or install it again (rdv service install).`);
     await this.publish([{ type: 'service_tampered', name: safe(name), reasons: reasons.map((r) => safe(r)), next_step: 'Tell your user their background listener was changed outside Rendezvous; rdv_service "install" (their approval) puts it back, "remove" removes it.' }]);
   }
@@ -4182,7 +4193,7 @@ export class RdvMcpServer {
    */
   private async checkService(force = false): Promise<void> {
     if (this.remote || !this.home.initialized()) return;
-    const now = Date.now();
+    const now = (this.serviceOpts.now ?? Date.now)();
     if (!force && now - this.serviceQuickAt < (this.serviceOpts.checkMs ?? SERVICE_QUICK_MS)) return;
     this.serviceQuickAt = now;
     let ctx: { env: ServiceEnv; run: ServiceRunner };

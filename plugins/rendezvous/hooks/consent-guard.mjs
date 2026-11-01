@@ -163,6 +163,8 @@ const SERVICE_SHELL =
   'Use rdv_service: "status" shows it (and whether it was changed), "install" (your user approves it) puts it back, "remove" removes it.';
 const SCHTASKS_VERBS = /^\/{1,2}(change|create|delete|end|run)$/i;
 const SYSTEMCTL_VERBS = new Set(['edit', 'revert', 'set-property', 'disable', 'mask', 'enable', 'start', 'stop', 'restart', 'reload', 'daemon-reload', 'link', 'reenable', 'preset']);
+// Environment of the user manager / launchd: a variable set there reaches every service started later, the background listener included (issue #118).
+const ENV_VERBS = { systemctl: new Set(['set-environment', 'import-environment']), launchctl: new Set(['setenv']) };
 const LAUNCHCTL_VERBS = new Set(['bootout', 'bootstrap', 'unload', 'load', 'kickstart', 'enable', 'disable', 'remove', 'submit']);
 const RELAYS =
   'rdv relays add/remove/list is for the human, in their own terminal: the relays the agent listens on receive its messages, and rdv relays list shows a confirm phrase meant only for them. Use the rdv_relays tool, which asks the human for a listening-relay change.';
@@ -856,6 +858,10 @@ function checkWords(words, ctx, depth) {
   if (started) checkWords(started, { cwd: ctx.cwd }, depth + 1);
   checkStarted(words, ctx, depth);
   const lw = words.map((w) => w.toLowerCase());
+  {
+    const progs = words.map(progName);
+    for (const [prog, verbs] of Object.entries(ENV_VERBS)) if (progs.includes(prog) && lw.some((w) => verbs.has(w))) throw new Refusal(SERVICE_SHELL);
+  }
   // The background listener's task, unit or LaunchAgent, changed through the OS's own tool (re-review of PR #117).
   if (lw.some((w) => w.includes('rdv-listen-'))) {
     const progs = words.map(progName);
