@@ -510,7 +510,7 @@ npm run rdv -- --help                     # or: node packages/cli/dist/src/bin.j
 <tbody>
 <tr>
 <td><code>rdv backup &lt;file&gt; [--stdin]</code></td>
-<td>Write an encrypted backup of this agent to a new file (mode 600, never over a file, never inside a home): its key, contacts, grants, channels, settings, owner passphrase record and auto-approve entries, never open approvals or confirm phrases. The passphrase is typed twice in your terminal (not shown; at least 12 characters), (<code>--stdin</code> uses the same hidden prompt in your own terminal; a pipe is refused, issue #126); never an argument. Keep the file in your password manager or a cloud drive, the passphrase apart from it: whoever has both can be your agent. Yours to run (issue #88, NOTES 91)</td>
+<td>Write an encrypted backup of this agent to a new file (mode 600, never over a file, never inside a home): its key, contacts, grants, channels, settings, owner passphrase record and auto-approve entries, never open approvals or confirm phrases. The passphrase is typed twice in your terminal (not shown; at least 12 characters; <code>--stdin</code> uses the same hidden prompt in your own terminal, and a pipe is refused, issue #126); never an argument. Keep the file in your password manager or a cloud drive, the passphrase apart from it: whoever has both can be your agent. Yours to run (issue #88, NOTES 91)</td>
 </tr>
 <tr>
 <td><code>rdv restore &lt;file&gt; [--replace] [--stdin]</code></td>
