@@ -450,6 +450,17 @@ describe('the label: a model never names a contact', () => {
     const ok64 = direct(await create(g, token, { label: 'x'.repeat(64) }));
     expect(ok64.suggested_label).toEqual({ untrusted_peer_text: 'x'.repeat(64) });
   });
+
+  it('a name with combining marks is kept; the length limit still holds', { timeout: 60_000 }, async () => {
+    const { g, token, b } = await gateway();
+    await turnOn(b);
+    const name = 'José Müller';
+    const ok = direct(await create(g, token, { label: name }));
+    expect(ok.suggested_label).toEqual({ untrusted_peer_text: name });
+    const long = direct(await create(g, token, { label: 'é'.repeat(33) }));
+    expect(long.suggested_label).toBeUndefined();
+    expect(long.label_note).toContain('not kept');
+  });
 });
 
 describe('the setting persists, bound to its agent', () => {
@@ -628,6 +639,21 @@ describe('an allowlist-only agent', () => {
   });
 });
 
+describe('an agent that blocks newcomers', () => {
+  it('asks on the page even with the setting on', { timeout: 60_000 }, async () => {
+    const { g, token, b } = await gateway();
+    await turnOn(b);
+    await g.home.locked(async () => {
+      const s = g.home.readAgentState();
+      s.book.policy = 'block';
+      g.home.writeAgentState(s);
+    });
+    const r = await create(g, token);
+    expect(r.body.result.status).toBe('awaiting_human');
+    expect(r.body.result.note).toContain('blocks newcomers');
+  });
+});
+
 describe('the identity is read live', () => {
   it('a setting recorded for another identity is off, so the next create goes to the page', { timeout: 60_000 }, async () => {
     const { g, token, b } = await gateway();
@@ -646,18 +672,20 @@ describe('a webhook set before this version', () => {
   it('the settings page and the turn-on answer say so and show the command; a webhook with the event, or none, says nothing', { timeout: 60_000 }, async () => {
     const { g, b } = await gateway();
     let r = await turnOn(b);
-    expect(r.text).not.toContain('does not send invite_created_by_assistant');
-    expect((await b.get('/approve/admin')).text).not.toContain('was set before this version');
+    expect(r.text).not.toContain('does not include the invite_created_by_assistant event');
+    expect((await b.get('/approve/admin')).text).not.toContain('so you will not hear about each link');
     const csrf0 = hidden((await b.get('/approve/admin')).text, 'csrf');
     await b.post('/approve/admin/assistant-invites/off', { csrf: csrf0, agent: 'omer' });
     await g.gw.notifyStore.set(ROOT_BINDING, { url: 'http://127.0.0.1:9/rdv', events: ['contact_request'], insecureHosts: ['127.0.0.1'] }, Buffer.from('rdv-test-secret-0123456789abcdef'), 0, new Date(), g.gw.primary.id);
     r = await turnOn(b);
-    expect(r.text).toContain('does not send invite_created_by_assistant');
+    expect(r.text).toContain('does not include the invite_created_by_assistant event');
     expect(r.text).toContain('--events contact_request,invite_created_by_assistant');
     const page = await b.get('/approve/admin');
-    expect(page.text).toContain('was set before this version');
-    expect(page.text).toContain('--events contact_request,invite_created_by_assistant');
+    expect(page.text).toContain('so you will not hear about each link');
+    expect(page.text).toContain('--events contact_request,invite_created_by_assistant --allow-insecure-host 127.0.0.1');
+    expect(page.text).toContain('class="suggest warn"');
+    expect(page.text).toContain('./gw');
     await g.gw.notifyStore.set(ROOT_BINDING, { url: 'http://127.0.0.1:9/rdv', events: [...DEFAULT_NOTIFY_EVENTS], insecureHosts: ['127.0.0.1'] }, Buffer.from('rdv-test-secret-0123456789abcdef'), 0, new Date(), g.gw.primary.id);
-    expect((await b.get('/approve/admin')).text).not.toContain('was set before this version');
+    expect((await b.get('/approve/admin')).text).not.toContain('so you will not hear about each link');
   });
 });
