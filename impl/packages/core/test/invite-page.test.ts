@@ -65,6 +65,8 @@ describe('invite landing page decoder', () => {
     const bad: Record<string, string> = {
       'known relay as text': recheck(plus(body, ...rec(1, 'wss://nos.lol'))),
       'non-canonical relay': recheck(plus(body, ...rec(1, 'wss://Relay.Example.com/'))),
+      'trailing-dot host': recheck(plus(body, ...rec(1, 'wss://relay.example.com.'))),
+      'credentials in a relay': recheck(plus(body, ...rec(1, 'wss://u@relay.example.com'))),
       'repeated relay': recheck(plus(body, ...rec(1, 'wss://a.example.com'), ...rec(1, 'wss://a.example.com'))),
       'relay after the name': recheck(plus(body, ...rec(2, 'Omer'), ...rec(1, 'wss://a.example.com'))),
       'two names': recheck(plus(body, ...rec(2, 'A'), ...rec(2, 'B'))),

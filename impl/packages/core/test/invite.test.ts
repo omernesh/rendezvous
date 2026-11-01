@@ -662,9 +662,11 @@ describe('invite links: security review of PR #129 (L1 to L7)', () => {
     expect(parseInvite(`Hey… here it is ${url}`)).toEqual(i);
     expect(parseInvite(inviteShareText(url, { name: 'Team #3', expires: i.expires }))).toEqual(i);
     expect(parseInvite(inviteShareText(url, { name: 'Omer', expires: i.expires }))).toEqual(i);
-    // A Rendezvous link wins over another host's fragment earlier in the text.
+    // The host is ignored on purpose: a payload after another host's "#" is an invite too, so with a second one it is ambiguous.
     const other = inviteUrl(inv({ name: undefined, relays: ['wss://relay.damus.io'] }));
-    expect(parseInvite(`see https://x.example/#${payloadOf(other)} and ${url}`)).toEqual(i);
+    expect(() => parseInvite(`see https://x.example/#${payloadOf(other)} and ${url}`)).toThrow(/more than one invite link: paste just the one link/);
+    // A page's "#section" or a hashtag is not an invite and is skipped.
+    expect(parseInvite(`see https://docs.example.com/guide#installation-and-setup and #rendezvous ${url}`)).toEqual(i);
     // Any host still reads when it is the only fragment.
     expect(parseInvite(`see https://x.example/#${payloadOf(url)}`)).toEqual(i);
     // The candidate word itself is still checked.
@@ -722,5 +724,59 @@ describe('invite links: security review of PR #129 (L1 to L7)', () => {
     expect(cleanInviteName('Team #3')).toBe('Team #3');
     const body = bodyOf(inviteUrl(inv({ name: undefined, relays: ['wss://relay.nesher.co'] })));
     expect(() => parseInvite(recheck(withBytes(body, ...rec(2, 'Omer SYSTEM'))))).toThrow(/name/);
+  });
+
+  it('MED (narrow review): a cut or failing link is never skipped for another; two invites are ambiguous', () => {
+    const A = inv({ name: 'Alice', relays: ['wss://relay.nesher.co'] });
+    const B = inv({ name: 'Mallory', relays: ['wss://relay.nesher.co'] });
+    const ua = inviteUrl(A);
+    const ub = inviteUrl(B);
+    const cutA = `${ua.slice(0, 60)}…${ua.slice(-8)}`;
+    const AMBIG = /more than one invite link: paste just the one link you mean/;
+    // The reviewer's cases: each would have connected to B.
+    expect(() => parseInvite(`New link: ${cutA} (old: ${ub})`)).toThrow(CUT);
+    expect(() => parseInvite(`New link: ${ua.slice(0, 70)}... old ${ub}`)).toThrow(CUT);
+    expect(() => parseInvite(`${ua}… also ${ub}`)).toThrow(CUT);
+    expect(() => parseInvite(`${ua}${ub}`)).toThrow(/cut off or changed|not an invite/);
+    expect(() => parseInvite(`${ua}x ${ub}`)).toThrow(/cut off or changed|not an invite/);
+    expect(() => parseInvite(`[${ua}](${ub})`)).toThrow(AMBIG);
+    // And the other shapes two links come in.
+    expect(() => parseInvite(`${ua} ${ub}`)).toThrow(AMBIG);
+    expect(() => parseInvite(`https://rendezvous.nesher.co.evil.com/i#${payloadOf(ub)} ${ua}`)).toThrow(AMBIG);
+    expect(() => parseInvite(`<a href="${ub}">${ua}</a>`)).toThrow(AMBIG);
+    expect(() => parseInvite(`${ua} rdv-invite:${payloadOf(ub)}`)).toThrow(AMBIG);
+    expect(() => parseInvite(`#${payloadOf(ub)} ${ua}`)).toThrow(AMBIG);
+    // A link with a relay the reader refuses is not skipped for a good one either.
+    const local = inviteUrl(inv({ name: undefined, relays: ['wss://192.168.0.2'] }));
+    expect(() => parseInvite(`${local} ${ua}`)).toThrow(/not a usable invite link/);
+    // The same invite twice is one invite: markdown [A](A), the share text (link in the sentence and on its own line).
+    expect(parseInvite(`[${ua}](${ua})`)).toEqual(A);
+    expect(parseInvite(inviteShareText(ua, { expires: A.expires }))).toEqual(A);
+    expect(parseInvite(`${ua} rdv-invite:${payloadOf(ua)}`)).toEqual(A);
+  });
+
+  it('LOW (narrow review): candidates are found in linear time; relay spellings are idempotent', () => {
+    const t0 = Date.now();
+    for (const t of ['#'.repeat(200_000), ('#' + 'A'.repeat(1000)).repeat(200), '/i#'.repeat(70_000)]) expect(() => parseInvite(t)).toThrow();
+    expect(Date.now() - t0).toBeLessThan(5000);
+    const cases = ['wss://relay.nesher.co/?', 'wss://relay.nesher.co/#', 'wss://relay.nesher.co/#/', 'wss://relay.nesher.co:443', 'wss://RELAY.nesher.co/./', 'wss://relay.nesher.co/a/../', 'wss://relay.example.com/x?y=1', 'wss://bücher.example/'];
+    for (const r of cases) {
+      const c = canonicalInviteRelay(r);
+      expect(c, r).not.toBeNull();
+      expect(canonicalInviteRelay(c!), r).toBe(c);
+    }
+    expect(canonicalInviteRelay('wss://RELAY.nesher.co/./')).toBe('wss://relay.nesher.co');
+    // No trailing-dot host and no credentials.
+    expect(canonicalInviteRelay('wss://relay.nesher.co.')).toBeNull();
+    expect(canonicalInviteRelay('wss://u:p@relay.nesher.co')).toBeNull();
+    expect(canonicalInviteRelay('wss://u@relay.example.com')).toBeNull();
+    const base = inv({ name: undefined });
+    expect(() => inviteUrl({ ...base, relays: ['wss://relay.nesher.co.'] })).toThrow(/relays/);
+    // Whatever spelling the encoder takes, the reader takes what it made; a table relay is always its bit.
+    for (const r of ['wss://relay.nesher.co/?', 'wss://relay.example.com/#', 'wss://relay\u3002nesher\u3002co']) {
+      const made = parseInvite(inviteUrl({ ...base, relays: [r] })).relays;
+      expect(made, r).toEqual([canonicalInviteRelay(r)]);
+    }
+    expect(payloadOf(inviteUrl({ ...base, relays: ['wss://relay\u3002nesher\u3002co'] }))).toBe(payloadOf(inviteUrl({ ...base, relays: ['wss://relay.nesher.co'] })));
   });
 });

@@ -4753,6 +4753,24 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       paragraph separators, private-use and unassigned characters. L7: the
       landing page checks the same structure as the agent (stray low bits,
       record syntax, repeats, spellings, the cap).
+    - **Narrow review of the fixes** (1 medium, 3 low). MED: "the first
+      candidate that reads wins" skipped a cut or failing link and took a
+      different invite later in the same text ("New link: <A cut…> (old:
+      <B>)", "<A>… also <B>", glued links, markdown `[A](B)`); through
+      `rdv_accept_invite`, which has no human gate, the user would have
+      connected to a link they never chose. Now every candidate that looks
+      like an invite must read: the base64url run after each `/i#`, after
+      `rdv-invite:`, and after any other `#` when it has a payload's shape
+      (16+ canonical characters starting with a known version byte, or "…"
+      right after it). A page's `#section`, a hashtag or "#12" is skipped;
+      a cut, changed or refused-relay candidate refuses the whole text; two
+      candidates with different agent IDs or secrets are refused as
+      ambiguous ("paste just the one link you mean"); the same invite twice
+      (the share text, `[A](A)`) is one. LOW: candidates are found in one
+      pass (no slice per `#`); `canonicalInviteRelay` drops only a lone
+      trailing "/" so it is idempotent (an empty `?` or `#` stays), and
+      refuses credentials and a trailing-dot host, on the agent and the
+      page.
     - **Vectors.** `vectors/invite-v2.json` (new; `v1.json` does not cover
       invites and is untouched): fixed inputs (seed 32 × `0x07`, secret
       16 × `0xa5`) and the exact URL for one known relay, three known
