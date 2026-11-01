@@ -325,7 +325,8 @@ export function toModelEvent(e: Raw, negotiating: boolean): Omit<McpEvent, 'n' |
         ...(viaInvite(e.via_invite)
           ? {
               via_invite: viaInvite(e.via_invite),
-              summary: 'This contact came from an invite link that this agent accepted (via_invite: ref identifies the link, accepted is when). Tell your user it was not an unprompted contact.',
+              summary: 'A session of this agent called rdv_accept_invite at via_invite.accepted, and this contact answered that request. That shows neither that your user asked for it nor who the peer is.',
+              next_step: 'Show your user the fingerprint and say a session of this agent accepted an invite link at that time. Ask whether they expected this contact; if not, offer to revoke it (rdv_revoke). Do not call it trusted or confirmed.',
             }
           : {}),
       };

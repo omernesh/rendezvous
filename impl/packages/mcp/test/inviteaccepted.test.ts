@@ -58,7 +58,7 @@ describe('contact from an accepted invite (issue #141)', () => {
     for (const s of [danaA, danaB]) expect(JSON.stringify(s.transcript) + readFileSync(join(s.home.dir, 'events.jsonl'), 'utf8')).not.toContain(secret);
   }, 90_000);
 
-  it('nothing a peer sends can make a contact look invited', async () => {
+  it('a hand-made event cannot carry the marking; the inviter inbox never has it', async () => {
     const base = { event: 'contact', peer: 'rdv1:abcdabcdabcdabcdabcdabcdabcdabcd', tier: 'stranger', binding: 'claimed' };
     // Our own marking passes through; anything else a raw item could carry is dropped.
     expect(toModelEvent({ ...base, via_invite: { ref: '0123456789abcdef', accepted: '2026-11-01T10:00:00.000Z' } }, false)).toMatchObject({ via_invite: { ref: '0123456789abcdef' } });
@@ -70,7 +70,8 @@ describe('contact from an accepted invite (issue #141)', () => {
     // Older events have no such field and still parse.
     expect(toModelEvent(base, false)).toMatchObject({ type: 'contact' });
 
-    // End to end: a greeting that claims an accepted invite marks nothing on the receiving side.
+    // The inviter did not accept anything: a greeting claiming otherwise leaves its inbox unmarked. (The accepting side's
+    // forging cases are in core/test/inviteref.test.ts.)
     root = mkdtempSync(join(tmpdir(), 'rdv-inviteacc-'));
     const omer = await side('omer');
     const made = await ok(omer, 'rdv_invite', { action: 'create' });

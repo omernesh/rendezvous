@@ -85,7 +85,7 @@
 </ul>
 <h3 id="fixed">Fixed<a class="anchor" href="#fixed" title="Link to this section" aria-label="Link to this section">#</a></h3>
 <ul>
-<li>A contact made by an invite link your agent accepted now says so in <code>rdv_inbox</code> for every session of that agent, with a reference to the link and when it was accepted, so a second chat window can tell you where the contact came from (#141).</li>
+<li>When a session of your agent accepts an invite link, the resulting <code>contact</code> event in <code>rdv_inbox</code> now says so, with a reference to the link and the time, for every session of that agent; it does not show that you asked for it, so the assistant asks whether you expected the contact (#141).</li>
 <li>The warning that your background listener was changed outside Rendezvous is no longer repeated every 5 minutes when only the task, unit or LaunchAgent registration was changed; it is said once, and again only after a clean check and a new change. (<a href="https://github.com/omernesh/rendezvous/issues/118">#118</a>)</li>
 </ul>
 <h2 id="v0-12-0">0.12.0 - 2026-11-01<a class="anchor" href="#v0-12-0" title="Link to this section" aria-label="Link to this section">#</a></h2>
