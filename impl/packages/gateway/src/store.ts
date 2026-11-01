@@ -245,6 +245,22 @@ export class GatewayStore {
     });
   }
 
+  /** Tokens made before identities were recorded get the identity they reach now (`identityOf` their binding). */
+  async stampIdentities(identityOf: (binding: string | undefined) => string | undefined): Promise<number> {
+    if (!Object.values(this.read().tokens).some((t) => t.agentId === undefined && identityOf(t.agent))) return 0;
+    return this.update((d) => {
+      let n = 0;
+      for (const t of Object.values(d.tokens)) {
+        const id = t.agentId === undefined ? identityOf(t.agent) : undefined;
+        if (id) {
+          t.agentId = id;
+          n += 1;
+        }
+      }
+      return n;
+    });
+  }
+
   /** Undoes rebindAgent when `agent migrate` fails after it: tokens bound to `to` are the root agent's again. */
   async unbindAgent(to: string): Promise<number> {
     return this.update((d) => {

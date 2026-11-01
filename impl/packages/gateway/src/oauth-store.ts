@@ -374,6 +374,22 @@ export class OAuthStore {
     });
   }
 
+  /** Grants made before identities were recorded get the identity they reach now (`identityOf` their binding). */
+  async stampIdentities(identityOf: (binding: string | undefined) => string | undefined): Promise<number> {
+    if (!Object.values(this.read().grants).some((g) => g.agentId === undefined && identityOf(g.agent))) return 0;
+    return this.update((d) => {
+      let n = 0;
+      for (const g of Object.values(d.grants)) {
+        const id = g.agentId === undefined ? identityOf(g.agent) : undefined;
+        if (id) {
+          g.agentId = id;
+          n += 1;
+        }
+      }
+      return n;
+    });
+  }
+
   /** Undoes rebindAgent when `agent migrate` fails after it: grants bound to `to` are the root agent's (`from`) again. */
   async unbindAgent(from: string, to: string): Promise<number> {
     return this.update((d) => {

@@ -21,7 +21,7 @@
 // First: stdout carries the command's output, never a dependency's console text (review of PR #120).
 import '@rendezvous/core/safe-console';
 import { parseArgs } from 'node:util';
-import { describeBackup, Home, initHome, readBackupFile, readEvents, restoreBackup } from '@rendezvous/cli/lib';
+import { describeBackup, Home, initHome, readBackupFile, readEvents, restoreBackup, tryLongLock } from '@rendezvous/cli/lib';
 import { AgentError, AgentRoot, checkAgentName, isRootBinding, ROOT_BINDING } from './agents.js';
 import { checkInsecureHost, checkNotifyUrl, DEFAULT_NOTIFY_EVENTS, NOTIFY_EVENTS, type NotifyEvent, NotifyError, NotifyStore, readSecretFile, receiverName, secretFileName } from './notify.js';
 import { DEFAULT_PORT, Gateway } from './gateway.js';
@@ -175,12 +175,14 @@ async function main(): Promise<void> {
       if (agent === undefined) die('no agent here yet: add one first (rdv-gateway agent add <name> new)', 2);
     } else if (!agents.some((a) => a.name === agent)) die(`no agent "${agent}" here (rdv-gateway agent list)`, 2);
     // The root agent is stored as the root marker, never its name (which follows its profile, NOTES 104).
+    // Every new token records the identity it is for; one that cannot be read gets no token.
     let agentId: string | undefined;
     try {
       agentId = root.find(agent!)?.home.readAgentState().card.id;
-    } catch {
-      agentId = undefined;
+    } catch (err) {
+      die(`agent ${agent}'s state cannot be read (${(err as Error).message}); no token was made`);
     }
+    if (!agentId) die(`agent ${agent}'s identity cannot be read; no token was made`);
     const { token, info } = await store.createToken(values.name!, values.scope!.split(',').map((s) => s.trim()).filter(Boolean), root.bindingOf(agent!), agentId);
     process.stderr.write(`Token ${info.id} ("${info.name}", agent ${agent}, scopes ${info.scopes.join(', ')}). It is shown once; give it only to the assistant you mean:\n`);
     process.stdout.write(`${token}\n`);
@@ -389,14 +391,24 @@ async function agentCommand(root: AgentRoot, store: GatewayStore, sub: string | 
       const bound = rootBound();
       if (!bound.length) die('nothing to resume: no token, grant or webhook is bound to the root agent');
       // What could not have belonged to that migrate: another identity's, or (recording no identity) made after it.
-      const foreign = bound.filter((x) => (x.agentId !== undefined ? x.agentId !== pending!.id : Date.parse(x.created) > pending!.at));
+      const earlier = root.premigrates().filter((p) => p.at < pending!.at && p.id !== pending!.id);
+      const foreign = bound.filter((x) =>
+        x.agentId !== undefined ? x.agentId !== pending!.id : Date.parse(x.created) > pending!.at || earlier.some((p) => Date.parse(x.created) <= p.at),
+      );
       if (foreign.length) {
         die(
-          `refused: ${foreign.map((x) => `${x.what} (${x.agentId !== undefined ? 'another identity' : `made ${x.created}, after that migrate`})`).join(', ')} cannot belong to the agent that migrate moved. ` +
+          `refused: ${foreign.map((x) => `${x.what} (${x.agentId !== undefined ? 'another identity' : Date.parse(x.created) > pending!.at ? `made ${x.created}, after that migrate` : `made ${x.created}, before an earlier migrate of another agent`})`).join(', ')} cannot belong to the agent that migrate moved. ` +
             'Revoke or clear them (rdv-gateway token revoke, oauth revoke, notify clear), then resume; nothing changed',
         );
       }
-      await rebindAll(pending!.from, name);
+      // Like migrate itself: never while the gateway (or anything else) listens for that agent.
+      const lock = tryLongLock(target!.home.listenerLockPath, 'rdv-gateway agent migrate --resume');
+      if (!lock.release) die(`${lock.owner} is running for ${target!.home.dir}: stop the gateway (and any rdv listen or rdv-mcp for it) first; nothing changed`);
+      try {
+        await rebindAll(pending!.from, name);
+      } finally {
+        lock.release!();
+      }
       process.stderr.write(`Finished the migrate that stopped halfway: ${bound.map((x) => x.what).join(', ')} now reach agent "${name}" (originals kept in ${pending!.dir}).\n`);
       return;
     }
@@ -407,7 +419,11 @@ async function agentCommand(root: AgentRoot, store: GatewayStore, sub: string | 
     } catch {
       rootId = undefined;
     }
-    const others = rootBound().filter((x) => x.agentId !== undefined && rootId !== undefined && x.agentId !== rootId);
+    // A legacy binding (no identity) made no later than an earlier migrate of another identity is that agent's, not this one's.
+    const before = root.premigrates().filter((p) => p.id !== undefined && p.id !== rootId);
+    const others = rootBound().filter((x) =>
+      x.agentId !== undefined ? rootId !== undefined && x.agentId !== rootId : before.some((p) => Date.parse(x.created) <= p.at),
+    );
     if (others.length) die(`refused: ${others.map((x) => x.what).join(', ')} were made for another identity than the root agent's; revoke or clear them first; nothing changed`);
     const to = values.name ?? root.rootAgentName();
     if (to !== undefined) {

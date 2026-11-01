@@ -843,7 +843,7 @@ describe('agent migrate with a webhook (re-review H1)', () => {
     expect((await bin(['agent', 'migrate', '--resume', 'nobody', '--home', root])).stderr).toMatch(/not the agent the newest migrate moved/);
     const r = await bin(['agent', 'migrate', '--resume', 'omer', '--home', root]);
     expect(r.code, r.stderr).toBe(0);
-    expect(r.stderr).toMatch(/Finished the migrate that stopped halfway: token tok_\w+, token tok_\w+, the webhook now reach agent "omer"/);
+    expect(r.stderr).toMatch(/Finished the migrate that stopped halfway: token tok_[\w-]+, token tok_[\w-]+, the webhook now reach agent "omer"/);
     expect(new GatewayStore(new Home(root)).listTokens().every((t) => t.agent === 'omer')).toBe(true);
     expect(Object.keys(new NotifyStore(new Home(root)).read().agents)).toEqual(['omer']);
     expect(existsSync(join(root, 'notify-omer.secret'))).toBe(true);
@@ -881,7 +881,7 @@ describe('agent migrate with a webhook (re-review H1)', () => {
     const { root, tokens } = await twoIdentities('handdelete');
     const r = await bin(['agent', 'migrate', '--resume', 'omer', '--home', root]);
     expect(r.code).not.toBe(0);
-    expect(r.stderr).toMatch(/refused: token tok_\w+ \(made .*, after that migrate\) cannot belong/);
+    expect(r.stderr).toMatch(/refused: token tok_[\w-]+ \(made .*, after that migrate\) cannot belong/);
     expect(tokens().listTokens().find((t) => t.name === 'for-b')!.agent).toBe(ROOT_BINDING);
   });
 
@@ -892,7 +892,7 @@ describe('agent migrate with a webhook (re-review H1)', () => {
     await new GatewayStore(new Home(root)).createToken('stranger', ['read'], ROOT_BINDING, other);
     const plain = await bin(['agent', 'migrate', '--home', root]);
     expect(plain.code).not.toBe(0);
-    expect(plain.stderr).toMatch(/refused: token tok_\w+ were made for another identity than the root agent's/);
+    expect(plain.stderr).toMatch(/refused: token tok_[\w-]+ were made for another identity than the root agent's/);
     expect(existsSync(join(root, 'agents', 'omer'))).toBe(false);
     await new AgentRoot(root).migrate(undefined, async () => {}, new Date(Date.now() + 60_000));
     expect((await bin(['agent', 'migrate', '--resume', 'omer', '--home', root])).stderr).toMatch(/\(another identity\) cannot belong/);
@@ -928,6 +928,129 @@ describe('agent migrate with a webhook (re-review H1)', () => {
     expect(existsSync(join(root, 'agents', 'omer'))).toBe(false);
     expect(Object.keys(store.read().agents)).toEqual([ROOT_BINDING]);
     expect(existsSync(join(root, 'notify-_root.secret'))).toBe(true);
+  });
+});
+
+describe('the identity a binding was made for (check of 797f7b8)', () => {
+  async function serve(root: string, token: string, log: string[] = []): Promise<{ status: number; text: string }> {
+    const relay = await startTestRelay();
+    const gw = new Gateway({ home: new Home(root), port: 0, humanLog: (l) => log.push(l), pollMs: 150, sweepMs: 3_600_000 });
+    try {
+      await gw.store.setPin(PIN);
+      const base = await gw.start();
+      const r = await fetch(`${base}/api/v1/tools/rdv_status`, { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: '{}' });
+      return { status: r.status, text: await r.text() };
+    } finally {
+      await gw.close();
+      await relay.close();
+    }
+  }
+  const idOf = (dir: string) => new Home(dir).readAgentState().card.id;
+  const makeToken = async (root: string) => (await bin(['token', 'create', '--name', 'sammie', '--scope', 'read', '--home', root])).stdout.trim();
+
+  it('S1: a token made for A reaches nothing once the root is another agent; the same agent restored keeps it', { timeout: 90_000 }, async () => {
+    const root = tmp();
+    await initHome(new Home(root), { profile: 'omer', emails: ['omer@example.com'] });
+    const A = idOf(root);
+    const token = await makeToken(root);
+    expect(new GatewayStore(new Home(root)).listTokens()[0].agentId).toBe(A);
+    // The same identity back in place (a backup of the same agent): the token still works.
+    const key = readFileSync(new Home(root).agentPath);
+    rmSync(new Home(root).agentPath);
+    writeFileSync(new Home(root).agentPath, key);
+    expect((await serve(root, token)).status).toBe(200);
+    // Another identity in the root: refused, and said at start.
+    rmSync(new Home(root).agentPath, { force: true });
+    rmSync(new Home(root).agentBackupPath, { force: true });
+    await initHome(new Home(root), { profile: 'omer', emails: ['omer@example.com'] });
+    expect(idOf(root)).not.toBe(A);
+    const log: string[] = [];
+    const r = await serve(root, token, log);
+    expect(r.status).toBe(403);
+    expect(r.text).toMatch(/made for another agent identity/);
+    expect(log.some((l) => /tok_[\w-]+ was made for another agent identity/.test(l))).toBe(true);
+  });
+
+  it('S2: after an interrupted migrate of A and a new agent B in the root, A\'s token neither reaches B nor moves to it', { timeout: 90_000 }, async () => {
+    const root = tmp();
+    await initHome(new Home(root), { profile: 'omer', emails: ['omer@example.com'] });
+    const token = await makeToken(root);
+    await new AgentRoot(root).migrate(undefined, async () => {}, new Date(Date.now() + 1000));
+    await initHome(new Home(root), { profile: 'dana', emails: ['dana@example.com'] });
+    expect((await serve(root, token)).status).toBe(403);
+    const m = await bin(['agent', 'migrate', '--home', root]);
+    expect(m.code).not.toBe(0);
+    expect(m.stderr).toMatch(/were made for another identity than the root agent's/);
+    expect(new GatewayStore(new Home(root)).listTokens()[0].agent).toBe(ROOT_BINDING);
+  });
+
+  it("S3 and S3b: A's legacy token (no identity) is never moved to B, by --resume or by a plain migrate", { timeout: 90_000 }, async () => {
+    for (const variant of ['resume', 'plain'] as const) {
+      const root = tmp();
+      await initHome(new Home(root), { profile: 'omer', emails: ['omer@example.com'] });
+      await new GatewayStore(new Home(root)).createToken('legacy-a', ['read'], ROOT_BINDING);
+      await new AgentRoot(root).migrate(undefined, async () => {}, new Date(Date.now() + 1000));
+      await initHome(new Home(root), { profile: 'dana', emails: ['dana@example.com'] });
+      let r;
+      if (variant === 'resume') {
+        await makeToken(root);
+        await new AgentRoot(root).migrate(undefined, async () => {}, new Date(Date.now() + 2000));
+        r = await bin(['agent', 'migrate', '--resume', 'dana', '--home', root]);
+        expect(r.stderr, variant).toMatch(/token tok_[\w-]+ \(made .*, before an earlier migrate of another agent\)/);
+      } else {
+        r = await bin(['agent', 'migrate', '--home', root]);
+        expect(r.stderr, variant).toMatch(/refused: token tok_[\w-]+ were made for another identity/);
+      }
+      expect(r.code, variant).not.toBe(0);
+      expect(new GatewayStore(new Home(root)).listTokens().find((t) => t.name === 'legacy-a')!.agent, variant).toBe(ROOT_BINDING);
+    }
+  });
+
+  it('S5: --resume is refused while the gateway serves that agent', { timeout: 90_000 }, async () => {
+    const root = tmp();
+    await initHome(new Home(root), { profile: 'omer', emails: ['omer@example.com'] });
+    await makeToken(root);
+    await new AgentRoot(root).migrate(undefined, async () => {}, new Date(Date.now() + 1000));
+    const relay = await startTestRelay();
+    const gw = new Gateway({ home: new Home(root), port: 0, humanLog: () => {}, pollMs: 150, sweepMs: 3_600_000 });
+    gws.push(gw);
+    await gw.store.setPin(PIN);
+    await gw.start();
+    const r = await bin(['agent', 'migrate', '--resume', 'omer', '--home', root]);
+    expect(r.code).not.toBe(0);
+    expect(r.stderr).toMatch(/is running for .*stop the gateway/);
+    await gw.close();
+    await relay.close();
+    expect(new GatewayStore(new Home(root)).listTokens()[0].agent).toBe(ROOT_BINDING);
+  });
+
+  it('an older token, grant or webhook is stamped with the identity it reaches at the first start', { timeout: 90_000 }, async () => {
+    const root = tmp();
+    await initHome(new Home(root), { profile: 'omer', emails: ['omer@example.com'] });
+    const { token } = await new GatewayStore(new Home(root)).createToken('legacy', ['read'], ROOT_BINDING);
+    await new NotifyStore(new Home(root)).set(ROOT_BINDING, { url: 'https://hooks.example.com/rdv', events: ['invite_redeemed'], insecureHosts: [] }, KEY, 0);
+    expect(new GatewayStore(new Home(root)).listTokens()[0].agentId).toBeUndefined();
+    const log: string[] = [];
+    expect((await serve(root, token, log)).status).toBe(200);
+    expect(log.some((l) => /recorded the agent identity on 2 older/.test(l))).toBe(true);
+    expect(new GatewayStore(new Home(root)).listTokens()[0].agentId).toBe(idOf(root));
+    expect(new NotifyStore(new Home(root)).config(ROOT_BINDING)?.agentId).toBe(idOf(root));
+  });
+
+  it("a webhook set for A sends nothing of B's when B is served under that name", async () => {
+    const { root, list } = await agents(['omer']);
+    const rcv = await receiver();
+    const store = new NotifyStore(new Home(root));
+    await store.set('omer', local(rcv.url), KEY, 0, new Date(), PEER);
+    const log: string[] = [];
+    const n = notifier(store, list, { t: Date.now() }, log);
+    await round(n);
+    await appendEvents(list[0].home, [redeemed()]);
+    await round(n);
+    await round(n);
+    expect(rcv.hits).toHaveLength(0);
+    expect(store.read().outbox).toHaveLength(0);
+    expect(log.filter((l) => /set for another agent identity/.test(l))).toHaveLength(1);
   });
 });
 

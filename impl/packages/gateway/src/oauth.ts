@@ -531,13 +531,13 @@ export class OAuthServer {
   }
 
   /** The principal behind an OAuth access token for this gateway, if it is live, and the agent its grant reaches. */
-  verifyAccess(token: string): { id: string; name: string; scopes: Scope[]; agent?: string } | undefined {
+  verifyAccess(token: string): { id: string; name: string; scopes: Scope[]; agent?: string; agentId?: string } | undefined {
     const hit = this.store.findAccess(token, this.o.now());
     // Bound to this gateway's resource or one of its agents' (which agent is the grant's binding, not the URL): one minted
     // for another (or before the public URL changed) is refused.
     const g = hit?.grant;
     if (!hit || !g || !this.ownResource(g.resource)) return undefined;
-    return { id: g.id, name: `${hit.client.name} (OAuth ${g.id})`, scopes: hit.scopes, ...(g.agent !== undefined ? { agent: g.agent } : {}) };
+    return { id: g.id, name: `${hit.client.name} (OAuth ${g.id})`, scopes: hit.scopes, ...(g.agent !== undefined ? { agent: g.agent } : {}), ...(g.agentId !== undefined ? { agentId: g.agentId } : {}) };
   }
 
   // --- helpers -----------------------------------------------------------------------

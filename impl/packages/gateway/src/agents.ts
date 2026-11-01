@@ -37,6 +37,17 @@ export const NOTIFY_SECRET_RE = /^notify-[a-z0-9_][a-z0-9_-]{0,31}\.secret(\.pre
 
 export class AgentError extends Error {}
 
+/** A folder `agent migrate` kept the root agent's originals in. */
+export interface Premigrate {
+  dir: string;
+  /** Its time (epoch ms), from its name. */
+  at: number;
+  /** The identity it holds, if it reads as an agent. */
+  id?: string;
+  /** That agent's name then. */
+  from: string;
+}
+
 export function checkAgentName(name: string): string {
   if (typeof name !== 'string' || !AGENT_NAME_RE.test(name)) {
     throw new AgentError(`invalid agent name ${JSON.stringify(name)}: 1 to 32 lowercase letters, digits, "-" or "_", starting with a letter or digit`);
@@ -206,26 +217,31 @@ export class AgentRoot {
    * The newest .premigrate-<time>/ folder in the root (by name, which sorts by time), when the root holds no agent:
    * where `agent migrate --resume` looks, and nowhere else. `at` is its time (epoch ms), `id` the identity it holds.
    */
-  newestPremigrate(): { dir: string; at: number; id?: string; from: string } | undefined {
+  newestPremigrate(): Premigrate | undefined {
     if (this.home.initialized()) return undefined;
+    return this.premigrates().at(-1);
+  }
+
+  /** Every .premigrate-<time>/ folder in the root, oldest first: its time, the identity it holds, its agent's name. */
+  premigrates(): Premigrate[] {
     let names: string[] = [];
     try {
       names = readdirSync(this.dir).filter((f) => PREMIGRATE_RE.test(f)).sort();
     } catch {
-      return undefined;
+      return [];
     }
-    const last = names.at(-1);
-    if (!last) return undefined;
-    const m = PREMIGRATE_RE.exec(last)!;
-    const at = Date.parse(`${m[1]}T${m[2]}:${m[3]}:${m[4]}.${m[5]}Z`);
-    const old = new AgentRoot(join(this.dir, last));
-    let id: string | undefined;
-    try {
-      id = old.home.readAgentState().card.id;
-    } catch {
-      id = undefined;
-    }
-    return { dir: old.dir, at, id, from: old.rootAgentName() ?? 'default' };
+    return names.map((n) => {
+      const m = PREMIGRATE_RE.exec(n)!;
+      const at = Date.parse(`${m[1]}T${m[2]}:${m[3]}:${m[4]}.${m[5]}Z`);
+      const old = new AgentRoot(join(this.dir, n));
+      let id: string | undefined;
+      try {
+        id = old.home.readAgentState().card.id;
+      } catch {
+        id = undefined;
+      }
+      return { dir: old.dir, at, id, from: old.rootAgentName() ?? 'default' };
+    });
   }
 
   /** The agents under agents/ that hold this identity. */
