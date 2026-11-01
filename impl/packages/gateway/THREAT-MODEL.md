@@ -33,6 +33,7 @@ tokens) and 93 (slice 2: the built-in OAuth 2.1 authorization server).
 
 | A local assistant with a shell on the owner's machine (Claude Code, Codex, …) | run commands as the owner | set or clear the PIN, make tokens, then approve on 127.0.0.1 |
 | A token or OAuth grant of one agent on a multi-agent gateway (NOTES 104), or whoever steers its assistant | everything its scopes allow on its own agent | call tools on, read the inbox of, see or answer approvals of, or take held results (invite links) of any other agent; open or reuse a session under another agent |
+| The owner's webhook receiver, the network to it, or a name it resolves through (NOTES 106) | receive, delay or refuse the agent's signed event notices | approve, grant or revoke anything; get an invite link, a key or message text; redirect the gateway to a private address; get another agent's events |
 
 The last row is the one the second review found: `echo 123456 | rdv-gateway
 pin set` followed by two posts to the page approved anything. What stops it
@@ -305,6 +306,52 @@ to start. `agent add|remove|migrate` are terminal-only (the consent guard
 refuses them); remove and migrate are refused while the agent listens, and
 both keep the key (`agents/.removed/`, `.premigrate-<time>/`). Tests:
 `multiagent.test.ts`.
+
+**Outbound webhooks** (NOTES 106). *What could go wrong:* the gateway becomes
+a request-forgery tool (a URL pointing at loopback, the LAN or a cloud
+metadata endpoint), leaks what it should not (an invite link, message text,
+the secret), sends one agent's events to another's receiver, or lets a
+receiver steer the agent. *Controls:* the settings are the owner's
+(`rdv-gateway notify set|clear|dead-letter`, terminal only; the consent guard
+refuses them, and any tool access to `gateway-notify.json` and to the secret
+files, also in a multi-agent root that holds no agent of its own), kept in the
+gateway's root, keyed by the agent's binding like tokens (`agent remove` and
+`agent add` clear a name's settings and dead letters, `migrate` moves them).
+The whole file is schema-checked on every read and the gateway refuses to
+start on a bad one. Every queued item and dead letter carries the identity it
+was made for, so an agent that later takes a name never gets another's
+events, by send or by `--retry`. The URL is https, or http only to a host the
+owner allows (`--allow-insecure-host`: a name, an IP or a CIDR range); every
+connection resolves through the SSRF-pinned lookup (`guardedLookup`), which
+refuses private, CGNAT, loopback, link-local and metadata answers (and IP
+literals in those ranges), and pins the socket to the checked address. An
+allowed name or range opens only private ranges; loopback, link-local and
+169.254.169.254 open only for that exact IP. No redirect is followed (a 3xx is a dead
+letter), a request lasts 10 s, at most 4 are in flight, and the response body
+is ignored (read to 4 KiB). The body is built only from fields checked
+against their shape (ids, tiers, fingerprints computed here, the owner's own
+labels with control characters replaced); a greeting, the only peer text, is
+wrapped as `untrusted_peer_text`; no invite link or secret, key or message
+text is ever in it. Each body is signed (HMAC-SHA256 over `t.body`) with a
+printable-ASCII secret that `notify set` copies from the owner's file (refused
+if group- or world-readable) into `notify-<agent>.secret` (mode 600) in the
+root; a replaced secret signs alongside the new one for 24 h. The secret is
+never logged or put in the state, and `notify show` and the log name only the
+receiver's scheme and host (a path may hold the receiver's token). Caps per
+agent (250 waiting, 125 dead letters) keep one agent's flood from evicting
+another's events, and a burst of requests or messages from one peer is one
+event with a count. Each agent's events come from its own event log, are queued
+under its binding and are sent only with that binding's settings at send time
+(cleared settings drop its queue). The notifier only reads the agent's files,
+never takes its locks, and nothing a receiver answers is read beyond the
+status. *Limits:* delivery is at least once (a receiver dedupes by `id`); the
+outbox (1000) and dead letters (500) are bounded, oldest first; an owner who
+allows a host or range has allowed it private addresses, and over http its
+events and signatures cross the network in the clear (use it for a Tailscale
+or LAN address only). The guard is a speed bump, as everywhere: an
+assistant with a shell that writes the files under another name or path it
+cannot see still gets past it. The signature authenticates the gateway
+to the receiver, not the reverse. Tests: `notify.test.ts`.
 
 ## Known limits and open risks
 

@@ -225,9 +225,53 @@ function checkMime(m: string | undefined): string | undefined {
 
 /**
  * Files that hold a Rendezvous key or consent state: never sent, wherever they are. The gateway's own files too
- * (its PIN and token hashes, its OAuth signing key): a multi-agent gateway's root is not itself a home (NOTES 104).
+ * (its PIN and token hashes, its OAuth signing key, its webhooks): a multi-agent gateway's root is not itself a home (NOTES 104).
  */
-export const SECRET_FILE_NAMES = ['agent.json', 'agent.json.bak', 'consent.json', 'autoapprove.json', 'owner.json', 'gateway.json', 'gateway-oauth.json'];
+export const SECRET_FILE_NAMES = ['agent.json', 'agent.json.bak', 'consent.json', 'autoapprove.json', 'owner.json', 'gateway.json', 'gateway-oauth.json', 'gateway-notify.json'];
+/** A gateway's webhook secrets (NOTES 106): notify-<agent>.secret, the previous one (.prev), and notify.secret, the owner's copy in the docs. */
+export const NOTIFY_SECRET_FILE = /^notify(-[a-z0-9_][a-z0-9_-]{0,31})?\.secret(\.prev)?$/;
+
+/** A name as Windows opens it: cut at the first ':' (an alternate data stream), trailing dots and spaces dropped, lowercased. */
+const plainName = (name: string) => name.split(':')[0].replace(/[. ]+$/, '').toLowerCase();
+
+/** Is this file name one that is never sent (SECRET_FILE_NAMES, or a webhook secret)? */
+export function isSecretFileName(name: string): boolean {
+  const n = plainName(name);
+  return SECRET_FILE_NAMES.includes(n) || NOTIFY_SECRET_FILE.test(n);
+}
+
+/**
+ * Is the file at `p` one that is never sent? Its name as written, and (where it exists) the name Windows opens: the
+ * real path, an 8.3 short name expanded. On Windows a short-looking name (`~1`) in a home or gateway root is refused
+ * even when it cannot be resolved.
+ */
+export function isSecretFile(p: string): boolean {
+  if (isSecretFileName(basename(p))) return true;
+  try {
+    if (existsSync(p) && isSecretFileName(basename(realpathSync.native(p)))) return true;
+  } catch {
+    // unreadable: judged by the name as written
+  }
+  if (process.platform === 'win32' && /~\d/.test(basename(p))) {
+    const d = dirname(p);
+    if (looksLikeAgentHome(d) || looksLikeGatewayRoot(d)) return true;
+  }
+  return false;
+}
+
+const looksLikeAgentHome = (d: string) => existsSync(join(d, 'config.json')) && (existsSync(join(d, 'agent.json')) || existsSync(join(d, 'consent.json')));
+
+/** A gateway's root (NOTES 104): one of its files, or an agents/ folder holding a home. It holds keys like a home does. */
+function looksLikeGatewayRoot(d: string): boolean {
+  if (['gateway.json', 'gateway-oauth.json', 'gateway-notify.json'].some((f) => existsSync(join(d, f)))) return true;
+  try {
+    return readdirSync(join(d, 'agents'), { withFileTypes: true })
+      .slice(0, 64)
+      .some((e) => e.isDirectory() && looksLikeAgentHome(join(d, 'agents', e.name)));
+  } catch {
+    return false;
+  }
+}
 
 /** Homes we can name: this one, $RDV_HOME, and every profile under ~/.rendezvous. */
 function knownHomes(home: Home): string[] {
@@ -245,7 +289,13 @@ function knownHomes(home: Home): string[] {
 function secretIdentities(home: Home): Set<string> {
   const ids = new Set<string>();
   for (const h of knownHomes(home)) {
-    for (const f of SECRET_FILE_NAMES) {
+    let names: string[] = [...SECRET_FILE_NAMES];
+    try {
+      names = [...names, ...readdirSync(h).filter((f) => NOTIFY_SECRET_FILE.test(f))];
+    } catch {
+      /* absent */
+    }
+    for (const f of names) {
       try {
         const st = statSync(join(h, f), { bigint: true });
         ids.add(`${st.dev}:${st.ino}`);
@@ -270,17 +320,17 @@ const realOr = (p: string) => {
  * Is `p` (an absolute path) a secret file by name, or inside a Rendezvous
  * home: this one, $RDV_HOME, anything under a `.rendezvous` folder (but its
  * installed source, `src`), or any folder that looks like a home
- * (config.json beside agent.json or consent.json)?
+ * (config.json beside agent.json or consent.json) or a gateway root?
  */
 export function inAnyHome(home: Home, p: string): boolean {
-  if (SECRET_FILE_NAMES.includes(basename(p).toLowerCase())) return true;
+  if (isSecretFile(p)) return true;
   const comps = p.split(/[\\/]+/).filter(Boolean).map((c) => c.toLowerCase());
   const at = comps.lastIndexOf('.rendezvous');
   if (at >= 0 && comps[at + 1] !== 'src') return true;
   const homes = [home.dir, process.env.RDV_HOME].filter((x): x is string => !!x).flatMap((h) => [resolve(h), realOr(h)]);
   for (let d = dirname(p); ; d = dirname(d)) {
     if (homes.some((h) => samePath(d, h))) return true;
-    if (existsSync(join(d, 'config.json')) && (existsSync(join(d, 'agent.json')) || existsSync(join(d, 'consent.json')))) return true;
+    if (looksLikeAgentHome(d) || looksLikeGatewayRoot(d)) return true;
     if (dirname(d) === d) return false;
   }
 }

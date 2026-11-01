@@ -1,7 +1,8 @@
 // Files in the hosts (SPEC §7.7, issue #26): validation of peer file parts,
 // hostile names, the quarantine, the start gate on fetching, prepared files
 // and the release view, and the `rdv file` commands.
-import { existsSync, linkSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { existsSync, linkSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { emptyTaskState, type FilePart, FILES_URI, REQUEST_URI, TASKS_URI, type TaskRecord } from '@rendezvous/a2a';
@@ -397,6 +398,42 @@ describe('outgoing files: prepared, attached, shown at the release gate', () => 
     for (const f of ['config.json', 'agent.json', 'tasks.json']) writeFileSync(join(other, f), '{}');
     expect(() => attachFiles(home, [], [join(other, 'tasks.json')])).toThrow(/inside a Rendezvous home/);
     expect(() => prepareFile(home, join(other, 'config.json'))).toThrow(/inside a Rendezvous home/);
+  });
+
+  it('never sends a gateway webhook secret, or anything in a gateway root (NOTES 106, review of PR #131)', () => {
+    const home = new Home(tmp());
+    home.ensureDir();
+    // The secret names anywhere, also spelled the ways Windows opens them.
+    const loose = tmp();
+    for (const n of ['notify-kids.secret', 'notify-_root.secret.prev', 'notify.secret', 'NOTIFY-KIDS.SECRET']) {
+      writeFileSync(join(loose, n), 'x'.repeat(32));
+      expect(() => prepareFile(home, join(loose, n)), n).toThrow(/Rendezvous file/);
+      expect(() => attachFiles(home, [], [join(loose, n)]), n).toThrow(/Rendezvous file/);
+    }
+    // A multi-agent root (no agent of its own): its files and anything beside them.
+    const root = tmp();
+    mkdirSync(join(root, 'agents', 'omer'), { recursive: true });
+    for (const f of ['config.json', 'agent.json']) writeFileSync(join(root, 'agents', 'omer', f), '{}');
+    writeFileSync(join(root, 'notes.txt'), 'x');
+    expect(() => prepareFile(home, join(root, 'notes.txt'))).toThrow(/inside a Rendezvous home/);
+    const gwOnly = tmp();
+    writeFileSync(join(gwOnly, 'gateway.json'), '{}');
+    writeFileSync(join(gwOnly, 'notes.txt'), 'x');
+    expect(() => prepareFile(home, join(gwOnly, 'notes.txt'))).toThrow(/inside a Rendezvous home/);
+    // An 8.3 short name is expanded before the name check (where the volume makes them).
+    if (process.platform === 'win32') {
+      const r = spawnSync('cmd', ['/d', '/c', `for %I in ("${join(loose, 'notify-kids.secret')}") do @echo %~sI`], { encoding: 'utf8', windowsVerbatimArguments: true });
+      const short = r.stdout.trim();
+      if (short && !/notify-kids\.secret$/i.test(short)) {
+        expect(short).toMatch(/~\d/);
+        expect(() => prepareFile(home, short), short).toThrow(/Rendezvous file/);
+      }
+    }
+    // Any project's agents/ folder is not a root.
+    const proj = tmp();
+    mkdirSync(join(proj, 'agents', 'reviewer'), { recursive: true });
+    writeFileSync(join(proj, 'agents', 'reviewer', 'README.md'), 'hello');
+    expect(prepareFile(home, join(proj, 'agents', 'reviewer', 'README.md')).name).toBe('README.md');
   });
 
   it('a hard link to the secret key from outside the home is refused by identity; any multiply-linked file too (security review)', () => {

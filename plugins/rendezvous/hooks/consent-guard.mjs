@@ -36,7 +36,7 @@
 // obvious spellings, and no more Docker or tree-walk rules are added (#51). The boundary is file permissions and
 // #126: keep the install folder owned by root or the owner, mode 700, and don't give the assistant's user the docker
 // group on the gateway host (impl/packages/gateway/THREAT-MODEL.md).
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -44,15 +44,44 @@ import { pathToFileURL } from 'node:url';
 export const SECRET_FILES = ['agent.json', 'agent.json.bak', 'consent.json', 'autoapprove.json', 'owner.json', 'owner-secret.json', 'owner-secret.marker'];
 /**
  * Files in a home that hold file keys and drafts (files.json, tasks.json), or the gateway's PIN, token and OAuth
- * grant hashes (gateway.json, gateway-oauth.json: writing one by hand mints a principal without the owner's consent):
- * refused by path when they are in a home.
+ * grant hashes (gateway.json, gateway-oauth.json: writing one by hand mints a principal without the owner's consent),
+ * or its outbound webhooks (gateway-notify.json: writing it would send the agent's events elsewhere): refused by path
+ * when they are in a home.
  */
-export const OWNER_FILES = ['files.json', 'tasks.json', 'gateway.json', 'gateway-oauth.json', 'listener.yield'];
+export const OWNER_FILES = ['files.json', 'tasks.json', 'gateway.json', 'gateway-oauth.json', 'gateway-notify.json', 'listener.yield'];
 /** Names distinctive enough to refuse in any folder, not only in a home: writing either one by hand is setting auto-approve. */
 const ANYWHERE_FILES = ['autoapprove.json', 'owner-secret.json', 'owner-secret.marker', 'cloudflared.token', 'cloudflared.env'];
 // The gateway installer's Cloudflare tunnel token (cloudflared.token; cloudflared.env in early builds): whoever holds
 // it can serve the owner's public hostname.
 const SECRET_MENTION = /agent\.json|consent\.json|autoapprove\.json|owner\.json|owner-secret\.(json|marker)|cloudflared\.(token|env)/i;
+/** A gateway's webhook secret (NOTES 106): `notify-<agent>.secret`, the previous one `….secret.prev`, and `notify.secret`, the name the docs give the owner's own copy; refused anywhere. */
+const NOTIFY_SECRET_FILE = /^notify(-[a-z0-9_][a-z0-9_-]{0,31})?\.secret(\.prev)?$/i;
+/** The gateway's own files in a command's text (an inline script that writes one names no path we can classify). */
+const GATEWAY_MENTION = /gateway(-oauth|-notify)?\.json|notify(-[a-z0-9_][a-z0-9_-]{0,31})?\.secret/i;
+/** A file of the owner's in a home or gateway root, by name (normalized: fileName). */
+const isOwnerFile = (name) => OWNER_FILES.includes(name.toLowerCase()) || NOTIFY_SECRET_FILE.test(name);
+/**
+ * Could a wildcard's last part name a webhook secret? Conservatively: any wildcard last part that mentions "secret"
+ * or starts with "n" (`notify-*.secret`, `n*`, `*secret*`), case-insensitive (review of PR #131).
+ */
+function couldBeNotifySecret(last) {
+  const w = String(last).toLowerCase();
+  return GLOB_CHARS.test(w) && (w.includes('secret') || w.startsWith('n'));
+}
+/**
+ * The name Windows opens for `p`: its 8.3 short form expanded (realpath, where the file exists), cut at the first ':'
+ * (an alternate data stream, `x.json::$DATA`), trailing dots and spaces dropped (`x.secret.`), lowercased (review of
+ * PR #131). Every name check uses it.
+ */
+function fileName(p) {
+  let full = p;
+  try {
+    if (existsSync(p)) full = realpathSync.native(p);
+  } catch {
+    // unreadable: judged by the name as written
+  }
+  return basename(full).split(':')[0].replace(/[. ]+$/, '').toLowerCase();
+}
 /**
  * `src` with quoting, escapes, string concatenation and whitespace removed
  * (sh, PowerShell, cmd and script-language spellings alike), so that a word
@@ -68,7 +97,7 @@ const MAX_DEPTH = 6;
 const SECRET_REFUSAL =
   'That names the Rendezvous secret key, consent, auto-approve, owner-settings or owner passphrase file, or the gateway\'s tunnel token (agent.json, agent.json.bak, consent.json, autoapprove.json, owner.json, owner-secret.json, cloudflared.token). Never read, write, copy or print it; use rdv_status for the agent ID, fingerprint and auto-approve status, and ask your user to change a setting in their own terminal.';
 const OWNER_REFUSAL =
-  'That names a Rendezvous file that holds file keys and drafts (files.json, tasks.json) or the gateway\'s PIN and token hashes (gateway.json, gateway-oauth.json). Never read or write it; use rdv_file and rdv_task, and leave the gateway\'s tokens and connections to your user.';
+  'That names a Rendezvous file that holds file keys and drafts (files.json, tasks.json) or the gateway\'s PIN and token hashes or its webhooks and their secrets (gateway.json, gateway-oauth.json, gateway-notify.json, notify-<agent>.secret). Never read or write it; use rdv_file and rdv_task, and leave the gateway\'s tokens and connections to your user.';
 const HOME_REFUSAL =
   'That reaches into a Rendezvous home, which holds the secret key and consent state. Do not search, glob, copy or read it as a whole; use rdv_status, rdv_pending_requests and rdv_inbox.';
 const HUMAN_ONLY =
@@ -485,8 +514,12 @@ const GATEWAY_SECRET =
   'rdv-gateway pin, token and oauth commands are for the human, in their own terminal: the PIN unlocks their approval page, a token is a key to their agent, and which assistants stay connected is their decision. Never run them, and never ask for the PIN or a token.';
 const GATEWAY_AGENT =
   'rdv-gateway agent add, remove and migrate are for the human, in their own terminal: each creates, restores or moves an agent and its key on the gateway. Never run them; give your user the command to run.';
+// Outbound webhooks (NOTES 106): where the agent's events go, and re-sending given-up ones, are the owner's choice.
+const GATEWAY_NOTIFY =
+  'rdv-gateway notify set, clear and dead-letter are for the human, in their own terminal: they decide where their agent\'s events are sent, signed with their secret. Never run them; give your user the command to run (rdv-gateway notify show is fine).';
 const GATEWAY_GROUPS = [
   ['pin', { set: GATEWAY_SECRET, unlock: GATEWAY_SECRET }],
+  ['notify', { set: GATEWAY_NOTIFY, clear: GATEWAY_NOTIFY, 'dead-letter': GATEWAY_NOTIFY }],
   ['token', { create: GATEWAY_SECRET, revoke: GATEWAY_SECRET }],
   ['oauth', { revoke: GATEWAY_SECRET }],
   // Multi-agent gateways (NOTES 104): adding, restoring, removing or migrating an agent creates or moves a key.
@@ -620,9 +653,27 @@ const isDir = (p) => {
     return false;
   }
 };
-/** A directory that looks like a Rendezvous home on disk (any --home or profile dir),
-   or the gateway installer's folder (isGatewayDir), which holds the tunnel token and a home. */
-const looksLikeHome = (d) => isGatewayDir(d) || (existsSync(join(d, 'config.json')) && (existsSync(join(d, 'agent.json')) || existsSync(join(d, 'consent.json'))));
+/** A directory that looks like an agent's home on disk (any --home or profile dir). */
+const looksLikeAgentHome = (d) => existsSync(join(d, 'config.json')) && (existsSync(join(d, 'agent.json')) || existsSync(join(d, 'consent.json')));
+/** The gateway's own files in its root (NOTES 104, 106). */
+const GATEWAY_ROOT_FILES = ['gateway.json', 'gateway-oauth.json', 'gateway-notify.json'];
+/**
+ * A gateway's root, which need not be a home itself (a multi-agent root holds only the gateway's state and agents/):
+ * one of the gateway's files, or an agents/ folder holding a home (a bare agents/ folder is any project's).
+ */
+function looksLikeGatewayRoot(d) {
+  if (GATEWAY_ROOT_FILES.some((f) => existsSync(join(d, f)))) return true;
+  try {
+    return readdirSync(join(d, 'agents'), { withFileTypes: true })
+      .slice(0, 64)
+      .some((e) => e.isDirectory() && looksLikeAgentHome(join(d, 'agents', e.name)));
+  } catch {
+    return false;
+  }
+}
+/** A directory that looks like a Rendezvous home: an agent's home, the gateway installer's folder (isGatewayDir), which
+   holds the tunnel token and a home, or a gateway root (looksLikeGatewayRoot). */
+const looksLikeHome = (d) => isGatewayDir(d) || looksLikeAgentHome(d) || looksLikeGatewayRoot(d);
 
 /**
  * `w` with a leading `~`, $HOME or $RDV_HOME (in sh, PowerShell or cmd
@@ -684,7 +735,7 @@ const staticPrefix = (w) => {
 /** A quoted run of command words (`"contact label"`, `"agent-name set"`): letters, digits and `-` only, several of them. */
 const COMMAND_RUN = /^[a-z0-9-]+(\s+[a-z0-9-]+)+$/i;
 /** Words of rdv and rdv-gateway after which another command word follows. */
-const GROUP_WORDS = new Set([...HUMAN_GROUPS.map(([g]) => g), 'address', 'card', 'alias', 'pin', 'token', 'oauth']);
+const GROUP_WORDS = new Set([...HUMAN_GROUPS.map(([g]) => g), 'address', 'card', 'alias', 'pin', 'token', 'oauth', 'notify']);
 
 /**
  * After rdv or rdv-gateway, a quoted run of command words is split back into its words (security review of PR #122):
@@ -1028,6 +1079,7 @@ function checkWords(words, ctx, depth) {
   for (let i = 0; i < words.length; i++) {
     const w = words[i];
     if (braces(w).some((x) => SECRET_MENTION.test(x))) throw new Refusal(SECRET_REFUSAL);
+    if (braces(w).some((x) => GATEWAY_MENTION.test(x))) throw new Refusal(OWNER_REFUSAL);
     // --project-directory names the gateway's folder for docker compose: its subcommand is checked above.
     const isHomeArg = /^-{1,2}(home|project-directory)$/i.test(words[i - 1] ?? '') || /^-{1,2}(home|project-directory)=|^RDV_HOME=/i.test(w);
     const value = w.replace(/^-{1,2}(home|project-directory)=|^RDV_HOME=/i, '');
@@ -1041,12 +1093,17 @@ function checkWords(words, ctx, depth) {
       // A walk of a folder tree that would descend into the gateway's folder (`grep -r x ~`, `tar c .`, `cp -r ~ /mnt`).
       if (walker && i !== prog && !isHomeArg && gatewayAtOrBelow(path)) throw new Refusal(GATEWAY_DIR);
       const where = classify(path);
+      // A wildcard that could name a webhook secret, wherever it is (those names are refused anywhere).
+      if (glob && couldBeNotifySecret(basename(text))) throw new Refusal(OWNER_REFUSAL);
       if (!where) continue;
       if (glob) {
-        // A wildcard in a home, or one whose last part could name the key or consent file.
-        if (where === 'home' || GLOB_CHARS.test(dirname(text)) || SECRET_FILES.some((s) => globRe(basename(text)).test(s))) throw new Refusal(HOME_REFUSAL);
+        // A wildcard in a home or a gateway root, or one whose last part could name the key, consent or an owner file.
+        const last = globRe(basename(text).toLowerCase());
+        if (where === 'home' || GLOB_CHARS.test(dirname(text)) || looksLikeGatewayRoot(dirname(path)) || [...SECRET_FILES, ...OWNER_FILES].some((s) => last.test(s))) {
+          throw new Refusal(HOME_REFUSAL);
+        }
       } else if (dyn && !isHomeArg && i !== prog) throw new Refusal(OPAQUE);
-      else if (where === 'inside' && OWNER_FILES.includes(basename(path).toLowerCase())) throw new Refusal(OWNER_REFUSAL);
+      else if (where === 'inside' && isOwnerFile(fileName(path))) throw new Refusal(OWNER_REFUSAL);
       else if (where === 'home' && !listing && !isHomeArg && i !== prog) throw new Refusal(HOME_REFUSAL);
     }
   }
@@ -1127,6 +1184,7 @@ export function checkPath(path, opts = {}) {
     if (at >= 0 && comps[at + 1] !== 'src') return HOME_REFUSAL;
     const base = opts.base ? expandPath(opts.base, cwd).path : cwd;
     const { path: p, viaRdvHome } = expandPath(staticPrefix(path) || '.', base);
+    if (couldBeNotifySecret(basename(path))) return OWNER_REFUSAL;
     if (classify(p, viaRdvHome) || (GLOB_CHARS.test(path) && path.includes('**') && containsHome(p))) return HOME_REFUSAL;
     // A glob in the gateway's folder, or one from above it that descends (`**`, or a wildcard in a folder part:
     // `~/*/*.token`), would reach the token. classify already catches the folder itself.
@@ -1138,9 +1196,11 @@ export function checkPath(path, opts = {}) {
   if (kind === 'search' && gatewayAtOrBelow(expandPath(path, cwd).path)) return GATEWAY_DIR;
   const { path: p } = expandPath(path, cwd);
   const where = classify(p);
-  if (SECRET_FILES.includes(basename(p).toLowerCase()) && (where || classify(dirname(p)))) return SECRET_REFUSAL;
-  if (OWNER_FILES.includes(basename(p).toLowerCase()) && where === 'inside') return OWNER_REFUSAL;
-  if (ANYWHERE_FILES.includes(basename(p).toLowerCase())) return SECRET_REFUSAL;
+  const name = fileName(p);
+  if (SECRET_FILES.includes(name) && (where || classify(dirname(p)))) return SECRET_REFUSAL;
+  if (isOwnerFile(name) && where === 'inside') return OWNER_REFUSAL;
+  if (ANYWHERE_FILES.includes(name)) return SECRET_REFUSAL;
+  if (NOTIFY_SECRET_FILE.test(name)) return OWNER_REFUSAL;
   if (where === 'home') return HOME_REFUSAL;
   if (kind === 'search' && (where || containsHome(p))) return HOME_REFUSAL;
   return undefined;

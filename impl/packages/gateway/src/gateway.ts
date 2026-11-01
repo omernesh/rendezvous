@@ -58,6 +58,7 @@ import { BRAND_CSS, FAVICON_SVG } from './brand.js';
 import { type AgentLabel, approvalPage, consentCsp, consentPage, CSS, donePage, errorPage, type Flash, listPage, PAGE_CSP, unlockPage } from './pages.js';
 import { authorizeCall, SCOPES, type Scope, toolScopes } from './scopes.js';
 import { GatewayStore } from './store.js';
+import { Notifier, type NotifierOptions, NotifyStore } from './notify.js';
 
 export const DEFAULT_PORT = 8787;
 export const API_BODY_MAX = 256 * 1024;
@@ -107,6 +108,8 @@ export interface GatewayOptions {
    */
   clientIpHeader?: string;
   now?: () => number;
+  /** Outbound notifications' timing and resolver (tests); the settings themselves are the owner's (`rdv-gateway notify set`). */
+  notify?: Partial<Omit<NotifierOptions, 'store' | 'agents' | 'log'>>;
 }
 
 /** Who a request is, once authenticated: the seam slice 2's OAuth plugs into. */
@@ -158,6 +161,9 @@ const CLIENT_FORGET_MS = 24 * 60 * 60_000;
 
 export class Gateway {
   readonly store: GatewayStore;
+  /** Outbound webhooks (NOTES 106): the owner's settings per agent, the outbox and the dead letters. */
+  readonly notifyStore: NotifyStore;
+  private notifier?: Notifier;
   readonly oauth: OAuthServer;
   readonly root: AgentRoot;
   /** Every agent served, the root agent (or else the first by name) first. */
@@ -189,6 +195,7 @@ export class Gateway {
     this.now = opts.now ?? Date.now;
     this.log = opts.humanLog ?? ((line) => process.stderr.write(`[rdv-gateway] ${line}\n`));
     this.store = new GatewayStore(opts.home);
+    this.notifyStore = new NotifyStore(opts.home);
     const host = opts.host ?? '127.0.0.1';
     if (!isLoopbackHost(host) && !opts.allowRemoteBind) {
       throw new Error(`refusing to bind ${host}: the gateway listens on this machine only unless you pass --allow-remote-bind (put your tunnel in front of 127.0.0.1 instead)`);
@@ -335,6 +342,12 @@ export class Gateway {
       if (rt.id) seen.set(rt.id, rt.name);
     }
     this.warnOrphans();
+    // A webhook file that does not pass its schema and URL rules stops the start (fail closed), never a half-read one.
+    try {
+      this.notifyStore.read();
+    } catch (err) {
+      throw new Error(`notifications: ${(err as Error).message}`);
+    }
     for (const rt of this.agents) rt.server.startListening();
     const http = createServer((req, res) => void this.handle(req, res));
     http.requestTimeout = 120_000;
@@ -365,11 +378,26 @@ export class Gateway {
     // A token or grant revoked from a terminal is refused at the next request; this also ends its open streams.
     this.sweeper = setInterval(() => this.sweepSessions(), SESSION_SWEEP_MS);
     this.sweeper.unref();
+    // Outbound only, beside the agents: it reads their event logs and invites, never writes them, never blocks them.
+    this.notifier = new Notifier({
+      ...this.opts.notify,
+      store: this.notifyStore,
+      agents: this.agents.map((a) => ({ name: a.name, home: a.home, binding: a.root ? ROOT_BINDING : a.name, id: a.id })),
+      log: this.log,
+      now: this.opts.notify?.now ?? this.now,
+    });
+    this.notifier.start();
     return this.base;
+  }
+
+  /** The outbound notifier (once started). */
+  get notifications(): Notifier | undefined {
+    return this.notifier;
   }
 
   async close(): Promise<void> {
     if (this.sweeper) clearInterval(this.sweeper);
+    await this.notifier?.close();
     for (const s of this.sessions.values()) await s.transport.close().catch(() => {});
     this.sessions.clear();
     if (this.http) {

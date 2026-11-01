@@ -484,7 +484,7 @@ write_ctl() {
 #   ./gw status | logs [tunnel] | start | stop | restart | update | uninstall
 #   ./gw rdv <command...>        the rdv CLI on the gateway's agent (e.g. ./gw rdv whoami)
 #   ./gw backup <file>           an encrypted backup of the agent (you type a new passphrase)
-#   ./gw pin|token|oauth|agent ...  rdv-gateway's owner commands, in your own terminal (agent add: then ./gw restart)
+#   ./gw pin|token|oauth|agent|notify ...  rdv-gateway's owner commands, in your own terminal (agent add: then ./gw restart)
 set -eu
 DIR=\$(CDPATH= cd -- "\$(dirname -- "\$0")" && pwd)
 $MINE_FUNC
@@ -503,7 +503,7 @@ case \$cmd in
   update) mine "\$DIR" && mine "\$DIR/install-gateway.sh" || { echo "gw: \$DIR or its installer copy is not yours alone (owner, symlink, group or other write, or an ACL); not running it" >&2; exit 1; }
     exec sh "\$DIR/install-gateway.sh" --dir "\$DIR" --update $ROOT_FLAGS"\$@" ;;
   rdv) exec compose run --rm --no-deps gateway node packages/cli/dist/src/bin.js "\$@" --home /data ;;
-  pin | token | oauth | agent) exec compose run --rm --no-deps gateway node packages/gateway/dist/src/bin.js "\$cmd" "\$@" --home /data ;;
+  pin | token | oauth | agent | notify) exec compose run --rm --no-deps gateway node packages/gateway/dist/src/bin.js "\$cmd" "\$@" --home /data ;;
   backup)
     [ \$# -eq 1 ] || { echo 'usage: ./gw backup <file>' >&2; exit 2; }
     out=\$(CDPATH= cd -- "\$(dirname -- "\$1")" && pwd)
@@ -523,7 +523,7 @@ EOF
 #   ./gw status | logs [tunnel] | start | stop | restart | update | uninstall
 #   ./gw rdv <command...>        the rdv CLI on the gateway's agent (e.g. ./gw rdv whoami)
 #   ./gw backup <file>           an encrypted backup of the agent (you type a new passphrase)
-#   ./gw pin|token|oauth|agent ...  rdv-gateway's owner commands, in your own terminal (agent add: then ./gw restart)
+#   ./gw pin|token|oauth|agent|notify ...  rdv-gateway's owner commands, in your own terminal (agent add: then ./gw restart)
 set -eu
 DIR=\$(CDPATH= cd -- "\$(dirname -- "\$0")" && pwd)
 $MINE_FUNC
@@ -540,7 +540,7 @@ case \$cmd in
   update) mine "\$DIR" && mine "\$DIR/install-gateway.sh" || { echo "gw: \$DIR or its installer copy is not yours alone (owner, symlink, group or other write, or an ACL); not running it" >&2; exit 1; }
     exec sh "\$DIR/install-gateway.sh" --dir "\$DIR" --update "\$@" ;;
   rdv) exec "\$NODE" "\$DIR/repo/impl/packages/cli/dist/src/bin.js" "\$@" --home "\$DIR/data" ;;
-  pin | token | oauth | agent) exec "\$NODE" "\$DIR/repo/impl/packages/gateway/dist/src/bin.js" "\$cmd" "\$@" --home "\$DIR/data" ;;
+  pin | token | oauth | agent | notify) exec "\$NODE" "\$DIR/repo/impl/packages/gateway/dist/src/bin.js" "\$cmd" "\$@" --home "\$DIR/data" ;;
   backup) exec "\$NODE" "\$DIR/repo/impl/packages/cli/dist/src/bin.js" backup "\$@" --home "\$DIR/data" ;;
   uninstall)
     svc_remove
