@@ -12,6 +12,7 @@ import { existsSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { acquireLock, type Home, writeAtomic } from '@rendezvous/cli/lib';
 import { randomToken, safeEqual, sha256 } from './http.js';
+import { isRootBinding } from './agents.js';
 import { isScope, SCOPES, type Scope } from './scopes.js';
 
 export const MAX_TOKENS = 50;
@@ -33,9 +34,9 @@ export interface ApiToken {
   scopes: Scope[];
   created: string;
   /**
-   * The one agent this token reaches (NOTES 104). Absent on a token made
-   * before multi-agent gateways: it reaches the root agent only, and nothing
-   * once the root holds none.
+   * The one agent this token reaches (NOTES 104): an agent's name, or the
+   * root marker (ROOT_BINDING) for the root agent. Absent on a token made
+   * before multi-agent gateways, which means the root agent too.
    */
   agent?: string;
 }
@@ -224,12 +225,12 @@ export class GatewayStore {
     });
   }
 
-  /** `agent migrate`: tokens of the root agent (named `from`, or made before NOTES 104) now reach `to`. */
+  /** `agent migrate`: tokens of the root agent (the root marker, none, or its name `from`) now reach `to`. */
   async rebindAgent(from: string, to: string): Promise<number> {
     return this.update((d) => {
       let n = 0;
       for (const t of Object.values(d.tokens)) {
-        if (t.agent === undefined || t.agent === from) {
+        if (isRootBinding(t.agent) || t.agent === from) {
           t.agent = to;
           n += 1;
         }

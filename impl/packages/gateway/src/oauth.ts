@@ -88,6 +88,9 @@ export interface OAuthServerOptions {
   onGrantEnded?: (grantId: string) => void;
   /** The agents this gateway serves (NOTES 104): a grant reaches exactly one of them. */
   agents?: () => readonly string[];
+  /** What a grant for an agent stores (the root marker for the root agent), and the agent a stored binding names now. */
+  binding?: (agent: string) => string;
+  nameOf?: (binding: string | undefined) => string | undefined;
 }
 
 class OAuthError extends Error {
@@ -140,6 +143,12 @@ export class OAuthServer {
     if (!r.startsWith(`${base}/a/`)) return undefined;
     const m = /^([a-z0-9][a-z0-9_-]{0,31})\/(mcp|sse)$/.exec(r.slice(base.length + 3));
     return m && (this.o.agents?.() ?? []).includes(m[1]) ? { agent: m[1] } : undefined;
+  }
+
+  /** A grant's stored resource: this gateway's MCP URL, or an agent's MCP URL under it. */
+  private ownResource(r: string): boolean {
+    const base = this.o.base();
+    return r === this.resource() || (r.startsWith(`${base}/a/`) && /^[a-z0-9][a-z0-9_-]{0,31}\/mcp$/.test(r.slice(base.length + 3)));
   }
 
   /** Where a client finds the metadata for the endpoint it called (the SDK checks that the resource covers its URL). */
@@ -456,7 +465,7 @@ export class OAuthServer {
     // The grant's id is known before the write, so a second presentation racing it still ends that grant.
     c.grantId = newGrantId();
     try {
-      const issued = await this.store.createGrant(client, c.scopes, c.resource, this.o.now(), c.consentAt, c.grantId, c.agent);
+      const issued = await this.store.createGrant(client, c.scopes, c.resource, this.o.now(), c.consentAt, c.grantId, this.o.binding ? this.o.binding(c.agent) : c.agent);
       if (c.replayed) {
         // Presented again while this grant was being written: it ends now.
         await this.store.revokeGrant(issued.grant.id);
@@ -482,7 +491,10 @@ export class OAuthServer {
     const resource = form.get('resource');
     const target = resource === null ? {} : this.resourceAgent(resource);
     if (!target) throw new OAuthError(400, 'invalid_target', 'resource: this gateway only');
-    const r = await this.store.refresh(ref, token, scopes, resource === null ? undefined : this.resource(target.agent), this.o.now());
+    // A resource naming an agent must name the grant's own agent (as it is called now); the gateway's own resource fits any.
+    const nameOf = this.o.nameOf ?? ((b: string | undefined) => b);
+    const ok = target.agent === undefined ? undefined : (g: { agent?: string }) => nameOf(g.agent) === target.agent;
+    const r = await this.store.refresh(ref, token, scopes, ok, this.o.now());
     if ('error' in r) {
       if (r.reused) {
         this.o.onGrantEnded?.(r.reused.id);
@@ -519,9 +531,10 @@ export class OAuthServer {
   /** The principal behind an OAuth access token for this gateway, if it is live, and the agent its grant reaches. */
   verifyAccess(token: string): { id: string; name: string; scopes: Scope[]; agent?: string } | undefined {
     const hit = this.store.findAccess(token, this.o.now());
-    // Bound to this gateway's resource, or its own agent's: one minted for another (or before the public URL changed) is refused.
+    // Bound to this gateway's resource or one of its agents' (which agent is the grant's binding, not the URL): one minted
+    // for another (or before the public URL changed) is refused.
     const g = hit?.grant;
-    if (!hit || !g || (g.resource !== this.resource() && (g.agent === undefined || g.resource !== this.resource(g.agent)))) return undefined;
+    if (!hit || !g || !this.ownResource(g.resource)) return undefined;
     return { id: g.id, name: `${hit.client.name} (OAuth ${g.id})`, scopes: hit.scopes, ...(g.agent !== undefined ? { agent: g.agent } : {}) };
   }
 

@@ -233,9 +233,17 @@ the root folder (code execution in the gateway, the container's volume, a
 backup of `data/`) has every agent served there; so does the owner's PIN,
 which unlocks approvals for all of them. Put agents on one gateway only when
 one person (or household) would trust one machine with all of them.
-*Controls:* every token and grant stores the one agent it reaches; one made
-before multi-agent gateways reaches the root agent only, and nothing once the
-root holds none, so no principal ever falls through to "a default". Each agent
+*Controls:* every token and grant stores the one agent it reaches (its name,
+or the root marker for the root agent, whose name follows its profile); one
+made before multi-agent gateways reaches the root agent only, and nothing once
+the root holds none, so no principal ever falls through to "a default". A
+name that tokens or grants are still bound to cannot be taken by a new agent
+without `--force` (which revokes them), and the gateway warns at start about
+bindings to an agent it does not have. An agent whose state cannot be read is
+skipped with an error in the log; the others are served. Caps hold per agent
+(32 MCP sessions, 64 approvals) and across all agents (128 sessions, 256
+approvals), so one agent's clients cannot exhaust the process for the others
+beyond that. Each agent
 has its own `RdvMcpServer` (home, listener, event log, held results) and its
 own pending approvals; a request reaches a server only through the
 principal's binding, and `/a/<name>/…` refuses any other agent's principal
@@ -254,8 +262,10 @@ both keep the key (`agents/.removed/`, `.premigrate-<time>/`). Tests:
 ## Known limits and open risks
 
 - Multi-agent: one PIN for all agents (per-agent PINs are not built), and
-  agent names are visible to anyone who reaches the gateway (an unknown name
-  is 404, a known one 401). Agents are read at start: one added or removed
+  agent names can be enumerated by anyone who reaches the gateway: an unknown
+  name under `/a/<name>/` and its protected-resource metadata answer 404, a
+  known one 401 or metadata. Pick names that say nothing you would keep
+  private. Agents are read at start: one added or removed
   takes effect on the next restart, and until then a token for an agent added
   since is refused.
 

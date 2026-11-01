@@ -6,6 +6,8 @@ import { type ApprovalAsk, type ApprovalForm, ToolError } from '@rendezvous/mcp'
 import { randomToken, sha256 } from './http.js';
 
 export const MAX_APPROVALS = 64;
+/** Pending approvals across every agent of one gateway (NOTES 104): one page holds them all. */
+export const MAX_APPROVALS_TOTAL = 256;
 /** Pending approvals one token may have open, so one client can't fill the page. */
 export const MAX_APPROVALS_PER_PRINCIPAL = 16;
 export const APPROVAL_TTL_MS = 24 * 60 * 60_000;
@@ -29,7 +31,14 @@ export class Approvals {
     private readonly now: () => number = Date.now,
     /** Whether the token that asked still exists: a revoked token's asks are dropped. */
     private readonly alive: (principal: string | undefined) => boolean = () => true,
+    /** How many wait across every agent of the gateway (this one's included). */
+    private readonly total: () => number = () => this.byId.size,
   ) {}
+
+  /** How many wait here now (expired ones not yet swept may count until the next ask). */
+  get size(): number {
+    return this.byId.size;
+  }
 
   /** Record an ask (the same call asked again reuses its entry) and return its approval page URL. */
   ask(a: ApprovalAsk, askedBy?: string): string {
@@ -48,7 +57,9 @@ export class Approvals {
     if (mine >= MAX_APPROVALS_PER_PRINCIPAL) {
       throw new ToolError(`${mine} approvals you asked for already wait for your user; nothing new was asked. Let them decide those first (or wait until they expire after a day).`);
     }
-    if (this.byId.size >= MAX_APPROVALS) throw new ToolError('too many approvals already wait for your user; nothing new was asked. Let them decide those first.');
+    if (this.byId.size >= MAX_APPROVALS || this.total() >= MAX_APPROVALS_TOTAL) {
+      throw new ToolError('too many approvals already wait for your user; nothing new was asked. Let them decide those first.');
+    }
     const id = `apr_${randomToken(18)}`;
     this.byId.set(id, { ...a, id, askedBy, created: this.now() });
     return this.urlFor(id);

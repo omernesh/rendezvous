@@ -4556,8 +4556,25 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       `.premigrate-<time>/` (kept, not deleted). Mixed layouts (a root agent
       plus `agents/…`) are fine, so migrating is optional. The root agent's
       name follows its profile, so restoring a backup with another profile
-      over the root renames it, and tokens made for the old name are then
-      refused (fail closed) until made again.
+      over the root (the deploy guide's "moving to your real identity")
+      renames it. So a token or grant for the root agent stores the root
+      marker `:root`, never the name (review of PR #127, MED-1); none
+      stored means the same. Its URL `/a/<name>/` follows the name; `/mcp`
+      does not change.
+    - **Names are never reused by stale bindings** (MED-2). `agent add`
+      refuses a name that tokens or grants are still bound to (an agent of
+      that name deleted by hand) unless `--force`, which revokes them first;
+      at start the gateway warns about every token or grant bound to an
+      agent it does not have. `migrate --name` rewrites a grant's resource
+      `/a/<old>/mcp` to `/a/<new>/mcp`, and a refresh is checked against the
+      grant's agent as named now, never the stored URL, so a refresh after a
+      rename or migration keeps working (LOW-1).
+    - **An unreadable agent is skipped, loudly** (LOW-2): the gateway logs an
+      ERROR naming it, serves the others, and its principals get 403
+      `agent_unavailable`. A name clash or two folders with one identity
+      still stop the start, since serving either would be a guess.
+    - **Caps across agents** (LOW-3): besides 32 MCP sessions and 64
+      approvals per agent, at most 128 sessions and 256 approvals in all.
     - **Routes.** `/mcp`, `/sse`, `/api/v1` serve the caller's own agent;
       `/a/<name>/mcp|sse|messages|api/v1|openapi.json` serve the named
       agent, and only to its own principals (another agent's token gets 403

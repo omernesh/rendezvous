@@ -156,14 +156,14 @@ async function main(): Promise<void> {
       agent = agents[0]?.name;
       if (agent === undefined) die('no agent here yet: add one first (rdv-gateway agent add <name> new)', 2);
     } else if (!agents.some((a) => a.name === agent)) die(`no agent "${agent}" here (rdv-gateway agent list)`, 2);
-    const { token, info } = await store.createToken(values.name!, values.scope!.split(',').map((s) => s.trim()).filter(Boolean), agent);
+    // The root agent is stored as the root marker, never its name (which follows its profile, NOTES 104).
+    const { token, info } = await store.createToken(values.name!, values.scope!.split(',').map((s) => s.trim()).filter(Boolean), root.bindingOf(agent!));
     process.stderr.write(`Token ${info.id} ("${info.name}", agent ${agent}, scopes ${info.scopes.join(', ')}). It is shown once; give it only to the assistant you mean:\n`);
     process.stdout.write(`${token}\n`);
     return;
   }
   if (cmd === 'token' && sub === 'list') {
-    const rootName = root.rootAgentName();
-    for (const t of store.listTokens()) process.stdout.write(`${t.id}  ${t.name}  agent ${t.agent ?? rootName ?? '(none)'}  ${t.scopes.join(',')}  ${t.created}\n`);
+    for (const t of store.listTokens()) process.stdout.write(`${t.id}  ${t.name}  agent ${root.nameOf(t.agent) ?? '(none)'}  ${t.scopes.join(',')}  ${t.created}\n`);
     return;
   }
   if (cmd === 'token' && sub === 'revoke') {
@@ -178,7 +178,7 @@ async function main(): Promise<void> {
       const hosts = c.redirectUris.map((u) => new URL(u).host).join(',');
       process.stdout.write(`${c.id}  ${JSON.stringify(c.name)}  returns to ${hosts}  registered ${c.created}${grants.length ? '' : c.approved ? '  (no grant left)' : '  (never approved)'}\n`);
       for (const g of grants) {
-        process.stdout.write(`  ${g.id}  agent ${g.agent ?? root.rootAgentName() ?? '(none)'}  ${g.scopes.join(',')}  since ${g.created}  last refresh ${new Date(g.lastUsed).toISOString()}\n`);
+        process.stdout.write(`  ${g.id}  agent ${root.nameOf(g.agent) ?? '(none)'}  ${g.scopes.join(',')}  since ${g.created}  last refresh ${new Date(g.lastUsed).toISOString()}\n`);
       }
     }
     return;
@@ -241,9 +241,19 @@ function calendarOption(given: string[]): string | Record<string, string> | unde
 /** `rdv-gateway agent …`: the agents this gateway serves. The owner's, in their own terminal, like every command here. */
 async function agentCommand(root: AgentRoot, store: GatewayStore, sub: string | undefined, name: string | undefined): Promise<void> {
   const oauth = new OAuthStore(root.home);
-  const rootName = root.rootAgentName();
-  const tokensOf = (n: string) => store.listTokens().filter((t) => (t.agent ?? rootName) === n);
-  const grantsOf = (n: string) => oauth.list().grants.filter((g) => (g.agent ?? rootName) === n);
+  const tokensOf = (n: string) => store.listTokens().filter((t) => root.nameOf(t.agent) === n);
+  const grantsOf = (n: string) => oauth.list().grants.filter((g) => root.nameOf(g.agent) === n);
+  /** Tokens and grants still bound to a name: `remove` and `add` refuse while there are any, unless --force revokes them. */
+  const bound = (n: string, then: string): void => {
+    const tokens = tokensOf(n);
+    const grants = grantsOf(n);
+    if ((tokens.length || grants.length) && !values.force) {
+      die(
+        `agent "${n}" still has ${tokens.length} token(s) (${tokens.map((t) => t.id).join(', ') || 'none'}) and ${grants.length} OAuth grant(s) (${grants.map((g) => g.id).join(', ') || 'none'}): ` +
+          `revoke them first, or pass --force to revoke them ${then}; nothing changed`,
+      );
+    }
+  };
   if (sub === 'list') {
     const agents = root.list();
     if (agents.length === 0) process.stderr.write(`no agent in ${root.dir} yet: rdv-gateway agent add <name> new\n`);
@@ -265,6 +275,11 @@ async function agentCommand(root: AgentRoot, store: GatewayStore, sub: string | 
     const fresh = positionals[3] === 'new';
     if (fresh === (restore !== undefined)) die('agent add needs exactly one of "new" (a new identity) or --restore <backup-file>', 2);
     const home = root.checkNewName(checkAgentName(name!));
+    // Tokens or grants left bound to this name (an agent of that name removed by hand) would reach the new agent.
+    bound(name!, 'before the new agent takes the name');
+    const t = await store.revokeAgent(name!);
+    const g = await oauth.revokeAgent(name!);
+    if (t.length || g.length) process.stderr.write(`Revoked ${t.length} token(s) and ${g.length} OAuth grant(s) left bound to "${name}".\n`);
     if (fresh) {
       const r = await initHome(home, { profile: name!, relays: values.relay, emails: values.email, phones: values.phone, publicPointer: values['public-pointer'] === true });
       process.stderr.write(`Added agent ${name} at ${home.dir}\nid:          ${r.id}\nfingerprint: ${r.fingerprint}\n`);
@@ -292,14 +307,7 @@ async function agentCommand(root: AgentRoot, store: GatewayStore, sub: string | 
   }
   if (sub === 'remove') {
     if (!name) die('agent remove needs a name (rdv-gateway agent list)', 2);
-    const tokens = tokensOf(name!);
-    const grants = grantsOf(name!);
-    if ((tokens.length || grants.length) && !values.force) {
-      die(
-        `agent "${name}" still has ${tokens.length} token(s) (${tokens.map((t) => t.id).join(', ') || 'none'}) and ${grants.length} OAuth grant(s) (${grants.map((g) => g.id).join(', ') || 'none'}): ` +
-          'revoke them first, or pass --force to revoke them with it; nothing changed',
-      );
-    }
+    bound(name!, 'with it');
     const { kept } = root.remove(name!);
     const t = await store.revokeAgent(name!);
     const g = await oauth.revokeAgent(name!);

@@ -34,7 +34,8 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 import type { Home } from '@rendezvous/cli/lib';
 import { RdvMcpServer } from '@rendezvous/mcp';
-import { AgentError, AgentRoot, AGENT_NAME_RE, type AgentEntry } from './agents.js';
+import { fingerprint } from '@rendezvous/core';
+import { AgentError, AgentRoot, AGENT_NAME_RE, type AgentEntry, isRootBinding, ROOT_BINDING } from './agents.js';
 import { Approvals, FormInputError, type PendingApproval, typeContent } from './approvals.js';
 import {
   HttpError,
@@ -62,6 +63,8 @@ export const DEFAULT_PORT = 8787;
 export const API_BODY_MAX = 256 * 1024;
 export const FORM_BODY_MAX = 64 * 1024;
 export const MAX_MCP_SESSIONS = 32;
+/** MCP sessions across every agent of one gateway (NOTES 104). */
+export const MAX_MCP_SESSIONS_TOTAL = 128;
 /** MCP sessions one token may hold: a new one closes that token's least recently used. */
 export const MAX_MCP_SESSIONS_PER_TOKEN = 4;
 const MCP_IDLE_MS = 30 * 60_000;
@@ -94,6 +97,8 @@ export interface GatewayOptions {
   sweepMs?: number;
   /** Requests per minute per token (API and MCP together). */
   tokenRate?: number;
+  /** MCP sessions across every agent (default MAX_MCP_SESSIONS_TOTAL). */
+  maxSessionsTotal?: number;
   /**
    * The header your tunnel puts the client's address in (e.g.
    * cf-connecting-ip, x-forwarded-for: its last entry). Set it only when
@@ -158,6 +163,9 @@ export class Gateway {
   /** Every agent served, the root agent (or else the first by name) first. */
   readonly agents: readonly AgentRuntime[];
   private readonly byName = new Map<string, AgentRuntime>();
+  /** The root agent's name now (it follows its profile); tokens and grants store ROOT_BINDING for it, not this. */
+  private readonly rootName?: string;
+  private readonly skipped: string[] = [];
   private http?: Server;
   private sweeper?: NodeJS.Timeout;
   private base = '';
@@ -208,10 +216,24 @@ export class Gateway {
       log: this.log,
       onGrantEnded: (id) => this.endPrincipal(id),
       agents: () => this.agents.map((a) => a.name),
+      binding: (name) => (name === this.rootName ? ROOT_BINDING : name),
+      nameOf: (b) => this.boundAgent(b),
     });
     this.root = new AgentRoot(opts.home.dir);
+    this.rootName = this.root.rootAgentName();
+    // An agent whose state cannot be read is skipped, loudly, and the others are served (its principals get 403).
+    const found: AgentEntry[] = [];
+    const ids: Array<string | undefined> = [];
+    for (const a of this.root.list()) {
+      try {
+        ids.push(a.home.readAgentState().card.id);
+        found.push(a);
+      } catch (err) {
+        this.skipped.push(a.name);
+        this.log(`ERROR: agent ${a.name} is NOT served: its state at ${a.home.dir} cannot be read (${(err as Error).message}). The other agents are served; fix or remove it, then restart.`);
+      }
+    }
     // No agent yet: the root stands in, so start() can say so.
-    const found: AgentEntry[] = this.root.list();
     const entries = found.length ? found : [{ name: 'default', home: opts.home, root: true }];
     const multi = entries.length > 1;
     const calendars = this.calendars(opts.calendar, entries.map((a) => a.name));
@@ -222,6 +244,8 @@ export class Gateway {
         (id) => `${this.base}/approve/${id}`,
         this.now,
         (p) => p === undefined || this.principalAgent(p) === a.name,
+        // Across every agent too: a gateway of many agents is still one page and one process.
+        () => this.agents.reduce((n, x) => n + x.approvals.size, 0),
       );
       const server = new RdvMcpServer({
         home: a.home,
@@ -241,10 +265,16 @@ export class Gateway {
         pollMs: opts.pollMs,
         sweepMs: opts.sweepMs,
       });
-      const rt: AgentRuntime = { name: a.name, home: a.home, root: a.root, server, approvals };
+      const id = ids[found.indexOf(a)];
+      const rt: AgentRuntime = { name: a.name, home: a.home, root: a.root, server, approvals, ...(id ? { id, fingerprint: fingerprint(id) } : {}) };
       this.byName.set(a.name, rt);
       return rt;
     });
+  }
+
+  /** Agents found but not served (their state could not be read). */
+  get skippedAgents(): readonly string[] {
+    return this.skipped;
   }
 
   /** Which calendar each agent answers from: one file only for a single agent, else one per agent by name. */
@@ -292,13 +322,16 @@ export class Gateway {
       throw new Error(`no agent at ${this.opts.home.dir} yet: create one first in your own terminal (rdv-gateway agent add <name> new, or rdv init)`);
     }
     if (!this.store.hasPin()) throw new Error('set the approval PIN first, in your own terminal: rdv-gateway pin set');
-    // Two folders with one identity would be two receivers for one key: refused (identities() throws).
-    for (const a of this.root.identities()) {
-      const rt = this.byName.get(a.name);
-      if (!rt) throw new AgentError(`agent "${a.name}" was added after this gateway was made; start it again`);
-      rt.id = a.id;
-      rt.fingerprint = a.fingerprint;
+    // Two folders with one identity would be two receivers for one key: refused.
+    const seen = new Map<string, string>();
+    for (const rt of this.agents) {
+      const other = rt.id ? seen.get(rt.id) : undefined;
+      if (other !== undefined) {
+        throw new AgentError(`agents "${other}" and "${rt.name}" are the same identity (${rt.fingerprint}): only one may run. Remove one of them (rdv-gateway agent remove), or finish a migration.`);
+      }
+      if (rt.id) seen.set(rt.id, rt.name);
     }
+    this.warnOrphans();
     for (const rt of this.agents) rt.server.startListening();
     const http = createServer((req, res) => void this.handle(req, res));
     http.requestTimeout = 120_000;
@@ -366,11 +399,21 @@ export class Gateway {
     });
   }
 
-  /** The agent a principal's stored binding names: its own, or (none stored) the root agent, if there is one. */
+  /** The agent a principal's stored binding names: its own, or (the root marker, or none stored) the root agent, if there is one. */
   private boundAgent(stored: string | undefined): string | undefined {
-    if (stored !== undefined) return stored;
-    const first = this.primary;
-    return first.root ? first.name : undefined;
+    return isRootBinding(stored) ? this.rootName : stored;
+  }
+
+  /** Tokens and grants bound to no agent here (removed by hand, or skipped): said at start, so the owner revokes them. */
+  private warnOrphans(): void {
+    const served = new Set([...this.agents.map((a) => a.name), ...this.skipped]);
+    const lost = [
+      ...this.store.listTokens().map((t) => ({ id: t.id, agent: this.boundAgent(t.agent) ?? '(the root agent, gone)' })),
+      ...this.oauth.store.list().grants.map((g) => ({ id: g.id, agent: this.boundAgent(g.agent) ?? '(the root agent, gone)' })),
+    ].filter((x) => !served.has(x.agent));
+    for (const x of lost) {
+      this.log(`WARNING: ${x.id} is bound to agent ${x.agent}, which is not here: it reaches nothing. Revoke it (rdv-gateway token revoke / oauth revoke); "agent add" refuses that name until you do.`);
+    }
   }
 
   /** The agent a principal id reaches, if the principal still exists. */
@@ -383,12 +426,13 @@ export class Gateway {
 
   /**
    * The agent a call reaches: the principal's own. Under /a/<name>/ the name must be that agent: a principal of
-   * another agent is refused there, never served (and it never learns whose the URL is).
+   * another agent is refused there, never served. (The refusal names no agent, but agent names are not secret: the
+   * URL holds one, and an unknown name answers 404.)
    */
   private runtimeFor(who: Principal, route: string | undefined): AgentRuntime {
     if (route !== undefined && route !== who.agent) throw new HttpError(403, 'this token is for another agent: use /mcp (or /api/v1), or that agent\'s own URL', 'wrong_agent');
     const rt = this.byName.get(who.agent);
-    if (!rt) throw new HttpError(403, 'the agent this token is for is not served here (added since the gateway started? your user restarts it)', 'agent_unavailable');
+    if (!rt) throw new HttpError(403, 'the agent this token is for is not served by this gateway now (it was removed, or cannot be read, or was added since the gateway started): your user checks "rdv-gateway agent list" and the gateway log', 'agent_unavailable');
     return rt;
   }
 
@@ -564,7 +608,7 @@ export class Gateway {
       await s.transport.close().catch(() => {});
     }
     // Per agent: one agent's clients never use up another's room.
-    if ([...this.sessions.values()].filter((s) => s.agent === rt.name).length >= MAX_MCP_SESSIONS) {
+    if ([...this.sessions.values()].filter((s) => s.agent === rt.name).length >= MAX_MCP_SESSIONS || this.sessions.size >= (this.opts.maxSessionsTotal ?? MAX_MCP_SESSIONS_TOTAL)) {
       throw new HttpError(503, 'too many open sessions; close one or retry later', 'busy', { 'Retry-After': '60' });
     }
     return rt.server.newSession({

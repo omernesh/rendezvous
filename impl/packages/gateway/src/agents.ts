@@ -19,6 +19,14 @@ import { fingerprint } from '@rendezvous/core';
 /** An agent's name: the URL segment (/a/<name>/mcp) and its folder. Lowercase, so it means one folder on every filesystem. */
 export const AGENT_NAME_RE = /^[a-z0-9][a-z0-9_-]{0,31}$/;
 export const AGENTS_DIR = 'agents';
+/**
+ * What a token or grant of the root agent stores as its agent: a marker, never the root's name, which follows its
+ * profile and so changes when a backup with another profile is restored over the root. A token or grant with no
+ * agent at all (made before NOTES 104) means the same.
+ */
+export const ROOT_BINDING = ':root';
+/** Whether a stored binding means the root agent. */
+export const isRootBinding = (b: string | undefined): boolean => b === undefined || b === ROOT_BINDING;
 /** The gateway's own files in its root: never an agent's, never migrated. */
 export const GATEWAY_FILES = ['gateway.json', 'gateway.lock', 'gateway-oauth.json', 'gateway-oauth.lock'];
 /** A home's lock files: held by whoever runs, never copied. */
@@ -78,6 +86,16 @@ export class AgentRoot {
     }
     const n = profile.toLowerCase().replace(/[^a-z0-9_-]/g, '-').slice(0, 32);
     return AGENT_NAME_RE.test(n) ? n : 'default';
+  }
+
+  /** What a token or grant for this agent stores: the root marker for the root agent, else its name. */
+  bindingOf(name: string): string {
+    return name === this.rootAgentName() ? ROOT_BINDING : name;
+  }
+
+  /** The agent a stored binding names now (the root marker: the root agent, if the root holds one). */
+  nameOf(binding: string | undefined): string | undefined {
+    return isRootBinding(binding) ? this.rootAgentName() : binding;
   }
 
   /** Every agent here: the root agent first, then agents/<name>/ by name. Only folders that hold an agent count. */

@@ -5,7 +5,7 @@
 // each other over the in-memory relay. A gateway from before keeps working
 // unchanged, and `rdv-gateway agent migrate|add|remove` move nothing silently.
 import { execFile } from 'node:child_process';
-import { cpSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { cpSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createHash, randomBytes } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -13,7 +13,7 @@ import { fileURLToPath } from 'node:url';
 import { createBackup, Home, initHome, writeBackupFile } from '@rendezvous/cli/lib';
 import { startTestRelay, type TestRelay } from '@rendezvous/core/testing';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { AgentRoot, Gateway, GatewayStore, OAuthStore } from '../src/index.js';
+import { AgentRoot, Approvals, Gateway, GatewayStore, MAX_APPROVALS_TOTAL, OAuthStore, ROOT_BINDING } from '../src/index.js';
 import { api, Browser, callJson, hidden, mcpClient, PIN, waitApi } from './helpers.js';
 
 const BIN = fileURLToPath(new URL('../dist/src/bin.js', import.meta.url));
@@ -210,7 +210,7 @@ describe('one gateway, two agents: isolation', () => {
 
 const REDIRECT = 'https://client.example/oauth/callback';
 
-async function connect(base: string, br: Browser, resource: string | undefined, choose?: string): Promise<{ status: number; text: string; token?: string }> {
+async function connect(base: string, br: Browser, resource: string | undefined, choose?: string): Promise<{ status: number; text: string; token?: string; refresh?: string; clientId?: string }> {
   const reg = await (await fetch(`${base}/oauth/register`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ client_name: 'Claude', redirect_uris: [REDIRECT], token_endpoint_auth_method: 'none' }) })).json();
   const verifier = randomBytes(32).toString('base64url');
   const challenge = createHash('sha256').update(verifier).digest('base64url');
@@ -234,8 +234,127 @@ async function connect(base: string, br: Browser, resource: string | undefined, 
     })
   ).json();
   expect(t.access_token, JSON.stringify(t)).toBeTruthy();
-  return { status: 200, text: page.text, token: t.access_token };
+  return { status: 200, text: page.text, token: t.access_token, refresh: t.refresh_token, clientId: reg.client_id };
 }
+
+async function refresh(base: string, clientId: string, token: string, resource?: string): Promise<{ status: number; body: any }> { // eslint-disable-line @typescript-eslint/no-explicit-any
+  const r = await fetch(`${base}/oauth/token`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: token, client_id: clientId, ...(resource ? { resource } : {}) }).toString(),
+  });
+  return { status: r.status, body: await r.json() };
+}
+
+/** A gateway on an existing root (after a change on disk), started. */
+async function restart(opts: Partial<ConstructorParameters<typeof Gateway>[0]> = {}): Promise<{ gw: Gateway; base: string; log: string[] }> {
+  const log: string[] = [];
+  const gw = new Gateway({ home: new Home(root), port: 0, humanLog: (l) => log.push(l), pollMs: 150, sweepMs: 3_600_000, ...opts });
+  gws.push(gw);
+  const base = await gw.start();
+  // On the old port, fetch may first reuse a pooled socket of the gateway that closed: spend that one.
+  await fetch(`${base}/healthz`).catch(() => {});
+  return { gw, base, log };
+}
+
+describe('review of PR #127', () => {
+  it('MED-1: tokens and grants of the root agent survive a restore that renames it (bound to the root marker)', { timeout: 90_000 }, async () => {
+    const { gw, base, ids } = await multi(['kids'], { legacy: 'omer' });
+    const made = await bin(['token', 'create', '--name', 'sammie', '--scope', 'read', '--agent', 'omer', '--home', root]);
+    expect(made.code, made.stderr).toBe(0);
+    const t = made.stdout.trim();
+    expect(new GatewayStore(new Home(root)).listTokens()[0].agent).toBe(ROOT_BINDING);
+    const br = new Browser(base);
+    const fixed = await connect(base, br, `${base}/a/omer/mcp`);
+    const picked = await connect(base, br, undefined, 'omer');
+    expect(new OAuthStore(new Home(root)).list().grants.map((g) => g.agent)).toEqual([ROOT_BINDING, ROOT_BINDING]);
+    await gw.close();
+    // A backup with another profile restored over the root: the root agent is now called "main".
+    const home = new Home(root);
+    home.writeConfig({ ...home.readConfig(), profile: 'main' });
+    const { gw: gw2, base: b2 } = await restart({ port: Number(new URL(base).port) });
+    expect(gw2.agents.map((a) => a.name)).toEqual(['main', 'kids']);
+    for (const tk of [t, fixed.token!, picked.token!]) {
+      expect((await api(b2, tk, 'rdv_status')).body.result.agent_id).toBe(ids.omer);
+      expect((await api(`${b2}/a/main`, tk, 'rdv_status')).body.result.agent_id).toBe(ids.omer);
+      expect((await api(`${b2}/a/kids`, tk, 'rdv_status')).status).toBe(403);
+    }
+    const r = await refresh(b2, picked.clientId!, picked.refresh!, `${b2}/mcp`);
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect((await api(b2, r.body.access_token, 'rdv_status')).body.result.agent_id).toBe(ids.omer);
+  });
+
+  it('MED-2: bindings left on a name never reach a new agent of that name; the gateway warns about them', { timeout: 90_000 }, async () => {
+    const { gw } = await multi(['kids', 'omer']);
+    const left = await tok(gw, 'kids', ['read'], 'old-kids');
+    await gw.close();
+    // The folder deleted by hand, not with agent remove.
+    rmSync(join(root, 'agents', 'kids'), { recursive: true, force: true });
+    const { log } = await restart();
+    expect(log.join('\n')).toMatch(/WARNING: tok_\S+ is bound to agent kids, which is not here/);
+    for (const g of gws) await g.close();
+    gws = [];
+    const refused = await bin(['agent', 'add', 'kids', 'new', '--email', email('kids'), '--relay', relay.url, '--home', root]);
+    expect(refused.code).not.toBe(0);
+    expect(refused.stderr).toMatch(/still has 1 token/);
+    expect(existsSync(join(root, 'agents', 'kids'))).toBe(false);
+    const forced = await bin(['agent', 'add', 'kids', 'new', '--email', email('kids'), '--relay', relay.url, '--force', '--home', root]);
+    expect(forced.code, forced.stderr).toBe(0);
+    expect(forced.stderr).toMatch(/Revoked 1 token/);
+    const { base } = await restart();
+    expect((await api(base, left, 'rdv_status')).status).toBe(401);
+  });
+
+  it('LOW-1: migrate --name rewrites a grant\'s agent resource, and its refresh keeps working', { timeout: 90_000 }, async () => {
+    const { gw, base, ids } = await multi([], { legacy: 'omer' });
+    const c = await connect(base, new Browser(base), `${base}/a/omer/mcp`);
+    await gw.close();
+    gws = [];
+    const m = await bin(['agent', 'migrate', '--name', 'main', '--home', root]);
+    expect(m.code, m.stderr).toBe(0);
+    const g = new OAuthStore(new Home(root)).list().grants;
+    expect(g[0].agent).toBe('main');
+    const { base: b2 } = await restart({ port: Number(new URL(base).port) });
+    expect(new OAuthStore(new Home(root)).grant(g[0].id)!.resource).toBe(`${b2}/a/main/mcp`);
+    expect((await api(`${b2}/a/main`, c.token, 'rdv_status')).body.result.agent_id).toBe(ids.omer);
+    const r = await refresh(b2, c.clientId!, c.refresh!, `${b2}/a/main/mcp`);
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect((await api(`${b2}/a/main`, r.body.access_token, 'rdv_status')).body.result.agent_id).toBe(ids.omer);
+    const r2 = await refresh(b2, c.clientId!, r.body.refresh_token, `${b2}/mcp`);
+    expect(r2.status, JSON.stringify(r2.body)).toBe(200);
+  });
+
+  it('LOW-2: an unreadable agent is skipped loudly; the others are served', { timeout: 60_000 }, async () => {
+    const { gw, ids } = await multi(['kids', 'omer']);
+    const k = await tok(gw, 'kids', ['read']);
+    const o = await tok(gw, 'omer', ['read']);
+    await gw.close();
+    gws = [];
+    writeFileSync(join(root, 'agents', 'kids', 'agent.json'), '{');
+    const { gw: gw2, base, log } = await restart();
+    expect(gw2.skippedAgents).toEqual(['kids']);
+    expect(log.join('\n')).toMatch(/ERROR: agent kids is NOT served/);
+    expect((await api(base, o, 'rdv_status')).body.result.agent_id).toBe(ids.omer);
+    const r = await api(base, k, 'rdv_status');
+    expect(r.status).toBe(403);
+    expect(r.body.code).toBe('agent_unavailable');
+  });
+
+  it('LOW-3: sessions and approvals are capped across all agents too', { timeout: 60_000 }, async () => {
+    const { gw } = await multi(['kids', 'omer']);
+    const k = await tok(gw, 'kids', ['read']);
+    const o = await tok(gw, 'omer', ['read']);
+    await gw.close();
+    gws = [];
+    const { base } = await restart({ maxSessionsTotal: 1 });
+    const first = await mcpClient(base, k);
+    await expect(mcpClient(base, o)).rejects.toThrow();
+    await first.close();
+    const full = new Approvals((id) => id, Date.now, () => true, () => MAX_APPROVALS_TOTAL);
+    const form = { message: 'x', properties: {}, required: [], digest: 'd' };
+    expect(() => full.ask({ tool: 'rdv_grant', args: {}, form, suggestions: [], principal: 'tok_a' } as never)).toThrow(/too many approvals/);
+  });
+});
 
 describe('one gateway, two agents: OAuth', () => {
   it('a grant reaches the one agent its resource names, or the one the owner picks; metadata per agent', { timeout: 60_000 }, async () => {
