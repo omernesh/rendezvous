@@ -28,7 +28,7 @@ import {
   MEETING_CAPABILITIES,
   verifyContactRequest,
 } from './contact.js';
-import { checkInviteRelays, type Invite, INVITE_RELAYS_MAX, INVITE_TTL_MS, inviteExpired, inviteUrl } from './invite.js';
+import { checkInviteRelays, inviteRef, type Invite, INVITE_RELAYS_MAX, INVITE_TTL_MS, inviteExpired, inviteUrl } from './invite.js';
 import type { LookupFunction } from 'node:net';
 import { guardedLookup, type Resolver } from './filefetch.js';
 import {
@@ -860,7 +860,7 @@ export class Agent extends EventEmitter<AgentEvents> {
     const isolated = this.transport.sendEnvelopeIsolated?.bind(this.transport);
     if (!isolated) throw new Error('this transport cannot send to an invite link\'s relays');
     const req = createContactRequest(this.key, this.card, { toHint: invite.agentId, greeting, invite: invite.secret, now });
-    this.book.trackOutstanding(req, 'claimed', invite.agentId);
+    this.book.trackOutstanding(req, 'claimed', invite.agentId, undefined, inviteRef(invite.secret));
     // Only after every check, and only for this send: connections of its own to the link's relays, whose names
     // resolve only to public addresses (pinned), closed afterwards. Our own relay connections are never used or
     // changed, even when the link names one of our relays (re-review of PR #120).

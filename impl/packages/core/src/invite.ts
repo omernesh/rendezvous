@@ -201,6 +201,16 @@ export function inviteSecretHash(secret: string): string {
   return Array.from(sha256(all), (x) => x.toString(16).padStart(2, '0')).join('');
 }
 
+/**
+ * A short local reference to an invite link, for the side that accepted it
+ * (issue #141): the first 16 hex of the secret's hash. The inviter's invite id
+ * is random and never reaches the accepter, so this is what both sides' notes
+ * can't share; it reveals nothing about the secret.
+ */
+export function inviteRef(secret: string): string {
+  return inviteSecretHash(secret).slice(0, 16);
+}
+
 /** Constant-time equality of two hex strings of the same length. */
 export function sameHash(a: string, b: string): boolean {
   if (typeof a !== 'string' || typeof b !== 'string' || a.length !== b.length) return false;
