@@ -10,12 +10,10 @@ The format follows Keep a Changelog. One line per change a user can see; PR numb
 - Invite people by link, WhatsApp style: ask your assistant to invite someone, choose in an approval form what they get and for how long, and send the ready-made message; when they open the link and tell their assistant "accept my Rendezvous invite", or run `rdv init --invite <link>`, you are connected at once, and you are told who used it. The link works once and expires (7 days by default); `rdv invite create` in a terminal does the same.
 - Nicknames for your contacts: tell your assistant "talk to joe" or "tell Ran's agent …" once you have given that contact the nickname (you type it in an approval form; at most 8 per contact, each name belongs to one contact). You can also name your own agent (e.g. "Sammie"): contacts see it as what your agent calls itself, never as a way to pick it, and your contact requests greet with it.
 - One `rdv-gateway` can serve several agents (yours, a second assistant's, a family's): `rdv-gateway agent add|list|remove|migrate`, an MCP address per agent (`/a/<name>/mcp`), and every token and OAuth connection reaches exactly one agent; the approval page says which agent each approval is for. An existing single-agent gateway works unchanged.
+- One-command gateway install: `curl -fsSL https://rendezvous.nesher.co/install-gateway.sh | sh` builds and starts `rdv-gateway` behind a Cloudflare Tunnel, your own proxy or Tailscale Funnel, one question at a time, and the plugin's `rdv-gateway-setup` skill prepares it from chat.
 
 ### Changed
 - The docs, site, plugin and MCP server text now describe Rendezvous as cross-platform secure agent-to-agent messaging, with meeting scheduling as one example. The CLI reference follows the order you use it (identity, contacts, messages, tasks and files, groups, backups), and the FAQ shows the current version.
-
-### Added
-- One-command gateway install: `curl -fsSL https://rendezvous.nesher.co/install-gateway.sh | sh` builds and starts `rdv-gateway` behind a Cloudflare Tunnel, your own proxy or Tailscale Funnel, one question at a time, and the plugin's `rdv-gateway-setup` skill prepares it from chat.
 
 ### Fixed
 - **Security:** a relay can no longer inject text into your assistant's connection to Rendezvous or into `rdv --json` output: messages a relay sends for display (NOTICE) are dropped instead of printed, and anything a library prints goes to the error stream as one cleaned line. Before, a hostile relay (one named in a contact's card, or now in an invite link) could forge tool results or approval prompts.
