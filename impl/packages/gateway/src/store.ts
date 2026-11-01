@@ -69,7 +69,8 @@ export function pinRuleError(pin: string): string | undefined {
   return undefined;
 }
 
-export type PinCheck = { ok: true } | { ok: false; lockedFor?: number; noPin?: boolean };
+/** `pinSetAt` is the PIN's `created` the check actually ran against: an effect it authorizes must still find that PIN in place. */
+export type PinCheck = { ok: true; pinSetAt: string } | { ok: false; lockedFor?: number; noPin?: boolean };
 
 export class GatewayStore {
   readonly path: string;
@@ -125,6 +126,7 @@ export class GatewayStore {
    * the PIN and approve on the page.
    */
   async changePin(current: string | undefined, next: string, now: number): Promise<void> {
+    let checked: string | undefined;
     if (this.hasPin()) {
       if (current === undefined) throw new StoreError('a PIN is set: give the current one to change it');
       const check = await this.checkPin(current, now);
@@ -133,17 +135,22 @@ export class GatewayStore {
           check.lockedFor ? `too many wrong PINs: try again in ${Math.ceil(check.lockedFor / 60_000)} minute(s); nothing changed` : 'that is not the current PIN; nothing changed',
         );
       }
+      checked = check.pinSetAt;
     }
-    await this.setPin(next);
+    await this.setPin(next, checked);
   }
 
-  async setPin(pin: string): Promise<void> {
+  /** `onlyIfSetAt`: replace the PIN only while it is still the one that was checked (else StoreError, nothing written). */
+  async setPin(pin: string, onlyIfSetAt?: string): Promise<void> {
     const why = pinRuleError(pin);
     if (why) throw new StoreError(why);
     const salt = randomBytes(16);
     const hash = await scrypt(pin, salt);
     await this.update((d) => {
-      d.owner = { salt: salt.toString('base64'), hash: hash.toString('base64'), created: new Date().toISOString() };
+      if (onlyIfSetAt !== undefined && d.owner?.created !== onlyIfSetAt) throw new StoreError('the PIN changed meanwhile; nothing changed');
+      let created = new Date().toISOString();
+      if (created === d.owner?.created) created = new Date(Date.parse(created) + 1).toISOString();
+      d.owner = { salt: salt.toString('base64'), hash: hash.toString('base64'), created };
       d.lockout = { failures: 0 };
     });
   }
@@ -176,13 +183,14 @@ export class GatewayStore {
   private async checkPinNow(pin: string, now: number, freeTries: number): Promise<PinCheck> {
     this.cache = undefined;
     const d = this.read();
-    if (!d.owner) return { ok: false, noPin: true };
+    const owner = d.owner;
+    if (!owner) return { ok: false, noPin: true };
     if (d.lockout.until && d.lockout.until > now) return { ok: false, lockedFor: d.lockout.until - now };
-    const hash = await scrypt(pin.slice(0, PIN_MAX), Buffer.from(d.owner.salt, 'base64'));
-    const want = Buffer.from(d.owner.hash, 'base64');
+    const hash = await scrypt(pin.slice(0, PIN_MAX), Buffer.from(owner.salt, 'base64'));
+    const want = Buffer.from(owner.hash, 'base64');
     if (hash.length === want.length && timingSafeEqual(hash, want)) {
       if (d.lockout.failures || d.lockout.until) await this.update((x) => void (x.lockout = { failures: 0 }));
-      return { ok: true };
+      return { ok: true, pinSetAt: owner.created };
     }
     const lockout = await this.update((x) => {
       if (x.lockout.last !== undefined && now - x.lockout.last > PIN_FORGET_MS) x.lockout = { failures: 0 };
