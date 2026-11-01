@@ -271,13 +271,31 @@ export function parseCommands(src, mode = 'sh', depth = 0) {
       i = end;
       continue;
     }
-    // A PowerShell here-string (`@'…'@`, `@"…"@`) is text the guard does not read as words: SUB (final review).
-    if (mode === 'ps' && c === '@' && (next === "'" || next === '"')) {
-      const close = src.indexOf(`\n${next}@`, i + 2);
-      i = close < 0 ? src.length : close + 2;
-      cur += SUB;
-      inWord = true;
-      continue;
+    // A PowerShell here-string (`@'…'@`, `@"…"@`): only where PowerShell reads one, at a token's start with nothing
+    // but white space after it on its line. Its value is text the guard does not read as words: SUB. With no closing
+    // `'@` / `"@` at a line's start it is refused (fail closed), never skipped to the end. The body of `@"…"@`
+    // is expandable, so a `$(…)` in it is checked like one in a double-quoted string.
+    if (mode === 'ps' && c === '@' && (next === "'" || next === '"') && !inWord) {
+      const nl = src.indexOf('\n', i + 2);
+      if (nl >= 0 && /^[ \t\r]*$/.test(src.slice(i + 2, nl))) {
+        const close = src.indexOf(`\n${next}@`, nl);
+        if (close < 0) throw new Refusal(HERE_STRING);
+        if (next === '"') {
+          const body = src.slice(nl + 1, close);
+          for (let j = 0; j < body.length; j++) {
+            if (body[j] === '`') j++;
+            else if (body[j] === '$' && body[j + 1] === '(') {
+              const end = closeParen(body, j + 2, mode);
+              sub(body.slice(j + 2, end));
+              j = end;
+            }
+          }
+        }
+        cur += SUB;
+        inWord = true;
+        i = close + 2;
+        continue;
+      }
     }
     if (mode === 'ps' && !inWord && (c === '[' || (c === '@' && /[\w{]/.test(next ?? '')))) {
       cur += SUB + c;
@@ -398,6 +416,7 @@ function couldBe(w, name, cwd) {
  * (`[string]…`), or a cmd for-variable (`%i`, `%%i`). The PowerShell forms are marked SUB by the tokenizer (unquoted
  * only). In a subcommand's place each one is refused, whatever it would turn out to be.
  */
+const HERE_STRING = 'That command has a PowerShell here-string with no end (a line starting with \'@ or "@): the guard cannot tell where it stops. Close it, or write the command more simply.';
 const dynamic = (w) => w.includes(SUB) || /\$[\w{(@*#?!$-]|%\w+%|(^|[^%\w])%%?[a-z](?![\w%])/i.test(w);
 
 const progName = (w) =>
@@ -656,12 +675,34 @@ function startedArgv(words) {
   return [words[at], ...rest.join(' ').trim().split(/\s+/).filter(Boolean)];
 }
 
+/**
+ * The rest of a process start (MED of the final review). Each argument string after a starter is split on white
+ * space and checked as a command line with its target (`Start-Process cmd -ArgumentList '/c rdv contact grant x'`,
+ * `saps pwsh '-c rdv …'`). A target that is only known when it runs (`Start-Process $r …`, `& $r …`, or the first
+ * argument of `[Diagnostics.Process]::Start($r, …)`) gets nothing that names rdv or a human-only subcommand.
+ */
+function checkStarted(words, ctx, depth) {
+  const sAt = words.findIndex((w) => STARTERS.has(progName(w)));
+  const tAt = sAt >= 0 ? words.findIndex((w, k) => k > sAt && !STARTER_SWITCHES.test(w)) : 0;
+  const target = words[tAt];
+  if (target === undefined) return;
+  const args = words.slice(tAt + 1).filter((w) => !STARTER_SWITCHES.test(w));
+  const line = args.join(' ').trim();
+  if (dynamic(target) && (sAt >= 0 || args.some((w) => /\s/.test(w)))) {
+    if (mentionsRdv(line)) throw new Refusal(OPAQUE);
+    checkWords(['rdv', ...line.split(/\s+/).filter(Boolean)], { cwd: ctx.cwd }, depth + 1);
+  } else if (sAt >= 0 && line) {
+    check(`${target} ${line}`, { cwd: ctx.cwd }, depth + 1);
+  }
+}
+
 function checkWords(words, ctx, depth) {
   if (depth > MAX_DEPTH) throw new Refusal(NESTED);
   words = splitCommandRuns(words);
   checkEmbedded(words, ctx, depth);
   const started = startedArgv(words);
   if (started) checkWords(started, { cwd: ctx.cwd }, depth + 1);
+  checkStarted(words, ctx, depth);
   const lw = words.map((w) => w.toLowerCase());
   // The background listener's task, unit or LaunchAgent, changed through the OS's own tool (re-review of PR #117).
   if (lw.some((w) => w.includes('rdv-listen-'))) {
