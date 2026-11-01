@@ -153,8 +153,9 @@ function armedRows(list: AdminArmedInvite[], agent: string, csrf: string): strin
 }
 
 /** The terminal command that adds the event to a webhook set before it existed (NOTES 113). `events` are the webhook's own. */
-export function inviteEventCommand(agent: string, events: string[]): string {
-  return `rdv-gateway notify set ${agent} --url https://… --secret-file <path> --events ${[...events, 'invite_created_by_assistant'].join(',')}`;
+export function inviteEventCommand(agent: string, events: string[], insecureHosts: readonly string[] = []): string {
+  const hosts = insecureHosts.map((h) => ` --allow-insecure-host ${h}`).join('');
+  return `rdv-gateway notify set ${agent} --url https://… --secret-file <path> --events ${[...events, 'invite_created_by_assistant'].join(',')}${hosts}`;
 }
 
 /** "My assistant may create invites without asking" (NOTES 113): on needs the PIN again, off only the session. */
@@ -177,7 +178,7 @@ function assistantInvitesPart(a: AdminAgent, csrf: string): string {
 <label for="${e(id)}">Your PIN, again (this lasts until you turn it off)</label><input type="password" id="${e(id)}" name="pin" maxlength="128" required autocomplete="current-password">
 <div class="row"><button class="primary" type="submit">Let my assistant create invites</button></div></form>`;
   const hook = a.assistantInvitesSince && a.inviteEventCommand
-    ? `<p class="warn">Your webhook for this agent was set before this version and does not send <code>invite_created_by_assistant</code>, so you will not hear about each link. In your terminal: <code>${e(a.inviteEventCommand)}</code></p>`
+    ? `<p class="suggest warn">Your webhook for this agent does not include the <code>invite_created_by_assistant</code> event, so you will not hear about each link. In your terminal: <code>${e(a.inviteEventCommand)}</code> (on a one-command install, run it through <code>./gw</code>)</p>`
     : '';
   return `<h3>My assistant may create invites without asking</h3>${what}${hook}${toggle}${open}`;
 }

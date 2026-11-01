@@ -1082,7 +1082,7 @@ export class Gateway {
       return show(200, {
         text:
           `Your assistant can now make stranger-level invite links for ${rt.name} without asking. Turn it off here any time.` +
-          (missing ? ` Your webhook for this agent was set before this version and does not send invite_created_by_assistant, so you will not hear about each link. In your terminal: ${missing}` : ''),
+          (missing ? ` Your webhook for this agent does not include the invite_created_by_assistant event, so you will not hear about each link. In your terminal: ${missing} (on a one-command install, run it through ./gw)` : ''),
       });
     }
 
@@ -1128,7 +1128,7 @@ export class Gateway {
       const binding = rt.root ? ROOT_BINDING : rt.name;
       const cfg = Object.hasOwn(n.agents, binding) ? n.agents[binding] : undefined;
       if (!cfg || cfg.events.includes('invite_created_by_assistant')) return undefined;
-      return inviteEventCommand(rt.name, [...cfg.events]);
+      return inviteEventCommand(rt.name, [...cfg.events], cfg.insecureHosts);
     } catch {
       return undefined;
     }
@@ -1182,7 +1182,7 @@ export class Gateway {
         ...(() => {
           const since = rt.id ? this.store.assistantInvitesSince(binding, rt.id) : undefined;
           if (!since) return {};
-          const cmd = cfg && !cfg.events.includes('invite_created_by_assistant') ? inviteEventCommand(rt.name, [...cfg.events]) : undefined;
+          const cmd = cfg && !cfg.events.includes('invite_created_by_assistant') ? inviteEventCommand(rt.name, [...cfg.events], cfg.insecureHosts) : undefined;
           return { assistantInvitesSince: since, ...(cmd ? { inviteEventCommand: cmd } : {}) };
         })(),
         assistantInvites: rt.server.assistantMadeInvites().map(({ suggestedLabel, ...i }) => ({ ...i, ...(suggestedLabel !== undefined ? { note: suggestedLabel } : {}) })),
