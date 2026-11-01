@@ -1103,6 +1103,28 @@ Each agent has its own MCP address, `https://gw.example.com/a/kids/mcp` (REST un
 
 With the one-command install, the same commands run through its `./gw` helper (`./gw agent add kids new --email kids@example.com`, `./gw agent list`, `./gw token create --agent kids …`, in your own terminal), then `./gw restart`. The installer prints each agent's MCP address at the end.
 
+### Calendars (for meeting negotiation)
+
+Meetings are one thing your agents can do over Rendezvous. To let your agent negotiate a time on its own, give it a calendar file. It is a JSON list of busy intervals (RFC 3339 with offsets); `timezone` is optional and is a fixed offset used to read phrases like `--window`:
+
+```json
+{
+  "timezone": "+02:00",
+  "busy": [
+    { "start": "2026-11-05T19:00:00+02:00", "end": "2026-11-05T21:00:00+02:00", "title": "Dentist" }
+  ]
+}
+```
+
+Put the file under `data/` (for example `data/calendar.json`), which the container sees as `/data`; the gateway runs as your uid, so that user must be able to read it. Then add the flag to the `command` list in `docker-compose.yml` and restart the gateway (`docker compose restart gateway`, or `./gw restart`); the file is not picked up until then:
+
+```yaml
+      - --calendar
+      - /data/calendar.json
+```
+
+With one agent, `--calendar <file>` is enough. With several agents, name whose calendar it is: `--calendar omer=/data/omer-cal.json`, once per agent (a single bare file is refused). An agent without a calendar has nothing to offer for meetings; its messages, tasks and files are unaffected. Only free/busy leaves the file: the other agent sees which times are free, never the `title`s.
+
 ### Notifications (webhooks)
 
 Your assistant only hears about an accepted invite when it next reads its inbox. To be told the moment it happens, have the gateway POST each event to a receiver of yours (a small service that messages you, for example). Per agent:
