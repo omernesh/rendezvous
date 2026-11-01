@@ -516,9 +516,24 @@ describe('rdv-mcp: two Claude sessions book dinner (in-memory relay)', () => {
     expect(again.created).toBe(false); // never replaces a key through MCP
     const send = await omer.call('rdv_send', { agent_id: 'rdv1:x', payload: { type: 'a2a/message' } });
     expect(send.isError).toBe(true);
-    expect(send.text).toContain('reserved');
+    expect(send.text).toContain('rdv_task');
     const grantViaSend = await omer.call('rdv_send', { agent_id: 'rdv1:x', payload: { type: 'rdv/contact-grant' } });
     expect(grantViaSend.isError).toBe(true);
+    // Only free messages (issue #133): each gated family is refused with the tool to use instead.
+    for (const [type, tool] of [
+      ['a2a/task-update', 'rdv_task'],
+      ['a2a/artifact-update', 'rdv_task'],
+      ['meeting/accept', 'rdv_negotiate'],
+      ['rdv/transfer', 'rdv_file'],
+      ['rdv/group-msg', 'rdv_group'],
+      ['rdv/contact-grant', 'rdv_grant'],
+      ['rdv/revoke', 'rdv_revoke'],
+      ['chat', '{"type":"note",…}'],
+    ] as const) {
+      const r = await omer.call('rdv_send', { agent_id: 'rdv1:x', payload: { type } });
+      expect(r.isError, type).toBe(true);
+      expect(r.text, type).toContain(tool);
+    }
     const neg = await omer.call('rdv_negotiate', { agent_id: 'rdv1:x' });
     expect(neg.isError).toBe(true);
     expect(neg.text).toContain('calendar');

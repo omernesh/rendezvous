@@ -135,7 +135,7 @@ addresses, policy), `inbox.jsonl` (received payloads), and `lock`.
 | `rdv contact grant <request-id> [--tier friend] [--scope-file s.json]` | Approve |
 | `rdv contact decline <request-id> [--block]` | Decline |
 | `rdv contact list` / `rdv contact revoke <agent-id>` | Manage contacts |
-| `rdv send <agent-id> --json '{"type":"a2a/message","text":"hi"}'` | Send any payload |
+| `rdv send <agent-id> --json '{"type":"note","text":"hi"}'` | Send a free message (`note` only; tasks, dinners, files and groups have their own commands) |
 | `rdv listen [--auto-grant tier] [--exec script]` | Long-running: print events as JSON lines; optionally auto-grant (demo only) or pipe each event to a script |
 | `rdv inbox [--follow]` | Show received payloads |
 

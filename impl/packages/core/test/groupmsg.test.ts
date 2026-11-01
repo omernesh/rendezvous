@@ -560,11 +560,11 @@ describe('three agents talk in a group (design B.5 steps 4, 8, 9)', () => {
     return { o, j, d, group: g.group };
   }
 
-  const note = (text: string) => ({ type: 'a2a/message', message: { role: 'user', parts: [{ kind: 'text', text }], messageId: crypto.randomUUID() } });
+  const note = (text: string) => ({ type: 'note', text });
   const texts = (a: Agent, from: Agent) => {
     const out: string[] = [];
     a.on('group-message', (d) => {
-      if (d.from === from.id) out.push(((d.body.message as { parts: Array<{ text: string }> }).parts[0]).text);
+      if (d.from === from.id) out.push(d.body.text as string);
     });
     return out;
   };
@@ -573,6 +573,9 @@ describe('three agents talk in a group (design B.5 steps 4, 8, 9)', () => {
     const { o, j, d, group } = await formGroup();
     const atJohn = texts(j, o);
     const atDana = texts(d, o);
+    // A plain post carries only free messages: a group task goes through its engine (issue #133).
+    await expect(o.sendGroup(group, { type: 'a2a/message', message: {} })).rejects.toThrow(/not a free message/);
+    await expect(o.sendGroup(group, { type: 'rdv/transfer' })).rejects.toThrow(/not a free message/);
     const report = await o.sendGroup(group, note('Draft the landing-page copy'));
     expect(report.sent.sort()).toEqual([j.id, d.id].sort());
     expect(report.msg.gseq).toBe(1);

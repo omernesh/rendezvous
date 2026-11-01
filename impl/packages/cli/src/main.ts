@@ -305,7 +305,7 @@ const COMMANDS: Record<string, Command> = {
     run: grp.groupResync,
   },
   'group post': {
-    usage: 'rdv group post <group-id> --json \'{"type":"a2a/message",…}\' [--to <agent-id>]...',
+    usage: 'rdv group post <group-id> --json \'{"type":"note","text":"…"}\' [--to <agent-id>]...',
     summary: 'Say something to a group: to every member you send to, or with --to privately to those members (--json carries the body and also selects JSON output)',
     args: 1,
     options: { json: { type: 'string' }, payload: { type: 'string' }, to: { type: 'string', multiple: true } },
@@ -392,8 +392,8 @@ const COMMANDS: Record<string, Command> = {
     run: grp.groupRemove,
   },
   send: {
-    usage: 'rdv send <agent-id> --json \'{"type":"a2a/message","text":"hi"}\'   (or --payload \'…\')',
-    summary: 'Send any payload to a contact (--json carries the payload here and also selects JSON output)',
+    usage: 'rdv send <agent-id> --json \'{"type":"note","text":"hi"}\'   (or --payload \'…\')',
+    summary: 'Send a free message ({"type":"note",…}) to a contact; tasks, dinners, files and groups have their own commands (--json carries the payload here and also selects JSON output)',
     args: 1,
     options: { json: { type: 'string' }, payload: { type: 'string' } },
     run: cmd.send,

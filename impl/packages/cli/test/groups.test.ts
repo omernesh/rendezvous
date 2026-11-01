@@ -110,7 +110,12 @@ describe('rdv group between rdv processes', () => {
       expect(log).not.toContain(dcode);
 
       // Slice 2 (issue #78): Omer posts to the board; John and Dana (not contacts of each other) both get it.
-      const body = { type: 'a2a/message', message: { role: 'user', parts: [{ kind: 'text', text: 'Draft the landing-page copy' }], messageId: '00000000-0000-4000-8000-0000000000c1' } };
+      // A task payload is not a post: group tasks have their own commands and gates (issue #133).
+      const a2a = { type: 'a2a/message', message: { role: 'user', parts: [{ kind: 'text', text: 'Draft the landing-page copy' }], messageId: '00000000-0000-4000-8000-0000000000c1' } };
+      const refused = await rdv(['group', 'post', g, '--json', JSON.stringify(a2a)], homes.omer, { check: false });
+      expect(refused.code).toBe(2);
+      expect(refused.stderr).toContain('rdv group request');
+      const body = { type: 'note', text: 'Draft the landing-page copy' };
       const posted = (await rdv(['group', 'post', g, '--json', JSON.stringify(body)], homes.omer)).lines[0];
       expect(posted).toMatchObject({ event: 'group-posted', group: g, gseq: 1, to: '*', failed: [] });
       expect([...(posted.sent as string[])].sort()).toEqual([ids.john, ids.dana].sort());

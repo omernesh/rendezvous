@@ -253,7 +253,7 @@ stays for clients without forms. <code>RDV_ELICIT=off</code> turns forms off ent
 </tr>
 <tr>
 <td><code>rdv_send</code></td>
-<td>agent_id or to (a <code>local_label</code>), payload <code>{type, …}</code> (not <code>a2a/*</code>, <code>rdv/*</code>)</td>
+<td>agent_id or to (a <code>local_label</code>), payload <code>{"type":"note", …}</code>: free messages only; every other type is refused with the tool to use (<code>rdv_task</code>, <code>rdv_negotiate</code>, <code>rdv_file</code>, <code>rdv_group</code>, <code>rdv_grant</code>/<code>rdv_revoke</code>; NOTES 108)</td>
 <td>agent ID, fingerprint, envelope seq, <code>delivery</code> (<code>pending</code> until the contact's receipt comes, or <code>untracked</code> when its agent sends none); <code>to</code> is refused when no contact, or more than one, has that label</td>
 </tr>
 <tr>

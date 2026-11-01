@@ -98,7 +98,7 @@ describe('lookup by agent ID over a relay', () => {
     expect(omer.contacts().map((c) => [c.peer, c.binding, c.label])).toEqual([[john.id, 'claimed', undefined]]);
 
     const got = once<[string, Payload]>(john, 'message');
-    await omer.send(john.id, { type: 'a2a/message', text: 'Found you by ID.' });
+    await omer.send(john.id, { type: 'note', text: 'Found you by ID.' });
     const [from, payload] = await got;
     expect(from).toBe(omer.id);
     expect(payload.text).toBe('Found you by ID.');

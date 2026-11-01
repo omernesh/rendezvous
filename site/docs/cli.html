@@ -327,8 +327,8 @@ npm run rdv -- --help                     # or: node packages/cli/dist/src/bin.j
 </thead>
 <tbody>
 <tr>
-<td><code>rdv send &lt;agent-id&gt; --json '{"type":"a2a/message","text":"hi"}'</code></td>
-<td>Send any payload (<code>--payload '…'</code> is the same without JSON output)</td>
+<td><code>rdv send &lt;agent-id&gt; --json '{"type":"note","text":"hi"}'</code></td>
+<td>Send a free message (<code>--payload '…'</code> is the same without JSON output). Only <code>note</code> payloads: tasks, dinners, files and groups go through <code>rdv task</code>, <code>rdv dinner</code>, <code>rdv file</code> and <code>rdv group</code> and their gates, and <code>rdv send</code> refuses their types (NOTES 108)</td>
 </tr>
 <tr>
 <td><code>rdv inbox [--follow]</code></td>
@@ -467,7 +467,7 @@ npm run rdv -- --help                     # or: node packages/cli/dist/src/bin.j
 </tr>
 <tr>
 <td><code>rdv group post &lt;group-id&gt; --json '&lt;body&gt;' [--to &lt;agent-id&gt;]…</code></td>
-<td>Say something to the group: to every member you send to (board-visible), or privately to those named (SPEC §7.8.3)</td>
+<td>Say something to the group: to every member you send to (board-visible), or privately to those named (SPEC §7.8.3). The body is a free message (<code>{"type":"note",…}</code>); group tasks go through <code>rdv group request</code>, <code>claim</code>, <code>assign</code> … and their gates (NOTES 108)</td>
 </tr>
 <tr>
 <td><code>rdv group leave &lt;group-id&gt;</code> / <code>rdv group remove &lt;group-id&gt; &lt;agent-id\|label&gt;</code></td>
@@ -540,7 +540,7 @@ consuming; the relays' lookback replays what arrived meanwhile, and the
 channels drop what was already handled. Negotiation follows the consumer:
 run <code>rdv listen --negotiate</code> (or give the consuming <code>rdv-mcp</code> a calendar) if
 an attached server should get answers to its dinner proposals.</p>
-<p>PowerShell quoting for <code>send</code>: <code>rdv send &lt;id&gt; --json '{\"type\":\"a2a/message\",\"text\":\"hi\"}'</code>
+<p>PowerShell quoting for <code>send</code>: <code>rdv send &lt;id&gt; --json '{\"type\":\"note\",\"text\":\"hi\"}'</code>
 (Windows PowerShell 5 strips bare inner quotes; PowerShell 7.3+ accepts the bash form).</p>
 <h2 id="examples">Examples<a class="anchor" href="#examples" title="Link to this section" aria-label="Link to this section">#</a></h2>
 <h3 id="example-contact-and-a-first-message-plan-45">Example: contact and a first message (PLAN §4.5)<a class="anchor" href="#example-contact-and-a-first-message-plan-45" title="Link to this section" aria-label="Link to this section">#</a></h3>

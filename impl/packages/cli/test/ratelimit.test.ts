@@ -104,7 +104,7 @@ describe('per-capability limits end to end (issue #28)', () => {
       });
       tasks = step.state;
       // A grant revoked for abuse gets no answer: the rdv/revoke says it all.
-      for (const o of step.outgoing) if (omer.book.contact(o.to)) void omer.send(o.to, o.payload as unknown as Payload);
+      for (const o of step.outgoing) if (omer.book.contact(o.to)) void omer.sendGated(o.to, o.payload as unknown as Payload);
     });
     const states: Array<{ state: string; reason?: unknown }> = [];
     john.on('message', (_from, payload) => {
@@ -121,7 +121,7 @@ describe('per-capability limits end to end (issue #28)', () => {
     expect(outboundLimit(mine, omer.id, LOOKUP, jctx())).toMatch(/5\/day/);
 
     // A hostile John sends anyway.
-    for (let n = 1; n <= 6; n++) await john.send(omer.id, request(n));
+    for (let n = 1; n <= 6; n++) await john.sendGated(omer.id, request(n));
     await until(() => states.length === 6);
     expect(states.slice(0, 5).every((s) => s.state === 'working')).toBe(true);
     expect(states[5]).toEqual({ state: 'rejected', reason: 'rate' });
@@ -131,11 +131,11 @@ describe('per-capability limits end to end (issue #28)', () => {
     expect(Object.keys(tasks.tasks)).toHaveLength(5); // nothing kept for the rejected one
 
     // 15 rejections in the window (3 x 5) are tolerated; the 16th revokes.
-    for (let n = 7; n <= 20; n++) await john.send(omer.id, request(n));
+    for (let n = 7; n <= 20; n++) await john.sendGated(omer.id, request(n));
     await until(() => states.length === 20);
     expect(omer.book.contact(john.id)).toBeDefined();
     expect(abuses).toEqual([]);
-    await john.send(omer.id, request(21));
+    await john.sendGated(omer.id, request(21));
     await until(() => revoked);
     expect(abuses).toEqual([expect.objectContaining({ peer: john.id, capability: LOOKUP, trigger: 'capability', rejected: 16, threshold: 15 })]);
     expect(omer.book.contact(john.id)).toBeUndefined();
@@ -176,7 +176,7 @@ describe('per-capability limits end to end (issue #28)', () => {
       const at = now();
       const step = receive(meetings, from, payload, { ...ctx(at, c.inboundScope as MeetingScope), limit: (cap, o) => omer.admitTask(from, cap, o, at) });
       meetings = step.state;
-      for (const o of step.outgoing) if (omer.book.contact(o.to)) void omer.send(o.to, o.payload as unknown as Payload);
+      for (const o of step.outgoing) if (omer.book.contact(o.to)) void omer.sendGated(o.to, o.payload as unknown as Payload);
     });
     const declines: string[] = [];
     john.on('message', (_from, payload) => {
@@ -188,7 +188,7 @@ describe('per-capability limits end to end (issue #28)', () => {
     john.on('revoked', () => (revoked = true));
     const proposeOne = async () => {
       const step = propose(emptyState(), omer.id, ctx(now(), john.book.contact(omer.id)!.outboundScope as MeetingScope));
-      await john.send(omer.id, step.outgoing[0].payload as unknown as Payload);
+      await john.sendGated(omer.id, step.outgoing[0].payload as unknown as Payload);
     };
 
     // Two proposals in the day are taken (held for Omer's human); the third is declined for the limit, nothing kept.

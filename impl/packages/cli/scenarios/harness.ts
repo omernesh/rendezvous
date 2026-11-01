@@ -7,6 +7,9 @@ import { basename, dirname, join, resolve, sep } from 'node:path';
 import { createInterface } from 'node:readline';
 import { parseArgs } from 'node:util';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import type { Payload } from '@rendezvous/core';
+import { withAgent } from '../src/commands.js';
+import { Home } from '../src/home.js';
 import { humanOnlyArgv } from '../src/main.js';
 
 // Works from scenarios/*.ts (vitest) and from dist/scenarios/*.js (node).
@@ -191,4 +194,15 @@ export async function until<T>(fn: () => Promise<T | undefined>, what: string, t
 
 export function assert(cond: unknown, message: string): asserts cond {
   if (!cond) throw new Error(`assertion failed: ${message}`);
+}
+
+/**
+ * Put an engine payload on the wire from a home, past our own engine and its
+ * gates: what a peer that does not run our software could send. `rdv send`
+ * refuses these (issue #133), so the adversarial steps use this instead.
+ */
+export async function rawSend(dir: string, peer: string, payload: Payload): Promise<void> {
+  await withAgent(new Home(dir), async (agent) => {
+    await agent.sendGated(peer, payload);
+  });
 }

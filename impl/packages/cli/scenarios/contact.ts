@@ -109,7 +109,7 @@ export async function runContactScenario(opts: ContactScenarioOptions): Promise<
       assert(c.inbound === 'default', "john's rights towards omer stay the local default");
       const list = await rdv(['contact', 'list'], dirs.omer);
       assert(list.lines.some((l) => l.peer === john), 'john is in omer\'s contact list');
-      const s = await rdv(['send', john, '--json', JSON.stringify({ type: 'a2a/message', text })], dirs.omer, {
+      const s = await rdv(['send', john, '--json', JSON.stringify({ type: 'note', text })], dirs.omer, {
         timeoutMs: timeout,
       });
       assert(s.lines[0]?.event === 'sent', 'send reports sent');

@@ -26,6 +26,7 @@ import {
   GROUPS_EXTENSION,
   isAgentId,
   isCapabilityUri,
+  FREE_MESSAGE_TYPES,
   MEETING_CAPABILITIES,
   MEETINGS_CAPABILITY,
   MAX_ADDRESSES,
@@ -35,6 +36,8 @@ import {
   type MirrorReport,
   normalizeAddresses,
   parseAddress,
+  plainSendFamily,
+  type ReservedFamily,
   type Payload,
   type RelayStatus,
   type Tier,
@@ -1613,6 +1616,24 @@ export async function contactResync({ home, out, positionals }: Ctx): Promise<vo
   );
 }
 
+const PLAIN_SEND_FLOW: Record<ReservedFamily, string> = {
+  control: 'your agent sends it itself (contacts: rdv contact grant, rdv contact revoke)',
+  a2a: 'tasks and meetings wait for your approval in their own commands: rdv task, rdv dinner',
+  transfer: 'file transfers go through rdv file',
+  group: 'group messages go through rdv group',
+  other: 'it carries only free messages',
+};
+
+/**
+ * Why `rdv send` / `rdv group post` refuses a payload type, or undefined for
+ * a free message (issue #133): every other type has its own flow and gates.
+ */
+export function plainSendRefusal(type: string, cmd: string, flows: Partial<Record<ReservedFamily, string>> = {}): string | undefined {
+  const family = plainSendFamily(type);
+  if (family === 'free') return undefined;
+  return `${cmd} does not send "${clean(type)}": ${flows[family] ?? PLAIN_SEND_FLOW[family]}. ${cmd} takes ${FREE_MESSAGE_TYPES.map((t) => `{"type":"${t}",…}`).join(' or ')}`;
+}
+
 export async function send({ home, out, values, positionals }: Ctx): Promise<void> {
   const raw = str(values.json) ?? str(values.payload);
   if (raw === undefined) throw new CliError('give the payload with --json \'{"type":"…"}\' (or --payload)', 2);
@@ -1625,6 +1646,8 @@ export async function send({ home, out, values, positionals }: Ctx): Promise<voi
   if (!payload || typeof payload !== 'object' || Array.isArray(payload) || typeof payload.type !== 'string') {
     throw new CliError('payload must be a JSON object with a string "type"', 2);
   }
+  const refused = plainSendRefusal(payload.type, 'rdv send');
+  if (refused) throw new CliError(refused, 2);
   const peer = positionals[0];
   const { env, delivery } = await withAgent(home, async (agent) => {
     const env = await agent.send(peer, payload);
@@ -1731,7 +1754,7 @@ export async function dinnerPropose({ home, out, values, positionals }: Ctx): Pr
     }
     // Task state first: a crash mid-send leaves a task that expires, not a reply to an unknown task.
     home.writeNegotiations(s.state);
-    for (const o of s.outgoing) await agent.send(o.to, o.payload as unknown as Payload);
+    for (const o of s.outgoing) await agent.sendGated(o.to, o.payload as unknown as Payload);
     return s;
   });
   for (const e of step.events) out.emit(dinnerView(e), dinnerText(e));

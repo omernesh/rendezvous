@@ -64,7 +64,7 @@ echo `$! > $johnHome/listen.pid; exit 0"
 
   $text = "Thursday 20:00? ($tag)"
   Write-Host '- omer sends a message'
-  $payload = @{ type = 'a2a/message'; text = $text } | ConvertTo-Json -Compress
+  $payload = @{ type = 'note'; text = $text } | ConvertTo-Json -Compress
   if ($PSVersionTable.PSVersion -lt [version]'7.3') { $payload = $payload.Replace('"', '\"') }  # PS5 strips bare inner quotes
   node $bin send $johnId --payload $payload --home $omerHome; if ($LASTEXITCODE) { throw "rdv send failed" }  # send takes --json as a value, so no global --json here
 

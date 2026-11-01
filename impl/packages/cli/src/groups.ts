@@ -46,7 +46,7 @@ import {
   refusedMembers,
 } from '@rendezvous/core';
 import { REQUEST_URI } from '@rendezvous/a2a';
-import { contactFor, type Ctx, withAgent } from './commands.js';
+import { contactFor, type Ctx, plainSendRefusal, withAgent } from './commands.js';
 import { describeGroupAsk, describeGroupTerms, describeInviteAsk, dropPhrase, groupAskOf, groupAsks, inviteAskOf, inviteAsks, inviteSubject, joinTarget, newcomerDigest, newcomerKey, newcomerTarget, reissueForDisplay, type ShownPhrase } from './consent.js';
 import { boardEventText, boardEventView, boardText, boardView, type GroupTaskRun, groupTaskVerb, type GroupVerb, postGroupTask } from './grouptasks.js';
 import { CliError, consentKey, type GroupTerms } from './home.js';
@@ -543,6 +543,12 @@ export async function groupPost({ home, out, values, positionals }: Ctx): Promis
   } catch (err) {
     throw new CliError(`body is not JSON: ${(err as Error).message}`, 2);
   }
+  // A group task's payloads go through rdv group request, claim, … and their gates (issue #133).
+  const refused =
+    body && typeof body === 'object' && typeof body.type === 'string'
+      ? plainSendRefusal(body.type, 'rdv group post', { a2a: 'group tasks wait for your approval in their own commands: rdv group request, claim, assign' })
+      : undefined;
+  if (refused) throw new CliError(refused, 2);
   const to = list(values.to);
   for (const id of to) if (!isAgentId(id)) throw new CliError(`--to takes a member's agent ID: ${clean(id)}`, 2);
   const report = await withAgent(home, async (agent) => {

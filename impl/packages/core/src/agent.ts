@@ -109,6 +109,7 @@ import {
   takeWaiting,
 } from './groupmsg.js';
 import { type AgentKey, generateKey, keyFromSecret } from './identity.js';
+import { TRANSFER_TYPE } from './transfer.js';
 import type { MirrorOptions, MirrorReport, Transport } from './transport/transport.js';
 
 const OUTBOX_LIMIT = 64;
@@ -146,6 +147,46 @@ export const RESTORED_ACK_TYPE = 'rdv/restored-ack';
 /** `rdv/restored` notices we act on per peer: each one re-bases its chain, so a few a day at most. */
 export const RESTORED_LIMIT = { count: 3, windowMs: 86_400_000 };
 const CONTROL_TYPES = new Set(['rdv/contact-request', 'rdv/contact-grant', 'rdv/revoke', 'rdv/resend', CARD_UPDATE_TYPE, RESTORED_TYPE, RESTORED_ACK_TYPE, ACK_TYPE, ...GROUP_TYPES, ...GROUP_MSG_TYPES]);
+
+/**
+ * The payload types a plain send (`rdv send`, `rdv_send`, `rdv group post`)
+ * carries: free messages, which the receiver only shows its human (issue #133,
+ * NOTES 108). An allow-list: every other type has, or may one day have, an
+ * engine and an approval gate of its own, and goes out only through it.
+ */
+export const FREE_MESSAGE_TYPES: readonly string[] = Object.freeze(['note']);
+
+/** Why a plain send refuses a type: whose flow it belongs to. */
+export type ReservedFamily = 'control' | 'a2a' | 'transfer' | 'group' | 'other';
+
+/** `free` for a free message; otherwise the flow that alone may send this type. */
+export function plainSendFamily(type: string): 'free' | ReservedFamily {
+  if (FREE_MESSAGE_TYPES.includes(type)) return 'free';
+  if (type.startsWith('rdv/group-') || GROUP_TYPES.includes(type) || GROUP_MSG_TYPES.includes(type)) return 'group';
+  if (type === TRANSFER_TYPE) return 'transfer';
+  if (type.startsWith('a2a/') || type.startsWith('meeting/')) return 'a2a';
+  if (type.startsWith('rdv/') || CONTROL_TYPES.has(type)) return 'control';
+  return 'other';
+}
+
+const FAMILY_FLOW: Record<ReservedFamily, string> = {
+  control: 'the agent sends it itself',
+  a2a: 'tasks and meetings go through their own engine and its approval gates',
+  transfer: 'file transfers go through the files flow and its gates',
+  group: 'group messages go through the groups flow',
+  other: `a plain send carries only ${FREE_MESSAGE_TYPES.join(', ')} payloads`,
+};
+
+/** A plain send of a type that has its own gated flow (issue #133). */
+export class PlainSendRefused extends Error {
+  constructor(
+    readonly payloadType: string,
+    readonly family: ReservedFamily,
+  ) {
+    super(`"${payloadType}" is not a free message: ${FAMILY_FLOW[family]}`);
+    this.name = 'PlainSendRefused';
+  }
+}
 
 /** Envelopes of ours a contact did not confirm, by what happened to them (NOTES 98). */
 export interface DeliveryNews {
@@ -999,9 +1040,20 @@ export class Agent extends EventEmitter<AgentEvents> {
    * send to over its pairwise channel. Board-visible by default (every member
    * our human approved, or our policy did; consumes our group chain); with
    * `to`, private to those members. One failed send does not stop the rest;
-   * its envelope stays in the outbox for a resend.
+   * its envelope stays in the outbox for a resend. The body is a free message
+   * (`FREE_MESSAGE_TYPES`); a group task's payloads go through `sendGroupGated`
+   * from the tasks engine (issue #133).
    */
   async sendGroup(groupId: string, body: GroupBody, opts: { to?: string[] } = {}): Promise<GroupSendReport> {
+    if (typeof body?.type === 'string') {
+      const family = plainSendFamily(body.type);
+      if (family !== 'free') throw new PlainSendRefused(body.type, family);
+    }
+    return this.sendGroupGated(groupId, body, opts);
+  }
+
+  /** `sendGroup` for a body an engine produced after its own gate ran (a group task's A2A payloads). */
+  async sendGroupGated(groupId: string, body: GroupBody, opts: { to?: string[] } = {}): Promise<GroupSendReport> {
     const { payload, recipients } = prepareGroupMessage(this.groups, this.key, groupId, body, { to: opts.to, isBlocked: (p) => this.book.isBlocked(p) });
     const report: GroupSendReport = { msg: payload.msg, sent: [], failed: [] };
     for (const peer of recipients) {
@@ -1395,8 +1447,24 @@ export class Agent extends EventEmitter<AgentEvents> {
     }
   }
 
-  /** Send an application payload (A2A task, message, proposal) to a contact. */
+  /**
+   * Send a free message (`FREE_MESSAGE_TYPES`, e.g. `{"type":"note",…}`) to a
+   * contact. Anything else is refused (issue #133): tasks, meetings, transfers
+   * and group payloads leave only through their engines, via `sendGated`.
+   */
   async send(peer: string, payload: Payload): Promise<Envelope> {
+    const family = plainSendFamily(payload.type);
+    if (family === 'control' && CONTROL_TYPES.has(payload.type)) throw new Error(`use the dedicated method for ${payload.type}`);
+    if (family !== 'free') throw new PlainSendRefused(payload.type, family);
+    return this.sendGated(peer, payload);
+  }
+
+  /**
+   * Send an application payload (A2A message or update, `rdv/transfer`) that
+   * an engine produced after its own gate ran (negotiate, tasks, files). Never
+   * wire this to a send whose payload a model or a shell picks: that is `send`.
+   */
+  async sendGated(peer: string, payload: Payload): Promise<Envelope> {
     if (CONTROL_TYPES.has(payload.type)) throw new Error(`use the dedicated method for ${payload.type}`);
     const c = this.book.contact(peer);
     if (!c) throw new Error(`no active contact with ${peer}`);

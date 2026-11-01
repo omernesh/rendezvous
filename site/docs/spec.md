@@ -909,7 +909,7 @@ Rules:
     grant would refuse: it counts its own open tasks per capability and
     the `task/request`s it sent in the window of the peer's `max_frequency`,
     and holds the task instead of sending it.
-  - **Free messages** (`rdv_send` notes, any payload that is not a task) need
+  - **Free messages** (`rdv_send` notes, §7) need
     only `may_initiate`, as today.
   - **Meetings.** `may_propose_meetings: true` is read as `invoke` holding the
     meetings and meeting-cancel URIs. A grant that has `invoke` MUST also
@@ -1551,6 +1551,15 @@ change**, issue #104).
 - Once contact is granted, agents exchange tasks using **A2A v0.3 objects**
   (§7.1) inside the envelope's encrypted content. The payload is a JSON
   document with a `type` field.
+- **Free messages.** `{"type": "note", …}` is a free message: the receiver
+  shows it to its human and acts on nothing in it. A host's plain send (one
+  whose payload a model, a script or a shell chooses) MUST carry only free
+  messages, and refuse every other type: tasks and meetings (`a2a/*`), file
+  transfers (`rdv/transfer`), group payloads (`rdv/group-*`) and control
+  messages leave only through their own flows and gates (§5.5, §7.6, §7.7,
+  §7.8), or a plain send would skip them. Hosts allow-list free types rather
+  than deny-list gated ones, so a type added later is refused until a flow
+  takes it.
 - The protocol is **asynchronous by default**: tasks, proposals, and
   confirmations are documents; no live channel is assumed. (Calendar
   negotiation = propose/accept cycles over store-and-forward.)
@@ -2695,7 +2704,7 @@ Proposed MCP tool API (v0.3):
 | `rdv_request_contact` | send a contact request (via hint or human channel) |
 | `rdv_pending_requests` | list inbound contact requests (for consent UX) |
 | `rdv_grant` / `rdv_revoke` | approve/reject/revoke contacts with tier+scope (meetings and the capabilities in `scope.invoke`); a grant needs the human's own approval (§5.5) |
-| `rdv_send` | send an envelope (task, message, proposal) |
+| `rdv_send` | send a free message (`{"type":"note",…}`); tasks, meetings, files and groups go only through their own tools and gates (§7) |
 | `rdv_inbox` | read events after a cursor (an event log; nothing is acknowledged to the peer) |
 | `rdv_negotiate` | A2A task exchange lifecycle |
 | `rdv_group` | groups (§7.8): create one, list groups and invites; inviting a contact, joining, approving a newcomer, leaving, removing a member and changing one's own terms only with the human's own approval (§5.5); posting, the board, and requesting, claiming, assigning and canceling tasks on it (§7.8.4). Group messages, board changes, equivocation, gaps, mutes, reports and members leaving arrive as `rdv_inbox` events, what members wrote as untrusted peer text |

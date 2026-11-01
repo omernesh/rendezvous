@@ -740,7 +740,7 @@ async function sendTransfers(agent: Agent, out: Array<{ to: string; msg: Transfe
   for (const o of out) {
     if (!agent.book.contact(o.to)) continue;
     try {
-      await agent.send(o.to, o.msg as unknown as Payload);
+      await agent.sendGated(o.to, o.msg as unknown as Payload);
     } catch (err) {
       errors.push(`sending rdv/transfer to ${o.to} failed: ${(err as Error).message}`);
     }

@@ -10,7 +10,7 @@ import type { AgentState } from '@rendezvous/core';
 import { startTestRelay, type TestRelay } from '@rendezvous/core/testing';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { makeSide, ok, waitEvent } from '../../mcp/test/flow.js';
-import { Browser, callJson, hidden, mcpClient, PIN, startGateway } from './helpers.js';
+import { api, Browser, callJson, hidden, mcpClient, PIN, startGateway } from './helpers.js';
 
 let relay: TestRelay;
 let root: string;
@@ -88,6 +88,26 @@ describe('rdv-gateway end to end', () => {
       expect(sent.sent).toBe(true);
       const atJohn = await waitEvent(john, (e) => e.type === 'message', 'the message from Omer', 20_000);
       expect(JSON.stringify(atJohn)).toContain('Hi John, Omer here.');
+
+      // 5b. rdv_send carries only free messages (issue #133), over MCP and REST alike: a task result,
+      // a meeting accept, a transfer or a group message would skip the gates of rdv_task, rdv_negotiate, rdv_file, rdv_group.
+      const seqBefore = (g.home.readAgentState() as AgentState).channels[j.agent_id].outSeq;
+      for (const [type, tool] of [
+        ['a2a/task-update', 'rdv_task'],
+        ['a2a/message', 'rdv_negotiate'],
+        ['meeting/accept', 'rdv_negotiate'],
+        ['rdv/transfer', 'rdv_file'],
+        ['rdv/group-msg', 'rdv_group'],
+        ['rdv/contact-grant', 'rdv_grant'],
+      ] as const) {
+        const viaMcp = await callJson(cloud, 'rdv_send', { to: 'john.e2e@doe.com', payload: { type, text: 'sneaky' } });
+        expect(viaMcp.isError, type).toBe(true);
+        expect(viaMcp.text, type).toContain(tool);
+        const viaRest = await api(g.base, token, 'rdv_send', { to: 'john.e2e@doe.com', payload: { type, text: 'sneaky' } });
+        expect(viaRest.status, type).toBe(422);
+        expect(viaRest.body.error, type).toContain(tool);
+      }
+      expect((g.home.readAgentState() as AgentState).channels[j.agent_id].outSeq).toBe(seqBefore);
 
       // 6. And back, John to Omer.
       const omerId = (await call('rdv_status')).agent_id;

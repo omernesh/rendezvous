@@ -170,8 +170,8 @@ describe('restore without a fork (rdv/restored)', () => {
     const gotContact = new Promise((res) => omer.once('contact', res));
     await john.grant((await pending).request.id);
     await gotContact;
-    await omer.send(john.id, { type: 'a2a/message', text: 'o1' });
-    await john.send(omer.id, { type: 'a2a/message', text: 'j1' });
+    await omer.send(john.id, { type: 'note', text: 'o1' });
+    await john.send(omer.id, { type: 'note', text: 'j1' });
     await until(() => jo.texts.includes('o1') && om.texts.includes('j1'));
     return { omer, john, om, jo };
   }
@@ -187,9 +187,9 @@ describe('restore without a fork (rdv/restored)', () => {
     const saved = JSON.parse(JSON.stringify(omer.toJSON())) as AgentState;
     const backupCreated = new Date().toISOString();
     // The old copy goes on after the backup, then its disk dies.
-    await omer.send(john.id, { type: 'a2a/message', text: 'o2' });
-    await omer.send(john.id, { type: 'a2a/message', text: 'o3' });
-    await john.send(omer.id, { type: 'a2a/message', text: 'j2' });
+    await omer.send(john.id, { type: 'note', text: 'o2' });
+    await omer.send(john.id, { type: 'note', text: 'o3' });
+    await john.send(omer.id, { type: 'note', text: 'j2' });
     await until(() => jo.texts.includes('o3') && om.texts.includes('j2'));
     omer.close();
     agents = agents.filter((a) => a !== omer);
@@ -206,8 +206,8 @@ describe('restore without a fork (rdv/restored)', () => {
 
     // John's reply the lost copy had received comes again from his outbox.
     await until(() => o2.texts.includes('j2'));
-    await omer2.send(john.id, { type: 'a2a/message', text: 'o4' });
-    await john.send(omer2.id, { type: 'a2a/message', text: 'j3' });
+    await omer2.send(john.id, { type: 'note', text: 'o4' });
+    await john.send(omer2.id, { type: 'note', text: 'j3' });
     await until(() => jo.texts.includes('o4') && o2.texts.includes('j3'));
     expect(o2.texts).toEqual(['j2', 'j3']);
     expect(jo.texts).toEqual(['o1', 'o2', 'o3', 'o4']);
@@ -223,7 +223,7 @@ describe('restore without a fork (rdv/restored)', () => {
     const john2 = start(Agent.fromJSON(johnState, transport));
     const j2 = watch(john2);
     await new Promise((r) => setTimeout(r, 600));
-    await omer2.send(john2.id, { type: 'a2a/message', text: 'o5' });
+    await omer2.send(john2.id, { type: 'note', text: 'o5' });
     await until(() => j2.texts.includes('o5'));
     expect(j2.restored).toEqual([]);
     expect(j2.drops).toEqual([]);
@@ -233,13 +233,13 @@ describe('restore without a fork (rdv/restored)', () => {
   it('sends the notice before anything else, even without sendRestoredNotices', async () => {
     const { omer, john, jo } = await pair();
     const saved = JSON.parse(JSON.stringify(omer.toJSON())) as AgentState;
-    await omer.send(john.id, { type: 'a2a/message', text: 'o2' });
+    await omer.send(john.id, { type: 'note', text: 'o2' });
     await until(() => jo.texts.includes('o2'));
     omer.close();
     agents = agents.filter((a) => a !== omer);
     const omer2 = start(await restoreFrom(saved, new Date().toISOString()));
     watch(omer2);
-    await omer2.send(john.id, { type: 'a2a/message', text: 'o3' });
+    await omer2.send(john.id, { type: 'note', text: 'o3' });
     await until(() => jo.texts.includes('o3'));
     expect(jo.restored).toHaveLength(1);
     expect(jo.drops).toEqual([]);
@@ -248,8 +248,8 @@ describe('restore without a fork (rdv/restored)', () => {
   it("skips the peer's envelopes nobody holds any more (the ack), instead of waiting for a gap forever", { timeout: 30_000 }, async () => {
     const { omer, john, om, jo } = await pair();
     const saved = JSON.parse(JSON.stringify(omer.toJSON())) as AgentState;
-    await john.send(omer.id, { type: 'a2a/message', text: 'j2' });
-    await john.send(omer.id, { type: 'a2a/message', text: 'j3' });
+    await john.send(omer.id, { type: 'note', text: 'j2' });
+    await john.send(omer.id, { type: 'note', text: 'j3' });
     await until(() => om.texts.includes('j3'));
     omer.close();
     agents = agents.filter((a) => a !== omer);
@@ -262,7 +262,7 @@ describe('restore without a fork (rdv/restored)', () => {
     await omer2.sendRestoredNotices();
     await until(() => o2.confirmed.length === 1 && o2.texts.includes('j3'));
     expect(o2.confirmed[0]).toEqual({ peer: john.id, skipped: 1 });
-    await john.send(omer2.id, { type: 'a2a/message', text: 'j4' });
+    await john.send(omer2.id, { type: 'note', text: 'j4' });
     await until(() => o2.texts.includes('j4'));
     expect(o2.texts).toEqual(['j3', 'j4']);
     expect(o2.drops).toEqual([]);
@@ -292,12 +292,12 @@ describe('restore without a fork (rdv/restored)', () => {
     john.channels.commitOutbound(omer.id, j2);
     (john as unknown as { outbox: Record<string, unknown[]> }).outbox[omer.id].push(j2);
     await john.transport.sendEnvelope(j2, [relay.url]);
-    await john.send(omer.id, { type: 'a2a/message', text: 'j3' });
+    await john.send(omer.id, { type: 'note', text: 'j3' });
     const omer2 = start(await restoreFrom(saved, new Date().toISOString()));
     const o2 = watch(omer2);
     await omer2.sendRestoredNotices();
     await until(() => o2.confirmed.length === 1 && o2.texts.includes('j3'));
-    await john.send(omer2.id, { type: 'a2a/message', text: 'j4' });
+    await john.send(omer2.id, { type: 'note', text: 'j4' });
     await until(() => o2.texts.includes('j4'));
     expect(o2.texts).toEqual(['j3', 'j4']);
     expect(jo.drops).toEqual([]);
@@ -315,7 +315,7 @@ describe('restore without a fork (rdv/restored)', () => {
     await new Promise((r) => setTimeout(r, 300));
     expect(jo.restored).toEqual([]);
     expect(omer2.restoreStatus()?.notice_due).toEqual([john.id]);
-    await omer2.send(john.id, { type: 'a2a/message', text: 'o2' });
+    await omer2.send(john.id, { type: 'note', text: 'o2' });
     await until(() => jo.texts.includes('o2'));
     expect(jo.restored).toHaveLength(1);
     expect(jo.drops).toEqual([]);
@@ -341,7 +341,7 @@ describe('restore without a fork (rdv/restored)', () => {
     watch(omer2);
     await omer2.sendRestoredNotices();
     await until(() => jo.restored.length === 1);
-    await omer.send(john.id, { type: 'a2a/message', text: 'from the old copy' });
+    await omer.send(john.id, { type: 'note', text: 'from the old copy' });
     await until(() => jo.drops.length > 0);
     expect(jo.drops[0]).toMatch(/envelope chain fork/);
     expect(jo.texts).not.toContain('from the old copy');

@@ -997,7 +997,7 @@ capped.</p>
     grant would refuse: it counts its own open tasks per capability and
     the <code>task/request</code>s it sent in the window of the peer's <code>max_frequency</code>,
     and holds the task instead of sending it.</li>
-<li><strong>Free messages</strong> (<code>rdv_send</code> notes, any payload that is not a task) need
+<li><strong>Free messages</strong> (<code>rdv_send</code> notes, §7) need
     only <code>may_initiate</code>, as today.</li>
 <li><strong>Meetings.</strong> <code>may_propose_meetings: true</code> is read as <code>invoke</code> holding the
     meetings and meeting-cancel URIs. A grant that has <code>invoke</code> MUST also
@@ -1606,6 +1606,15 @@ change</strong>, issue #104).</p>
 <li>Once contact is granted, agents exchange tasks using <strong>A2A v0.3 objects</strong>
   (§7.1) inside the envelope's encrypted content. The payload is a JSON
   document with a <code>type</code> field.</li>
+<li><strong>Free messages.</strong> <code>{"type": "note", …}</code> is a free message: the receiver
+  shows it to its human and acts on nothing in it. A host's plain send (one
+  whose payload a model, a script or a shell chooses) MUST carry only free
+  messages, and refuse every other type: tasks and meetings (<code>a2a/*</code>), file
+  transfers (<code>rdv/transfer</code>), group payloads (<code>rdv/group-*</code>) and control
+  messages leave only through their own flows and gates (§5.5, §7.6, §7.7,
+  §7.8), or a plain send would skip them. Hosts allow-list free types rather
+  than deny-list gated ones, so a type added later is refused until a flow
+  takes it.</li>
 <li>The protocol is <strong>asynchronous by default</strong>: tasks, proposals, and
   confirmations are documents; no live channel is assumed. (Calendar
   negotiation = propose/accept cycles over store-and-forward.)</li>
@@ -2936,7 +2945,7 @@ calling card.</strong></p>
 </tr>
 <tr>
 <td><code>rdv_send</code></td>
-<td>send an envelope (task, message, proposal)</td>
+<td>send a free message (<code>{"type":"note",…}</code>); tasks, meetings, files and groups go only through their own tools and gates (§7)</td>
 </tr>
 <tr>
 <td><code>rdv_inbox</code></td>
