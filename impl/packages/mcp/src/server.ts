@@ -578,7 +578,8 @@ export interface RdvMcpOptions {
 const SERVICE_QUICK_MS = 30_000;
 const SERVICE_FULL_MS = 5 * 60_000;
 /** A tamper reason the quick pass can produce itself (files and record), as opposed to the OS registration. */
-const quickReason = (r: string): boolean => / (is gone|was changed)$/.test(r) || r.startsWith('there is no record') || r.startsWith('the record of');
+const FULL_ONLY_PREFIXES = ['what the OS runs', 'it runs with', 'the task has', 'the unit runs', 'a drop-in'];
+export const quickReason = (r: string): boolean => !FULL_ONLY_PREFIXES.some((p) => r.startsWith(p));
 
 /** How long this server leaves listener.lock free after installing the service, for the service to take it. */
 const SERVICE_YIELD_MS = 60_000;
@@ -4203,7 +4204,10 @@ export class RdvMcpServer {
       return; // an OS without a service manager
     }
     const q = quickServiceCheck(this.home, ctx.env);
-    if (!q?.installed) return;
+    if (!q?.installed) {
+      this.tamperWarned.clear(); // nothing of ours is here: a later change is a new one
+      return;
+    }
     if (q.reasons.length) return this.warnReasons(q.name, q.reasons);
     // Its files are as installed again: a later change is a new one, reported again.
     if (now - this.serviceFullAt < SERVICE_FULL_MS) return this.warnReasons(q.name, []);
@@ -4279,6 +4283,7 @@ export class RdvMcpServer {
     }
     const holds = await waitForService(home, d.name, this.serviceOpts.waitMs ?? 10_000);
     const after = serviceStatus(home, profile, env, run);
+    await this.warnTampered(after); // resets the dedupe set to what is really there now
     this.humanLog(`background listener ${d.name} installed through the approval form (${d.location}); remove it with: ${removeCommand(home)}`);
     return {
       installed: true,
@@ -4306,6 +4311,7 @@ export class RdvMcpServer {
     const removed = removeService(home, serviceDefinition(home.dir, profile, env), run);
     this.yieldUntil = 0; // this server takes over on its next tick
     clearListenerYield(home);
+    this.tamperWarned.clear();
     if (removed) this.humanLog(`background listener ${st.name} removed`);
     return {
       removed,
