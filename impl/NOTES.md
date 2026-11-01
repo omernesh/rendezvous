@@ -4953,7 +4953,24 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       webhook settings now record the identity (`agentId`) of the agent they
       are made for; a plain migrate also refuses to move a root binding that
       records another identity (narrow review of PR #131: before, a newer
-      identity's root tokens could be moved to an older migrated agent). An expired previous secret
+      identity's root tokens could be moved to an older migrated agent).
+      The recorded identity is checked when serving too: a token or OAuth
+      grant whose `agentId` differs from the identity served under its
+      binding now (the home replaced by, or restored as, another agent; a new
+      agent made in an emptied root) is refused (403 `wrong_identity`) and
+      drops out of sessions and approvals; a webhook set for another
+      identity queues and sends nothing (said once); the gateway lists such
+      bindings at start. A backup of the same agent keeps its identity, so
+      its bindings keep working. A legacy binding (no identity) counts as
+      another agent's when it was made no later than an earlier
+      `.premigrate-*` of a different identity (for `--resume`, and for a
+      plain migrate against every kept folder whose identity is not the
+      root's). On the first start after this change the gateway stamps every
+      legacy token, grant and webhook setting with the identity it reaches
+      then (the served agent of its binding; nothing for a binding that
+      reaches no agent), so the legacy path ends for existing installs.
+      `--resume` takes that agent's listener lock like migrate, and `token
+      create` refuses when the agent's identity cannot be read. An expired previous secret
       (`….secret.prev` past `previousUntil`) is deleted at the next send.
       The example receiver bounds itself: 8 requests at once, 15 s per
       request in all, a Content-Length of ASCII digits only.

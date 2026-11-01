@@ -669,6 +669,22 @@ export class NotifyStore {
     });
   }
 
+  /** Webhook settings made before identities were recorded get the identity their agent has now. */
+  async stampIdentities(identityOf: (binding: string) => string | undefined): Promise<number> {
+    if (!Object.entries(this.read().agents).some(([b, c]) => c.agentId === undefined && identityOf(b))) return 0;
+    return this.update((d) => {
+      let n = 0;
+      for (const [b, c] of Object.entries(d.agents)) {
+        const id = c.agentId === undefined ? identityOf(b) : undefined;
+        if (id) {
+          c.agentId = id;
+          n += 1;
+        }
+      }
+      return n;
+    });
+  }
+
   /** The dead letters of this binding made for this identity. */
   deadLetters(binding: string, agentId: string): DeadLetter[] {
     return this.read().dead.filter((i) => i.agent === binding && i.agentId === agentId);
@@ -784,6 +800,7 @@ export class Notifier {
   /** The agent (binding) of each item in flight, for the per-agent slots. */
   private readonly inflightAgent = new Map<string, string>();
   private turn = 0;
+  private readonly warnedIdentity = new Set<string>();
   /** Outcomes not yet written: their items stay out of dispatch until they are. */
   private readonly outcomes: Outcome[] = [];
   private readonly settling = new Set<string>();
@@ -895,7 +912,7 @@ export class Notifier {
       };
       await this.opts.store.update((d) => {
         const cfg = Object.hasOwn(d.agents, a.binding) ? d.agents[a.binding] : undefined;
-        if (!cfg) return;
+        if (!cfg || !this.sameIdentity(cfg, a)) return;
         const st = (d.state[a.binding] ??= { expired: [] });
         if (st.cursor === undefined) {
           st.cursor = last;
@@ -933,7 +950,7 @@ export class Notifier {
       const now = this.now();
       await this.opts.store.update((d) => {
         const cfg = Object.hasOwn(d.agents, a.binding) ? d.agents[a.binding] : undefined;
-        if (!cfg?.events.includes('invite_expired')) return;
+        if (!cfg?.events.includes('invite_expired') || !this.sameIdentity(cfg, a)) return;
         const st = (d.state[a.binding] ??= { expired: [] });
         const since = Date.parse(cfg.created);
         for (const [key, r] of Object.entries(invites)) {
@@ -1005,6 +1022,19 @@ export class Notifier {
     }
   }
 
+  /**
+   * Settings made for another identity than the agent served under that binding now (its home was restored as or
+   * replaced by another agent) send nothing: said once per binding.
+   */
+  private sameIdentity(cfg: NotifyConfig, a: NotifyAgent): boolean {
+    if (cfg.agentId === undefined || cfg.agentId === a.id) return true;
+    if (!this.warnedIdentity.has(a.binding)) {
+      this.warnedIdentity.add(a.binding);
+      this.opts.log(`notify: agent ${a.name}'s webhook was set for another agent identity; nothing is sent until you set it again (rdv-gateway notify set ${a.name} …) or clear it`);
+    }
+    return false;
+  }
+
   private agent(binding: string): NotifyAgent | undefined {
     return this.opts.agents.find((a) => a.binding === binding);
   }
@@ -1014,7 +1044,7 @@ export class Notifier {
     const a = this.agent(item.agent);
     const name = a?.name ?? item.agent;
     // Settings cleared, the event unsubscribed, or another identity holds this binding now: nothing to send it to.
-    if (!cfg || !cfg.events.includes(item.event) || !a || a.id !== item.agentId) return this.settle({ id: item.id, how: 'drop' });
+    if (!cfg || !cfg.events.includes(item.event) || !a || a.id !== item.agentId || !this.sameIdentity(cfg, a)) return this.settle({ id: item.id, how: 'drop' });
     let result: PostResult;
     try {
       const secrets = this.opts.store.secrets(item.agent, this.now());

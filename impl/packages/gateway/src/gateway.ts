@@ -342,7 +342,15 @@ export class Gateway {
       }
       if (rt.id) seen.set(rt.id, rt.name);
     }
+    // Bindings from before identities were recorded get the identity they reach now, so the time-based fallback in
+    // `agent migrate --resume` no longer applies to them (NOTES 106).
+    const stamped =
+      (await this.store.stampIdentities((b) => this.identityOfBinding(b))) +
+      (await this.oauth.store.stampIdentities((b) => this.identityOfBinding(b))) +
+      (await this.notifyStore.stampIdentities((b) => this.identityOfBinding(b)).catch(() => 0));
+    if (stamped) this.log(`recorded the agent identity on ${stamped} older token(s), grant(s) or webhook setting(s)`);
     this.warnOrphans();
+    this.warnIdentities();
     // A webhook file that does not pass its schema and URL rules stops the start (fail closed), never a half-read one.
     try {
       this.notifyStore.read();
@@ -414,16 +422,24 @@ export class Gateway {
   authenticate(req: IncomingMessage, endpoint: 'mcp' | 'sse' = 'mcp', route?: string): Principal {
     const h = String(req.headers.authorization ?? '');
     const m = /^Bearer ([A-Za-z0-9_-]{16,200})$/.exec(h);
-    let who: (Omit<Principal, 'agent'> & { agent?: string }) | undefined;
+    let who: (Omit<Principal, 'agent'> & { agent?: string; agentId?: string }) | undefined;
     if (m?.[1].startsWith('rdvo_')) {
       who = this.oauth.verifyAccess(m[1]);
     } else if (m) {
       const t = this.store.findToken(m[1]);
-      if (t) who = { id: t.id, name: t.name, scopes: t.scopes, agent: t.agent };
+      if (t) who = { id: t.id, name: t.name, scopes: t.scopes, agent: t.agent, ...(t.agentId !== undefined ? { agentId: t.agentId } : {}) };
     }
     // One made before NOTES 104 names no agent: it reaches the root agent, and nothing once the root holds none.
     const agent = who ? this.boundAgent(who.agent) : undefined;
-    if (who && agent !== undefined) return { ...who, agent };
+    if (who && agent !== undefined) {
+      // Made for another identity than the agent served under that name now (its home was replaced or restored as
+      // another agent): it reaches nothing. A backup of the same agent keeps its identity, so its tokens still work.
+      if (this.identityDiffers(who.agentId, agent)) {
+        throw new HttpError(403, 'this token was made for another agent identity than the one served here now; your user makes a new one (rdv-gateway token create) or connects again', 'wrong_identity');
+      }
+      const { agentId: _id, ...rest } = who;
+      return { ...rest, agent };
+    }
     // RFC 9728 §5.1: where an OAuth client finds out how to get a token.
     const challenge = `Bearer realm="rendezvous", resource_metadata="${this.oauth.resourceMetadataUrl(endpoint, route)}", scope="${SCOPES.join(' ')}"${h ? ', error="invalid_token"' : ''}`;
     throw new HttpError(401, 'a valid bearer token is required (connect with OAuth, or your user makes a token with "rdv-gateway token create")', 'unauthorized', {
@@ -453,12 +469,46 @@ export class Gateway {
     }
   }
 
-  /** The agent a principal id reaches, if the principal still exists. */
+  /** Tokens, grants and webhooks made for another identity than the agent served under their name now: said at start. */
+  private warnIdentities(): void {
+    const items = [
+      ...this.store.listTokens().map((t) => ({ what: t.id, binding: t.agent, agentId: t.agentId })),
+      ...this.oauth.store.list().grants.map((g) => ({ what: g.id, binding: g.agent, agentId: g.agentId })),
+    ];
+    let hooks: Array<{ what: string; binding: string; agentId?: string }> = [];
+    try {
+      hooks = Object.entries(this.notifyStore.read().agents).map(([b, c]) => ({ what: `the webhook of ${b === ROOT_BINDING ? 'the root agent' : b}`, binding: b, agentId: c.agentId }));
+    } catch {
+      hooks = [];
+    }
+    for (const x of [...items, ...hooks]) {
+      const agent = this.boundAgent(x.binding);
+      if (agent !== undefined && this.identityDiffers(x.agentId, agent)) {
+        this.log(`WARNING: ${x.what} was made for another agent identity than agent ${agent} has now: it reaches nothing. Revoke it (or set the webhook again).`);
+      }
+    }
+  }
+
+  /** The agent a principal id reaches, if the principal still exists and was made for that agent's identity. */
   private principalAgent(id: string): string | undefined {
     const t = this.store.listTokens().find((x) => x.id === id);
-    if (t) return this.boundAgent(t.agent);
-    const g = this.oauth.store.grant(id);
-    return g ? this.boundAgent(g.agent) : undefined;
+    const p = t ?? this.oauth.store.grant(id);
+    if (!p) return undefined;
+    const agent = this.boundAgent(p.agent);
+    return agent !== undefined && !this.identityDiffers(p.agentId, agent) ? agent : undefined;
+  }
+
+  /** A recorded identity that is not the served agent's (none recorded: legacy, judged by the binding alone). */
+  private identityDiffers(recorded: string | undefined, agent: string): boolean {
+    if (recorded === undefined) return false;
+    const rt = this.byName.get(agent);
+    return rt?.id !== undefined && rt.id !== recorded;
+  }
+
+  /** The identity a stored binding reaches now: the served agent of that name, if it has one. */
+  private identityOfBinding(binding: string | undefined): string | undefined {
+    const name = this.boundAgent(binding);
+    return name === undefined ? undefined : this.byName.get(name)?.id;
   }
 
   /**
