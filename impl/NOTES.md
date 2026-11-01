@@ -4561,11 +4561,16 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       marker `:root`, never the name (review of PR #127, MED-1); none
       stored means the same. Its URL `/a/<name>/` follows the name; `/mcp`
       does not change.
-    - **Names are never reused by stale bindings** (MED-2). `agent add`
-      refuses a name that tokens or grants are still bound to (an agent of
-      that name deleted by hand) unless `--force`, which revokes them first;
-      at start the gateway warns about every token or grant bound to an
-      agent it does not have. `migrate --name` rewrites a grant's resource
+    - **Stale bindings never reach a new holder of their name** (MED-2 and
+      the re-review). A token or grant left on a name (its agent deleted by
+      hand) could reach whatever takes that name next, by three paths, all
+      closed: `agent add` and `agent migrate --name` refuse a name that
+      bindings still store unless `--force`, which revokes them first; and a
+      restore that renames the root to such a name gains nothing, because a
+      stored name equal to the root's current name is stale (root bindings
+      store the marker) and reaches nothing, in the gateway and in
+      `AgentRoot.nameOf`. `rebindAgent` moves only root-marker bindings. At
+      start the gateway warns about every binding that reaches no agent. `migrate --name` rewrites a grant's resource
       `/a/<old>/mcp` to `/a/<new>/mcp`, and a refresh is checked against the
       grant's agent as named now, never the stored URL, so a refresh after a
       rename or migration keeps working (LOW-1).

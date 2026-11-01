@@ -93,9 +93,15 @@ export class AgentRoot {
     return name === this.rootAgentName() ? ROOT_BINDING : name;
   }
 
-  /** The agent a stored binding names now (the root marker: the root agent, if the root holds one). */
+  /**
+   * The agent a stored binding names now (the root marker: the root agent, if the root holds one). A binding that
+   * is the root's current name is stale (root bindings store the marker; that name belonged to an agent since
+   * removed), so it names nothing.
+   */
   nameOf(binding: string | undefined): string | undefined {
-    return isRootBinding(binding) ? this.rootAgentName() : binding;
+    const rootName = this.rootAgentName();
+    if (isRootBinding(binding)) return rootName;
+    return binding === rootName ? undefined : binding;
   }
 
   /** Every agent here: the root agent first, then agents/<name>/ by name. Only folders that hold an agent count. */

@@ -353,14 +353,15 @@ export class OAuthStore {
   }
 
   /**
-   * `agent migrate`: grants of the root agent (the root marker, none, or its name `from`) now reach `to`, and a
-   * resource naming the old agent's URL names the new one (the gateway's own resource stays).
+   * `agent migrate`: grants of the root agent (the root marker, or none) now reach `to`, and a resource naming the
+   * old agent's URL names the new one (the gateway's own resource stays). A grant naming the root's name itself is
+   * stale, so it is not moved.
    */
   async rebindAgent(from: string, to: string): Promise<number> {
     return this.update((d) => {
       let n = 0;
       for (const g of Object.values(d.grants)) {
-        if (isRootBinding(g.agent) || g.agent === from) {
+        if (isRootBinding(g.agent)) {
           g.agent = to;
           if (g.resource.endsWith(`/a/${from}/mcp`)) g.resource = `${g.resource.slice(0, -`/a/${from}/mcp`.length)}/a/${to}/mcp`;
           n += 1;

@@ -230,9 +230,10 @@ export class Gateway {
         found.push(a);
       } catch (err) {
         this.skipped.push(a.name);
-        this.log(`ERROR: agent ${a.name} is NOT served: its state at ${a.home.dir} cannot be read (${(err as Error).message}). The other agents are served; fix or remove it, then restart.`);
+        this.log(`ERROR: agent ${a.name} is NOT served: its state at ${a.home.dir} cannot be read (${(err as Error).message}). Fix or remove it, then restart.`);
       }
     }
+    if (this.skipped.length) this.log(found.length ? `serving the other agents: ${found.map((a) => a.name).join(', ')}` : 'no other agent to serve');
     // No agent yet: the root stands in, so start() can say so.
     const entries = found.length ? found : [{ name: 'default', home: opts.home, root: true }];
     const multi = entries.length > 1;
@@ -401,16 +402,21 @@ export class Gateway {
 
   /** The agent a principal's stored binding names: its own, or (the root marker, or none stored) the root agent, if there is one. */
   private boundAgent(stored: string | undefined): string | undefined {
-    return isRootBinding(stored) ? this.rootName : stored;
+    if (isRootBinding(stored)) return this.rootName;
+    // Root bindings store the marker: a raw name equal to the root's is a stale binding of a removed agent (a
+    // restore renamed the root to it), and reaches nothing.
+    return stored === this.rootName ? undefined : stored;
   }
 
   /** Tokens and grants bound to no agent here (removed by hand, or skipped): said at start, so the owner revokes them. */
   private warnOrphans(): void {
     const served = new Set([...this.agents.map((a) => a.name), ...this.skipped]);
-    const lost = [
-      ...this.store.listTokens().map((t) => ({ id: t.id, agent: this.boundAgent(t.agent) ?? '(the root agent, gone)' })),
-      ...this.oauth.store.list().grants.map((g) => ({ id: g.id, agent: this.boundAgent(g.agent) ?? '(the root agent, gone)' })),
-    ].filter((x) => !served.has(x.agent));
+    const lost = [...this.store.listTokens(), ...this.oauth.store.list().grants]
+      .filter((p) => {
+        const a = this.boundAgent(p.agent);
+        return a === undefined || !served.has(a);
+      })
+      .map((p) => ({ id: p.id, agent: isRootBinding(p.agent) ? '(the root agent, gone)' : p.agent }));
     for (const x of lost) {
       this.log(`WARNING: ${x.id} is bound to agent ${x.agent}, which is not here: it reaches nothing. Revoke it (rdv-gateway token revoke / oauth revoke); "agent add" refuses that name until you do.`);
     }

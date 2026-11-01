@@ -243,10 +243,13 @@ async function agentCommand(root: AgentRoot, store: GatewayStore, sub: string | 
   const oauth = new OAuthStore(root.home);
   const tokensOf = (n: string) => store.listTokens().filter((t) => root.nameOf(t.agent) === n);
   const grantsOf = (n: string) => oauth.list().grants.filter((g) => root.nameOf(g.agent) === n);
-  /** Tokens and grants still bound to a name: `remove` and `add` refuse while there are any, unless --force revokes them. */
+  /**
+   * Tokens and grants that store this name: `remove`, `add` and `migrate --name` refuse while there are any, unless
+   * --force revokes them. Root bindings store the marker, so for a new name these can only be stale.
+   */
   const bound = (n: string, then: string): void => {
-    const tokens = tokensOf(n);
-    const grants = grantsOf(n);
+    const tokens = store.listTokens().filter((t) => t.agent === n);
+    const grants = oauth.list().grants.filter((g) => g.agent === n);
     if ((tokens.length || grants.length) && !values.force) {
       die(
         `agent "${n}" still has ${tokens.length} token(s) (${tokens.map((t) => t.id).join(', ') || 'none'}) and ${grants.length} OAuth grant(s) (${grants.map((g) => g.id).join(', ') || 'none'}): ` +
@@ -319,6 +322,15 @@ async function agentCommand(root: AgentRoot, store: GatewayStore, sub: string | 
     return;
   }
   if (sub === 'migrate') {
+    const to = values.name ?? root.rootAgentName();
+    if (to !== undefined) {
+      // Stale bindings to the new name would reach the root agent once it takes that name.
+      bound(to, 'before the root agent takes the name');
+      if (root.find(to)?.root === false) die(`agent "${to}" exists already; pick another name with --name`);
+      const t = await store.revokeAgent(to);
+      const g = await oauth.revokeAgent(to);
+      if (t.length || g.length) process.stderr.write(`Revoked ${t.length} token(s) and ${g.length} OAuth grant(s) left bound to "${to}".\n`);
+    }
     const r = await root.migrate(values.name, async (from, to) => {
       await store.rebindAgent(from, to);
       await oauth.rebindAgent(from, to);
