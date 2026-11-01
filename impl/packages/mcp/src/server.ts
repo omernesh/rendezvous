@@ -4283,8 +4283,10 @@ export class RdvMcpServer {
     }
     const holds = await waitForService(home, d.name, this.serviceOpts.waitMs ?? 10_000);
     const after = serviceStatus(home, profile, env, run);
-    await this.warnTampered(after); // resets the dedupe set to what is really there now
     this.humanLog(`background listener ${d.name} installed through the approval form (${d.location}); remove it with: ${removeCommand(home)}`);
+    // A tamper that survives the reinstall (a systemd drop-in) is reported again, after the line above.
+    this.tamperWarned.clear();
+    await this.warnTampered(after);
     return {
       installed: true,
       changed: true,
