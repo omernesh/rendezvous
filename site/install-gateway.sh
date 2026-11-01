@@ -92,11 +92,13 @@ show_cmd() {
 # or only show it with --dry-run.
 run() {
   if [ "$DRY_RUN" = 1 ]; then show_cmd "$@"; return 0; fi
+  recheck_dir
   "$@" </dev/null
 }
 # Run a command that asks the human something in this terminal.
 run_tty() {
   if [ "$DRY_RUN" = 1 ]; then show_cmd "$@"; return 0; fi
+  recheck_dir
   "$@" </dev/tty
 }
 
@@ -109,6 +111,7 @@ write_file() {
     return 0
   fi
   # Never through a symlink someone left in place, and the temp file is a fresh one only we created.
+  [ -z "${DIR:-}" ] || case $1 in "$DIR"/*) recheck_dir ;; esac
   [ ! -L "$1" ] || die "$1 is a symbolic link; this installer will not write through it. Remove it, then run this again"
   [ ! -L "$(dirname "$1")" ] || die "$(dirname "$1") is a symbolic link; this installer will not write through it"
   tmp=$(umask 077 && mktemp "$1.XXXXXX") || die "cannot create a temporary file next to $1"
@@ -134,7 +137,22 @@ valid_ref() {
 }
 valid_token() { matches '^[A-Za-z0-9+/=_-]{40,4096}$' "$1"; }
 # A path we can write into compose files, unit files and shell lines without quoting surprises.
-valid_path() { matches '^/[A-Za-z0-9._/@+-]*$' "$1"; }
+valid_path() {
+  matches '^/[A-Za-z0-9._/@+-]*$' "$1" || return 1
+  case $1 in *//* | */./* | */../* | */. | */..) return 1 ;; esac
+}
+
+# A path with its existing part resolved (cd -P, pwd -P) and the rest appended as given.
+physical_path() {
+  p=$1 tail=''
+  while [ ! -d "$p" ] && [ "$p" != / ]; do
+    tail="/$(basename "$p")$tail"
+    p=$(dirname "$p")
+  done
+  real=$(cd -P -- "$p" 2>/dev/null && pwd -P) || real=$p
+  out="${real%/}$tail"
+  printf '%s' "${out:-/}"
+}
 
 # Folders that are never an install folder: system and shared ones, a NAS volume's own top, your home and above it.
 system_dir() {
@@ -443,6 +461,15 @@ write_ctl() {
   # As root (a NAS), ./gw update runs as root again, for the same gateway user.
   ROOT_FLAGS=''
   [ "$(id -u)" != 0 ] || ROOT_FLAGS="--allow-root --uid $RDV_UID "
+  # ./gw update runs the installer copy only while it and the folder are yours alone (no symlink, group or other
+  # write, or ACL), the same check the installer makes before every write.
+  # shellcheck disable=SC2016  # written into ./gw as is
+  MINE_FUNC='mine() {
+  [ ! -L "$1" ] || return 1
+  m=$(ls -lnd "$1" 2>/dev/null) || return 1
+  [ "$(printf "%s" "$m" | awk "{print \$3}")" = "$(id -u)" ] || return 1
+  case ${m%% *} in ?????w* | ????????w* | *+) return 1 ;; esac
+}'
   if [ "$RUNTIME" = docker ]; then
     write_file "$DIR/gw" 755 <<EOF
 #!/bin/sh
@@ -453,6 +480,7 @@ write_ctl() {
 #   ./gw pin|token|oauth ...     rdv-gateway's owner commands, in your own terminal
 set -eu
 DIR=\$(CDPATH= cd -- "\$(dirname -- "\$0")" && pwd)
+$MINE_FUNC
 compose() {
   if docker compose version >/dev/null 2>&1; then docker compose --project-directory "\$DIR" -f "\$DIR/docker-compose.yml" "\$@"
   else docker-compose --project-directory "\$DIR" -f "\$DIR/docker-compose.yml" "\$@"; fi
@@ -465,7 +493,8 @@ case \$cmd in
   start) compose up -d ;;
   stop) compose stop ;;
   restart) compose restart ;;
-  update) exec sh "\$DIR/install-gateway.sh" --dir "\$DIR" --update $ROOT_FLAGS"\$@" ;;
+  update) mine "\$DIR" && mine "\$DIR/install-gateway.sh" || { echo "gw: \$DIR or its installer copy is not yours alone (owner, symlink, group or other write, or an ACL); not running it" >&2; exit 1; }
+    exec sh "\$DIR/install-gateway.sh" --dir "\$DIR" --update $ROOT_FLAGS"\$@" ;;
   rdv) exec compose run --rm --no-deps gateway node packages/cli/dist/src/bin.js "\$@" --home /data ;;
   pin | token | oauth) exec compose run --rm --no-deps gateway node packages/gateway/dist/src/bin.js "\$cmd" "\$@" --home /data ;;
   backup)
@@ -490,6 +519,7 @@ EOF
 #   ./gw pin|token|oauth ...     rdv-gateway's owner commands, in your own terminal
 set -eu
 DIR=\$(CDPATH= cd -- "\$(dirname -- "\$0")" && pwd)
+$MINE_FUNC
 NODE='$NODE_BIN'
 cmd=\${1:-help}
 [ \$# -gt 0 ] && shift
@@ -500,7 +530,8 @@ case \$cmd in
   start) svc_start ;;
   stop) svc_stop ;;
   restart) svc_stop; svc_start ;;
-  update) exec sh "\$DIR/install-gateway.sh" --dir "\$DIR" --update "\$@" ;;
+  update) mine "\$DIR" && mine "\$DIR/install-gateway.sh" || { echo "gw: \$DIR or its installer copy is not yours alone (owner, symlink, group or other write, or an ACL); not running it" >&2; exit 1; }
+    exec sh "\$DIR/install-gateway.sh" --dir "\$DIR" --update "\$@" ;;
   rdv) exec "\$NODE" "\$DIR/repo/impl/packages/cli/dist/src/bin.js" "\$@" --home "\$DIR/data" ;;
   pin | token | oauth) exec "\$NODE" "\$DIR/repo/impl/packages/gateway/dist/src/bin.js" "\$cmd" "\$@" --home "\$DIR/data" ;;
   backup) exec "\$NODE" "\$DIR/repo/impl/packages/cli/dist/src/bin.js" backup "\$@" --home "\$DIR/data" ;;
@@ -711,23 +742,77 @@ check_install_dir() {
     if [ ! -f "$1/install.conf" ] && [ -n "$(ls -A "$1" 2>/dev/null)" ]; then
       die "$1 already has other files in it and no gateway install. Choose a new or empty folder (this one would be made private and its files replaced)"
     fi
-    check_owned "$1"
-    others_can_write "$1" && die "$1 can be written by other users; fix its permissions (chmod 700) or choose another folder"
+    check_private "$1"
   fi
-  # The nearest folder above that exists: yours or root's, and not writable by others (so not /tmp).
+  # The nearest folder above that exists: yours or root's. It may be shared (writable by others, or with an ACL, as
+  # /volume1/docker is on a Synology NAS) only if the install folder is ours and private; it is then checked again
+  # before every write and every run of anything in it.
   up=$(dirname "$1")
   while [ ! -e "$up" ] && [ "$up" != / ]; do up=$(dirname "$up"); done
   [ ! -L "$up" ] || die "$up is a symbolic link; give the real path"
   o=$(owner_of "$up")
   [ "$o" = "$(id -u)" ] || [ "$o" = 0 ] || die "$up belongs to uid $o; put the gateway in a folder that is yours"
-  ! others_can_write "$up" || die "$up can be written by other users (like /tmp); put the gateway in a folder that is yours"
+  if others_can_write "$up" || has_acl "$up"; then
+    case $up in /tmp | /var/tmp | /dev/shm | /private/tmp) die "$up is a temporary folder anyone can write; put the gateway in a folder that is yours" ;; esac
+    warn "$up is shared (others can write it, or it has an ACL). The gateway's own folder $1 is made private (700, no ACL) and checked again before every write."
+  fi
 }
-# Is a folder writable by others (group or world)? From ls -ld, which every system has.
+
+# The first column of ls -ld (type, mode and a trailing + or @ for an ACL or extended attributes), and the numeric
+# owner and group: what every system's ls shows.
+# shellcheck disable=SC2012  # only the columns of one validated path are read
+mode_of() { ls -lnd "$1" 2>/dev/null | awk '{print $1}'; }
+# shellcheck disable=SC2012
+group_of() { ls -lnd "$1" 2>/dev/null | awk '{print $4}'; }
+# Writable by anyone but its owner? Group write is fine only when the group is the owner's private group (a user
+# private group home: group named like the user, with the user's own gid).
 others_can_write() {
-  # shellcheck disable=SC2012  # only the mode column of one path we validated is read
-  m=$(ls -ld "$1" 2>/dev/null | cut -c1-10)
-  case $m in ?????w???? | ????????w?) return 0 ;; esac
+  m=$(mode_of "$1")
+  case $m in ????????w*) return 0 ;; esac
+  case $m in
+    ?????w*)
+      [ "$(group_of "$1")" = "$(id -g)" ] && [ "$(id -gn 2>/dev/null)" = "$(id -un 2>/dev/null)" ] && [ "$(owner_of "$1")" = "$(id -u)" ] && return 1
+      return 0 ;;
+  esac
   return 1
+}
+# Synology DSM's ACL tool, when there is one.
+syno_acl_tool() {
+  for t in synoacltool /usr/syno/bin/synoacltool; do
+    if command -v "$t" >/dev/null 2>&1; then command -v "$t"; return 0; fi
+  done
+  return 1
+}
+# Does a path carry an ACL? A trailing + in ls -ld (POSIX ACLs, DSM), or entries in synoacltool -get.
+has_acl() {
+  case $(mode_of "$1") in *+) return 0 ;; esac
+  t=$(syno_acl_tool) || return 1
+  "$t" -get "$1" 2>/dev/null | grep -Eq '^[[:space:]]*\[[0-9]+\]'
+}
+# The install folder must be yours, not a symlink, not writable by anyone else, and without an ACL.
+check_private() {
+  [ ! -L "$1" ] || die "$1 is a symbolic link; this installer will not use it"
+  check_owned "$1"
+  ! others_can_write "$1" || die "$1 can be written by other users; fix its permissions (chmod 700) or choose another folder"
+  ! has_acl "$1" || die "$1 has an ACL (other users may reach it). Remove it (Synology: synoacltool -del $1) or choose another folder"
+}
+# Make the install folder (700, no ACL) and check it. On DSM a new folder can inherit the share's ACL: strip it.
+make_install_dir() {
+  [ "$DRY_RUN" != 1 ] || return 0
+  if [ ! -d "$DIR" ]; then
+    (umask 077 && mkdir -p "$DIR") || die "cannot create $DIR"
+  fi
+  chmod 700 "$DIR" || die "cannot chmod $DIR"
+  if t=$(syno_acl_tool) && has_acl "$DIR"; then
+    "$t" -del "$DIR" >/dev/null 2>&1 || die "cannot remove the ACL $DIR inherited ($t -del $DIR)"
+  fi
+  check_private "$DIR"
+}
+# Before every write into the install folder and every run of something in it: still private (nothing swapped it
+# for a symlink, changed its owner or gave it an ACL meanwhile).
+recheck_dir() {
+  [ "$DRY_RUN" != 1 ] && [ -n "${DIR:-}" ] && [ -e "$DIR" ] || return 0
+  check_private "$DIR"
 }
 
 choose_dir_and_settings() {
@@ -738,7 +823,11 @@ choose_dir_and_settings() {
   fi
   DIR=$(abs_path "$DIR")
   valid_path "$DIR" || die "use a folder path without spaces or special characters (got: $DIR)"
+  # Judge the real path: the part that exists, with symlinks resolved.
+  DIR=$(physical_path "$DIR")
+  valid_path "$DIR" || die "the folder resolves to a path with special characters: $DIR"
   check_install_dir "$DIR"
+  make_install_dir
   load_conf
   if [ "$CONF_FOUND" = 1 ]; then
     say "Found a gateway installed here (runtime ${C_RUNTIME:-?}, ${C_TUNNEL:-?}, ${C_PUBLIC_URL:-?}, code: ${REF:-${C_REF:-main}})."
@@ -846,6 +935,7 @@ choose_public_address() {
       say 'Keeping the saved tunnel token.'
     elif [ "$DRY_RUN" = 1 ]; then
       say "Would ask for the tunnel token here (never shown) and save it to $DIR/cloudflared.token (mode 600)."
+      TOKEN_CHANGED=1
     else
       say 'Paste the tunnel token: in the dashboard it is the long string after --token in the install command.'
       read_secret 'Tunnel token'
@@ -854,6 +944,7 @@ choose_public_address() {
       (umask 077 && mkdir -p "$DIR") && chmod 700 "$DIR"
       printf '%s\n' "$SECRET" | write_file "$DIR/cloudflared.token" 600
       SECRET=
+      TOKEN_CHANGED=1
       say "Saved to $DIR/cloudflared.token (mode 600)."
     fi
   fi
@@ -873,8 +964,9 @@ resolve_ref() {
   printf '%s' "$c"
 }
 
-# Who owns a file (GNU, busybox and BSD stat).
-owner_of() { stat -c %u "$1" 2>/dev/null || stat -f %u "$1" 2>/dev/null || printf '?'; }
+# Who owns a file, as a uid (ls -lnd: the same on GNU, busybox and BSD).
+# shellcheck disable=SC2012
+owner_of() { o=$(ls -lnd "$1" 2>/dev/null | awk '{print $3}'); printf '%s' "${o:-?}"; }
 
 # The code, the installer copy and the helper must belong to whoever runs this (root on a NAS), never to the
 # gateway's own user: ./gw update runs them later, so a tree that user could change would run its code as you.
@@ -1071,7 +1163,10 @@ start_services() {
   fi
   if [ "$RUNTIME" = docker ]; then
     [ "$TUNNEL" = cloudflare-quick ] && start_quick_tunnel
-    has_tunnel_service && [ "$TUNNEL" != cloudflare-quick ] && run compose up -d tunnel
+    # A new token reaches cloudflared only through a new container: it reads the file once, at start.
+    if has_tunnel_service && [ "$TUNNEL" != cloudflare-quick ]; then
+      if [ "$TOKEN_CHANGED" = 1 ]; then run compose up -d --force-recreate tunnel; else run compose up -d tunnel; fi
+    fi
     run compose up -d --force-recreate --remove-orphans gateway
   else
     SERVICE_FUNCS=$(service_funcs)
@@ -1176,7 +1271,7 @@ main() {
   DIR='' RUNTIME='' REF='' PORT='' AGENT='' EMAILS='' RELAYS='' POINTER='' BACKUP=''
   C_RUNTIME='' C_REF='' C_PORT='' C_TUNNEL='' C_PUBLIC_URL='' C_HEADER=''
   TUNNEL='' PUBLIC_URL='' CLIENT_IP_HEADER='' UPDATE=0 YES=0 DRY_RUN=0 ALLOW_ROOT=0 COMPOSE=''
-  SERVICE_FUNCS='' UNINSTALL_EXTRA=: CLOUDFLARED_BIN='' NODE_BIN=node SECRET='' UID_FLAG=''
+  SERVICE_FUNCS='' UNINSTALL_EXTRA=: CLOUDFLARED_BIN='' NODE_BIN=node SECRET='' UID_FLAG='' TOKEN_CHANGED=0
   NODE_IMAGE=${RDV_NODE_IMAGE:-$NODE_IMAGE_DEFAULT}
   CLOUDFLARED_IMAGE=${RDV_CLOUDFLARED_IMAGE:-$CLOUDFLARED_IMAGE_DEFAULT}
   while [ $# -gt 0 ]; do

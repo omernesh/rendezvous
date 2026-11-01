@@ -30,7 +30,7 @@
 // security boundary is the MCP consent gate: rdv_grant and rdv_negotiate need
 // the human's form or confirm phrase (NOTES 57, 62), and only a hash of each
 // phrase is ever stored.
-import { existsSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -499,8 +499,40 @@ const GATEWAY_INSTALL =
   'The gateway installer (install-gateway.sh, and ./gw update, which runs it) is for the human, in their own terminal: it builds and restarts the gateway, can run as root on a NAS, and asks for the PIN and secrets there. Never run it; give your user the command to run.';
 const TUNNEL_INSPECT =
   "That would print the gateway tunnel's configuration (docker inspect or docker compose config of the gateway's tunnel), which can hold its token. Never read it; check the tunnel with ./gw status or ./gw logs tunnel.";
-/** A gateway install folder with a tunnel token in it: searched or globbed as a whole, it would show the token. */
-const holdsTunnelToken = (dir) => ['cloudflared.token', 'cloudflared.env'].some((f) => existsSync(join(dir, f)));
+const GATEWAY_DIR =
+  "That reaches into the Rendezvous gateway's install folder as a whole (a wildcard, a recursive search, copy or archive, or a container command there), which holds the tunnel token and the agent. Use ./gw status and ./gw logs there, and leave the rest to your user.";
+/**
+ * The gateway installer's folder (install.conf, cloudflared.token, or its ./gw helper): treated like a home, since it
+ * holds the tunnel token and the agent's home (data/). Best effort: Docker access is root-equivalent anyway.
+ */
+const isGatewayDir = (d) => {
+  if (['install.conf', 'cloudflared.token', 'cloudflared.env'].some((f) => existsSync(join(d, f)))) return true;
+  try {
+    return readFileSync(join(d, 'gw'), 'utf8').slice(0, 400).includes('install-gateway.sh');
+  } catch {
+    return false;
+  }
+};
+/** A gateway folder at `p`, or under it within two levels (where a recursive search from `p` would descend), or the default one under it. */
+function gatewayAtOrBelow(p, depth = 2) {
+  if (!isDir(p)) return false;
+  if (isGatewayDir(p)) return true;
+  const def = join(homedir(), 'rendezvous-gateway');
+  if (under(norm(def), norm(p)) && isGatewayDir(def)) return true;
+  if (depth === 0) return false;
+  let names;
+  try {
+    names = readdirSync(p, { withFileTypes: true });
+  } catch {
+    return false;
+  }
+  return names.slice(0, 300).some((e) => e.isDirectory() && !['node_modules', '.git'].includes(e.name) && gatewayAtOrBelow(join(p, e.name), depth - 1));
+}
+/** docker (compose) subcommands open in the gateway's folder: looking at the services and (re)starting them. */
+const DOCKER_IN_GATEWAY = new Set(['ps', 'logs', 'up', 'restart']);
+/** Programs that walk a folder tree, always or with a recursive flag. */
+const TREE_WALKERS = new Set(['rg', 'ag', 'ack', 'find', 'fd', 'tar', 'zip', '7z', 'rsync', 'du', 'tree', 'get-childitem', 'gci', 'select-string', 'copy-item', 'compress-archive']);
+const RECURSIVE_WITH_FLAG = new Set(['grep', 'egrep', 'fgrep', 'cp', 'scp']);
 /** Shells that run a script named anywhere after them (`bash -x install-gateway.sh`), and wrappers that run their next word. */
 const INSTALL_SHELLS = new Set(['sh', 'bash', 'dash', 'zsh', 'ksh', 'ash', 'busybox', 'source', '.']);
 const INSTALL_RUNNERS = new Set([...INSTALL_SHELLS, 'sudo', 'env', 'exec', 'command', 'nohup', 'time', 'timeout', 'doas', 'script']);
@@ -582,8 +614,9 @@ const isDir = (p) => {
     return false;
   }
 };
-/** A directory that looks like a Rendezvous home on disk (any --home or profile dir). */
-const looksLikeHome = (d) => existsSync(join(d, 'config.json')) && (existsSync(join(d, 'agent.json')) || existsSync(join(d, 'consent.json')));
+/** A directory that looks like a Rendezvous home on disk (any --home or profile dir),
+   or the gateway installer's folder (isGatewayDir), which holds the tunnel token and a home. */
+const looksLikeHome = (d) => isGatewayDir(d) || (existsSync(join(d, 'config.json')) && (existsSync(join(d, 'agent.json')) || existsSync(join(d, 'consent.json'))));
 
 /**
  * `w` with a leading `~`, $HOME or $RDV_HOME (in sh, PowerShell or cmd
@@ -874,8 +907,18 @@ function checkWords(words, ctx, depth) {
     if (k === 0 || shellBefore || INSTALL_RUNNERS.has(progName(words[k - 1])) || /^[A-Za-z_]\w*=/.test(words[k - 1])) throw new Refusal(GATEWAY_INSTALL);
   }
   // docker inspect / docker compose config near the gateway's tunnel: it shows the tunnel's settings.
-  if (words.some((w) => ['docker', 'docker-compose', 'podman'].includes(progName(w))) && lw.some((w) => w === 'inspect' || w === 'config')) {
-    if (lw.some((w) => /tunnel|cloudflared/.test(w)) || existsSync(join(ctx.cwd, 'cloudflared.token')) || existsSync(join(ctx.cwd, 'cloudflared.env'))) throw new Refusal(TUNNEL_INSPECT);
+  const dockerAt = words.findIndex((w) => ['docker', 'docker-compose', 'podman'].includes(progName(w)));
+  if (dockerAt >= 0) {
+    // The gateway's folder: where it runs (cwd), or named with --project-directory / -f / a path argument.
+    const inGateway =
+      isGatewayDir(ctx.cwd) || words.slice(dockerAt + 1).some((w) => !dynamic(w) && /[\\/]/.test(w) && (isGatewayDir(expandPath(w, ctx.cwd).path) || isGatewayDir(dirname(expandPath(w, ctx.cwd).path))));
+    if (lw.some((w) => w === 'inspect' || w === 'config') && (inGateway || lw.some((w) => /tunnel|cloudflared/.test(w)))) throw new Refusal(TUNNEL_INSPECT);
+    // A command in the gateway's containers or a copy out of them (exec, cp, run, and the rest) could read the
+    // token or the agent; there, only looking at and (re)starting the services is open.
+    if (inGateway) {
+      const sub = lw.slice(dockerAt + 1).find((w) => !w.startsWith('-') && w !== 'compose' && !isGatewayDir(expandPath(w, ctx.cwd).path) && !/\.ya?ml$/.test(w));
+      if (sub === undefined || !DOCKER_IN_GATEWAY.has(sub)) throw new Refusal(GATEWAY_DIR);
+    }
   }
   // `… | xargs rdv contact`: the arguments come from stdin, unseen.
   const feeder = lw.findIndex((w) => ['xargs', 'parallel'].includes(progName(w)));
@@ -936,11 +979,15 @@ function checkWords(words, ctx, depth) {
   let prog = words.findIndex((w) => !/^[A-Za-z_]\w*=/.test(w) && !['sudo', 'env', 'command', 'exec', 'nohup', 'time', '&', '.', 'call', '{', '!'].includes(w));
   if (prog < 0) prog = 0;
   const listing = LISTING.has(progName(words[prog] ?? ''));
+  const progWord = progName(words[prog] ?? '');
+  const walker =
+    TREE_WALKERS.has(progWord) || (RECURSIVE_WITH_FLAG.has(progWord) && words.slice(prog + 1).some((w) => /^-[A-Za-z]*[rRa]|^--recursive$|^--archive$/.test(w)));
   for (let i = 0; i < words.length; i++) {
     const w = words[i];
     if (braces(w).some((x) => SECRET_MENTION.test(x))) throw new Refusal(SECRET_REFUSAL);
-    const isHomeArg = /^-{1,2}home$/i.test(words[i - 1] ?? '') || /^-{1,2}home=|^RDV_HOME=/i.test(w);
-    const value = w.replace(/^-{1,2}home=|^RDV_HOME=/i, '');
+    // --project-directory names the gateway's folder for docker compose: its subcommand is checked above.
+    const isHomeArg = /^-{1,2}(home|project-directory)$/i.test(words[i - 1] ?? '') || /^-{1,2}(home|project-directory)=|^RDV_HOME=/i.test(w);
+    const value = w.replace(/^-{1,2}(home|project-directory)=|^RDV_HOME=/i, '');
     for (const x of braces(value)) {
       const { text, viaRdvHome } = expandRefs(x);
       const glob = GLOB_CHARS.test(text);
@@ -948,6 +995,8 @@ function checkWords(words, ctx, depth) {
       const pre = glob || dyn ? staticPrefix(text) : text;
       if (dyn && pre === '' && !viaRdvHome) continue; // starts with a variable we can't see: no path to judge
       const path = isAbsolute(pre) ? pre : resolve(ctx.cwd, pre || '.');
+      // A walk of a folder tree that would descend into the gateway's folder (`grep -r x ~`, `tar c .`, `cp -r ~ /mnt`).
+      if (walker && i !== prog && !isHomeArg && gatewayAtOrBelow(path)) throw new Refusal(GATEWAY_DIR);
       const where = classify(path);
       if (!where) continue;
       if (glob) {
@@ -1036,10 +1085,14 @@ export function checkPath(path, opts = {}) {
     const base = opts.base ? expandPath(opts.base, cwd).path : cwd;
     const { path: p, viaRdvHome } = expandPath(staticPrefix(path) || '.', base);
     if (classify(p, viaRdvHome) || (GLOB_CHARS.test(path) && path.includes('**') && containsHome(p))) return HOME_REFUSAL;
-    if (holdsTunnelToken(p) || holdsTunnelToken(dirname(p))) return SECRET_REFUSAL;
+    // A glob in the gateway's folder, or one from above it that descends (`**`, or a wildcard in a folder part:
+    // `~/*/*.token`), would reach the token. classify already catches the folder itself.
+    const rest = path.slice(staticPrefix(path).length);
+    if (isGatewayDir(p) || ((rest.includes('**') || /[\\/]/.test(rest)) && gatewayAtOrBelow(p))) return GATEWAY_DIR;
     return undefined;
   }
-  if (kind === 'search' && holdsTunnelToken(expandPath(path, cwd).path)) return SECRET_REFUSAL;
+  // A search (Grep, a recursive listing) of the gateway's folder or of a folder it would descend into.
+  if (kind === 'search' && gatewayAtOrBelow(expandPath(path, cwd).path)) return GATEWAY_DIR;
   const { path: p } = expandPath(path, cwd);
   const where = classify(p);
   if (SECRET_FILES.includes(basename(p).toLowerCase()) && (where || classify(dirname(p)))) return SECRET_REFUSAL;
