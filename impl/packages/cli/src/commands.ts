@@ -1490,7 +1490,7 @@ export async function contactRevoke({ home, out, positionals }: Ctx): Promise<vo
   out.emit({ event: 'revoked', peer }, `revoked ${peer}`);
 }
 
-/** --stdin reads a piped line; on a terminal it would echo the secret, so there the hidden prompt is used instead (issue #126). */
+/** --stdin used to read a piped line; these commands now need your own terminal, where it uses the hidden prompt instead (a pipe is refused, issue #126). */
 const pipedStdin = (values: Ctx['values']): boolean => values.stdin === true && process.stdin.isTTY !== true;
 
 /** One line from stdin (`--stdin`: the human piped a passphrase in on purpose), without its line end. */
@@ -1508,7 +1508,7 @@ async function backupSecret(ctx: Ctx, question: string): Promise<string> {
   if (pipedStdin(ctx.values)) return stdinLine();
   const term = ctx.tty ?? processTty();
   if (!term.interactive) {
-    throw new CliError('the backup passphrase is read from your terminal (or, if you mean it, from stdin with --stdin); it is never an argument. Only you may do this, in your own terminal');
+    throw new CliError('the backup passphrase is read from your terminal and is never an argument. This needs stdin, stdout and stderr all in your own terminal (not piped or redirected), and a terminal device to read it from. Only you may do this, in your own terminal');
   }
   return term.secret(question);
 }

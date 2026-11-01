@@ -5,6 +5,7 @@ import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve, sep } from 'node:path';
 import { createInterface } from 'node:readline';
+import { parseArgs } from 'node:util';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { humanOnlyArgv } from '../src/main.js';
 
@@ -54,12 +55,15 @@ function realish(p: string): string {
 }
 
 /**
- * This file ships in @rendezvous/cli and stands in for the human's terminal, so it must never act on a real home:
- * the gated path refuses any --home (or $RDV_HOME) that is not under os.tmpdir() (issue #126).
+ * This file ships in @rendezvous/cli and stands in for the human's terminal, so it gives no shortcut on a real home:
+ * the gated path refuses any --home (or $RDV_HOME) that is not under os.tmpdir() (issue #126). The home is found with
+ * the same parseArgs semantics main uses (the last value wins, `--home=x` included); more than one --home is refused.
  */
 function assertTempHome(args: string[]): void {
-  const i = args.lastIndexOf('--home');
-  const home = i >= 0 ? args[i + 1] : process.env.RDV_HOME;
+  const { tokens } = parseArgs({ args, options: { home: { type: 'string' } }, strict: false, allowPositionals: true, tokens: true });
+  const homes = tokens.filter((t) => t.kind === 'option' && t.name === 'home');
+  if (homes.length > 1) throw new Error('the scenario harness refuses more than one --home');
+  const home = homes.length ? (homes[0] as { value?: string }).value : process.env.RDV_HOME;
   if (!home) throw new Error('the scenario harness runs human-only commands only on an explicit temporary --home');
   const tmp = realish(tmpdir());
   const real = realish(home);

@@ -159,7 +159,7 @@ describe('human-only commands need an interactive terminal (issue #126)', () => 
   });
   it('the shipped harness refuses to stand in for the human on a home outside the temp dir', () => {
     // Not under os.tmpdir(): refused, so dist/scenarios/harness.js is no bypass on a real home.
-    const outside = process.platform === 'win32' ? 'C:\Users\nobody\.rendezvous\omer' : '/home/nobody/.rendezvous/omer';
+    const outside = process.platform === 'win32' ? String.raw`C:\Users\nobody\.rendezvous\omer` : '/home/nobody/.rendezvous/omer';
     expect(() => rdvArgv(['contact', 'grant', 'req-1', '--home', outside])).toThrow(/outside/);
     // A path that climbs out of the temp dir is judged by where it lands.
     expect(() => rdvArgv(['contact', 'grant', 'req-1', '--home', join(tmpdir(), '..', 'elsewhere-rdv')])).toThrow(/outside/);
@@ -171,6 +171,9 @@ describe('human-only commands need an interactive terminal (issue #126)', () => 
     } finally {
       if (saved !== undefined) process.env.RDV_HOME = saved;
     }
+    // --home= forms and a second --home are judged too (parseArgs takes the last value; the harness refuses two).
+    expect(() => rdvArgv(['contact', 'grant', 'req-1', `--home=${outside}`])).toThrow(/outside/);
+    expect(() => rdvArgv(['contact', 'grant', 'req-1', '--home', join(tmpdir(), 'rdv-x'), '--home=/elsewhere'])).toThrow(/more than one/);
     // A temp home and any non-gated command are unaffected.
     expect(() => rdvArgv(['contact', 'grant', 'req-1', '--home', join(tmpdir(), 'rdv-x')])).not.toThrow();
     expect(() => rdvArgv(['whoami', '--home', outside])).not.toThrow();

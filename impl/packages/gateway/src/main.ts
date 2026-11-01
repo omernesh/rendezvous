@@ -4,7 +4,7 @@
 //   rdv-gateway serve [--home <dir> | --profile <name>] [--port 8787] [--public-url https://…] [--host 127.0.0.1 --allow-remote-bind]
 //                     [--calendar cal.json] [--calendar-dir <dir>]… [--window "…"] [--tz +02:00]
 //   rdv-gateway pin set                      the approval page's PIN, in a terminal: the current one first, then the new one twice, never echoed
-//                                            (--stdin: the same lines on stdin, current first when one is set; still only in your own terminal)
+//                                            (--stdin: the same hidden prompts in your own terminal; a pipe is refused)
 //   rdv-gateway pin unlock                   clear the wait after wrong PINs
 //   rdv-gateway token create --name <n> --scope read,send[,contact:request,negotiate]
 //   rdv-gateway token list | token revoke <id>
@@ -93,7 +93,7 @@ const die = (msg: string, code = 1): never => {
   process.exit(code);
 };
 
-/** --stdin reads piped lines; on a terminal it would echo the secret, so there the hidden prompt is used (issue #126). */
+/** --stdin used to read piped lines; these commands now need your own terminal, where it uses the hidden prompt (a pipe is refused, issue #126). */
 const pipedStdin = (): boolean => values.stdin === true && process.stdin.isTTY !== true;
 
 /** stdin's lines, for --stdin. */

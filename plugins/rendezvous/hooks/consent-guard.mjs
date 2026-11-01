@@ -33,7 +33,8 @@
 // rdv-gateway commands themselves refuse to run unless stdin and stdout are
 // both a terminal (issue #126, cli/src/humanonly.ts, gateway/src/args.ts).
 // That raises the bar, it is not a proof: a shell tool without a terminal is
-// refused in any spelling, but a launcher that opens a new console (Windows
+// refused when it runs those commands, but another interpreter calling the library
+// directly (e.g. node -e importing dist/src/main.js) or a launcher that opens a new console (Windows
 // Start-Process, cmd /c start) or a pseudo-terminal (tmux, screen, pty) passes
 // isTTY, an accepted limit under #51. Naming those launchers here is what
 // keeps the check from being faked, and an assistant running its shell in a

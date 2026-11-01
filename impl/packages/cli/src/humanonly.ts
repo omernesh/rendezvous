@@ -3,11 +3,12 @@
 // The plugin's consent guard reads shell text and is best effort: a model with
 // a shell can always spell a command it does not see. This is the boundary
 // behind it. A shell tool without a terminal (Claude Code's Bash and PowerShell
-// tools, MCP clients), a script and a pipe are refused, so the grant command
-// and the rest fail there in any spelling. This raises the bar; it is not a
-// proof: a launcher that opens a new console (Windows `Start-Process`, `cmd /c
-// start`) or a pseudo-terminal (tmux, screen, python `pty`) passes isTTY, an
-// accepted limit under #51 that the consent guard names. An assistant whose
+// tools, MCP clients), a script and a pipe are refused when they run the `rdv`
+// or `rdv-gateway` commands. This raises the bar; it is not a proof: another
+// interpreter calling the library directly (e.g. `node -e` importing
+// dist/src/main.js), or a launcher that opens a new console (Windows
+// `Start-Process`, `cmd /c start`) or a pseudo-terminal (tmux, screen, python
+// `pty`) passes isTTY, an accepted limit under #51 that the consent guard names. An assistant whose
 // shell runs in a real terminal (some IDE agent modes) is not stopped here and
 // must use the approval-form tools.
 //

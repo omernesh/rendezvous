@@ -46,7 +46,9 @@ refuses to run unless stdin and stdout are both a terminal, `--stdin`
 included, before it reads or writes anything; no flag, environment variable
 or file turns that off. This raises the bar; it is not a proof. A shell tool
 without a terminal (Claude Code's Bash and PowerShell tools, MCP clients) is
-refused in any spelling, but a launcher that opens a new console (Windows
+refused when it runs the `rdv-gateway` or `rdv` commands, but another interpreter
+calling the library directly (e.g. `node -e` importing `dist/src/main.js`) or a launcher
+that opens a new console (Windows
 `Start-Process -WindowStyle Hidden`, `cmd /c start`) or a pseudo-terminal
 (tmux, screen, python `pty`) passes `isTTY`; that stays an accepted limit
 under #51, and the consent guard is the layer that names those launchers. An
