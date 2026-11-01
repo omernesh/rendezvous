@@ -918,7 +918,39 @@ function checkWords(words, ctx, depth) {
     if (inGateway) {
       const sub = lw.slice(dockerAt + 1).find((w) => !w.startsWith('-') && w !== 'compose' && !isGatewayDir(expandPath(w, ctx.cwd).path) && !/\.ya?ml$/.test(w));
       if (sub === undefined || !DOCKER_IN_GATEWAY.has(sub)) throw new Refusal(GATEWAY_DIR);
+      // Only the gateway's own compose file and folder: another -f could define a service that mounts the folder.
+      for (let k = dockerAt + 1; k < words.length; k++) {
+        const m = /^(-f|--file|--project-directory)(?:=(.*))?$/.exec(words[k]);
+        if (!m) continue;
+        const v = m[2] ?? words[++k];
+        if (v === undefined || dynamic(v)) throw new Refusal(GATEWAY_DIR);
+        const p = expandPath(v, ctx.cwd).path;
+        const ok = m[1] === '--project-directory' ? isGatewayDir(p) : basename(p).toLowerCase() === 'docker-compose.yml' && isGatewayDir(dirname(p));
+        if (!ok) throw new Refusal(GATEWAY_DIR);
+      }
     }
+    // A bind mount of the gateway's folder (or of a folder it is under) into any container: -v/--volume host:ctr[:ro],
+    // --mount type=bind,source=host,… .
+    for (let k = dockerAt + 1; k < words.length; k++) {
+      const m = /^(-v|--volume|--mount)(?:=(.*))?$/.exec(words[k]) ?? (/^-v(.+)$/.exec(words[k]) ? [words[k], '-v', words[k].slice(2)] : null);
+      if (!m) continue;
+      const v = m[2] ?? words[++k];
+      if (v === undefined) continue;
+      if (dynamic(v)) throw new Refusal(GATEWAY_DIR);
+      // host:container[:opts], where a Windows host path keeps its drive letter (C:/x:/data).
+      const parts = v.split(':');
+      const volHost = /^[A-Za-z]$/.test(parts[0]) && /^[\\/]/.test(parts[1] ?? '') ? `${parts[0]}:${parts[1]}` : parts[0];
+      const hosts = m[1] === '--mount' ? v.split(',').map((kv) => /^(source|src)=(.*)$/i.exec(kv)?.[2]).filter(Boolean) : [volHost];
+      for (const h of hosts) {
+        if (!/^[.~/\\]|^[A-Za-z]:[\\/]/.test(h)) continue; // a named volume, not a host path
+        const p = expandPath(h, ctx.cwd).path;
+        if (isGatewayDir(p) || classify(p) || gatewayAtOrBelow(p)) throw new Refusal(GATEWAY_DIR);
+      }
+    }
+    // A command in, a copy out of, or an attach to the gateway's containers, wherever this runs: they are named after
+    // the install folder and its services (rendezvous-gateway-gateway-1, …-tunnel-1), or are its cloudflared.
+    const verb = lw.slice(dockerAt + 1).find((w) => ['exec', 'cp', 'run', 'attach', 'debug'].includes(w));
+    if (verb && lw.slice(dockerAt + 1).some((w) => /rendezvous-gateway|cloudflared|(^|[-_])(gateway|tunnel)([-_]\d+)?(:|$)/.test(w))) throw new Refusal(GATEWAY_DIR);
   }
   // `… | xargs rdv contact`: the arguments come from stdin, unseen.
   const feeder = lw.findIndex((w) => ['xargs', 'parallel'].includes(progName(w)));
@@ -982,6 +1014,11 @@ function checkWords(words, ctx, depth) {
   const progWord = progName(words[prog] ?? '');
   const walker =
     TREE_WALKERS.has(progWord) || (RECURSIVE_WITH_FLAG.has(progWord) && words.slice(prog + 1).some((w) => /^-[A-Za-z]*[rRa]|^--recursive$|^--archive$/.test(w)));
+  // A walker with no folder named walks the working directory (`grep -r tok`, `find -name x`, `du`).
+  if (walker && gatewayAtOrBelow(ctx.cwd)) {
+    const named = words.slice(prog + 1).some((w) => !w.startsWith('-') && !dynamic(w) && isDir(expandPath(w, ctx.cwd).path));
+    if (!named) throw new Refusal(GATEWAY_DIR);
+  }
   for (let i = 0; i < words.length; i++) {
     const w = words[i];
     if (braces(w).some((x) => SECRET_MENTION.test(x))) throw new Refusal(SECRET_REFUSAL);

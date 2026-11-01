@@ -111,7 +111,7 @@ write_file() {
     return 0
   fi
   # Never through a symlink someone left in place, and the temp file is a fresh one only we created.
-  [ -z "${DIR:-}" ] || case $1 in "$DIR"/*) recheck_dir ;; esac
+  [ -z "${DIR:-}" ] || case $1 in "${D:-$DIR}"/* | "$DIR"/*) recheck_dir ;; esac
   [ ! -L "$1" ] || die "$1 is a symbolic link; this installer will not write through it. Remove it, then run this again"
   [ ! -L "$(dirname "$1")" ] || die "$(dirname "$1") is a symbolic link; this installer will not write through it"
   tmp=$(umask 077 && mktemp "$1.XXXXXX") || die "cannot create a temporary file next to $1"
@@ -281,8 +281,8 @@ detect_compose() {
   fi
 }
 compose() {
-  if [ "$COMPOSE" = standalone ]; then docker-compose --project-directory "$DIR" -f "$DIR/docker-compose.yml" "$@"
-  else docker compose --project-directory "$DIR" -f "$DIR/docker-compose.yml" "$@"; fi
+  if [ "$COMPOSE" = standalone ]; then docker-compose --project-directory "$D" -f "$D/docker-compose.yml" "$@"
+  else docker compose --project-directory "$D" -f "$D/docker-compose.yml" "$@"; fi
 }
 
 # Sets DOCKER_MISSING to what Docker lacks here ("" when ready).
@@ -332,7 +332,7 @@ check_node() {
 # install.conf holds only the non-secret answers, as KEY=value lines we parse (never source).
 load_conf() {
   CONF_FOUND=0
-  [ -f "$DIR/install.conf" ] || return 0
+  [ -f "$D/install.conf" ] || return 0
   CONF_FOUND=1
   while IFS='=' read -r k v; do
     case $k in
@@ -343,11 +343,11 @@ load_conf() {
       PUBLIC_URL) C_PUBLIC_URL=$v ;;
       CLIENT_IP_HEADER) C_HEADER=$v ;;
     esac
-  done <"$DIR/install.conf"
+  done <"$D/install.conf"
 }
 
 save_conf() {
-  write_file "$DIR/install.conf" 600 <<EOF
+  write_file "$D/install.conf" 600 <<EOF
 # Written by install-gateway.sh: your answers, so a re-run (./gw update) keeps them. No secrets here.
 RUNTIME=$RUNTIME
 REF=$REF
@@ -361,7 +361,7 @@ EOF
 # --- the generated files -----------------------------------------------------
 
 write_env() {
-  write_file "$DIR/.env" 600 <<EOF
+  write_file "$D/.env" 600 <<EOF
 # Read by docker compose (the project is named after this folder). No secrets here (a tunnel token lives in cloudflared.token).
 NODE_IMAGE=$NODE_IMAGE
 CLOUDFLARED_IMAGE=$CLOUDFLARED_IMAGE
@@ -454,7 +454,7 @@ services:
       retries: 3
 EOF
     compose_tunnel_service
-  } | write_file "$DIR/docker-compose.yml" 644
+  } | write_file "$D/docker-compose.yml" 644
 }
 
 write_ctl() {
@@ -471,7 +471,7 @@ write_ctl() {
   case ${m%% *} in ?????w* | ????????w* | *+) return 1 ;; esac
 }'
   if [ "$RUNTIME" = docker ]; then
-    write_file "$DIR/gw" 755 <<EOF
+    write_file "$D/gw" 755 <<EOF
 #!/bin/sh
 # Control the Rendezvous gateway in this folder (written by install-gateway.sh).
 #   ./gw status | logs [tunnel] | start | stop | restart | update | uninstall
@@ -510,7 +510,7 @@ case \$cmd in
 esac
 EOF
   else
-    write_file "$DIR/gw" 755 <<EOF
+    write_file "$D/gw" 755 <<EOF
 #!/bin/sh
 # Control the Rendezvous gateway in this folder (written by install-gateway.sh).
 #   ./gw status | logs [tunnel] | start | stop | restart | update | uninstall
@@ -658,7 +658,7 @@ tool() {
     if [ "$how" = run ]; then "$how" compose run --rm --no-deps -T gateway node "$js" "$@" --home /data
     else "$how" compose run --rm --no-deps gateway node "$js" "$@" --home /data; fi
   else
-    "$how" "$NODE_BIN" "$DIR/repo/impl/$js" "$@" --home "$DIR/data"
+    "$how" "$NODE_BIN" "$D/repo/impl/$js" "$@" --home "$D/data"
   fi
 }
 
@@ -811,9 +811,31 @@ make_install_dir() {
 # Before every write into the install folder and every run of something in it: still private (nothing swapped it
 # for a symlink, changed its owner or gave it an ACL meanwhile).
 recheck_dir() {
-  [ "$DRY_RUN" != 1 ] && [ -n "${DIR:-}" ] && [ -e "$DIR" ] || return 0
-  check_private "$DIR"
+  [ "$DRY_RUN" != 1 ] && [ -n "${DIR:-}" ] || return 0
+  if [ "${D:-}" = . ]; then
+    # We work from inside the folder by relative paths, so a rename of its parent's entry cannot redirect a write
+    # or a command. Still: the folder we are in must be the one we checked, at the path we checked, and private.
+    now=$(real_cwd)
+    [ "$now" = "$DIR" ] || die "the install folder moved while the installer ran (now $now); stopping"
+    check_private .
+  elif [ -e "$DIR" ]; then
+    check_private "$DIR"
+  fi
 }
+# Step into the install folder once it is checked: from here on every write and every command uses paths relative
+# to it (D=.), and docker gets its real path at the moment it is needed (here).
+enter_install_dir() {
+  [ "$DRY_RUN" != 1 ] || return 0
+  cd -P -- "$DIR" || die "cannot enter $DIR"
+  now=$(real_cwd)
+  [ "$now" = "$DIR" ] || die "$DIR is not where it was checked (now $now); stopping"
+  check_private .
+  D=.
+}
+# Where we really are now. Not the shell's own pwd -P: dash answers it from what it remembered at cd, so a folder
+# renamed under us would still show its old path. The pwd program asks the kernel.
+real_cwd() { env pwd -P 2>/dev/null || pwd -P; }
+here() { if [ "${D:-}" = . ]; then real_cwd; else printf '%s' "$DIR"; fi; }
 
 choose_dir_and_settings() {
   step 1 'choose the folder'
@@ -828,6 +850,8 @@ choose_dir_and_settings() {
   valid_path "$DIR" || die "the folder resolves to a path with special characters: $DIR"
   check_install_dir "$DIR"
   make_install_dir
+  D=$DIR
+  enter_install_dir
   load_conf
   if [ "$CONF_FOUND" = 1 ]; then
     say "Found a gateway installed here (runtime ${C_RUNTIME:-?}, ${C_TUNNEL:-?}, ${C_PUBLIC_URL:-?}, code: ${REF:-${C_REF:-main}})."
@@ -931,7 +955,7 @@ choose_public_address() {
   valid_header "$CLIENT_IP_HEADER" || die "--client-ip-header is a header name (got: $CLIENT_IP_HEADER)"
 
   if [ "$TUNNEL" = cloudflare-token ]; then
-    if [ -f "$DIR/cloudflared.token" ] && { [ "$UPDATE" = 1 ] || ask_yn --update 'A tunnel token is saved here. Keep it?' y; }; then
+    if [ -f "$D/cloudflared.token" ] && { [ "$UPDATE" = 1 ] || ask_yn --update 'A tunnel token is saved here. Keep it?' y; }; then
       say 'Keeping the saved tunnel token.'
     elif [ "$DRY_RUN" = 1 ]; then
       say "Would ask for the tunnel token here (never shown) and save it to $DIR/cloudflared.token (mode 600)."
@@ -941,8 +965,8 @@ choose_public_address() {
       read_secret 'Tunnel token'
       valid_token "$SECRET" || die 'that does not look like a tunnel token (one long string of letters, digits and -_+/=); nothing saved'
       # The folder was checked in step 1 (yours, private, no symlinks); write_file makes a fresh temp file there.
-      (umask 077 && mkdir -p "$DIR") && chmod 700 "$DIR"
-      printf '%s\n' "$SECRET" | write_file "$DIR/cloudflared.token" 600
+      (umask 077 && mkdir -p "$D") && chmod 700 "$D"
+      printf '%s\n' "$SECRET" | write_file "$D/cloudflared.token" 600
       SECRET=
       TOKEN_CHANGED=1
       say "Saved to $DIR/cloudflared.token (mode 600)."
@@ -956,11 +980,11 @@ choose_public_address() {
 
 # The commit for a branch, a tag, or a commit that one of them contains; fails for anything else.
 resolve_ref() {
-  if c=$(git -C "$DIR/repo" rev-parse --verify --quiet "refs/remotes/origin/$1^{commit}"); then printf '%s' "$c"; return 0; fi
-  if c=$(git -C "$DIR/repo" rev-parse --verify --quiet "refs/tags/$1^{commit}"); then printf '%s' "$c"; return 0; fi
+  if c=$(git -C "$D/repo" rev-parse --verify --quiet "refs/remotes/origin/$1^{commit}"); then printf '%s' "$c"; return 0; fi
+  if c=$(git -C "$D/repo" rev-parse --verify --quiet "refs/tags/$1^{commit}"); then printf '%s' "$c"; return 0; fi
   matches '^[0-9a-f]{7,40}$' "$1" || return 1
-  c=$(git -C "$DIR/repo" rev-parse --verify --quiet "$1^{commit}") || return 1
-  [ -n "$(git -C "$DIR/repo" branch -r --contains "$c" 2>/dev/null)$(git -C "$DIR/repo" tag --contains "$c" 2>/dev/null)" ] || return 1
+  c=$(git -C "$D/repo" rev-parse --verify --quiet "$1^{commit}") || return 1
+  [ -n "$(git -C "$D/repo" branch -r --contains "$c" 2>/dev/null)$(git -C "$D/repo" tag --contains "$c" 2>/dev/null)" ] || return 1
   printf '%s' "$c"
 }
 
@@ -980,48 +1004,48 @@ check_owned() {
 
 fetch_and_build() {
   step 4 'get the code and build it'
-  check_owned "$DIR" "$DIR/repo" "$DIR/install-gateway.sh" "$DIR/gw"
-  run mkdir -p "$DIR" "$DIR/data" "$DIR/logs"
-  run chmod 700 "$DIR" "$DIR/data"
+  check_owned "$D" "$D/repo" "$D/install-gateway.sh" "$D/gw"
+  run mkdir -p "$D" "$D/data" "$D/logs"
+  run chmod 700 "$D" "$D/data"
   REPO=${RDV_REPO:-https://github.com/omernesh/rendezvous}
-  if [ -e "$DIR/repo/.git" ]; then
-    origin=$(git -C "$DIR/repo" remote get-url origin 2>/dev/null || true)
+  if [ -e "$D/repo/.git" ]; then
+    origin=$(git -C "$D/repo" remote get-url origin 2>/dev/null || true)
     [ "$origin" = "$REPO" ] || die "$DIR/repo is a clone of '$origin', not '$REPO'"
-    [ -z "$(git -C "$DIR/repo" status --porcelain 2>/dev/null)" ] || die "$DIR/repo has local changes; this installer will not overwrite them"
-  elif [ -e "$DIR/repo" ]; then
+    [ -z "$(git -C "$D/repo" status --porcelain 2>/dev/null)" ] || die "$D/repo has local changes; this installer will not overwrite them"
+  elif [ -e "$D/repo" ]; then
     die "$DIR/repo exists but is not a git clone. Move it away"
   else
-    run git clone --quiet "$REPO" "$DIR/repo"
+    run git clone --quiet "$REPO" "$D/repo"
   fi
   # Only the published branches and tags, so a commit reachable from neither (a pull request's) is not there to use.
-  run git -C "$DIR/repo" fetch --quiet --prune --tags origin '+refs/heads/*:refs/remotes/origin/*'
+  run git -C "$D/repo" fetch --quiet --prune --tags origin '+refs/heads/*:refs/remotes/origin/*'
   if [ "$DRY_RUN" = 1 ]; then
-    show_cmd git -C "$DIR/repo" checkout --quiet --detach "<$REF: a branch, tag or commit on one of them>"
+    show_cmd git -C "$D/repo" checkout --quiet --detach "<$REF: a branch, tag or commit on one of them>"
   else
     commit=$(resolve_ref "$REF") || die "$REF is not a branch, a tag, or a commit on one of them in $REPO"
-    git -C "$DIR/repo" checkout --quiet --detach "$commit" || die "git checkout $commit failed"
-    say "Code: $REF at $(git -C "$DIR/repo" log -1 --format='%h %s')"
+    git -C "$D/repo" checkout --quiet --detach "$commit" || die "git checkout $commit failed"
+    say "Code: $REF at $(git -C "$D/repo" log -1 --format='%h %s')"
   fi
   # ./gw update runs this copy, outside repo/: yours like the rest, never the gateway user's.
-  run cp "$DIR/repo/site/install-gateway.sh" "$DIR/install-gateway.sh"
-  run chmod 755 "$DIR/install-gateway.sh"
+  run cp "$D/repo/site/install-gateway.sh" "$D/install-gateway.sh"
+  run chmod 755 "$D/install-gateway.sh"
   say 'Building (a few minutes the first time)...'
   if [ "$RUNTIME" = docker ]; then
     # Built as the owner of repo/ (you; root on a NAS, in a container without capabilities), so the gateway's user
     # never owns the code it runs (the gateway mounts it read-only). Only data/ is that user's.
     if [ "$(id -u)" = 0 ]; then
-      run chown "$RDV_UID:$RDV_GID" "$DIR/data"
+      run chown "$RDV_UID:$RDV_GID" "$D/data"
       build_user=0:0
     else
       build_user="$RDV_UID:$RDV_GID"
     fi
     run docker run --rm --user "$build_user" --cap-drop ALL --security-opt no-new-privileges \
       -e HOME=/tmp -e npm_config_update_notifier=false \
-      -v "$DIR/repo:/app" -w /app/impl "$NODE_IMAGE" sh -c 'npm ci --no-audit --no-fund && npm run build'
+      -v "$(here)/repo:/app" -w /app/impl "$NODE_IMAGE" sh -c 'npm ci --no-audit --no-fund && npm run build'
   else
-    (cd "$DIR/repo/impl" 2>/dev/null || [ "$DRY_RUN" = 1 ]; run npm ci --no-audit --no-fund && run npm run build) || die 'the build failed'
+    (cd "$D/repo/impl" 2>/dev/null || [ "$DRY_RUN" = 1 ]; run npm ci --no-audit --no-fund && run npm run build) || die 'the build failed'
   fi
-  [ "$DRY_RUN" = 1 ] || [ -f "$DIR/repo/impl/$GW_JS" ] || die "the build finished but $DIR/repo/impl/$GW_JS is missing"
+  [ "$DRY_RUN" = 1 ] || [ -f "$D/repo/impl/$GW_JS" ] || die "the build finished but $DIR/repo/impl/$GW_JS is missing"
 
   # The settings files, before anything runs through compose.
   save_conf
@@ -1034,7 +1058,7 @@ fetch_and_build() {
 
 setup_agent() {
   step 5 'your agent'
-  if [ -f "$DIR/data/agent.json" ]; then
+  if [ -f "$D/data/agent.json" ]; then
     say 'An agent is already set up here; keeping it:'
     tool run rdv whoami || true
     done_step 5
@@ -1094,16 +1118,16 @@ setup_agent() {
       say 'Next, rdv shows the agent ID and fingerprint in the file and asks for its passphrase. Check they are yours, then type it.'
       if [ "$RUNTIME" = docker ]; then
         # A private copy the container's user can read; removed right after.
-        run mkdir -p "$DIR/.restore"
-        run chmod 700 "$DIR/.restore"
-        run cp "$BACKUP" "$DIR/.restore/agent.rdvbackup"
-        if [ "$(id -u)" = 0 ]; then run chown -R "$RDV_UID:$RDV_GID" "$DIR/.restore"; fi
+        run mkdir -p "$D/.restore"
+        run chmod 700 "$D/.restore"
+        run cp "$BACKUP" "$D/.restore/agent.rdvbackup"
+        if [ "$(id -u)" = 0 ]; then run chown -R "$RDV_UID:$RDV_GID" "$D/.restore"; fi
         st=0
-        run_tty compose run --rm --no-deps -v "$DIR/.restore:/backup:ro" gateway node "$CLI_JS" restore /backup/agent.rdvbackup --home /data || st=$?
-        run rm -rf "$DIR/.restore"
+        run_tty compose run --rm --no-deps -v "$(here)/.restore:/backup:ro" gateway node "$CLI_JS" restore /backup/agent.rdvbackup --home /data || st=$?
+        run rm -rf "$D/.restore"
         [ "$st" = 0 ] || die 'restore failed (a wrong passphrase restores nothing); run this again to retry'
       else
-        run_tty "$NODE_BIN" "$DIR/repo/impl/$CLI_JS" restore "$BACKUP" --home "$DIR/data" || die 'restore failed (a wrong passphrase restores nothing); run this again to retry'
+        run_tty "$NODE_BIN" "$D/repo/impl/$CLI_JS" restore "$BACKUP" --home "$D/data" || die 'restore failed (a wrong passphrase restores nothing); run this again to retry'
       fi
       say 'Only one machine should receive for an agent: stop rdv listen / rdv-mcp for it on the old one.'
       ;;
@@ -1115,7 +1139,7 @@ setup_agent() {
 
 setup_pin() {
   step 6 'the approval PIN'
-  if [ -f "$DIR/data/gateway.json" ] && grep -q '"owner"' "$DIR/data/gateway.json" 2>/dev/null; then
+  if [ -f "$D/data/gateway.json" ] && grep -q '"owner"' "$D/data/gateway.json" 2>/dev/null; then
     if [ "$UPDATE" = 1 ] || ask_yn --update 'An approval PIN is set. Keep it?' y; then
       say 'Keeping the PIN.'
       done_step 6
@@ -1139,7 +1163,7 @@ start_quick_tunnel() {
   url=
   while [ $i -lt 30 ]; do
     if [ "$RUNTIME" = docker ]; then logs=$(compose logs --no-color tunnel 2>&1 || true)
-    else logs=$(cat "$DIR/logs/cloudflared.log" 2>/dev/null || true); fi
+    else logs=$(cat "$D/logs/cloudflared.log" 2>/dev/null || true); fi
     url=$(quick_url_from "$logs")
     [ -n "$url" ] && break
     i=$((i + 1))
@@ -1174,7 +1198,7 @@ start_services() {
       run mkdir -p "$AGENTS_DIR"
       d="gui/$(id -u)"
       if [ "$TUNNEL" = cloudflare-quick ]; then
-        run rm -f "$DIR/logs/cloudflared.log"
+        run rm -f "$D/logs/cloudflared.log"
         write_launchd_agents
         run launchctl bootout "$d/co.nesher.rdv-gateway-tunnel" 2>/dev/null || true
         run launchctl bootstrap "$d" "$AGENTS_DIR/co.nesher.rdv-gateway-tunnel.plist"
@@ -1189,7 +1213,7 @@ start_services() {
     else
       run mkdir -p "$UNIT_DIR"
       if [ "$TUNNEL" = cloudflare-quick ]; then
-        run rm -f "$DIR/logs/cloudflared.log"
+        run rm -f "$D/logs/cloudflared.log"
         write_systemd_units
         run systemctl --user daemon-reload
         run systemctl --user enable rdv-gateway-tunnel
@@ -1268,7 +1292,7 @@ EOF
 
 main() {
   [ -n "${HOME:-}" ] || die 'HOME is not set'
-  DIR='' RUNTIME='' REF='' PORT='' AGENT='' EMAILS='' RELAYS='' POINTER='' BACKUP=''
+  DIR='' D='' RUNTIME='' REF='' PORT='' AGENT='' EMAILS='' RELAYS='' POINTER='' BACKUP=''
   C_RUNTIME='' C_REF='' C_PORT='' C_TUNNEL='' C_PUBLIC_URL='' C_HEADER=''
   TUNNEL='' PUBLIC_URL='' CLIENT_IP_HEADER='' UPDATE=0 YES=0 DRY_RUN=0 ALLOW_ROOT=0 COMPOSE=''
   SERVICE_FUNCS='' UNINSTALL_EXTRA=: CLOUDFLARED_BIN='' NODE_BIN=node SECRET='' UID_FLAG='' TOKEN_CHANGED=0

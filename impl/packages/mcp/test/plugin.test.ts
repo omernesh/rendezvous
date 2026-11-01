@@ -1371,6 +1371,35 @@ describe('the rdv-gateway-setup skill', () => {
       // From above: a walk would descend into it.
       for (const c of [`grep -r tok ${root}`, 'grep -rn tok .', 'tar cf /tmp/x.tar .', 'find . -name "*.token"', 'rsync -a . /mnt/backup']) refusedIn(root, c);
       refusedIn(helperOnly, 'cat *');
+      // Walkers with no folder named walk the working directory.
+      for (const c of ['grep -r tok', 'grep -rn tok --include=*.token', 'find -name x', 'du -a', 'rg tok']) {
+        refusedIn(gw, c);
+        refusedIn(root, c);
+      }
+      const elsewhere = mkdtempSync(join(tmpdir(), 'rdv-elsewhere-'));
+      try {
+        // Forward slashes: an sh parse reads a Windows backslash as an escape.
+        allowedIn(root, `grep -r tok ${elsewhere.split('\\').join('/')}`);
+      } finally {
+        rmSync(elsewhere, { recursive: true, force: true });
+      }
+      // In the folder, only its own compose file and project directory.
+      writeFileSync(join(root, 'evil.yml'), 'services: {}\n');
+      // Paths in commands with forward slashes: an sh parse reads a Windows backslash as an escape.
+      const F = (p: string) => p.split('\\').join('/');
+      for (const c of [`docker compose -f ${F(join(root, 'evil.yml'))} up -d`, `docker compose --file=${F(join(root, 'evil.yml'))} ps`, `docker compose --project-directory ${F(root)} up -d`]) refusedIn(gw, c);
+      allowedIn(gw, `docker compose -f ${F(join(gw, 'docker-compose.yml'))} ps`);
+      allowedIn(gw, 'docker compose -f ./docker-compose.yml logs tunnel');
+      // A bind mount of the folder, or of a folder above it, from anywhere.
+      for (const c of [`docker run --rm -v ${F(gw)}:/x alpine cat /x/cloudflared.tok`, `docker run --rm -v ${F(root)}:/x:ro alpine ls /x`, `docker run --rm --mount type=bind,source=${F(gw)},target=/x alpine sh`, `docker run --rm --volume=${F(gw)}/data:/d alpine sh`]) {
+        refusedIn(tmpdir(), c);
+      }
+      allowedIn(tmpdir(), 'docker run --rm -v mydata:/data alpine ls /data');
+      // The gateway's containers and services by name, from anywhere.
+      for (const c of ['docker exec rendezvous-gateway-tunnel-1 cat /etc/cloudflared/x', 'docker cp rendezvous-gateway-gateway-1:/data /tmp/x', 'docker attach rendezvous-gateway-tunnel-1', 'docker compose -p rendezvous-gateway exec gateway sh', 'docker exec -it some-tunnel-1 sh']) {
+        refusedIn(tmpdir(), c);
+      }
+      allowedIn(tmpdir(), 'docker exec -it postgres psql');
       // The Grep and Glob tools likewise.
       expect(checkPath(root, { kind: 'search' })).toBeTruthy();
       expect(checkPath(gw, { kind: 'search' })).toBeTruthy();

@@ -51,9 +51,14 @@ tunnel token in `cloudflared.token` (mode 600, handed to `cloudflared
 --token-file`, never in an environment variable). The guard treats the
 install folder (`install.conf`, `cloudflared.token` or its `./gw` helper)
 like a home: wildcards in it, tree walks that descend into it (recursive
-grep, find, tar, zip, cp -r, rsync, the Grep and Glob tools), and docker
-commands there other than `ps`, `logs`, `up` and `restart` are refused, as
-are the installer and `./gw update`. This is best effort too: anyone who can
+grep, find, tar, zip, cp -r, rsync, the Grep and Glob tools, also with no
+folder named from inside or above it), docker commands there other than
+`ps`, `logs`, `up` and `restart` or with another compose file, bind mounts
+of the folder into any container, and `exec`, `cp`, `run` or `attach` on
+the gateway's containers by name are refused, as are the installer and
+`./gw update`. The installer itself works from inside its folder by relative
+paths and re-checks it (owner, mode, ACL, real path) before every write and
+command, so a shared parent such as a NAS share cannot redirect it. This is best effort too: anyone who can
 run Docker is root-equivalent on that host and can read the token or the
 agent's key, and a shell has spellings the guard does not follow (#51). The
 real boundary for an assistant with a shell on the gateway host is tracked

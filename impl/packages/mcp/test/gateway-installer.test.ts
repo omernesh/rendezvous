@@ -236,6 +236,15 @@ describe.skipIf(noSh !== null)('install-gateway.sh: helpers', () => {
       const s = lib(`DRY_RUN=0 DIR="${share}/rendezvous-gateway"; mv "$DIR" "$DIR.real"; ln -s "$DIR.real" "$DIR"; printf x | write_file "$DIR/x" 600 2>&1; echo reached`);
       expect(s.out).toMatch(/symbolic link/);
       expect(s.out).not.toContain('reached');
+      // Renamed and replaced by someone else's folder after the checks: we work from inside ours by relative
+      // paths, so nothing lands in theirs, and the recheck stops at the next write.
+      const g2 = `${share}/gw2`;
+      const swap = lib(
+        `DRY_RUN=0 DIR="${g2}"; make_install_dir; D=$DIR; enter_install_dir; mv "${g2}" "${g2}.moved"; mkdir "${g2}"; printf x | write_file ./x 600 2>&1; echo reached`,
+      );
+      expect(swap.out).toMatch(/install folder moved while the installer ran/);
+      expect(swap.out).not.toContain('reached');
+      expect(readdirSync(g2)).toEqual([]);
       // physical_path resolves symlinks in the existing part.
       expect(lib(`physical_path "${share}/rendezvous-gateway/sub"`).out).toBe(`${share}/rendezvous-gateway.real/sub`);
     } finally {
