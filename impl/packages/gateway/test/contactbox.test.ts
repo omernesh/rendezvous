@@ -179,14 +179,19 @@ describe('the box on the gateway page', () => {
     const { done } = await answer(s.b, asked.body.result.approve_url, { f_tier: 'friend', f_expires_days: '2', f_name: '', f_label: 'Dana', f_may_propose_meetings: '1', f_always_allow: '1' });
     const link = linkIn(done);
     const secret = link.split('#')[1];
-    expect(done).toContain('Dana'); // the owner's page still has everything it had
+    expect(done).toContain('Message ready to send'); // the owner's page still has everything it had
     const ev = await waitApi(s.g.base, s.token, (e) => e.type === 'approval' && e.tool === 'rdv_invite', 'the invite');
     expect(ev.result.auto_approve_when_used).toMatchObject({ state: 'chosen' });
     expect(ev.held_for_you).toMatch(/not available to you at all/);
     expect(ev.held_for_you).not.toMatch(/rdv_invite action "link"/);
     // Nowhere in tool output or the shared log: no link, no url, no share_text.
     expect(JSON.stringify(ev)).not.toContain(secret);
-    expect(JSON.stringify(ev)).not.toMatch(/share_text|"url"/);
+    // The prose names the held keys ("url and share_text are not in this event"); no such key or link is in the event itself.
+    for (const o of [ev, ev.result]) {
+      expect(Object.keys(o)).not.toContain('url');
+      expect(Object.keys(o)).not.toContain('share_text');
+    }
+    expect(JSON.stringify(ev)).not.toMatch(/https?:\/\/[^"\s]*\/i#/);
     expect(JSON.stringify(ev.result)).toMatch(/shown only to your user/);
     expect(readFileSync(join(s.g.home.dir, 'events.jsonl'), 'utf8')).not.toContain(secret);
     // rdv_invite "link" says so plainly and returns nothing, now or later.

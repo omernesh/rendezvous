@@ -263,9 +263,9 @@ describe('event shapes', () => {
     expect(eventData({ event: 'invite-exposed', invite_id: '0123456789abcdef', from: PEER }, () => undefined)?.event).toBe('invite_exposed');
     expect(eventData({ event: 'contact', peer: PEER, tier: 'friend', binding: 'in-person' }, () => undefined)?.event).toBe('contact');
     // auto_approve_on (NOTES 112): metadata only, whatever else the log line carries; junk is nulled or dropped.
-    const armed = eventData({ event: 'auto-approve-on', peer: PEER, invite_id: '0123456789abcdef', covers: ['https://rendezvous.nesher.co/m/1', 'bad uri <x>', 5], until: 'until your user turns it off', human: 'secret text' } as never, () => undefined)!;
+    const armed = eventData({ event: 'auto-approve-on', peer: PEER, invite_id: '0123456789abcdef', covers: ['https://rendezvous.nesher.co/m/1', 'https://x.example/cap?v=1', 'bad uri <x>', 5], until: 'until your user turns it off', human: 'secret text' } as never, () => undefined)!;
     expect(armed.event).toBe('auto_approve_on');
-    expect(armed.data).toEqual({ invite_id: '0123456789abcdef', fingerprint: expect.any(String), covers: ['https://rendezvous.nesher.co/m/1'], until: 'until your user turns it off' });
+    expect(armed.data).toEqual({ invite_id: '0123456789abcdef', fingerprint: expect.any(String), covers: ['https://rendezvous.nesher.co/m/1', 'https://x.example/cap?v=1'], until: 'until your user turns it off' });
     expect(JSON.stringify(armed)).not.toContain('secret text');
     expect(eventData({ event: 'auto-approve-on', peer: 'nope', invite_id: '../x' } as never, () => undefined)!.data).toEqual({ invite_id: null, fingerprint: null, covers: [], until: null });
     expect(eventData({ event: 'relay-down', relay: 'wss://x' }, () => undefined)).toBeUndefined();

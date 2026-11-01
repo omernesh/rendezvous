@@ -1219,7 +1219,7 @@ export class Gateway {
       // The page was older than the ask (it was asked again, or changed): nothing was done; show it as it is now.
       return this.html(res, 409, approvalPage({ item, agent, csrf, message: { text: 'This changed since you opened the page. Nothing was done; review it again.', bad: true } }));
     }
-    if (item.busy) return this.html(res, 409, donePage({ agent, title: 'Already running', text: 'Your answer to this is already being carried out.', csrf, bad: true }));
+    if (item.busy) return this.html(res, 409, donePage({ agent, title: 'Already running', text: 'Your answer to this is already being carried out. If a link was meant to be shown here and you no longer have it, you can revoke the invite and make a new one.', csrf, bad: true }));
     let content: Record<string, unknown> = {};
     if (decision === 'approve') {
       try {

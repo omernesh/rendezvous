@@ -1447,6 +1447,7 @@ function auditText(a: AuditEntry): string {
   const parts = [safeTs(a.ts), a.gate + (a.action ? ` ${a.action}` : ''), `by ${a.by}`, a.peer];
   if (a.capability) parts.push(a.capability);
   if (a.task) parts.push(`task ${a.task}`);
+  if (a.invite) parts.push(`invite ${a.invite}`);
   if (a.approval) parts.push(`class ${a.approval}`);
   if (a.digest) parts.push(`digest ${a.digest.slice(0, 12)}`);
   if (a.sent?.length) parts.push(`sent ${a.sent.map((x) => `${x.sha256.slice(0, 12)} (${x.bytes} bytes)`).join(', ')}`);
