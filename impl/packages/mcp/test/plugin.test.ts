@@ -1075,6 +1075,13 @@ describe('installing the background listener is the human’s (issue #102)', () 
     'systemctl --user disable --now rdv-listen-omer',
     'launchctl bootout gui/501/rdv-listen-omer',
     'launchctl kickstart -k gui/501/rdv-listen-omer',
+    // The service manager's environment reaches every service started later (issue #118).
+    'systemctl --user set-environment RDV_X=1',
+    'systemctl --user import-environment',
+    'systemctl --user import-environment PATH',
+    '/usr/bin/systemctl --user set-environment A=b',
+    'launchctl setenv RDV_X 1',
+    'sudo launchctl setenv PATH /tmp/evil',
     // The yield file in a home.
     'echo {} > ~/.rendezvous/omer/listener.yield',
   ];
@@ -1089,6 +1096,8 @@ describe('installing the background listener is the human’s (issue #102)', () 
     'schtasks /Query /TN rdv-listen-omer',
     'schtasks /Run /TN SomeOtherTask',
     'systemctl --user stop docker',
+    'systemctl --user show-environment',
+    'launchctl getenv PATH',
   ];
   it.each(denied)('the guard refuses %s', (c) => expect(checkCommand(c)).toBeTruthy());
   it.each(allowed)('the guard allows %s', (c) => expect(checkCommand(c)).toBeUndefined());
