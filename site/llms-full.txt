@@ -1493,7 +1493,7 @@ john.start();
 
 // On another machine:
 await omer.requestContact('john@doe.com', "Omer's agent would like to be in contact.");
-omer.once('contact', () => omer.send(john.id, { type: 'a2a/message', text: 'Hi John, Omer here.' }));
+omer.once('contact', () => omer.send(john.id, { type: 'note', text: 'Hi John, Omer here.' }));
 ```
 
 **Relays.** `DEFAULT_RELAYS` is the public set `rdv init` uses when no relay
