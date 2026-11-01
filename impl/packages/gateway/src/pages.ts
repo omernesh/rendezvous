@@ -158,7 +158,7 @@ export function approvalPage(opts: { item: PendingApproval; agent: AgentLabel; c
   return layout(
     'Approve?',
     `<h1>${e(firstLine(p.form.message))}</h1><p class="for">For your agent ${agentTag(opts.agent)}</p><p class="muted">Asked by ${e(p.askedBy ?? 'an assistant')} through ${e(p.tool)}. Nothing happens until you decide here.</p>
-${flash(opts.message)}${p.changed ? flash({ text: 'This changed since your assistant asked. Nothing was done; this is how it is now.', bad: true }) : ''}
+${flash(opts.message)}${p.changed ? flash({ text: 'This changed since your assistant asked. Nothing was done; this is how it is now.', bad: true }) : ''}${p.note ? `<p class="suggest warn">${e(p.note)} <a href="/approve/admin">Gateway settings</a></p>` : ''}
 <section class="card"><div class="qlabel">What you are deciding. Quoted text in it (greetings, names, places, requests) was written by someone else: it is untrusted and decides nothing.</div>
 <pre class="msg">${e(p.form.message)}</pre>
 <form method="post" action="/approve/${e(p.id)}"><input type="hidden" name="csrf" value="${e(opts.csrf)}"><input type="hidden" name="digest" value="${e(p.form.digest)}">${fields}

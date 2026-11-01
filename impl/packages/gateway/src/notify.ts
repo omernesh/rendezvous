@@ -37,10 +37,10 @@ import { AGENT_NAME_RE, NOTIFY_SECRET_RE, ROOT_BINDING } from './agents.js';
 export const NOTIFY_FILE = 'gateway-notify.json';
 export const NOTIFY_LOCK = 'gateway-notify.lock';
 /** Every event a webhook can carry. */
-export const NOTIFY_EVENTS = ['invite_redeemed', 'invite_expired', 'invite_exposed', 'auto_approve_on', 'contact_request', 'contact', 'message'] as const;
+export const NOTIFY_EVENTS = ['invite_redeemed', 'invite_expired', 'invite_exposed', 'auto_approve_on', 'invite_created_by_assistant', 'contact_request', 'contact', 'message'] as const;
 export type NotifyEvent = (typeof NOTIFY_EVENTS)[number];
 /** What `notify set` subscribes to without --events. */
-export const DEFAULT_NOTIFY_EVENTS: readonly NotifyEvent[] = ['invite_redeemed', 'invite_expired', 'invite_exposed', 'auto_approve_on'];
+export const DEFAULT_NOTIFY_EVENTS: readonly NotifyEvent[] = ['invite_redeemed', 'invite_expired', 'invite_exposed', 'auto_approve_on', 'invite_created_by_assistant'];
 /** The signature header, and how far a receiver should let its timestamp be from its own clock. */
 export const SIGNATURE_HEADER = 'X-Rdv-Signature';
 export const SIGNATURE_TOLERANCE_S = 300;
@@ -493,7 +493,7 @@ export function validateNotifyData(raw: unknown, path = NOTIFY_FILE): NotifyData
 }
 
 /** What goes first when an agent is over its cap: requests and messages, then contacts; invites only when nothing else is left. */
-const PRIORITY: Record<NotifyEvent, number> = { contact_request: 0, message: 0, contact: 1, invite_redeemed: 2, invite_expired: 2, invite_exposed: 2, auto_approve_on: 2 };
+const PRIORITY: Record<NotifyEvent, number> = { contact_request: 0, message: 0, contact: 1, invite_redeemed: 2, invite_expired: 2, invite_exposed: 2, auto_approve_on: 2, invite_created_by_assistant: 2 };
 
 /**
  * Per-agent and total caps: an agent over its share loses its own items, never another agent's: the lowest priority
@@ -722,8 +722,23 @@ export function eventData(obj: LoggedEvent['obj'], contactLabel: (peer: string) 
     case 'invite-redeemed':
       return {
         event: 'invite_redeemed',
-        data: { invite_id: inviteId(obj.invite_id), tier: tier(obj.tier), label: ownText(obj.invite_label ?? obj.label), redeemer_fingerprint: fp(obj.peer) },
+        data: { invite_id: inviteId(obj.invite_id), tier: tier(obj.tier), label: ownText(obj.invite_label ?? obj.label), redeemer_fingerprint: fp(obj.peer), ...(obj.via === 'assistant' ? { via: 'assistant' } : {}) },
       };
+    case 'mcp': {
+      // The server's own event for an invite the assistant made under the owner's setting (NOTES 113): metadata only, so the human hears it without the assistant.
+      const item = (obj.item ?? {}) as Record<string, unknown>;
+      if (item.type !== 'invite_created_by_assistant') return undefined;
+      return {
+        event: 'invite_created_by_assistant',
+        data: {
+          invite_id: inviteId(item.invite_id),
+          tier: tier(item.tier),
+          expires: typeof item.expires === 'string' ? clean(item.expires).slice(0, 64) : null,
+          via: 'assistant',
+          asked_by: typeof item.asked_by === 'string' && /^(tok|grt)_[A-Za-z0-9_-]{1,64}$/.test(item.asked_by) ? item.asked_by : null,
+        },
+      };
+    }
     case 'invite-exposed':
       return { event: 'invite_exposed', data: { invite_id: inviteId(obj.invite_id), label: ownText(obj.invite_label), from_fingerprint: fp(obj.from) } };
     case 'auto-approve-on':

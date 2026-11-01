@@ -1,5 +1,5 @@
 // The owner's gateway settings page (issue #102 item 7, NOTES 110): access
-// tokens, connected OAuth apps, auto-approved contacts (NOTES 112), the PIN and the webhooks, per agent, behind
+// tokens, connected OAuth apps, auto-approved contacts (NOTES 112), invites by the assistant (NOTES 113), the PIN and the webhooks, per agent, behind
 // the same PIN unlock, session, CSRF token and CSP as the approval page. No
 // JavaScript. Never shows a token's value (except once, on the page that made
 // it), a hash, the PIN or a webhook secret. Adding, removing and migrating
@@ -57,11 +57,22 @@ export interface AdminArmedInvite {
   covers: string[];
 }
 
+/** An open invite link the assistant made without asking (NOTES 113). `note` is the assistant's own word for the person: untrusted. Never the link or its secret. */
+export interface AdminAssistantInvite {
+  id: string;
+  note?: string;
+  created: string;
+  expires: string;
+}
+
 export interface AdminAgent extends AgentLabel {
   tokens: AdminToken[];
   grants: AdminGrant[];
   autoApproved: AdminAutoApproved[];
   armedInvites: AdminArmedInvite[];
+  /** When the owner let the assistant make invites without asking; absent: it asks. */
+  assistantInvitesSince?: string;
+  assistantInvites: AdminAssistantInvite[];
   webhook?: AdminWebhook;
   dead: number;
 }
@@ -139,6 +150,28 @@ function armedRows(list: AdminArmedInvite[], agent: string, csrf: string): strin
     .join('')}</tbody></table>`;
 }
 
+/** "My assistant may create invites without asking" (NOTES 113): on needs the PIN again, off only the session. */
+function assistantInvitesPart(a: AdminAgent, csrf: string): string {
+  const open = a.assistantInvites.length
+    ? `<p class="muted">Links it made that nobody has used yet. Revoke one and it stops working. Who it says a link is for is only your assistant's note: whoever opens a link first gets it.</p><table class="admin"><thead><tr><th>Invite</th><th>Its note</th><th>Made</th><th>Works until</th><th></th></tr></thead><tbody>${a.assistantInvites
+        .map(
+          (i) =>
+            `<tr><td class="muted">${e(i.id)}</td><td>${i.note ? e(i.note) : '<span class="muted">none</span>'}</td><td>${e(when(i.created))}</td><td>${e(when(i.expires))}</td><td>${button('/approve/admin/invite/revoke', csrf, { agent: a.name, id: i.id }, 'Revoke')}</td></tr>`,
+        )
+        .join('')}</tbody></table>`
+    : '<p class="muted">No open link made this way.</p>';
+  const what =
+    '<p class="muted">With this on, when you say "invite Ran" your assistant gets the link right away, with no page and no PIN, and can give it to you in chat or email it. Every such link makes a <b>stranger</b>: they can message your agent, but cannot propose meetings, cannot invoke anything and get no standing approval, and the link lasts at most 7 days. Your assistant cannot pick more: asking for more comes here for your approval, as does a sixth open link.</p>' +
+    '<p class="muted"><b>The risk:</b> an assistant steered by a prompt injection could make these links too and hand them to someone. Whoever opens one becomes a stranger contact who can message your agent. You hear about each one by webhook if you set one, and you can revoke it below. The contact stays unnamed until you name it.</p>';
+  const id = `aip_${a.name}`;
+  const toggle = a.assistantInvitesSince
+    ? `<p>On since ${e(when(a.assistantInvitesSince))}.</p>${button('/approve/admin/assistant-invites/off', csrf, { agent: a.name }, 'Turn this off')}<p class="muted">Off: every new invite asks you again. Links already made keep working until you revoke them.</p>`
+    : `<p>Off: every invite asks you on an approval page.</p><form method="post" action="/approve/admin/assistant-invites/on">${hidden('csrf', csrf)}${hidden('agent', a.name)}
+<label for="${e(id)}">Your PIN, again (this lasts until you turn it off)</label><input type="password" id="${e(id)}" name="pin" maxlength="128" required autocomplete="current-password">
+<div class="row"><button class="primary" type="submit">Let my assistant create invites</button></div></form>`;
+  return `<h3>My assistant may create invites without asking</h3>${what}${toggle}${open}`;
+}
+
 function createForm(agent: string, csrf: string): string {
   const scopes = SCOPES.map((s) => `<label class="check"><input type="checkbox" name="s_${e(s)}" value="1"> <span><b>${e(s)}</b>: ${e(SCOPE_TEXT[s])}</span></label>`).join('');
   return `<details><summary>Make an access token</summary><form method="post" action="/approve/admin/token/create">${hidden('csrf', csrf)}${hidden('agent', agent)}
@@ -163,6 +196,7 @@ function agentPart(a: AdminAgent, csrf: string, multi: boolean): string {
 <h3>Access tokens</h3><p class="muted">For assistants that connect with a token. Each reaches only this agent.</p>${tokenRows(a.tokens, a.name, csrf)}${createForm(a.name, csrf)}
 <h3>Connected apps (OAuth)</h3>${grantRows(a.grants, a.name, csrf)}
 <h3>Auto-approved contacts</h3><p class="muted">These contacts no longer need your approval for what is listed. You turn this on only when you tick "Don't ask again" on an approval form; Turn off takes effect at once.</p>${autoRows(a.autoApproved, a.name, csrf)}${armedRows(a.armedInvites, a.name, csrf)}
+${assistantInvitesPart(a, csrf)}
 <h3>Webhook</h3>${webhookPart(a, csrf)}</section>`;
 }
 

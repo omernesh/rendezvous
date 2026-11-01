@@ -1133,7 +1133,7 @@ describe('rdv-gateway notify', () => {
     expect((await bin(['notify', 'set', 'nobody', '--home', root, '--url', 'https://hooks.example.com/rdv', '--secret-file', sf])).stderr).toMatch(/no agent "nobody"/);
     const ok = await bin(['notify', 'set', 'omer', '--home', root, '--url', 'http://100.101.102.103:8080/rdv/TOKEN123', '--allow-insecure-host', '100.64.0.0/10', '--secret-file', sf]);
     expect(ok.code, ok.stderr).toBe(0);
-    expect(ok.stderr).toContain('invite_redeemed, invite_expired, invite_exposed, auto_approve_on');
+    expect(ok.stderr).toContain('invite_redeemed, invite_expired, invite_exposed, auto_approve_on, invite_created_by_assistant');
     expect(ok.stderr).toContain('notify-omer.secret');
     expect(ok.stderr).not.toContain(SECRET);
     expect(ok.stderr).not.toContain('TOKEN123');
@@ -1141,12 +1141,12 @@ describe('rdv-gateway notify', () => {
     rmSync(sf);
     expect(readFileSync(join(root, 'notify-omer.secret'), 'utf8')).toBe(SECRET);
     const d = new NotifyStore(new Home(root)).read();
-    expect(d.agents.omer).toMatchObject({ url: 'http://100.101.102.103:8080/rdv/TOKEN123', events: ['invite_redeemed', 'invite_expired', 'invite_exposed', 'auto_approve_on'], insecureHosts: ['100.64.0.0/10'] });
+    expect(d.agents.omer).toMatchObject({ url: 'http://100.101.102.103:8080/rdv/TOKEN123', events: ['invite_redeemed', 'invite_expired', 'invite_exposed', 'auto_approve_on', 'invite_created_by_assistant'], insecureHosts: ['100.64.0.0/10'] });
     expect(d.state.omer.cursor).toBe(1);
     expect(readFileSync(join(root, 'gateway-notify.json'), 'utf8')).not.toContain(SECRET);
     const show = await bin(['notify', 'show', '--home', root]);
     expect(show.stdout).toMatch(/^kids {2}\(no webhook\)$/m);
-    expect(show.stdout).toMatch(/^omer {2}http:\/\/100\.101\.102\.103:8080 {2}events invite_redeemed,invite_expired,invite_exposed,auto_approve_on {2}insecure hosts 100\.64\.0\.0\/10/m);
+    expect(show.stdout).toMatch(/^omer {2}http:\/\/100\.101\.102\.103:8080 {2}events invite_redeemed,invite_expired,invite_exposed,auto_approve_on,invite_created_by_assistant {2}insecure hosts 100\.64\.0\.0\/10/m);
     expect(show.stdout).not.toMatch(/TOKEN123|secret/);
 
     const omerId = list[1].id;

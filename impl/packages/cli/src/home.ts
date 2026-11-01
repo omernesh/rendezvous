@@ -231,11 +231,18 @@ export interface AuditEntry {
    * A gate (start, release, notify), a meeting confirm auto-approve passed
    * (`meeting`, issue #44), a change to the contact's auto-approve setting, or
    * to the owner passphrase (peer `owner`), or an identity backup made or
-   * restored (`backup`, peer `owner`, issue #88).
+   * restored (`backup`, peer `owner`, issue #88), or an invite link the
+   * assistant made under the owner's setting on the gateway, or its revoke on
+   * the settings page (`invite`, peer `*`, NOTES 113).
    */
-  gate: 'start' | 'release' | 'notify' | 'meeting' | 'auto-approve' | 'owner-secret' | 'backup';
-  /** Who let it pass: the grant (class `auto`/`notify`), the human (form, phrase, terminal), or the human's standing auto-approve. */
-  by: 'grant' | 'human' | 'auto-approve';
+  gate: 'start' | 'release' | 'notify' | 'meeting' | 'auto-approve' | 'owner-secret' | 'backup' | 'invite';
+  /**
+   * Who let it pass: the grant (class `auto`/`notify`), the human (form, phrase, terminal), the human's standing
+   * auto-approve, or the human's standing choice that their assistant may make low-tier invites (`assistant-setting`, NOTES 113).
+   */
+  by: 'grant' | 'human' | 'auto-approve' | 'assistant-setting';
+  /** gate `invite`, action `create`: the gateway's id of the token or OAuth grant that asked (never its value). */
+  principal?: string;
   approval?: string;
   digest?: string;
   /** A task in a group (SPEC §7.8.4): which group. */
@@ -248,8 +255,8 @@ export interface AuditEntry {
    * covers, issue #93); gate `owner-secret`: `set`, `changed` or `reset`;
    * gate `backup`: `create` or `restore`.
    */
-  action?: 'set' | 'extend' | 'off' | 'keep' | 'changed' | 'reset' | 'create' | 'restore' | 'disarm';
-  /** gate `auto-approve`, action `disarm`: the open invite whose "Don't ask again" choice the owner took off (NOTES 112). */
+  action?: 'set' | 'extend' | 'off' | 'keep' | 'changed' | 'reset' | 'create' | 'restore' | 'disarm' | 'revoke';
+  /** gate `auto-approve`, action `disarm`: the open invite whose "Don't ask again" choice the owner took off (NOTES 112); gate `invite`: the invite (NOTES 113). */
   invite?: string;
   /** gate `auto-approve`, action `off`: why. */
   reason?: AutoApproveOff;
@@ -262,7 +269,7 @@ export interface AuditEntry {
   /** gate `meeting`: which step auto-approve took for our human (accepting the peer's time, or confirming our offer it accepted). */
   meeting?: 'accept' | 'confirm';
   /** gate `auto-approve`, a change our human made: from their terminal (`cli`) or through the MCP approval form (`mcp`, issue #44), or the "Don't ask again" box on a gate's approval form or the gateway's page (`form`, issue #103). */
-  via?: 'cli' | 'mcp' | 'form' | 'settings';
+  via?: 'cli' | 'mcp' | 'form' | 'settings' | 'gateway';
 }
 
 /** One contact on auto-approve (autoapprove.json). Bound to the grant it was set on; `mac` keys it to this agent. */

@@ -11,10 +11,13 @@ least once), remembering ids in SQLite. RDV_NOTIFY_SECRET_FILES may list several
 files (separated by os.pathsep), to accept an old and a new secret while you rotate.
 At most 8 requests are handled at once, and each gets 15 s in all.
 
-Events by default: invite_redeemed, invite_expired, invite_exposed and
+Events by default: invite_redeemed, invite_expired, invite_exposed,
 auto_approve_on (someone used an invite link you armed with "Don't ask again":
-data has invite_id, fingerprint, covers, until). The last one reaches you without
-your assistant in between, so make handle() alert you (a message, a push) for it.
+data has invite_id, fingerprint, covers, until) and invite_created_by_assistant
+(your assistant made an invite link without asking, under your setting on the
+settings page: data has invite_id, tier, expires, via, asked_by; never the link).
+The last two reach you without your assistant in between, so make handle() alert
+you (a message, a push) for them. invite_redeemed for such a link says via: "assistant".
 """
 import hashlib, hmac, json, os, socket, sqlite3, sys, threading, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer

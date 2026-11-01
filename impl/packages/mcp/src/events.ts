@@ -325,9 +325,14 @@ export function toModelEvent(e: Raw, negotiating: boolean): Omit<McpEvent, 'n' |
         // Our own user's words, written when they made the invite.
         local_label: typeof e.label === 'string' ? safe(e.label) : null,
         tier: oneOf(TIERS)(e.tier),
+        // Made by the assistant under the owner's setting on the gateway (NOTES 113): the contact has no name, and the note names nobody.
+        ...(e.via === 'assistant' ? { via: 'assistant', suggested_label: typeof e.suggested_label === 'string' ? safe(e.suggested_label) : null } : {}),
         next_step:
-          'Tell your user that the person they invited accepted (show the fingerprint and the label) and is now a contact. ' +
-          'If it was not who they meant (someone else got the link first), they can revoke the contact with rdv_revoke.',
+          e.via === 'assistant'
+            ? 'Tell your user that a link you made for them (invite_id; suggested_label is your own earlier note) was used, show the fingerprint, and say the contact is a stranger with no name yet: it may write to them, nothing more. ' +
+              'A link goes to whoever opens it first, so the note does not prove who this is. If they want to name the contact, call rdv_label: they type the name on their approval page. If it was not who they meant, they can revoke the contact with rdv_revoke.'
+            : 'Tell your user that the person they invited accepted (show the fingerprint and the label) and is now a contact. ' +
+              'If it was not who they meant (someone else got the link first), they can revoke the contact with rdv_revoke.',
       };
     // An invite's secret came on a public topic, so the agent revoked that invite (review of PR #120).
     case 'invite-exposed':
