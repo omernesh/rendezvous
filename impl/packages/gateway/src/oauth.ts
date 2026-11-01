@@ -93,6 +93,8 @@ export interface OAuthServerOptions {
   nameOf?: (binding: string | undefined) => string | undefined;
   /** The identity (rdv1:…) of an agent by name, recorded on the grant. */
   identityOf?: (agent: string) => string | undefined;
+  /** Whether a grant still belongs to the identity served under its binding (a refresh is refused otherwise). */
+  identityOk?: (grant: { agent?: string; agentId?: string; created: string }) => boolean;
 }
 
 class OAuthError extends Error {
@@ -496,7 +498,7 @@ export class OAuthServer {
     // A resource naming an agent must name the grant's own agent (as it is called now); the gateway's own resource fits any.
     const nameOf = this.o.nameOf ?? ((b: string | undefined) => b);
     const ok = target.agent === undefined ? undefined : (g: { agent?: string }) => nameOf(g.agent) === target.agent;
-    const r = await this.store.refresh(ref, token, scopes, ok, this.o.now());
+    const r = await this.store.refresh(ref, token, scopes, ok, this.o.now(), this.o.identityOk);
     if ('error' in r) {
       if (r.reused) {
         this.o.onGrantEnded?.(r.reused.id);
@@ -531,13 +533,13 @@ export class OAuthServer {
   }
 
   /** The principal behind an OAuth access token for this gateway, if it is live, and the agent its grant reaches. */
-  verifyAccess(token: string): { id: string; name: string; scopes: Scope[]; agent?: string; agentId?: string } | undefined {
+  verifyAccess(token: string): { id: string; name: string; scopes: Scope[]; agent?: string; agentId?: string; created: string } | undefined {
     const hit = this.store.findAccess(token, this.o.now());
     // Bound to this gateway's resource or one of its agents' (which agent is the grant's binding, not the URL): one minted
     // for another (or before the public URL changed) is refused.
     const g = hit?.grant;
     if (!hit || !g || !this.ownResource(g.resource)) return undefined;
-    return { id: g.id, name: `${hit.client.name} (OAuth ${g.id})`, scopes: hit.scopes, ...(g.agent !== undefined ? { agent: g.agent } : {}), ...(g.agentId !== undefined ? { agentId: g.agentId } : {}) };
+    return { id: g.id, name: `${hit.client.name} (OAuth ${g.id})`, scopes: hit.scopes, created: g.created, ...(g.agent !== undefined ? { agent: g.agent } : {}), ...(g.agentId !== undefined ? { agentId: g.agentId } : {}) };
   }
 
   // --- helpers -----------------------------------------------------------------------

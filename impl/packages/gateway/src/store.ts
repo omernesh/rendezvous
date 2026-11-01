@@ -246,12 +246,12 @@ export class GatewayStore {
   }
 
   /** Tokens made before identities were recorded get the identity they reach now (`identityOf` their binding). */
-  async stampIdentities(identityOf: (binding: string | undefined) => string | undefined): Promise<number> {
-    if (!Object.values(this.read().tokens).some((t) => t.agentId === undefined && identityOf(t.agent))) return 0;
+  async stampIdentities(identityOf: (binding: string | undefined, created: string) => string | undefined): Promise<number> {
+    if (!Object.values(this.read().tokens).some((t) => t.agentId === undefined && identityOf(t.agent, t.created))) return 0;
     return this.update((d) => {
       let n = 0;
       for (const t of Object.values(d.tokens)) {
-        const id = t.agentId === undefined ? identityOf(t.agent) : undefined;
+        const id = t.agentId === undefined ? identityOf(t.agent, t.created) : undefined;
         if (id) {
           t.agentId = id;
           n += 1;

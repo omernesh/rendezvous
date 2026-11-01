@@ -417,6 +417,24 @@ describe('OAuth: PKCE, redirect URIs, codes', () => {
 });
 
 describe('OAuth: refresh, reuse, revocation, expiry', () => {
+  it('a grant recording another agent identity is refused: its access token 403, its refresh invalid_grant (PR #131)', async () => {
+    const g = await gateway();
+    const b = new Browser(g.local);
+    const f = await approvedCode(g, b);
+    const t0 = (await exchange(g, f)).body;
+    expect((await api(g.local, t0.access_token, 'rdv_status')).status).toBe(200);
+    // The grant now records another identity than the agent served under its binding (the home was replaced).
+    await g.gw.oauth.store.update((d) => {
+      for (const x of Object.values(d.grants)) x.agentId = 'rdv1:' + 'a'.repeat(52);
+    });
+    const r = await api(g.local, t0.access_token, 'rdv_status');
+    expect(r.status).toBe(403);
+    expect(r.text).toMatch(/made for another agent identity/);
+    const refreshed = await token(g.local, { grant_type: 'refresh_token', refresh_token: t0.refresh_token, client_id: f.clientId });
+    expect(refreshed.status).toBe(400);
+    expect(refreshed.body.error).toBe('invalid_grant');
+  });
+
   it('rotates refresh tokens; reusing a rotated one ends the whole grant', async () => {
     const g = await gateway();
     const b = new Browser(g.local);

@@ -262,7 +262,14 @@ export class OAuthStore {
    * refresh token rotated out before, presented again, means two parties hold
    * it: the whole grant ends (its tokens and its pending approvals).
    */
-  async refresh(ref: string, token: string, scopes: Scope[] | undefined, resourceOk: ((g: OAuthGrant) => boolean) | undefined, now: number): Promise<RefreshResult> {
+  async refresh(
+    ref: string,
+    token: string,
+    scopes: Scope[] | undefined,
+    resourceOk: ((g: OAuthGrant) => boolean) | undefined,
+    now: number,
+    identityOk?: (g: OAuthGrant) => boolean,
+  ): Promise<RefreshResult> {
     const h = sha256(token);
     const accessToken = `rdvo_${randomToken(32)}`;
     const refreshToken = `rdvr_${randomToken(32)}`;
@@ -279,6 +286,8 @@ export class OAuthStore {
         return { error: 'invalid_grant', reused };
       }
       if (!current || current.clientId !== ref || current.refresh.expires <= now) return { error: 'invalid_grant' };
+      // Made for another identity than the agent served under its binding now: the client authorises again.
+      if (identityOk && !identityOk(current)) return { error: 'invalid_grant' };
       if (resourceOk && !resourceOk(current)) return { error: 'invalid_target' };
       const granted = scopes ?? current.scopes;
       if (granted.length === 0 || granted.some((s) => !current!.scopes.includes(s))) return { error: 'invalid_scope' };
@@ -375,12 +384,12 @@ export class OAuthStore {
   }
 
   /** Grants made before identities were recorded get the identity they reach now (`identityOf` their binding). */
-  async stampIdentities(identityOf: (binding: string | undefined) => string | undefined): Promise<number> {
-    if (!Object.values(this.read().grants).some((g) => g.agentId === undefined && identityOf(g.agent))) return 0;
+  async stampIdentities(identityOf: (binding: string | undefined, created: string) => string | undefined): Promise<number> {
+    if (!Object.values(this.read().grants).some((g) => g.agentId === undefined && identityOf(g.agent, g.created))) return 0;
     return this.update((d) => {
       let n = 0;
       for (const g of Object.values(d.grants)) {
-        const id = g.agentId === undefined ? identityOf(g.agent) : undefined;
+        const id = g.agentId === undefined ? identityOf(g.agent, g.created) : undefined;
         if (id) {
           g.agentId = id;
           n += 1;
