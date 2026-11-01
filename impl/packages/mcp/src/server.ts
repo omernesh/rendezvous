@@ -5065,6 +5065,7 @@ export class RdvMcpServer {
       // The inviter wrote it; anyone can make a link with any name.
       name_in_link: r.name_in_link !== undefined ? untrusted(r.name_in_link) : null,
       invite_expires: safe(r.expires),
+      invite_ref: safe(r.invite_ref),
       next_step:
         'Tell your user the request went to the inviter (fingerprint). Their agent connects you at once if the invite is still open: a "contact" event in rdv_inbox. ' +
         'If it was used, revoked or expired, it waits for the inviter like any request. To give them a local label, use rdv_label (your user approves the name); the name in the link is only their claim.',

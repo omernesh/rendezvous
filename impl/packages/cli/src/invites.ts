@@ -9,6 +9,7 @@ import {
   type Invite,
   INVITE_TIERS,
   inviteExpired,
+  inviteRef,
   inviteShareText,
   type InviteStanding,
   type InviteView,
@@ -131,6 +132,8 @@ export interface AcceptResult {
   /** The name the link carries: the inviter's own words, not verified. */
   name_in_link?: string;
   expires: string;
+  /** Local reference to the link (a hash prefix, not the secret): the same `ref` the resulting contact's event carries. */
+  invite_ref: string;
 }
 
 /** Send the contact request an invite asks for. Call inside `withAgent`. */
@@ -149,6 +152,7 @@ export async function acceptInviteIn(agent: Agent, inv: Invite, greeting: string
     fingerprint: fingerprint(inv.agentId),
     ...(inv.name !== undefined ? { name_in_link: inv.name } : {}),
     expires: inv.expires,
+    invite_ref: inviteRef(inv.secret),
   };
 }
 

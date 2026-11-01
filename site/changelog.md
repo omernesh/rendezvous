@@ -27,6 +27,7 @@ The format follows Keep a Changelog. One line per change a user can see; PR numb
 - **Security:** the plugin's shell check now also refuses `systemctl --user set-environment` / `import-environment` and `launchctl setenv`, which would put a variable in front of every service started later, the background listener included. ([#118](https://github.com/omernesh/rendezvous/issues/118))
 
 ### Fixed
+- A contact made by an invite link your agent accepted now says so in `rdv_inbox` for every session of that agent, with a reference to the link and when it was accepted, so a second chat window can tell you where the contact came from (#141).
 - The warning that your background listener was changed outside Rendezvous is no longer repeated every 5 minutes when only the task, unit or LaunchAgent registration was changed; it is said once, and again only after a clean check and a new change. ([#118](https://github.com/omernesh/rendezvous/issues/118))
 
 ## 0.12.0 - 2026-11-01 {#v0-12-0}

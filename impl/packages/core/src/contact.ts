@@ -502,6 +502,15 @@ export interface Contact {
    * a restore from backup never repeats a value.
    */
   grantStamp?: string;
+  /**
+   * Local only, never sent: this contact came from an invite link our own human
+   * gave this agent (issue #141). Set from our own outstanding request, which
+   * only `acceptInvite` marks, so nothing a peer sends can set or forge it.
+   * `ref` is `inviteRef` of the link's secret (not the inviter's invite id,
+   * which the grant doesn't carry); `accepted` is when we sent the request.
+   * Absent in older state and for every other contact.
+   */
+  viaInvite?: { ref: string; accepted: string };
 }
 
 export interface PendingRequest {
@@ -539,6 +548,8 @@ export interface OutstandingRequest {
   label?: string;
   /** `created` of our card the request carried: the card a grantor holds (Agent `cardSent`, NOTES 82). */
   card_created?: string;
+  /** Set only by `acceptInvite` on this agent: a local reference to the invite link this request redeems (`inviteRef`). Never sent. */
+  invite_ref?: string;
 }
 
 /** A probe got more answers than we keep: someone may be flooding it. */
@@ -813,12 +824,12 @@ export class ContactBook {
    * went to a specific card; omit it for a topic probe (anyone may answer, and
    * the binding is then always `claimed`).
    */
-  trackOutstanding(req: ContactRequestBody, binding: Binding = 'claimed', to?: string, label?: string): void {
+  trackOutstanding(req: ContactRequestBody, binding: Binding = 'claimed', to?: string, label?: string, inviteRef?: string): void {
     // A probe is labeled with the address our human probed, unless they named the peer otherwise.
     const l = label !== undefined ? this.freeLabel(label, to) : to ? undefined : req.to_hint;
     const card = typeof req.card?.created === 'string' ? { card_created: req.card.created } : {};
     this.state.outstanding[req.id] = to
-      ? { to_hint: req.to_hint, sent: req.ts, binding, to, ...(l ? { label: l } : {}), ...card }
+      ? { to_hint: req.to_hint, sent: req.ts, binding, to, ...(l ? { label: l } : {}), ...card, ...(inviteRef ? { invite_ref: inviteRef } : {}) }
       : { to_hint: req.to_hint, sent: req.ts, binding: 'claimed', ...(l ? { label: l } : {}), ...card };
   }
 
@@ -1153,7 +1164,7 @@ export class ContactBook {
       if (g.from !== outstanding.to) return null;
       if (this.isBlocked(g.from) || !this.markSeen(g.id)) return null;
       delete this.state.outstanding[g.request_ref];
-      return { contact: this.addReceivedGrant(g, outstanding.binding ?? 'claimed', now, outstanding.label) };
+      return { contact: this.addReceivedGrant(g, outstanding.binding ?? 'claimed', now, outstanding.label, typeof outstanding.invite_ref === 'string' ? { ref: outstanding.invite_ref, accepted: outstanding.sent } : undefined) };
     }
     // Topic probe: the grantor's card must at least claim the address we probed (NOTES 18).
     const probed = topicForHint(outstanding.to_hint);
@@ -1291,7 +1302,7 @@ export class ContactBook {
     return { contact: c, previous };
   }
 
-  private addReceivedGrant(g: ContactGrant, binding: Binding, now: Date, label?: string): Contact {
+  private addReceivedGrant(g: ContactGrant, binding: Binding, now: Date, label?: string, viaInvite?: Contact['viaInvite']): Contact {
     const prev = this.state.contacts[g.from];
     const granted = prev?.inboundGranted === true;
     const l = label ?? prev?.label;
@@ -1306,6 +1317,7 @@ export class ContactBook {
       outboundTs: g.ts,
       ...(l ? { label: l } : {}),
       ...(prev?.aliases?.length ? { aliases: [...prev.aliases] } : {}),
+      ...((viaInvite ?? prev?.viaInvite) ? { viaInvite: viaInvite ?? prev!.viaInvite! } : {}),
       binding,
       grantId: g.id,
       expires: g.expires,

@@ -98,6 +98,8 @@ export function contactView(c: Contact) {
     binding: c.binding,
     since: c.since,
     expires: c.expires,
+    /** Local only (issue #141): this contact came from an invite link this agent accepted. Our own state, never the peer's word. */
+    ...(c.viaInvite ? { via_invite: { ref: c.viaInvite.ref, accepted: c.viaInvite.accepted } } : {}),
     /** The tier the peer's grant gave us (when we requested). */
     granted_tier: c.grantedTier,
     /** granted: our human set the peer's rights; default: the local default (no meetings, rate-limited). */

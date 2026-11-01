@@ -5498,6 +5498,26 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
         Owner-approved invites are unchanged. SPEC 5.2.3 says so.
     - **Covered by.** `gateway/test/assistantinvites.test.ts`.
 
+114. **A contact that came from an invite we accepted says so (issue #141)**
+    - **Choice.** `acceptInvite` marks its outstanding request with
+      `invite_ref`, the first 16 hex of the link secret's hash (`inviteRef`).
+      When the inviter's grant fulfils that request, the contact gets a local
+      `viaInvite {ref, accepted}` (`accepted` = when the request was sent), kept
+      across a re-grant. `contactView` shows it as `via_invite`, so the
+      `contact` event in the shared `events.jsonl` carries it to every
+      `rdv_inbox` session of the home, whether `rdv listen` or `rdv-mcp` wrote it.
+    - **Why a ref, not the invite id.** The inviter's invite id is random and
+      stored only by the inviter; the grant does not carry it and the issue
+      allows no wire change. The ref is a hash prefix: it can't be turned into
+      the secret, and the link never appears in an event. The inviter can match
+      it only by hashing the secret, which it holds as the full hash.
+    - **Forgery.** Only `acceptInvite` writes `invite_ref`, and it applies only
+      when the grant comes from the agent the request went to. Nothing in a
+      peer's request, greeting or card reaches it. The event parser accepts only
+      a 16-hex ref and an ISO timestamp, so a hand-made raw item can't smuggle
+      text. Older events and state have no field and parse as before.
+    - **Covered by.** `mcp/test/inviteaccepted.test.ts`.
+
 ## Not implemented yet
 
 

@@ -251,11 +251,18 @@ function boardNextStep(e: Raw): string | undefined {
       return undefined;
   }
 }
-/** A non-negative safe integer, else null. */
+/** The invite marking on a contact event: a 16-hex ref and a timestamp, else nothing (older events have none). */
+function viaInvite(v: unknown): { ref: string; accepted: string } | null {
+  if (!v || typeof v !== 'object') return null;
+  const { ref, accepted } = v as Record<string, unknown>;
+  if (typeof ref !== 'string' || !/^[0-9a-f]{16}$/.test(ref) || typeof accepted !== 'string' || !/^\d{4}-\d\d-\d\dT[\d:.]+Z$/.test(accepted)) return null;
+  return { ref, accepted };
+}
 /** How many envelopes a delivery event names (bounded: it is only shown). */
 const seqCount = (v: unknown): number => (Array.isArray(v) ? Math.min(v.length, 64) : 0);
 /** Our user's label for the peer, else its fingerprint. */
 const labelOr = (e: Raw): string => (typeof e.label === 'string' && e.label ? safe(e.label) : who(e.peer));
+/** A non-negative safe integer, else null. */
 const count = (v: unknown): number | null =>(typeof v === 'number' && Number.isSafeInteger(v) && v >= 0 ? v : null);
 
 /** Turn one inbound item into a model-facing event, or null to hide it. */
@@ -314,6 +321,13 @@ export function toModelEvent(e: Raw, negotiating: boolean): Omit<McpEvent, 'n' |
         local_label: typeof e.label === 'string' ? safe(e.label) : null,
         tier: oneOf(TIERS)(e.tier),
         binding: oneOf(BINDINGS)(e.binding),
+        // Written from this agent's own state when it accepted an invite link (issue #141), never from anything the peer sent.
+        ...(viaInvite(e.via_invite)
+          ? {
+              via_invite: viaInvite(e.via_invite),
+              summary: 'This contact came from an invite link that this agent accepted (via_invite: ref identifies the link, accepted is when). Tell your user it was not an unprompted contact.',
+            }
+          : {}),
       };
     // One of our user's invite links was used (NOTES 101): the contact it made, and which invite.
     case 'invite-redeemed':
