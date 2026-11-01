@@ -271,9 +271,44 @@ describe('the skill', () => {
     // Free text in an argument stays free text, also after the command (re-review L1).
     expect(checkCommand('rdv send john "see you at the group join tomorrow"')).toBeFalsy();
     // Quoted text with ( [ @ is text (round 3), and so is prose that names a command.
-    for (const c of ["Start-Process notepad 'contact grant'", "Start-Process rdv -ArgumentList 'whoami'", "Start-Process rdv 'contact list'", "rdv send rdv1:abc --text @'\nsee you\n'@"]) {
+    for (const c of [
+      "Start-Process rdv -ArgumentList 'whoami'",
+      "Start-Process rdv 'contact list'",
+      "Start-Process cmd '/c dir'",
+      "Start-Process $r 'some file.txt'",
+      "rdv send rdv1:abc --text @'\nsee you\n'@",
+      "echo @'\nhello\n'@; rdv whoami",
+      'echo @"\nhello $(Get-Date)\n"@',
+      'echo john@doe.com',
+    ]) {
       expect(checkCommand(c), c).toBeFalsy();
     }
+    // A here-string is one only at a token's start with nothing after it on its line; otherwise `@'` is text and the
+    // commands after it are still read (regression of 04b7684). With no end it is refused, never skipped.
+    for (const c of [
+      "echo a@'b'; rdv contact grant x",
+      'echo john@"x".com; rdv contact grant x',
+      "echo @'b'; rdv contact grant x",
+      "$x = @'\nhi\n",
+      '$x = @"\nhi\n',
+      'echo @"\n$(rdv contact grant x)\n"@',
+      // A process start: a target known only when it runs gets nothing naming rdv or a human-only subcommand, and
+      // every argument string is checked as a command line with its target (MED).
+      "Start-Process $r -ArgumentList 'contact grant x'",
+      "Start-Process $r 'whoami; rdv contact grant x'",
+      "Start-Process (gcm rdv) 'contact grant x'",
+      "saps $r 'contact alias add rdv1:abc Ran'",
+      "[Diagnostics.Process]::Start($r, 'contact grant x')",
+      "& $r 'contact grant x'",
+      "Start-Process cmd -ArgumentList '/c rdv contact grant x'",
+      "Start-Process pwsh -ArgumentList '-c rdv contact grant x'",
+      "saps pwsh '-NoProfile -Command rdv contact label rdv1:abc Ran'",
+      // Like `notepad contact grant` itself: a human-only pair is refused whatever program it is given to.
+      "Start-Process notepad 'contact grant'",
+    ]) {
+      expect(checkCommand(c), c).toBeTruthy();
+    }
+    expect(checkCommand("$x = @'\nhi\n")).toMatch(/here-string with no end/);
     for (const c of ['rdv send john "(running late)"', 'rdv send john "[urgent] call me"', 'rdv send john "@john hi"', 'echo 100%', 'rdv send rdv1:abc --json \'{"type":"note","text":"50% off (today)"}\'']) {
       expect(checkCommand(c), c).toBeFalsy();
     }
