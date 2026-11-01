@@ -426,7 +426,7 @@ describe('rdv_grant limits: per-capability limits from MCP (issue #63), enforced
     h.inbound = () => ({ action: 'accept', content: { approve: true, limit_frequency_0: 'lots' } });
     const bad = await omer.call('rdv_grant', { agent_id: j.agent_id, invoke: [REVIEW] });
     expect(bad.isError).toBe(true);
-    expect(bad.text).toContain('Nothing was approved');
+    expect(bad.text).toContain('rate limit: write it like 3/day (per minute, hour or day), or leave it blank for no limit. Nothing was done yet');
     // Unticking meetings drops their limits with them; a field the client does not send keeps what was shown.
     h.inbound = () => ({ action: 'accept', content: { approve: true, tier: 'friend', may_propose_meetings: false, limit_frequency_0: '1/day' } });
     const noMeet = await ok(omer, 'rdv_grant', { agent_id: j.agent_id, invoke: [REVIEW], limits: { [REVIEW]: { max_open: 1 } } });

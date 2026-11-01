@@ -147,6 +147,93 @@ describe('sessions, limits, paths', () => {
     expect(JSON.stringify(c)).not.toContain('"max_open":32');
   });
 
+  it('a limit that does not parse keeps the ask open and says so to the owner; blank approves with no limit', async () => {
+    const g = await gateway();
+    const t = await g.token(['read', 'contact:request']);
+    const john = await makeSide('john', join(root, 'john'));
+    sides.push(john);
+    const j = await ok(john, 'rdv_init', { profile: 'john', email: `john.b${process.pid}.${n}@doe.com`, relays: [relay.url] });
+    await new Promise((r) => setTimeout(r, 300));
+    await ok(john, 'rdv_request_contact', { target: g.home.readConfig().addresses[0].value });
+    const ev = await waitApi(g.base, t, (e) => e.type === 'contact_request', 'the request');
+    const asked = await api(g.base, t, 'rdv_grant', { request_id: ev.request_id });
+    const path = new URL(asked.body.result.approve_url).pathname;
+    const b = new Browser(g.base);
+    await b.unlock(path);
+    const page = await b.get(path);
+    expect(page.text).toMatch(/name="f_limit_open_0"[^>]*autocomplete="off"/);
+    const base = { csrf: hidden(page.text, 'csrf'), digest: hidden(page.text, 'digest'), decision: 'approve', f_tier: 'friend', f_limit_open_0: '' };
+    const bad = await b.post(path, { ...base, f_label: 'Johnny', f_limit_frequency_0: 'whenever' });
+    expect(bad.status).toBe(400);
+    expect(bad.text).toContain('Dinner proposals: rate limit: write it like 3/day (per minute, hour or day), or leave it blank for no limit. Nothing was done yet.');
+    expect(bad.text).not.toMatch(/your user|max_frequency|ask them again/);
+    expect(bad.text).toMatch(/name="f_label"[^>]*value="Johnny"/);
+    expect(bad.text).toMatch(/name="f_limit_frequency_0"[^>]*value="whenever"/);
+    expect((g.home.readAgentState() as AgentState).book.contacts[j.agent_id]).toBeUndefined();
+    expect((await b.get('/approve')).text).toContain(path);
+    const done = await b.post(path, { ...base, csrf: hidden(bad.text, 'csrf'), digest: hidden(bad.text, 'digest'), f_label: '', f_limit_frequency_0: '' });
+    expect(done.text).toContain('Approved');
+    const c = (g.home.readAgentState() as AgentState).book.contacts[j.agent_id];
+    expect(c).toBeDefined();
+    expect(JSON.stringify(c)).not.toContain('"max_frequency":"whenever"');
+    expect(JSON.stringify(c.inboundScope.invoke[MEETINGS_CAPABILITY])).toBe('{}');
+  });
+
+  it('a bad entry shows the form again: values are escaped, an unticked box stays unticked, no approval event, a clashing label keeps the ask', async () => {
+    const g = await gateway();
+    const t = await g.token(['read', 'contact:request']);
+    const sideFor = async (name: string) => {
+      const side = await makeSide(name, join(root, name));
+      sides.push(side);
+      const info = await ok(side, 'rdv_init', { profile: name, email: `${name}.c${process.pid}.${n}@doe.com`, relays: [relay.url] });
+      await new Promise((r) => setTimeout(r, 300));
+      await ok(side, 'rdv_request_contact', { target: g.home.readConfig().addresses[0].value });
+      return info;
+    };
+    const first = await sideFor('johnone');
+    const ev1 = await waitApi(g.base, t, (e) => e.type === 'contact_request', 'the first request');
+    const capability = (await api(g.base, t, 'rdv_status', {})).body.result.tasks.capabilities[0] as string;
+    const asked = await api(g.base, t, 'rdv_grant', { request_id: ev1.request_id, invoke: [capability] });
+    const path = new URL(asked.body.result.approve_url).pathname;
+    const b = new Browser(g.base);
+    await b.unlock(path);
+    const page = await b.get(path);
+    expect(page.text).toMatch(/name="f_allow_invoke"[^>]*checked/);
+    const base = { csrf: hidden(page.text, 'csrf'), digest: hidden(page.text, 'digest'), decision: 'approve', f_tier: 'friend', f_label: '', f_limit_open_0: '' };
+    // An echoed value is escaped.
+    const evil = await b.post(path, { ...base, f_limit_frequency_0: '"><b>x</b>' });
+    expect(evil.status).toBe(400);
+    expect(evil.text).not.toContain('<b>x</b>');
+    expect(evil.text).toContain('&lt;b&gt;x&lt;/b&gt;');
+    // A field the page can't type (FormInputError) re-renders with the box still unticked.
+    const typo = await b.post(path, { ...base, f_limit_frequency_0: '', f_limit_open_0: 'many' });
+    expect(typo.status).toBe(400);
+    expect(typo.text).not.toMatch(/name="f_allow_invoke"[^>]*checked/);
+    // Nothing reached the assistant about the failed tries.
+    const inbox = await api(g.base, t, 'rdv_inbox', { since: 0 });
+    expect(inbox.body.result.events.filter((e: { type: string }) => e.type === 'approval')).toEqual([]);
+    expect((g.home.readAgentState() as AgentState).book.contacts[first.agent_id]).toBeUndefined();
+    // Another contact's nickname is refused as a label, and the ask stays open.
+    await (g.gw.server as unknown as { withAgent(f: (a: { book: { addAlias(p: string, a: string): unknown } }) => Promise<unknown>): Promise<unknown> }).withAgent(async () => undefined);
+    const done = await b.post(path, { ...base, csrf: hidden(typo.text, 'csrf'), digest: hidden(typo.text, 'digest'), f_limit_frequency_0: '' });
+    expect(done.text).toContain('Approved');
+    const second = await sideFor('johntwo');
+    const ev2 = await waitApi(g.base, t, (e) => e.type === 'contact_request' && e.request_id !== ev1.request_id, 'the second request');
+    expect(second.agent_id).not.toBe(first.agent_id);
+    await (g.gw.server as unknown as { withAgent(f: (a: { book: { addAlias(p: string, a: string): unknown } }) => Promise<unknown>): Promise<unknown> }).withAgent(async (a) => a.book.addAlias(first.agent_id, 'Ran'));
+    const asked2 = await api(g.base, t, 'rdv_grant', { request_id: ev2.request_id });
+    const path2 = new URL(asked2.body.result.approve_url).pathname;
+    const page2 = await b.get(path2);
+    const clash = await b.post(path2, { csrf: hidden(page2.text, 'csrf'), digest: hidden(page2.text, 'digest'), decision: 'approve', f_tier: 'friend', f_label: 'Ran', f_limit_frequency_0: '', f_limit_open_0: '' });
+    expect(clash.status).toBe(400);
+    expect(clash.text).toContain('Nothing was done yet.');
+    expect(clash.text).not.toMatch(/your user|ask them again/);
+    expect((g.home.readAgentState() as AgentState).book.contacts[second.agent_id]).toBeUndefined();
+    expect((await b.get('/approve')).text).toContain(path2);
+    const fixed = await b.post(path2, { csrf: hidden(clash.text, 'csrf'), digest: hidden(clash.text, 'digest'), decision: 'approve', f_tier: 'friend', f_label: 'Ran Two', f_limit_frequency_0: '', f_limit_open_0: '' });
+    expect(fixed.text).toContain('Approved');
+  });
+
   it('no local path leaves: the home, calendars, and any other absolute path', async () => {
     const g = await gateway();
     const redact = (v: unknown) => (g.gw.server as unknown as { redactPaths(v: unknown): unknown }).redactPaths(v);

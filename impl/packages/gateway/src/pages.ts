@@ -110,9 +110,9 @@ export function listPage(opts: { agents: Array<AgentLabel & { items: PendingAppr
 const firstLine = (s: string) => s.split('\n')[0].replace(/^Rendezvous:\s*/, '').slice(0, 160);
 
 /** Text for the owner about a suggestion the assistant made (never prefilled). */
-function suggestionText(p: PendingApproval, field: string, value: string): { text: string; warn: boolean } {
+function suggestionText(field: string, value: string, tierDefault: unknown): { text: string; warn: boolean } {
   if (field === 'tier') {
-    const def = p.form.properties.tier?.default;
+    const def = tierDefault;
     const closer = typeof def === 'string' && TIERS.indexOf(value as never) >= 0 && TIERS.indexOf(value as never) < TIERS.indexOf(def as never);
     return {
       text: `Your assistant suggests the tier "${value}".${closer ? ` That is closer than the default for this request ("${def}"): choose it only if you mean it.` : ''}`,
@@ -125,13 +125,14 @@ function suggestionText(p: PendingApproval, field: string, value: string): { tex
   return { text: `Your assistant suggests ${field}: "${value}".`, warn: false };
 }
 
-function field(p: PendingApproval, name: string, f: Record<string, unknown>): string {
+/** One field; `p` may carry the owner's typed values as defaults, `orig` is the form as the assistant's ask made it (the suggestions are judged against its defaults). */
+function field(p: PendingApproval, name: string, f: Record<string, unknown>, orig: PendingApproval): string {
   const id = `f_${name}`;
   const title = e(f.title ?? name);
   const sugg = p.suggestions
     .filter((s) => s.field === name)
     .map((s) => {
-      const t = suggestionText(p, s.field, s.value);
+      const t = suggestionText(s.field, s.value, orig.form.properties.tier?.default);
       return `<p class="suggest${t.warn ? ' warn' : ''}">${e(t.text)}</p>`;
     })
     .join('');
@@ -148,17 +149,30 @@ function field(p: PendingApproval, name: string, f: Record<string, unknown>): st
   }
   if (f.type === 'integer' || f.type === 'number') {
     const attr = (k: string) => (typeof f[k] === 'number' ? ` ${k === 'minimum' ? 'min' : 'max'}="${f[k]}"` : '');
-    return `<label for="${id}">${title}</label><input type="number" id="${id}" name="${id}"${attr('minimum')}${attr('maximum')} value="${e(typeof f.default === 'number' ? f.default : '')}">`;
+    return `<label for="${id}">${title}</label><input type="number" id="${id}" name="${id}"${attr('minimum')}${attr('maximum')} value="${e(typeof f.default === 'number' ? f.default : '')}" autocomplete="off">`;
   }
   return `<p class="flash bad">A field this page cannot show (${title}): decide this one in your own terminal.</p>`;
 }
 
-export function approvalPage(opts: { item: PendingApproval; agent: AgentLabel; csrf: string; message?: Flash }): string {
-  const p = opts.item;
+/** The item with the owner's own typed values as the fields' defaults (the digest is unchanged), to show a form again after a bad entry. */
+function withEntered(item: PendingApproval, entered: URLSearchParams): PendingApproval {
+  const properties: typeof item.form.properties = {};
+  for (const [k, f] of Object.entries(item.form.properties)) {
+    const v = entered.get(`f_${k}`);
+    if (f.type === 'boolean') properties[k] = { ...f, default: entered.has(`f_${k}`) };
+    else if (v === null) properties[k] = f;
+    else if (f.type === 'integer' || f.type === 'number') properties[k] = v.trim() !== '' && Number.isFinite(Number(v)) ? { ...f, default: Number(v) } : (({ default: _d, ...rest }) => rest)(f);
+    else properties[k] = { ...f, default: v };
+  }
+  return { ...item, form: { ...item.form, properties } };
+}
+
+export function approvalPage(opts: { item: PendingApproval; agent: AgentLabel; csrf: string; message?: Flash; entered?: URLSearchParams }): string {
+  const p = opts.entered ? withEntered(opts.item, opts.entered) : opts.item;
   const approveTitle = typeof p.form.properties.approve?.title === 'string' ? p.form.properties.approve.title : 'Approve';
   const fields = Object.entries(p.form.properties)
     .filter(([k]) => k !== 'approve')
-    .map(([k, f]) => field(p, k, f) + (typeof f.description === 'string' && f.description ? `<p class="muted hint">${e(f.description)}</p>` : ''))
+    .map(([k, f]) => field(p, k, f, opts.item) + (typeof f.description === 'string' && f.description ? `<p class="muted hint">${e(f.description)}</p>` : ''))
     .join('');
   return layout(
     'Approve?',
