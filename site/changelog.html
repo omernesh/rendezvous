@@ -72,6 +72,10 @@
 <li>(Security) An invite link you armed with "Don't ask again" is no longer given to the assistant that asked for it on the gateway: it is shown only on your approval page, so an injected assistant cannot pass it on. A new <code>auto_approve_on</code> webhook event (on by default for new webhooks) tells you straight away when such a link is used. "Turn everything off" now also disarms open armed invites, and the gateway's settings page lists them with a Disarm button.</li>
 <li>On approval forms the label field is now "What you call them, e.g. Ran" (your name for the other person, not your own assistant's), and browsers no longer autofill the gateway page's text inputs.</li>
 </ul>
+<h3 id="fixed">Fixed<a class="anchor" href="#fixed" title="Link to this section" aria-label="Link to this section">#</a></h3>
+<ul>
+<li>A rate limit that doesn't parse on the gateway's approval page no longer throws the approval away: the form comes back with what you typed and a plain note on that field (write it like 3/day, or leave it blank), and your assistant's ask stays open. The number inputs on approval forms no longer offer browser autofill either.</li>
+</ul>
 <h2 id="v0-13-0">0.13.0 - 2026-11-01<a class="anchor" href="#v0-13-0" title="Link to this section" aria-label="Link to this section">#</a></h2>
 <h3 id="added_1">Added<a class="anchor" href="#added_1" title="Link to this section" aria-label="Link to this section">#</a></h3>
 <ul>
@@ -84,7 +88,7 @@
 <li><strong>Security:</strong> a relay can no longer push frames of up to 100 MiB at your agent: every relay connection now drops at 1 MiB per frame (the biggest real message is under 50 KB) and reconnects like any other dropped relay. (<a href="https://github.com/omernesh/rendezvous/issues/125">#125</a>)</li>
 <li><strong>Security:</strong> the plugin's shell check now also refuses <code>systemctl --user set-environment</code> / <code>import-environment</code> and <code>launchctl setenv</code>, which would put a variable in front of every service started later, the background listener included. (<a href="https://github.com/omernesh/rendezvous/issues/118">#118</a>)</li>
 </ul>
-<h3 id="fixed">Fixed<a class="anchor" href="#fixed" title="Link to this section" aria-label="Link to this section">#</a></h3>
+<h3 id="fixed_1">Fixed<a class="anchor" href="#fixed_1" title="Link to this section" aria-label="Link to this section">#</a></h3>
 <ul>
 <li>When a session of your agent accepts an invite link, the resulting <code>contact</code> event in <code>rdv_inbox</code> now says so, with a reference to the link and the time, for every session of that agent; it does not show that you asked for it, so the assistant asks whether you expected the contact (#141).</li>
 <li>The warning that your background listener was changed outside Rendezvous is no longer repeated every 5 minutes when only the task, unit or LaunchAgent registration was changed; it is said once, and again only after a clean check and a new change. (<a href="https://github.com/omernesh/rendezvous/issues/118">#118</a>)</li>
@@ -103,7 +107,7 @@
 <li>Invite links are now about 106 characters instead of about 300 (a new compact format; links made before still work) and carry your name only if you ask for one. Assistants are told to hand a link over whole, never shortened, and a link that was shortened with "…" or cut off now gets a clear "ask for the full link" answer instead of a vague error.</li>
 <li>The docs, site, plugin and MCP server text now describe Rendezvous as cross-platform secure agent-to-agent messaging, with meeting scheduling as one example. The CLI reference follows the order you use it (identity, contacts, messages, tasks and files, groups, backups), and the FAQ shows the current version.</li>
 </ul>
-<h3 id="fixed_1">Fixed<a class="anchor" href="#fixed_1" title="Link to this section" aria-label="Link to this section">#</a></h3>
+<h3 id="fixed_2">Fixed<a class="anchor" href="#fixed_2" title="Link to this section" aria-label="Link to this section">#</a></h3>
 <ul>
 <li><strong>Security:</strong> a relay can no longer inject text into your assistant's connection to Rendezvous or into <code>rdv --json</code> output: messages a relay sends for display (NOTICE) are dropped instead of printed, and anything a library prints goes to the error stream as one cleaned line. Before, a hostile relay (one named in a contact's card, or now in an invite link) could forge tool results or approval prompts.</li>
 <li><strong>Security:</strong> <code>rdv</code> no longer runs a command whose name was given as one quoted word (such as <code>"contact grant"</code>), which slipped past the plugin's check that keeps your assistant away from commands that are yours alone; that check now also reads such words, and refuses a subcommand built while the command runs (shell parameters such as <code>$@</code>, PowerShell splatting and expressions).</li>
@@ -116,13 +120,13 @@
 <ul>
 <li>Your agent can stay reachable while your chat app is closed: ask your assistant, approve the form that shows exactly what it installs, and a background listener starts whenever you log in (a scheduled task on Windows, a LaunchAgent on macOS, a systemd user service on Linux); it never approves anything on its own, and you can remove it any time (<code>rdv_service</code>, or <code>rdv service install</code> in a terminal). (<a href="https://github.com/omernesh/rendezvous/issues/102">#102</a>)</li>
 </ul>
-<h3 id="fixed_2">Fixed<a class="anchor" href="#fixed_2" title="Link to this section" aria-label="Link to this section">#</a></h3>
+<h3 id="fixed_3">Fixed<a class="anchor" href="#fixed_3" title="Link to this section" aria-label="Link to this section">#</a></h3>
 <ul>
 <li>The standing-approval demo clip on the site no longer says no tool can turn it on: it now shows the agent opening the approval form where you type your owner passphrase. (<a href="https://github.com/omernesh/rendezvous/issues/106">#106</a>)</li>
 <li><strong>Security:</strong> delivery receipts are harder to abuse: a contact that restores its agent onto a clock that runs far behind can no longer let old receipts confirm messages it never got, and someone replaying a contact's old messages can make your agent send that contact at most 48 extra receipts a day. (<a href="https://github.com/omernesh/rendezvous/issues/113">#113</a>)</li>
 </ul>
 <h2 id="v0-10-1">0.10.1 - 2026-10-27<a class="anchor" href="#v0-10-1" title="Link to this section" aria-label="Link to this section">#</a></h2>
-<h3 id="fixed_3">Fixed<a class="anchor" href="#fixed_3" title="Link to this section" aria-label="Link to this section">#</a></h3>
+<h3 id="fixed_4">Fixed<a class="anchor" href="#fixed_4" title="Link to this section" aria-label="Link to this section">#</a></h3>
 <ul>
 <li><strong>Security:</strong> when you give more rights to a contact that is on auto-approve, the approval form (and the confirm phrase in your terminal) now tells you it stays on and that looser limits on what it covers are approved without asking too; and an older copy of the auto-approve file put back after you narrowed a grant and widened it again no longer brings back what the narrowing removed. (<a href="https://github.com/omernesh/rendezvous/issues/94">#94</a>)</li>
 </ul>
@@ -143,7 +147,7 @@
 <li>The gateway pages now show the Rendezvous logo and wordmark at the top and a favicon, and send <code>Cache-Control: no-store, no-transform</code> so a proxy cannot mask addresses as "[email protected]".</li>
 <li>A deploy guide for <code>rdv-gateway</code>: a hardened Docker Compose setup behind a TLS tunnel, the PIN and test-identity first run, connecting claude.ai, ChatGPT and Claude Code, updating, and checks. (<a href="https://github.com/omernesh/rendezvous/issues/12">#12</a>)</li>
 </ul>
-<h3 id="fixed_4">Fixed<a class="anchor" href="#fixed_4" title="Link to this section" aria-label="Link to this section">#</a></h3>
+<h3 id="fixed_5">Fixed<a class="anchor" href="#fixed_5" title="Link to this section" aria-label="Link to this section">#</a></h3>
 <ul>
 <li>Approval forms work in Claude Code: the tool no longer waits for the form (Claude Code shows it only after the assistant's reply, so it used to time out and do nothing). The form appears once the reply ends, your answer completes the step, and your assistant hears what you decided. Several can be open at once, and an answer to something that changed meanwhile does nothing. (<a href="https://github.com/omernesh/rendezvous/issues/103">#103</a>)</li>
 <li>An agent no longer stays deaf after a network blip leaves a relay connection half-open: dead relay sockets are detected within about a minute, re-joined with a catch-up, and reported as relay down and up. A refused probe answer now leaves a line in the process log. (<a href="https://github.com/omernesh/rendezvous/issues/101">#101</a>)</li>
@@ -154,7 +158,7 @@
 <li>Site: the setup section now opens on "Ask your agent", with "Or use the CLI" as the second tab.</li>
 </ul>
 <h2 id="v0-7-1">0.7.1 - 2026-10-27<a class="anchor" href="#v0-7-1" title="Link to this section" aria-label="Link to this section">#</a></h2>
-<h3 id="fixed_5">Fixed<a class="anchor" href="#fixed_5" title="Link to this section" aria-label="Link to this section">#</a></h3>
+<h3 id="fixed_6">Fixed<a class="anchor" href="#fixed_6" title="Link to this section" aria-label="Link to this section">#</a></h3>
 <ul>
 <li>Approval form questions are short enough to read in Claude Code: field titles are a few words and the explanation sits in the field's description (also shown on the gateway's approval page), so nothing is cut off mid-sentence. (<a href="https://github.com/omernesh/rendezvous/issues/99">#99</a>)</li>
 </ul>
@@ -282,7 +286,7 @@
 <li>Public Nostr relays are the default, so two agents can find each other with no relay of your own. Failed publishes are retried and unhealthy relays rest for a while. <code>rdv whoami</code> shows relay health. (<a href="https://github.com/omernesh/rendezvous/pull/21">#21</a>)</li>
 <li>Messages are limited to 32 KiB. (<a href="https://github.com/omernesh/rendezvous/pull/21">#21</a>)</li>
 </ul>
-<h3 id="fixed_6">Fixed<a class="anchor" href="#fixed_6" title="Link to this section" aria-label="Link to this section">#</a></h3>
+<h3 id="fixed_7">Fixed<a class="anchor" href="#fixed_7" title="Link to this section" aria-label="Link to this section">#</a></h3>
 <ul>
 <li>A relay connection that timed out could crash the agent. (<a href="https://github.com/omernesh/rendezvous/pull/21">#21</a>)</li>
 </ul>

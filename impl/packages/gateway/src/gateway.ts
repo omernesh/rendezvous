@@ -1307,7 +1307,7 @@ export class Gateway {
       try {
         content = typeContent(item.form.properties, form);
       } catch (err) {
-        if (err instanceof FormInputError) return this.html(res, 400, approvalPage({ item, agent, csrf, message: { text: `Nothing was done: ${err.message}.`, bad: true } }));
+        if (err instanceof FormInputError) return this.html(res, 400, approvalPage({ item, agent, csrf, entered: form, message: { text: `Nothing was done: ${err.message}.`, bad: true } }));
         throw err;
       }
     }
@@ -1321,6 +1321,10 @@ export class Gateway {
     if (out.kind === 'changed') {
       rt.approvals.replaceForm(item.id, out.form);
       return this.html(res, 409, approvalPage({ item: rt.approvals.get(item.id) ?? item, agent, csrf }));
+    }
+    if (out.kind === 'invalid') {
+      // Nothing was done and the ask stays open: show the form again with what the owner typed (the value is not logged).
+      return this.html(res, 400, approvalPage({ item, agent, csrf, entered: form, message: { text: out.message, bad: true } }));
     }
     rt.approvals.drop(item.id);
     if (out.kind === 'error') {

@@ -16,6 +16,9 @@ The format follows Keep a Changelog. One line per change a user can see; PR numb
 - (Security) An invite link you armed with "Don't ask again" is no longer given to the assistant that asked for it on the gateway: it is shown only on your approval page, so an injected assistant cannot pass it on. A new `auto_approve_on` webhook event (on by default for new webhooks) tells you straight away when such a link is used. "Turn everything off" now also disarms open armed invites, and the gateway's settings page lists them with a Disarm button.
 - On approval forms the label field is now "What you call them, e.g. Ran" (your name for the other person, not your own assistant's), and browsers no longer autofill the gateway page's text inputs.
 
+### Fixed
+- A rate limit that doesn't parse on the gateway's approval page no longer throws the approval away: the form comes back with what you typed and a plain note on that field (write it like 3/day, or leave it blank), and your assistant's ask stays open. The number inputs on approval forms no longer offer browser autofill either.
+
 ## 0.13.0 - 2026-11-01 {#v0-13-0}
 
 ### Added

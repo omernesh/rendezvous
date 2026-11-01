@@ -450,6 +450,8 @@ export type ApprovalOutcome =
    */
   | { kind: 'done'; value: unknown; unneeded?: boolean; held?: Record<string, string> }
   | { kind: 'error'; error: string }
+  /** A limit the owner typed does not parse: nothing was done and nothing is published; `message` is for the owner, who is shown the form again. */
+  | { kind: 'invalid'; message: string }
   /** The item changed since the page showed it: nothing was done; this is the form for it now. */
   | { kind: 'changed'; form: ApprovalForm };
 
@@ -618,6 +620,9 @@ const SERVICE_YIELD_MS = 60_000;
 
 /** An error whose message is ours and safe to show (the model, or the owner on the gateway's page). */
 export class ToolError extends Error {}
+
+/** A limit the owner typed in an approval form that does not parse: the message is written for the owner, and nothing was done. */
+export class FormValueError extends ToolError {}
 
 /**
  * A tool result with a part for the caller only (an invite link, review of
@@ -844,7 +849,7 @@ function formLabel(content: Record<string, unknown> | undefined, shown: string |
   try {
     return cleanLabel(v);
   } catch (err) {
-    throw new ToolError(`the label your user entered is not valid (${(err as Error).message}). Nothing was approved; ask them again.`);
+    throw new FormValueError(`Label: ${(err as Error).message}. Nothing was done yet.`);
   }
 }
 
@@ -1005,19 +1010,18 @@ const LIMIT_MAX_OPEN = 32;
 /** One capability's limits, checked: `max_frequency` as `"<n>/<minute|hour|day>"`, `max_open` 1 to 32. Unset fields are left out. */
 function checkLimit(uri: string, l: { max_frequency?: unknown; max_open?: unknown }, who: 'model' | 'form'): InvokeLimits {
   const what = uri === MEETINGS_CAPABILITY ? 'meetings' : safe(uri);
-  const bad = (msg: string): never => {
-    throw new ToolError(
-      who === 'model' ? `limits for ${what}: ${msg}` : `the limit your user entered for ${what} is not valid (${msg}). Nothing was approved; ask them again.`,
-    );
+  const field = uri === MEETINGS_CAPABILITY ? 'Dinner proposals' : shortCapName(uri);
+  const bad = (msg: string, ownerMsg: string): never => {
+    throw who === 'model' ? new ToolError(`limits for ${what}: ${msg}`) : new FormValueError(`${field}: ${ownerMsg} Nothing was done yet.`);
   };
   const out: InvokeLimits = {};
   if (l.max_frequency !== undefined) {
-    if (typeof l.max_frequency !== 'string' || !parseFrequency(l.max_frequency)) bad('max_frequency must be "<n>/<minute|hour|day>", e.g. "3/day"');
+    if (typeof l.max_frequency !== 'string' || !parseFrequency(l.max_frequency)) bad('max_frequency must be "<n>/<minute|hour|day>", e.g. "3/day"', 'rate limit: write it like 3/day (per minute, hour or day), or leave it blank for no limit.');
     out.max_frequency = l.max_frequency as string;
   }
   if (l.max_open !== undefined) {
     if (!(Number.isSafeInteger(l.max_open) && (l.max_open as number) >= 1 && (l.max_open as number) <= LIMIT_MAX_OPEN)) {
-      bad(`max_open must be a whole number from 1 to ${LIMIT_MAX_OPEN}`);
+      bad(`max_open must be a whole number from 1 to ${LIMIT_MAX_OPEN}`, `max open: use a whole number from 1 to ${LIMIT_MAX_OPEN}, or leave it blank.`);
     }
     out.max_open = l.max_open as number;
   }
@@ -1074,7 +1078,7 @@ function limitFields(caps: readonly string[], limits: CapabilityLimits): Record<
     fields[`limit_frequency_${i}`] = {
       type: 'string',
       title: `${short}: rate limit`,
-      description: `${name}: at most how many per minute, hour or day (e.g. 3/day); blank for no limit of its own`,
+      description: `${name}: at most how many per minute, hour or day (e.g. 3/day). Optional: leave it blank for no limit of its own.`,
       maxLength: 32,
       default: l.max_frequency ?? '',
     };
@@ -1482,7 +1486,8 @@ export class RdvMcpServer {
           ]).catch(() => {});
         }
         return { kind: 'changed', form: err.form };
-      } else out = { kind: 'error', error: clean(this.modelSafeError(ask.tool, err), true) };
+      } else if (err instanceof FormValueError && !publishChanged) return { kind: 'invalid', message: clean(err.message, true) };
+      else out = { kind: 'error', error: clean(this.modelSafeError(ask.tool, err), true) };
     }
     // The state moved to a path that needed no one (e.g. the dinner is no longer agreed): the call ran as asked,
     // and the owner's answer decided nothing. Say so instead of reporting their decision.
@@ -5279,6 +5284,17 @@ export class RdvMcpServer {
         const chosen = form.content.tier;
         if (typeof chosen === 'string' && (TIERS as string[]).includes(chosen)) tier = chosen as Tier;
         label = formLabel(form.content, label);
+        // A label that another contact's nickname already reaches is refused here, before anything is granted, and the owner sees the form again.
+        if (label !== undefined) {
+          const typed = label;
+          await this.withAgent(async (agent) => {
+            try {
+              agent.book.freeLabel(typed, pending.request.from);
+            } catch (err) {
+              throw new FormValueError(`Label: ${(err as Error).message}. Nothing was done yet.`);
+            }
+          });
+        }
         limits = formLimits(form.content, limitCaps(mayMeet, invoke), limits);
         invoke = formInvoke(form.content, invoke);
         limits = grantedLimits(limits, mayMeet, invoke);
