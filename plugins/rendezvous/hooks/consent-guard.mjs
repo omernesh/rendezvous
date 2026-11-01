@@ -30,6 +30,12 @@
 // security boundary is the MCP consent gate: rdv_grant and rdv_negotiate need
 // the human's form or confirm phrase (NOTES 57, 62), and only a hash of each
 // phrase is ever stored.
+//
+// Accepted limits (gateway installer folder): with Docker access on the gateway host, or a shell running inside
+// the install folder, the assistant can reach the tunnel token and the gateway's data. The rules here catch only the
+// obvious spellings, and no more Docker or tree-walk rules are added (#51). The boundary is file permissions and
+// #126: keep the install folder owned by root or the owner, mode 700, and don't give the assistant's user the docker
+// group on the gateway host (impl/packages/gateway/THREAT-MODEL.md).
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
