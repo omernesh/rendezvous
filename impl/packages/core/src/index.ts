@@ -1,3 +1,4 @@
+export * from './version.js';
 export * from './agent.js';
 export * from './backup.js';
 export * from './card.js';

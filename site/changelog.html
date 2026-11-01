@@ -71,6 +71,8 @@
 <h3 id="fixed">Fixed<a class="anchor" href="#fixed" title="Link to this section" aria-label="Link to this section">#</a></h3>
 <ul>
 <li><strong>Security:</strong> a relay can no longer inject text into your assistant's connection to Rendezvous or into <code>rdv --json</code> output: messages a relay sends for display (NOTICE) are dropped instead of printed, and anything a library prints goes to the error stream as one cleaned line. Before, a hostile relay (one named in a contact's card, or now in an invite link) could forge tool results or approval prompts.</li>
+<li>Rendezvous no longer crashes when its error stream is closed (for example when <code>rdv</code> is piped into a program that exits early); the line is dropped instead.</li>
+<li><code>rdv --version</code>, the MCP server and the gateway's API document now report the real release version instead of 0.1.0, and the site's <code>llms.txt</code> takes it from the plugin manifest.</li>
 <li>The backup form and <code>rdv backup</code> now tell you the passphrase rules up front (length, variety, no common words) instead of only after you submit.</li>
 </ul>
 <h2 id="v0-11-0">0.11.0 - 2026-10-27<a class="anchor" href="#v0-11-0" title="Link to this section" aria-label="Link to this section">#</a></h2>

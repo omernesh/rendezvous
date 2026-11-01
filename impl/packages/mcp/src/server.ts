@@ -102,6 +102,7 @@ import {
   deliverySummary,
   type DeliverySummary,
   INVITE_TIERS,
+  VERSION,
 } from '@rendezvous/core';
 import {
   addressViews,
@@ -1246,7 +1247,7 @@ export class RdvMcpServer {
    * listed: `allow`). Call `endSession` when its transport closes.
    */
   newSession(opts: { allow?: (tool: string) => boolean; caller?: Caller } = {}): McpServer {
-    const mcp = new McpServer({ name: 'rendezvous', version: '0.1.0' }, { instructions: this.remote ? REMOTE_INSTRUCTIONS : INSTRUCTIONS });
+    const mcp = new McpServer({ name: 'rendezvous', version: VERSION }, { instructions: this.remote ? REMOTE_INSTRUCTIONS : INSTRUCTIONS });
     for (const d of this.defs) if (!opts.allow || opts.allow(d.name)) this.registerOn(mcp, d, opts.caller);
     if (!opts.allow || opts.allow('rdv_inbox')) this.registerInbox(mcp);
     return mcp;

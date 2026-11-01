@@ -1,4 +1,5 @@
 import { type ParseArgsConfig, parseArgs } from 'node:util';
+import { VERSION } from '@rendezvous/core';
 import * as cmd from './commands.js';
 import * as grp from './groups.js';
 import * as inv from './invites.js';
@@ -596,7 +597,7 @@ export async function main(argv: string[]): Promise<number> {
     return argv.length === 0 ? 2 : 0;
   }
   if (argv[0] === '--version') {
-    process.stdout.write('0.1.0\n');
+    process.stdout.write(`${VERSION}\n`);
     return 0;
   }
 
