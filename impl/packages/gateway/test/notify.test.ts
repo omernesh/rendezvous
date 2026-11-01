@@ -13,7 +13,6 @@ import { createServer, type IncomingHttpHeaders, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { appendEvents, Home, initHome } from '@rendezvous/cli/lib';
 import { agentIdFromPublicKey, generateKey } from '@rendezvous/core';
 import { startTestRelay } from '@rendezvous/core/testing';
@@ -49,9 +48,8 @@ import {
   validateNotifyData,
   verifyRdvSignature,
 } from '../src/index.js';
-import { PIN } from './helpers.js';
+import { gatewayArgv, PIN } from './helpers.js';
 
-const BIN = fileURLToPath(new URL('../dist/src/bin.js', import.meta.url));
 const SECRET = 'rdv-test-secret-0123456789abcdef';
 const SECRET2 = 'rdv-test-secret-2-fedcba9876543210';
 const PEER = 'rdv1:' + 'a'.repeat(52);
@@ -671,7 +669,7 @@ describe('in the gateway', () => {
 /** The built bin, stdin closed. */
 function bin(args: string[]): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
-    const child = execFile(process.execPath, [BIN, ...args], { timeout: 60_000 }, (err, stdout, stderr) =>
+    const child = execFile(process.execPath, gatewayArgv(args), { timeout: 60_000 }, (err, stdout, stderr) =>
       resolve({ code: err ? ((err as { code?: number }).code ?? 1) : 0, stdout: String(stdout), stderr: String(stderr) }),
     );
     child.stdin!.end();

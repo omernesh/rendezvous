@@ -18,7 +18,7 @@ import { withAgent } from '@rendezvous/cli/lib';
 import { encryptFile, fileRefPart, newTransferId, type Payload, transferMessage } from '@rendezvous/core';
 import { startTestFileServer, startTestRelay, type TestFileServer, type TestRelay } from '@rendezvous/core/testing';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { RDV_BIN } from '../../cli/scenarios/harness.js';
+import { rdvArgv } from '../../cli/scenarios/harness.js';
 import { type ElicitHandler, INJECTION, makeSide, ok, phraseFromHumanLog, type Side, waitEvent } from './flow.js';
 
 const T = 15_000;
@@ -165,7 +165,7 @@ describe('a doc review with a file: release gate, then fetch, verify, decrypt (S
     expect([...omer.transcript, inbox].join('\n')).not.toContain(key);
     expect(john.transcript.join('\n')).not.toContain(key);
     // Omer's own listing shows the file without its key, too.
-    const listed = execFileSync(process.execPath, [RDV_BIN, 'task', 'list', '--json', '--home', omer.home.dir], { encoding: 'utf8' });
+    const listed = execFileSync(process.execPath, rdvArgv(['task', 'list', '--json', '--home', omer.home.dir]), { encoding: 'utf8' });
     expect(listed).toContain(sha256);
     expect(listed).not.toContain(key);
   });
@@ -209,10 +209,10 @@ describe('fetching waits for the start gate', () => {
     // Omer's human attaches a prepared file to a request from his own terminal.
     const src = join(root, 'brief.txt');
     writeFileSync(src, 'Brief: one page, three sections.');
-    const prepared = JSON.parse(execFileSync(process.execPath, [RDV_BIN, 'file', 'prepare', src, '--json', '--home', omer.home.dir], { encoding: 'utf8' }).trim());
+    const prepared = JSON.parse(execFileSync(process.execPath, rdvArgv(['file', 'prepare', src, '--json', '--home', omer.home.dir]), { encoding: 'utf8' }).trim());
     const url = store.put(`/brief/${prepared.sha256}`, new Uint8Array(readFileSync(prepared.upload)));
     // Async: the test relay runs in this process, so a blocking exec would starve it.
-    const { stdout: out } = await execFileAsync(process.execPath, [RDV_BIN, 'task', 'request', johnId, '--text', 'Please read the brief.', '--file', `${prepared.sha256}=${url}`, '--json', '--home', omer.home.dir], { encoding: 'utf8' });
+    const { stdout: out } = await execFileAsync(process.execPath, rdvArgv(['task', 'request', johnId, '--text', 'Please read the brief.', '--file', `${prepared.sha256}=${url}`, '--json', '--home', omer.home.dir]), { encoding: 'utf8' });
     // Held for Omer's release (issue #53): nothing has left.
     const heldLine = JSON.parse(out.trim().split('\n')[0]);
     expect(heldLine).toMatchObject({ event: 'task-request-held', peer: johnId, release_code: expect.stringMatching(/^[0-9a-f]{12}$/) });
@@ -237,7 +237,7 @@ describe('fetching waits for the start gate', () => {
     // The CLI refuses the same way.
     let cliErr = '';
     try {
-      execFileSync(process.execPath, [RDV_BIN, 'file', 'fetch', id, '--home', john.home.dir], { encoding: 'utf8', stdio: 'pipe' });
+      execFileSync(process.execPath, rdvArgv(['file', 'fetch', id, '--home', john.home.dir]), { encoding: 'utf8', stdio: 'pipe' });
     } catch (err) {
       cliErr = String((err as { stderr?: string }).stderr);
     }
@@ -253,17 +253,17 @@ describe('fetching waits for the start gate', () => {
     // An inline file changed after the human saw it: the release is refused, in the form path and the terminal, and nothing leaves.
     const note = join(root, 'note.txt');
     writeFileSync(note, 'v1');
-    const { stdout: out2 } = await execFileAsync(process.execPath, [RDV_BIN, 'task', 'request', johnId, '--text', 'And this note.', '--inline', note, '--json', '--home', omer.home.dir], { encoding: 'utf8' });
+    const { stdout: out2 } = await execFileAsync(process.execPath, rdvArgv(['task', 'request', johnId, '--text', 'And this note.', '--inline', note, '--json', '--home', omer.home.dir]), { encoding: 'utf8' });
     const held2 = JSON.parse(out2.trim().split('\n')[0]);
     writeFileSync(note, 'v2, written after it was shown');
     const refused = await omer.call('rdv_task', { action: 'approve-release', task_id: held2.hold });
     expect(refused.isError).toBe(true);
     expect(refused.text).toMatch(/changed since you reviewed it.*Nothing was sent/);
-    const viaCli = await execFileAsync(process.execPath, [RDV_BIN, 'task', 'release', held2.hold, '--code', held2.release_code, '--home', omer.home.dir], { encoding: 'utf8' }).catch((e: { stderr: string }) => e);
+    const viaCli = await execFileAsync(process.execPath, rdvArgv(['task', 'release', held2.hold, '--code', held2.release_code, '--home', omer.home.dir]), { encoding: 'utf8' }).catch((e: { stderr: string }) => e);
     expect(String((viaCli as { stderr?: string }).stderr)).toContain('changed since you reviewed it');
     // A wrong code never sends either; dropping it is reduce-only.
     writeFileSync(note, 'v1');
-    const wrong = await execFileAsync(process.execPath, [RDV_BIN, 'task', 'release', held2.hold, '--code', '000000000000', '--home', omer.home.dir], { encoding: 'utf8' }).catch((e: { stderr: string }) => e);
+    const wrong = await execFileAsync(process.execPath, rdvArgv(['task', 'release', held2.hold, '--code', '000000000000', '--home', omer.home.dir]), { encoding: 'utf8' }).catch((e: { stderr: string }) => e);
     expect(String((wrong as { stderr?: string }).stderr)).toContain('not the one you reviewed');
     expect((await ok(omer, 'rdv_task', { action: 'cancel', task_id: held2.hold })).state).toBe('dropped');
     expect(omer.home.readTasks().requests).toBeUndefined();
@@ -392,7 +392,7 @@ describe('direct transfer: an offer is shown, never acted on automatically', () 
     while (fromOmer().length < 2 && Date.now() < deadline) await new Promise((r) => setTimeout(r, 100));
     expect(fromOmer()[1].payload).toMatchObject({ step: 'abort', transfer: t0, reason: 'direct transfer is off' });
     expect(omer.humanLog.join('\n')).toContain('not signed by this agent');
-    execFileSync(process.execPath, [RDV_BIN, 'file', 'direct-transfer', 'on', '--home', omer.home.dir], { encoding: 'utf8' });
+    execFileSync(process.execPath, rdvArgv(['file', 'direct-transfer', 'on', '--home', omer.home.dir]), { encoding: 'utf8' });
     const t2 = newTransferId();
     await rawSend(john, omerId, transferMessage({ file: ref.sha256, transfer: t2, step: 'propose', protocols: ['webrtc-datachannel/1'] }));
     const p = await waitEvent(omer, (e) => e.type === 'transfer' && e.transfer_id === t2, 'the proposed transfer', T);

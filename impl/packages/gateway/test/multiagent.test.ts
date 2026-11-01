@@ -9,14 +9,12 @@ import { cpSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, wri
 import { createHash, randomBytes } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { createBackup, Home, initHome, writeBackupFile } from '@rendezvous/cli/lib';
 import { startTestRelay, type TestRelay } from '@rendezvous/core/testing';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { AgentRoot, Approvals, Gateway, GatewayStore, MAX_APPROVALS_TOTAL, OAuthStore, ROOT_BINDING } from '../src/index.js';
-import { api, Browser, callJson, hidden, mcpClient, PIN, waitApi } from './helpers.js';
+import { api, Browser, callJson, gatewayArgv, hidden, mcpClient, PIN, waitApi } from './helpers.js';
 
-const BIN = fileURLToPath(new URL('../dist/src/bin.js', import.meta.url));
 
 let relay: TestRelay;
 let root: string;
@@ -57,7 +55,7 @@ const tok = async (gw: Gateway, agent: string | undefined, scopes: string[], nam
 /** The built bin, stdin piped (no terminal). */
 function bin(args: string[], input = ''): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
-    const child = execFile(process.execPath, [BIN, ...args], { timeout: 60_000 }, (err, stdout, stderr) =>
+    const child = execFile(process.execPath, gatewayArgv(args), { timeout: 60_000 }, (err, stdout, stderr) =>
       resolve({ code: err ? ((err as { code?: number }).code ?? 1) : 0, stdout: String(stdout), stderr: String(stderr) }),
     );
     child.stdin!.end(input);

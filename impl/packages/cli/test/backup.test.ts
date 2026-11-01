@@ -9,7 +9,7 @@ import { REQUEST_URI } from '@rendezvous/a2a';
 import { type AgentState, sealBackup } from '@rendezvous/core';
 import { startTestRelay, type TestRelay } from '@rendezvous/core/testing';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { Listener, RDV_BIN, rdv } from '../scenarios/harness.js';
+import { Listener, RDV_BIN, rdv, rdvArgv } from '../scenarios/harness.js';
 import { backupCmd, contactAutoApprove, restoreCmd, type Tty, whoami } from '../src/commands.js';
 import { Home } from '../src/home.js';
 import { storeOwnerSecret } from '../src/ownersecret.js';
@@ -41,10 +41,14 @@ function capture(): { out: Output; lines: Array<Record<string, unknown>> } {
   return { out, lines };
 }
 
-/** `rdv <args>` with `input` on stdin. */
-function rdvStdin(args: string[], home: string, input: string): Promise<{ code: number; stdout: string; stderr: string }> {
+/**
+ * `rdv <args>` with `input` on stdin: as the human in their own terminal (rdvArgv), or with `asHuman: false` as an
+ * assistant's shell or a script would run it (bin.js, no terminal).
+ */
+function rdvStdin(args: string[], home: string, input: string, asHuman = true): Promise<{ code: number; stdout: string; stderr: string }> {
+  const full = [...args, '--home', home, '--json'];
   return new Promise((resolve) => {
-    const child = execFile(process.execPath, [RDV_BIN, ...args, '--home', home, '--json'], { windowsHide: true, timeout: 30_000 }, (err, stdout, stderr) =>
+    const child = execFile(process.execPath, asHuman ? rdvArgv(full) : [RDV_BIN, ...full], { windowsHide: true, timeout: 30_000 }, (err, stdout, stderr) =>
       resolve({ code: err ? (typeof err.code === 'number' ? err.code : 1) : 0, stdout, stderr }),
     );
     child.stdin?.end(input);
@@ -125,7 +129,16 @@ describe('rdv backup and rdv restore', () => {
     await whoami({ home: dst, out: who.out, values: {}, positionals: [] });
     expect(who.lines[0]).toMatchObject({ id, restored: { backup_created: doc.created } });
 
-    // --replace, explicitly, from stdin (the human piping it on purpose).
+    // A pipe is no terminal (issue #126): `echo pass | rdv restore --stdin` from a script or an assistant's shell is
+    // refused before anything is read, and the agent here is untouched.
+    const agentBefore = readFileSync(dst.agentPath, 'utf8');
+    for (const args of [['restore', file, '--replace', '--stdin'], ['backup', join(root, 'piped.rdvbackup'), '--stdin']]) {
+      const piped = await rdvStdin(args, dst.dir, `${PASS}\n`, false);
+      expect([piped.code, piped.stderr], args[0]).toEqual([1, expect.stringContaining('needs an interactive terminal')]);
+    }
+    expect(existsSync(join(root, 'piped.rdvbackup'))).toBe(false);
+    expect(readFileSync(dst.agentPath, 'utf8')).toBe(agentBefore);
+    // --replace, explicitly, with --stdin in the human's own terminal.
     const again = await rdvStdin(['restore', file, '--replace', '--stdin'], dst.dir, `${PASS}\n`);
     expect([again.code, again.stderr]).toEqual([0, '']);
     expect(JSON.parse(again.stdout.trim().split('\n').at(-1)!)).toMatchObject({ event: 'restore', id, replaced: id });

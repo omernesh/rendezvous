@@ -34,7 +34,7 @@ With Cloudflare, turn off Email Obfuscation for the gateway's hostname (see step
 
 - A machine with Docker and the Compose plugin, and `git`.
 - A public HTTPS name for it, such as `gw.example.com`, served by a TLS tunnel (Cloudflare Tunnel is what this guide shows) or a reverse proxy that forwards to `127.0.0.1:8787`.
-- A terminal you control on that machine (over `ssh -t` is fine) for the owner-only commands.
+- A terminal you control on that machine (over `ssh -t` is fine) for the owner-only commands. They refuse to run unless stdin and stdout are both a terminal (issue #126): `ssh` without `-t`, a script, a pipe, `docker compose run -T`, or `docker exec` without `-it` gets a refusal and changes nothing. That is what keeps an assistant with a shell from running them.
 
 ### 1. Get the code and build it
 
@@ -113,7 +113,7 @@ services:
       retries: 3
 ```
 
-`gw`, a wrapper for the owner-only commands (then `chmod +x gw`):
+`gw`, a wrapper for the owner-only commands (then `chmod +x gw`). Keep `docker compose run` without `-T`, so the command gets your terminal; if you run one in the running container instead, use `docker compose exec gateway …` (it gives the command your terminal unless you pass `-T`) or `docker exec -it <container> …` (plain `docker exec` without `-it` has no terminal and is refused):
 
 ```bash
 #!/bin/sh

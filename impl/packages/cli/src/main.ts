@@ -5,6 +5,7 @@ import * as grp from './groups.js';
 import * as inv from './invites.js';
 import * as svc from './service.js';
 import { CliError, Home, RelayPublishError } from './home.js';
+import { processIsInteractive, rdvHumanOnly } from './humanonly.js';
 import { clean } from './output.js';
 import { Output } from './output.js';
 
@@ -620,7 +621,43 @@ function help(): string {
   ].join('\n');
 }
 
-export async function main(argv: string[]): Promise<number> {
+/** The command `argv` names (its key in COMMANDS, when there is one) and the arguments after it. */
+function resolveCommand(argv: string[]): { name: string; rest: string[] } {
+  // A command is named by plain words (security review of PR #122): one word holding a space, as in
+  // `rdv "contact label" …` or `rdv contact "alias add" …`, would otherwise join into a command name that a
+  // check looking at separate words (the plugin's consent guard) never saw. Refused for every command.
+  const plain = (w: string | undefined): w is string => w !== undefined && /^[a-z0-9-]+$/.test(w);
+  if (plain(argv[1]) && plain(argv[2]) && Object.hasOwn(COMMANDS, `${argv[0]} ${argv[1]} ${argv[2]}`)) {
+    return { name: `${argv[0]} ${argv[1]} ${argv[2]}`, rest: argv.slice(3) };
+  }
+  if (plain(argv[1]) && Object.hasOwn(COMMANDS, `${argv[0]} ${argv[1]}`)) return { name: `${argv[0]} ${argv[1]}`, rest: argv.slice(2) };
+  return { name: argv[0], rest: argv.slice(1) };
+}
+
+/**
+ * Would `rdv <argv>` need the human's terminal (issue #126)? For test harnesses that drive these commands through
+ * `main`'s `interactive` option; bin.js never asks. undefined for a command anyone may run, or one that does not parse.
+ */
+export function humanOnlyArgv(argv: string[]): string | undefined {
+  const { name, rest } = resolveCommand(argv);
+  if (!Object.hasOwn(COMMANDS, name)) return undefined;
+  try {
+    const { values, positionals } = parseArgs({ args: rest, options: { ...COMMON, ...COMMANDS[name].options }, allowPositionals: true, strict: true });
+    return values.help ? undefined : rdvHumanOnly(name, values as cmd.Ctx['values'], positionals);
+  } catch {
+    return undefined;
+  }
+}
+
+export interface MainOptions {
+  /**
+   * Is this an interactive terminal (issue #126)? Default: stdin and stdout are both a TTY. An in-process seam for
+   * tests only: bin.js never passes it, and no flag, environment variable or file sets it.
+   */
+  interactive?: () => boolean;
+}
+
+export async function main(argv: string[], opts: MainOptions = {}): Promise<number> {
   const wantsJson = argv.includes('--json');
   const fallbackOut = new Output(wantsJson);
   if (argv.length === 0 || argv[0] === 'help' || argv[0] === '--help' || argv[0] === '-h') {
@@ -632,23 +669,11 @@ export async function main(argv: string[]): Promise<number> {
     return 0;
   }
 
-  // A command is named by plain words (security review of PR #122): one word holding a space, as in
-  // `rdv "contact label" …` or `rdv contact "alias add" …`, would otherwise join into a command name that a
-  // check looking at separate words (the plugin's consent guard) never saw. Refused for every command.
-  const plain = (w: string | undefined): w is string => w !== undefined && /^[a-z0-9-]+$/.test(w);
-  if (!plain(argv[0])) {
+  if (!/^[a-z0-9-]+$/.test(argv[0])) {
     fallbackOut.error(`unknown command ${JSON.stringify(clean(argv[0]))}: a command is one or more plain words (letters, digits and "-"), e.g. rdv contact list (see rdv --help)`);
     return 2;
   }
-  let name = argv[0];
-  let rest = argv.slice(1);
-  if (plain(argv[1]) && plain(argv[2]) && Object.hasOwn(COMMANDS, `${argv[0]} ${argv[1]} ${argv[2]}`)) {
-    name = `${argv[0]} ${argv[1]} ${argv[2]}`;
-    rest = argv.slice(3);
-  } else if (plain(argv[1]) && Object.hasOwn(COMMANDS, `${argv[0]} ${argv[1]}`)) {
-    name = `${argv[0]} ${argv[1]}`;
-    rest = argv.slice(2);
-  }
+  const { name, rest } = resolveCommand(argv);
   // Own keys only (re-review L5): `rdv constructor` or `rdv __proto__` is an unknown command, not Object's.
   const command = Object.hasOwn(COMMANDS, name) ? COMMANDS[name] : undefined;
   if (!command) {
@@ -686,6 +711,13 @@ export async function main(argv: string[]): Promise<number> {
   if (positionals.length !== command.args) {
     out.error(`expected ${command.args} argument(s), got ${positionals.length}\nusage: ${command.usage}`);
     return 2;
+  }
+
+  // The human's commands only in an interactive terminal (issue #126): refused before anything is read or written.
+  const human = rdvHumanOnly(name, values, positionals);
+  if (human !== undefined && !(opts.interactive ?? processIsInteractive)()) {
+    out.error(human);
+    return 1;
   }
 
   try {

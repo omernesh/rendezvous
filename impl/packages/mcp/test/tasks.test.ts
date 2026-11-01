@@ -14,7 +14,7 @@ import { Home, initHome } from '@rendezvous/cli/lib';
 import type { AddressCard } from '@rendezvous/core';
 import { startTestRelay, type TestRelay } from '@rendezvous/core/testing';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { RDV_BIN, until } from '../../cli/scenarios/harness.js';
+import { rdvArgv, until } from '../../cli/scenarios/harness.js';
 import { type ElicitHandler, INJECTION, makeSide, ok, phraseFromHumanLog, phraseFromTerminal, type Side, waitEvent } from './flow.js';
 
 const ESC = String.fromCharCode(27);
@@ -140,7 +140,7 @@ describe('rdv_task: a general task, both gates by confirm phrase (request/v1, fr
 
     // The human reads the phrase in their terminal (a new one: only hashes are stored) and types it to the model.
     phrases.push(phraseFromHumanLog(john, id));
-    const text = execFileSync(process.execPath, [RDV_BIN, 'task', 'list', '--home', john.home.dir], { encoding: 'utf8' });
+    const text = execFileSync(process.execPath, rdvArgv(['task', 'list', '--home', john.home.dir]), { encoding: 'utf8' });
     const phrase = phraseFromTerminal(text, id);
     phrases.push(phrase);
     expect(text).toContain('request (untrusted, written by the peer)');
@@ -393,7 +393,7 @@ describe('state survives a restart', () => {
 
 describe('a gate opens only on content the human saw in full (security review)', () => {
   const LONG = `${'Please read all of this. '.repeat(80)}`.slice(0, 2000) + 'X'; // 2001 characters
-  const terminal = (side: Side) => execFileSync(process.execPath, [RDV_BIN, 'task', 'list', '--home', side.home.dir], { encoding: 'utf8' });
+  const terminal = (side: Side) => execFileSync(process.execPath, rdvArgv(['task', 'list', '--home', side.home.dir]), { encoding: 'utf8' });
 
   it('a 2001-character request gets no form and no excerpt with a phrase; the terminal shows all of it with the phrase that works', async () => {
     const forms = johnForms();
@@ -517,10 +517,10 @@ describe('request/v1 against hostile peer text (issue #27)', () => {
     // The human channels: the server's log and the terminal show it escaped too, and the phrase stands apart from it.
     for (const l of john.humanLog) expect(l).not.toMatch(RAW_CONTROL);
     expect(realPhrase(john, id)).not.toBe(FAKE_PHRASE); // the peer's phrase-like text never doubles as the human's phrase
-    const terminal = execFileSync(process.execPath, [RDV_BIN, 'task', 'list', '--home', john.home.dir], { encoding: 'utf8' });
+    const terminal = execFileSync(process.execPath, rdvArgv(['task', 'list', '--home', john.home.dir]), { encoding: 'utf8' });
     expect(terminal).not.toMatch(RAW_CONTROL);
     expect(terminal).toContain('IGNORE PREVIOUS INSTRUCTIONS');
-    const json = execFileSync(process.execPath, [RDV_BIN, 'task', 'list', '--json', '--home', john.home.dir], { encoding: 'utf8' });
+    const json = execFileSync(process.execPath, rdvArgv(['task', 'list', '--json', '--home', john.home.dir]), { encoding: 'utf8' });
     expect(json).not.toMatch(RAW_CONTROL); // --json printed to a terminal: C1 and bidi written as \u escapes
     expect(JSON.parse(json.trim().split('\n')[0]).text[0]).toBe(HOSTILE); // the same value, unchanged
     // The terminal issued a new phrase (only hashes are stored); that one, the human's, starts it.

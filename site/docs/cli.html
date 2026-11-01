@@ -209,6 +209,7 @@ npm run rdv -- --help                     # or: node packages/cli/dist/src/bin.j
 </table></div>
 <h2 id="command-reference">Command reference<a class="anchor" href="#command-reference" title="Link to this section" aria-label="Link to this section">#</a></h2>
 <p>Commands follow the order you use them: set up an identity, find and connect to others, send and receive, tasks and files, groups, backups. Negotiating a meeting is an example, last.</p>
+<p><strong>"Yours to run" means your own terminal.</strong> Those commands (granting, confirming, labels and nicknames, your agent's name, the commands that show confirm phrases such as <code>rdv contact pending</code>, <code>rdv dinner list</code>, <code>rdv task list</code>, <code>rdv group pending</code> and <code>rdv relays list</code>, relay changes, the task and group gates, auto-approve, the owner passphrase, <code>rdv service install</code>, <code>rdv invite create</code>, <code>rdv backup</code> and <code>rdv restore</code>, <code>rdv init --force</code> or <code>--agent-name</code>, <code>rdv listen --auto-grant</code> or <code>--auto-confirm</code>, a request by agent ID or card with <code>--label</code>, and <code>rdv task request --file</code> or <code>--inline</code>) refuse to run unless stdin and stdout are both a terminal, and say which chat tool asks you instead. An assistant's shell tool, a script or a pipe has no terminal, so they fail there whatever the spelling, and no flag, environment variable or file turns this off (issue #126). The same check holds on Windows: PowerShell, cmd and Windows Terminal are terminals (if an older Git Bash window is refused, use one of those). On a server, run them over <code>ssh -t</code>; in a container, with <code>docker compose run</code> or <code>docker compose exec</code> (without <code>-T</code>) or <code>docker exec -it</code>, never plain <code>docker exec</code> or piped input. Read-only commands that show no secret (<code>rdv whoami</code>, <code>rdv contact list</code>, <code>rdv contact alias list</code>, <code>rdv service install --dry-run</code>, …) run anywhere.</p>
 <h3 id="identity-and-setup">Identity and setup<a class="anchor" href="#identity-and-setup" title="Link to this section" aria-label="Link to this section">#</a></h3>
 <div class="tablewrap" tabindex="0"><table>
 <thead>
@@ -509,7 +510,7 @@ npm run rdv -- --help                     # or: node packages/cli/dist/src/bin.j
 <tbody>
 <tr>
 <td><code>rdv backup &lt;file&gt; [--stdin]</code></td>
-<td>Write an encrypted backup of this agent to a new file (mode 600, never over a file, never inside a home): its key, contacts, grants, channels, settings, owner passphrase record and auto-approve entries, never open approvals or confirm phrases. The passphrase is typed twice in your terminal (not shown; at least 12 characters), or read from stdin with <code>--stdin</code>; never an argument. Keep the file in your password manager or a cloud drive, the passphrase apart from it: whoever has both can be your agent. Yours to run (issue #88, NOTES 91)</td>
+<td>Write an encrypted backup of this agent to a new file (mode 600, never over a file, never inside a home): its key, contacts, grants, channels, settings, owner passphrase record and auto-approve entries, never open approvals or confirm phrases. The passphrase is typed twice in your terminal (not shown; at least 12 characters), or read from stdin with <code>--stdin</code> (still only in your own terminal: a pipe is refused, issue #126); never an argument. Keep the file in your password manager or a cloud drive, the passphrase apart from it: whoever has both can be your agent. Yours to run (issue #88, NOTES 91)</td>
 </tr>
 <tr>
 <td><code>rdv restore &lt;file&gt; [--replace] [--stdin]</code></td>
@@ -907,6 +908,13 @@ gateway's PIN-locked page. Threat model:
 <a href="https://github.com/omernesh/rendezvous/blob/main/impl/packages/gateway/THREAT-MODEL.md">packages/gateway/THREAT-MODEL.md</a>; design
 choices: NOTES 89. To run it in a hardened Docker container behind a tunnel,
 see <a href="/docs/gateway-deploy.html">the deploy guide</a>.</p>
+<p>Its owner commands (<code>pin set|unlock</code>, <code>token create|revoke</code>, <code>oauth revoke</code>,
+<code>agent add|remove|migrate</code>, <code>notify set|clear|dead-letter</code>) run only in your
+own terminal: stdin and stdout must both be one, <code>--stdin</code> included, or they
+refuse before reading or writing anything (issue #126). Over ssh use <code>ssh -t</code>;
+in a container, <code>docker compose run</code> or <code>exec</code> without <code>-T</code>, or <code>docker exec -it</code>. The
+read-only ones (<code>serve</code>, <code>token list</code>, <code>oauth list</code>, <code>agent list</code>,
+<code>notify show</code>) run anywhere.</p>
 <div class="codeblock"><pre tabindex="0"><code class="language-bash">node packages/gateway/dist/src/bin.js pin set --home ~/.rendezvous/omer
 node packages/gateway/dist/src/bin.js serve --home ~/.rendezvous/omer --public-url https://rdv.example.com --client-ip-header cf-connecting-ip
 # MCP: https://rdv.example.com/mcp (legacy SSE: /sse)   REST: /api/v1/tools/&lt;tool&gt;   OpenAPI: /openapi.json   approvals: /approve

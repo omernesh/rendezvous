@@ -5,9 +5,32 @@ import { request } from 'node:http';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { Home, initHome } from '@rendezvous/cli/lib';
+import { createRequire } from 'node:module';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { Gateway, type GatewayOptions } from '../src/index.js';
+import { gatewayHumanOnlyArgv } from '../src/args.js';
 
 export const PIN = '482916-blue';
+
+export const BIN = fileURLToPath(new URL('../dist/src/bin.js', import.meta.url));
+const MAIN = new URL('../dist/src/main.js', import.meta.url).href;
+const SAFE_CONSOLE = pathToFileURL(createRequire(import.meta.url).resolve('@rendezvous/core/safe-console')).href;
+
+/**
+ * node's arguments for `rdv-gateway <args>`. The owner commands need an interactive terminal (issue #126) and a
+ * spawned bin has none, so for them the test stands in for the owner at a terminal: the same command in a process
+ * of its own, through gatewayMain's in-process `interactive` option, which bin.js never passes (code here, given to
+ * `node -e`; nothing of rdv-gateway's turns the check off). `asOwner: false` runs bin.js as an assistant's shell would.
+ */
+export function gatewayArgv(args: string[], asOwner = true): string[] {
+  if (!asOwner || !gatewayHumanOnlyArgv(args)) return [BIN, ...args];
+  const code = [
+    `await import(${JSON.stringify(SAFE_CONSOLE)});`,
+    `const { gatewayMain } = await import(${JSON.stringify(MAIN)});`,
+    'await gatewayMain(process.argv.slice(1), { interactive: () => true });',
+  ].join(' ');
+  return ['--input-type=module', '-e', code, '--', ...args];
+}
 let tokens = 0;
 
 export interface TestGateway {

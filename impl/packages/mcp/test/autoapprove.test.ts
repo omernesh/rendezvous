@@ -15,7 +15,7 @@ import { fingerprint, MEETINGS_CAPABILITY } from '@rendezvous/core';
 import { startTestRelay, type TestRelay } from '@rendezvous/core/testing';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { contactAutoApprove, ownerSecretSet, type Tty } from '../../cli/src/commands.js';
-import { RDV_BIN, rdv } from '../../cli/scenarios/harness.js';
+import { rdv, rdvArgv } from '../../cli/scenarios/harness.js';
 import { hasOwnerSecret, storeOwnerSecret } from '../../cli/src/ownersecret.js';
 import { Output } from '../../cli/src/output.js';
 import { INJECTION, makeSide, ok, type Side, TZ, WINDOW, waitEvent, writeCalendars } from './flow.js';
@@ -218,7 +218,7 @@ describe('auto-approve through rdv-mcp', () => {
     expect(line).toContain('confirm phrase');
     expect(john.transcript.join('\n')).not.toContain(ON);
     // ...and `rdv contact pending` in the human's terminal.
-    const text = execFileSync(process.execPath, [RDV_BIN, 'contact', 'pending', '--home', john.home.dir], { encoding: 'utf8' });
+    const text = execFileSync(process.execPath, rdvArgv(['contact', 'pending', '--home', john.home.dir]), { encoding: 'utf8' });
     expect(text).toContain(`your assistant asks to grant contact ${omerId}`);
     expect(text).toContain(ON);
   });

@@ -8,7 +8,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import type { ElicitResult } from '@modelcontextprotocol/sdk/types.js';
 import { startTestRelay, type TestRelay } from '@rendezvous/core/testing';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { Listener, RDV_BIN, rdv } from '../../cli/scenarios/harness.js';
+import { Listener, rdv, rdvArgv } from '../../cli/scenarios/harness.js';
 import {
   candidateTarget,
   checkPhrase,
@@ -104,7 +104,7 @@ describe('rdv-mcp: two Claude sessions book dinner (in-memory relay)', () => {
         expect(cli.lines[0].id).toBe(requestId);
         expect(cli.stdout).not.toMatch(/[a-z]+-[a-z]+-[a-z]+-\d{3}/); // --json output carries no phrase...
         expect(j.home.readConsent()[`request:${requestId}`].hash).toBe(stored); // ...and replaces none
-        const text = execFileSync(process.execPath, [RDV_BIN, 'contact', 'pending', '--home', j.home.dir], { encoding: 'utf8' });
+        const text = execFileSync(process.execPath, rdvArgv(['contact', 'pending', '--home', j.home.dir]), { encoding: 'utf8' });
         // Only a hash is stored (issue #12): the terminal shows a new phrase, with the terms it approves, which replaces the logged one.
         const phrase = phraseFromTerminal(text, requestId);
         phrases.push(phrase);
@@ -132,7 +132,7 @@ describe('rdv-mcp: two Claude sessions book dinner (in-memory relay)', () => {
         // The human sees the dinner's phrase in `rdv dinner list` (text mode only, a new one: only hashes are stored) and in the server log.
         const logged = phraseFromHumanLog(side, taskId);
         phrases.push(logged);
-        const text = execFileSync(process.execPath, [RDV_BIN, 'dinner', 'list', '--home', side.home.dir], { encoding: 'utf8' });
+        const text = execFileSync(process.execPath, rdvArgv(['dinner', 'list', '--home', side.home.dir]), { encoding: 'utf8' });
         const phrase = phraseFromTerminal(text, taskId);
         phrases.push(phrase);
         expect(phrase).not.toBe(logged);
@@ -150,7 +150,7 @@ describe('rdv-mcp: two Claude sessions book dinner (in-memory relay)', () => {
           phrases.push(reissued);
           expect(reissued).not.toBe(phrase);
           expect(side.humanLog.some((l) => l.includes(taskId) && l.includes('CHANGED'))).toBe(true);
-          const moved = phraseFromTerminal(execFileSync(process.execPath, [RDV_BIN, 'dinner', 'list', '--home', side.home.dir], { encoding: 'utf8' }), taskId);
+          const moved = phraseFromTerminal(execFileSync(process.execPath, rdvArgv(['dinner', 'list', '--home', side.home.dir]), { encoding: 'utf8' }), taskId);
           phrases.push(moved);
           expect((await ok(side, 'rdv_negotiate', { action: 'status' })).negotiations[0].waiting_for).toContain('your user');
           // Back to what the human reviewed: the phrase issued for the moved meeting is stale in turn.
@@ -178,7 +178,7 @@ describe('rdv-mcp: two Claude sessions book dinner (in-memory relay)', () => {
     phrases.push(loggedCancel);
     expect(john.humanLog.find((l) => l.includes(loggedCancel))).toContain('CANCEL the agreed dinner');
     // Only a hash is stored (issue #12): the terminal shows a new cancel phrase, which replaces the logged one.
-    const listed = execFileSync(process.execPath, [RDV_BIN, 'dinner', 'list', '--home', john.home.dir], { encoding: 'utf8' });
+    const listed = execFileSync(process.execPath, rdvArgv(['dinner', 'list', '--home', john.home.dir]), { encoding: 'utf8' });
     const cancelPhrase = /cancel this agreed dinner\): ([a-z]+-[a-z]+-[a-z]+-\d{3})/.exec(listed)?.[1];
     if (!cancelPhrase) throw new Error(`no cancel phrase in:\n${listed}`);
     phrases.push(cancelPhrase);
@@ -1346,7 +1346,7 @@ describe('local labels are part of what the human approves (NOTES 62)', () => {
     expect((await john.call('rdv_grant', { request_id: requestId, confirm_phrase: forBank, label: BANK })).isError).toBe(true); // replaced
     expect((await ok(john, 'rdv_status')).contacts).toEqual([]);
     // The terminal shows the human what the current phrase approves, label included.
-    const text = execFileSync(process.execPath, [RDV_BIN, 'contact', 'pending', '--home', john.home.dir], { encoding: 'utf8' });
+    const text = execFileSync(process.execPath, rdvArgv(['contact', 'pending', '--home', john.home.dir]), { encoding: 'utf8' });
     expect(text).toContain(`it approves: tier stranger, may propose meetings, calendar free_busy, up to 100/day, local label "${BANK}"`);
     const granted = await ok(john, 'rdv_grant', { request_id: requestId, confirm_phrase: phraseFromTerminal(text, requestId), label: BANK });
     expect(granted).toMatchObject({ granted: true, local_label: BANK });
@@ -1369,7 +1369,7 @@ describe('local labels are part of what the human approves (NOTES 62)', () => {
     const before = omer.humanLog.length;
     expect((await omer.call('rdv_grant', { grant_id: cand.grant_id, label: work })).isError).toBe(true);
     expect(omer.humanLog.length).toBe(before);
-    const text = execFileSync(process.execPath, [RDV_BIN, 'contact', 'pending', '--home', omer.home.dir], { encoding: 'utf8' });
+    const text = execFileSync(process.execPath, rdvArgv(['contact', 'pending', '--home', omer.home.dir]), { encoding: 'utf8' });
     expect(text).toContain(`it approves: local label "${work}"`);
     const confirmed = await ok(omer, 'rdv_grant', { grant_id: cand.grant_id, confirm_phrase: phraseFromTerminal(text, cand.grant_id), label: work });
     expect(confirmed).toMatchObject({ confirmed: true, local_label: work });
