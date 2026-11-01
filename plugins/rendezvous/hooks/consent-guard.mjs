@@ -259,6 +259,21 @@ export function parseCommands(src, mode = 'sh', depth = 0) {
     if (mode === 'ps' && c === '<' && next === '#') {
       const j = src.indexOf('#>', i + 2);
       i = j < 0 ? src.length : j + 1;
+      endWord(); // a block comment separates tokens, as PowerShell reads it
+      continue;
+    }
+    // PowerShell, unquoted (round 3 of the review of PR #122): `(…)` as an argument (not at a command's start) is an
+    // expression whose value is only known when it runs, like `$(…)`; `[type]…` is a cast and `@name` a splat. Each
+    // becomes SUB in its word, so dynamic() sees it in a subcommand's place. Inside quotes they stay plain text.
+    if (mode === 'ps' && c === '(' && (inWord || words.length > 0)) {
+      const end = closeParen(src, i + 1, mode);
+      sub(src.slice(i + 1, end));
+      i = end;
+      continue;
+    }
+    if (mode === 'ps' && !inWord && (c === '[' || (c === '@' && /[\w{]/.test(next ?? '')))) {
+      cur += SUB + c;
+      inWord = true;
       continue;
     }
     // bash ANSI-C quoting: $'\x63ontact' is "contact" (issue #47). Decoded, so the word is judged as the shell runs it.
@@ -371,10 +386,11 @@ function couldBe(w, name, cwd) {
 /**
  * A word whose value is only known when it runs (re-review of PR #122): a substitution, a variable (`$x`, `${x}`,
  * `%x%`), a shell special parameter (`$@`, `"$@"`, `$*`, `$#`, `$?`, `$!`, `$$`, `$-`), a PowerShell splat (`@a`,
- * `@args`, `@(…)`), a PowerShell expression argument (`('se'+'t')`, `(-join …)`, `(gc f)`) or a type literal or cast
- * (`[string]…`). In a subcommand's place each one is refused, whatever it would turn out to be.
+ * `@args`, `@(…)`), a PowerShell expression argument (`('se'+'t')`, `(-join …)`, `(gc f)`), a type literal or cast
+ * (`[string]…`), or a cmd for-variable (`%i`, `%%i`). The PowerShell forms are marked SUB by the tokenizer (unquoted
+ * only). In a subcommand's place each one is refused, whatever it would turn out to be.
  */
-const dynamic = (w) => w.includes(SUB) || /\$[\w{(@*#?!$-]|%\w+%/.test(w) || /^@[\w{(]/.test(w) || /^[([]/.test(w);
+const dynamic = (w) => w.includes(SUB) || /\$[\w{(@*#?!$-]|%\w+%|(^|[^%\w])%%?[a-z](?![\w%])/i.test(w);
 
 const progName = (w) =>
   basename(w.replace(/[\\/]+$/, ''))
@@ -548,20 +564,14 @@ const staticPrefix = (w) => {
 
 /** A quoted run of command words (`"contact label"`, `"agent-name set"`): letters, digits and `-` only, several of them. */
 const COMMAND_RUN = /^[a-z0-9-]+(\s+[a-z0-9-]+)+$/i;
+/** Words of rdv and rdv-gateway after which another command word follows. */
+const GROUP_WORDS = new Set([...HUMAN_GROUPS.map(([g]) => g), 'address', 'card', 'alias', 'pin', 'token', 'oauth']);
+
 /**
  * After rdv or rdv-gateway, a quoted run of command words is split back into its words (security review of PR #122):
  * `rdv "contact label" …` and `rdv contact "alias add" …` are matched like `rdv contact label …`. The CLI refuses such
  * a word too (main.ts), so this only keeps the guard's message where the CLI's would be.
  */
-/**
- * rdv (any name, after any global options) and up to two plain command words, then an expression, a splat or a cast
- * where the next command word goes: `rdv contact ('grant') …`, `node bin.js agent-name (-join …) …`, `rdv @a`.
- */
-const DYNAMIC_SUBCOMMAND =
-  /(?:^|[\s;|&{(])(?:rdv(?:\.cmd|\.ps1|\.exe)?|bin\.js|@rendezvous\/cli\S*)(?:\s+--(?:home|profile)(?:=\S+|\s+\S+)|\s+--json|\s+--)*(?:\s+["']?[a-z0-9][a-z0-9-]*["']?){0,2}\s+["']?[(@[]/i;
-/** Words of rdv and rdv-gateway after which another command word follows. */
-const GROUP_WORDS = new Set([...HUMAN_GROUPS.map(([g]) => g), 'address', 'card', 'alias', 'pin', 'token', 'oauth']);
-
 function splitCommandRuns(words) {
   const at = words.findIndex((w) => isRdv(w) || isGateway(w));
   if (at < 0) return words;
@@ -596,8 +606,32 @@ function splitCommandRuns(words) {
   return [...out, ...words.slice(k)];
 }
 
+/** Where a command can start inside a string: its start, or after a separator, an opening quote, `!` or `system(`. */
+const COMMAND_START = /(?:^|[;|&(){}\n`!"']|\$\()\s*/;
+const LAUNCHERS = new Set(['node', 'npx', 'pnpm', 'yarn', 'bunx', 'bun', 'deno', 'npm', 'call', 'exec', 'start', 'sudo', 'env']);
+
+/**
+ * One word that holds a whole command line naming rdv (an argument of any program: `$SHELL -c '…'`,
+ * `awk 'BEGIN{system("rdv contact grant …")}'`, `-ArgumentList '…bin.js contact grant …'`, `ssh host '…'`,
+ * `git -c alias.x='!rdv …'`): each piece that starts with rdv, rdv-gateway or bin.js (or a launcher and then one of
+ * them) is checked as a command of its own. Prose (`git commit -m "docs: rdv contact grant is for the human"`) is not
+ * a command start, so it passes.
+ */
+function checkEmbedded(words, ctx, depth) {
+  for (const w of words) {
+    if (!/\s/.test(w) || !mentionsRdv(w)) continue;
+    for (const piece of w.split(COMMAND_START)) {
+      const tokens = piece.trim().split(/\s+/).map((t) => t.replace(/^["']+|["',]+$/g, '')).filter(Boolean);
+      const at = isRdv(tokens[0] ?? '') || isGateway(tokens[0] ?? '') ? 0 : LAUNCHERS.has(progName(tokens[0] ?? '')) && (isRdv(tokens[1] ?? '') || isGateway(tokens[1] ?? '')) ? 1 : -1;
+      if (at >= 0) checkWords(tokens, { cwd: ctx.cwd }, depth + 1);
+    }
+  }
+}
+
 function checkWords(words, ctx, depth) {
+  if (depth > MAX_DEPTH) throw new Refusal(NESTED);
   words = splitCommandRuns(words);
+  checkEmbedded(words, ctx, depth);
   const lw = words.map((w) => w.toLowerCase());
   // The background listener's task, unit or LaunchAgent, changed through the OS's own tool (re-review of PR #117).
   if (lw.some((w) => w.includes('rdv-listen-'))) {
@@ -658,7 +692,10 @@ function checkWords(words, ctx, depth) {
         if ((named || dynamic(a)) && couldBe(b, s, ctx.cwd)) throw new Refusal(why);
       }
       // `file` is also a common program (`file "$f"`): only after rdv is it a subcommand.
-      if (named && dynamic(b) && (i === 0 ? cmd !== 'file' : isRdv(words[i - 1]) || dynamic(words[i - 1]) || words[i - 1] === '--')) throw new Refusal(OPAQUE);
+      // After rdv's global options (`rdv --profile omer contact (gc f)`) too.
+      if (named && dynamic(b) && (i === 0 ? cmd !== 'file' : isRdv(words[i - 1]) || dynamic(words[i - 1]) || words[i - 1] === '--' || (cmd !== 'file' && words.slice(0, i).some(isRdv)))) {
+        throw new Refusal(OPAQUE);
+      }
     }
     // rdv's next word must be a literal: not built at run time, and no wildcard the shell could expand into a subcommand.
     if (isRdv(a) && (dynamic(b) || GLOB_CHARS.test(b))) throw new Refusal(OPAQUE);
@@ -779,10 +816,6 @@ function checkCode(code, ctx, depth) {
 }
 
 function check(src, ctx, depth) {
-  // `rdv contact ('grant') …`, `node bin.js agent-name (-join …) …`: the parser makes a parenthesized argument a
-  // command of its own, so the subcommand built in it is never seen as one (re-review of PR #122). In the place of a
-  // subcommand, or of rdv's first word, an expression, a splat or a cast is refused.
-  if (mentionsRdv(src) && DYNAMIC_SUBCOMMAND.test(src)) throw new Refusal(OPAQUE);
   if (depth > MAX_DEPTH) throw new Refusal(NESTED);
   if (SECRET_MENTION.test(src)) throw new Refusal(SECRET_REFUSAL);
   if (SERVICE_MENTION.test(src)) throw new Refusal(SERVICE_SHELL);
