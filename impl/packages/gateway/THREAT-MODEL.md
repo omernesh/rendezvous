@@ -56,10 +56,16 @@ folder named from inside or above it), docker commands there other than
 `ps`, `logs`, `up` and `restart` or with another compose file, bind mounts
 of the folder into any container, and `exec`, `cp`, `run` or `attach` on
 the gateway's containers by name are refused, as are the installer and
-`./gw update`. The installer itself works from inside its folder by relative
-paths and re-checks it (owner, mode, ACL, real path) before every write and
-command, so a shared parent such as a NAS share cannot redirect it; that
-part is a real boundary.
+`./gw update`. The installer itself is a real boundary in two parts. It
+refuses an install folder under any folder, up to `/`, that someone other
+than the owner or root could rename entries in (group or other write without
+the sticky bit, or an ACL letting anyone else write or delete; on DSM it
+reads `synoacltool`, which is how it refuses a share such as
+`/volume1/docker`): a rename there could swap the whole install between
+runs, because Docker resolves the bind paths again at every container start
+and `sudo ./gw update` runs the folder's `./gw`. And during a run it works
+from inside its folder by relative paths and re-checks it (owner, mode, ACL,
+real path) before every write and command.
 
 **Accepted limits.** With Docker access on the gateway host, or a shell
 running inside the install folder, an assistant can reach the tunnel token

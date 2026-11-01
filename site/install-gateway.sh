@@ -159,7 +159,14 @@ system_dir() {
   case $1 in
     / | /bin | /boot | /dev | /etc | /home | /lib | /lib64 | /media | /mnt | /opt | /proc | /root | /run | /sbin | /srv | /sys | /tmp | /usr | /usr/* | /var | /var/tmp | /var/lib | /var/log) return 0 ;;
     /Users | /Library | /Library/* | /System | /System/* | /Applications | /private | /private/* | /Volumes) return 0 ;;
-    /volume[0-9]* | /volume[0-9]*/docker | /volume[0-9]*/homes | /volumeUSB*) case $1 in */*/*/*) return 1 ;; esac; return 0 ;;
+    # A NAS volume's top and its system shares; a new folder beside them (/volume1/rendezvous-gateway) is fine.
+    /volume[0-9]* | /volumeUSB*)
+      case $1 in
+        */*/*/*) return 1 ;;
+        /*/docker | /*/homes | /*/@* | /*/web | /*/photo | /*/music | /*/video | /*/public | /*/NetBackup) return 0 ;;
+        /*/*) return 1 ;;
+      esac
+      return 0 ;;
   esac
   case "${HOME%/}/" in "${1%/}/"*) return 0 ;; esac
   case $1 in /*/*) return 1 ;; *) return 0 ;; esac
@@ -744,18 +751,59 @@ check_install_dir() {
     fi
     check_private "$1"
   fi
-  # The nearest folder above that exists: yours or root's. It may be shared (writable by others, or with an ACL, as
-  # /volume1/docker is on a Synology NAS) only if the install folder is ours and private; it is then checked again
-  # before every write and every run of anything in it.
+  # Every folder above it, up to /: yours or root's, and no one else may rename entries in it. Whoever can rename an
+  # entry in any of them can swap the whole install between runs: Docker resolves the bind paths again at every
+  # container start, and a later `sudo ./gw update` would run their ./gw as root. So a shared parent is refused, not
+  # warned about: group or other write without the sticky bit, or an ACL letting anyone else write or delete. That
+  # rules out a Synology share such as /volume1/docker (its ACL lets user:anon write); use /volume1/rendezvous-gateway.
   up=$(dirname "$1")
-  while [ ! -e "$up" ] && [ "$up" != / ]; do up=$(dirname "$up"); done
-  [ ! -L "$up" ] || die "$up is a symbolic link; give the real path"
-  o=$(owner_of "$up")
-  [ "$o" = "$(id -u)" ] || [ "$o" = 0 ] || die "$up belongs to uid $o; put the gateway in a folder that is yours"
-  if others_can_write "$up" || has_acl "$up"; then
-    case $up in /tmp | /var/tmp | /dev/shm | /private/tmp) die "$up is a temporary folder anyone can write; put the gateway in a folder that is yours" ;; esac
-    warn "$up is shared (others can write it, or it has an ACL). The gateway's own folder $1 is made private (700, no ACL) and checked again before every write."
+  case $up in /tmp | /var/tmp | /dev/shm | /private/tmp) die "$up is a temporary folder; put the gateway in a folder that is yours" ;; esac
+  while :; do
+    if [ -e "$up" ] || [ -L "$up" ]; then
+      [ ! -L "$up" ] || die "$up is a symbolic link; give the real path"
+      o=$(owner_of "$up")
+      [ "$o" = "$(id -u)" ] || [ "$o" = 0 ] || die "$up belongs to uid $o, so it could swap the install; put the gateway under folders that are yours or root's"
+      if others_can_write "$up" && ! sticky "$up"; then
+        die "$up can be written by other users, who could swap the install; put the gateway under folders only you or root can change$(nas_hint)"
+      fi
+      if acl_lets_others_write "$up"; then
+        die "$up has an ACL that lets other users write or delete in it, so they could swap the install; put the gateway under folders without one$(nas_hint)"
+      fi
+    fi
+    [ "$up" != / ] || break
+    up=$(dirname "$up")
+  done
+}
+# On a Synology NAS, where to put it instead of a share.
+nas_hint() { if is_dsm; then printf ' (on a Synology NAS: --dir /volume1/rendezvous-gateway, outside the shares)'; fi; }
+is_dsm() { [ -f /etc/synoinfo.conf ] || [ -x /usr/syno/bin/synoacltool ]; }
+have_getfacl() { command -v getfacl >/dev/null 2>&1; }
+# The sticky bit (t or T in the last mode character): others may add entries but not rename or delete yours.
+sticky() { case $(mode_of "$1") in ?????????[tT]*) return 0 ;; esac; return 1; }
+# Does an ACL let a principal other than root or you write, append or delete? DSM's synoacltool, or getfacl; an
+# ACL neither can read counts as yes.
+acl_lets_others_write() {
+  has_acl "$1" || return 1
+  me=$(id -un 2>/dev/null)
+  if t=$(syno_acl_tool); then
+    # Lines like: [2] user:anon:allow:rwxpdDaARWc--:fd-- (level:0)
+    "$t" -get "$1" 2>/dev/null | awk -v me="$me" '
+      /^[[:space:]]*\[[0-9]+\]/ {
+        split($2, f, ":"); kind = f[1]; name = f[2]; allow = f[3]; perm = f[4]
+        if (allow != "allow") next
+        if ((kind == "user" && (name == "root" || name == me)) || kind == "owner") next
+        if (perm ~ /[wpdD]/) bad = 1
+      }
+      END { exit bad ? 0 : 1 }'
+    return
   fi
+  if have_getfacl; then
+    getfacl -cp "$1" 2>/dev/null | awk -F: -v me="$me" '
+      ($1 == "user" || $1 == "group") && $2 != "" && !($1 == "user" && ($2 == "root" || $2 == me)) && $3 ~ /w/ { bad = 1 }
+      END { exit bad ? 0 : 1 }'
+    return
+  fi
+  return 0
 }
 
 # The first column of ls -ld (type, mode and a trailing + or @ for an ACL or extended attributes), and the numeric
@@ -834,13 +882,17 @@ enter_install_dir() {
 }
 # Where we really are now. Not the shell's own pwd -P: dash answers it from what it remembered at cd, so a folder
 # renamed under us would still show its old path. The pwd program asks the kernel.
-real_cwd() { env pwd -P 2>/dev/null || pwd -P; }
+real_cwd() { env pwd -P 2>/dev/null || die 'cannot run the pwd program (env pwd -P) to check where the installer is'; }
 here() { if [ "${D:-}" = . ]; then real_cwd; else printf '%s' "$DIR"; fi; }
 
 choose_dir_and_settings() {
   step 1 'choose the folder'
   if [ -z "$DIR" ]; then
-    ask --dir 'Install folder' "$HOME/rendezvous-gateway"
+    # On a Synology NAS, beside the shares, not in one: /volume1 is root's 755 there, while a share such as
+    # /volume1/docker carries an ACL that lets other accounts (even anon) write, which could swap the install.
+    def="$HOME/rendezvous-gateway"
+    if is_dsm && [ -d /volume1 ]; then def=/volume1/rendezvous-gateway; fi
+    ask --dir 'Install folder' "$def"
     DIR=$ANSWER
   fi
   DIR=$(abs_path "$DIR")
@@ -1002,6 +1054,12 @@ check_owned() {
   done
 }
 
+# The Node.js runtime's build, from the install folder: no cd into repo/, since recheck_dir wants the working
+# directory to stay the checked install folder.
+build_node() {
+  { run npm --prefix "$D/repo/impl" ci --no-audit --no-fund && run npm --prefix "$D/repo/impl" run build; } || die 'the build failed'
+}
+
 fetch_and_build() {
   step 4 'get the code and build it'
   check_owned "$D" "$D/repo" "$D/install-gateway.sh" "$D/gw"
@@ -1043,7 +1101,7 @@ fetch_and_build() {
       -e HOME=/tmp -e npm_config_update_notifier=false \
       -v "$(here)/repo:/app" -w /app/impl "$NODE_IMAGE" sh -c 'npm ci --no-audit --no-fund && npm run build'
   else
-    (cd "$D/repo/impl" 2>/dev/null || [ "$DRY_RUN" = 1 ]; run npm ci --no-audit --no-fund && run npm run build) || die 'the build failed'
+    build_node
   fi
   [ "$DRY_RUN" = 1 ] || [ -f "$D/repo/impl/$GW_JS" ] || die "the build finished but $DIR/repo/impl/$GW_JS is missing"
 
@@ -1139,7 +1197,7 @@ setup_agent() {
 
 setup_pin() {
   step 6 'the approval PIN'
-  if [ -f "$D/data/gateway.json" ] && grep -q '"owner"' "$D/data/gateway.json" 2>/dev/null; then
+  if [ ! -L "$D/data/gateway.json" ] && [ -f "$D/data/gateway.json" ] && grep -q '"owner"' "$D/data/gateway.json" 2>/dev/null; then
     if [ "$UPDATE" = 1 ] || ask_yn --update 'An approval PIN is set. Keep it?' y; then
       say 'Keeping the PIN.'
       done_step 6
