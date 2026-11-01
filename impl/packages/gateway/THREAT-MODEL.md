@@ -58,7 +58,17 @@ of the folder into any container, and `exec`, `cp`, `run` or `attach` on
 the gateway's containers by name are refused, as are the installer and
 `./gw update`. The installer itself works from inside its folder by relative
 paths and re-checks it (owner, mode, ACL, real path) before every write and
-command, so a shared parent such as a NAS share cannot redirect it. This is best effort too: anyone who can
+command, so a shared parent such as a NAS share cannot redirect it; that
+part is a real boundary.
+
+**Accepted limits.** With Docker access on the gateway host, or a shell
+running inside the install folder, an assistant can reach the tunnel token
+and the gateway's data (the agent's key, the PIN hash, the OAuth signing
+key). The consent guard only catches the obvious spellings; it is defence in
+depth (#51), and no more rules are being added for Docker or tree walks. The
+real boundary is file permissions plus #126: keep the install folder owned
+by root or the owner with mode 700, and, if you want a boundary, do not give
+the assistant's user the docker group (or sudo) on the gateway host. This is best effort too: anyone who can
 run Docker is root-equivalent on that host and can read the token or the
 agent's key, and a shell has spellings the guard does not follow (#51). The
 real boundary for an assistant with a shell on the gateway host is tracked
