@@ -87,6 +87,8 @@ export interface NotifyConfig {
   created: string;
   /** Until when the previous secret (`….secret.prev`) signs too. */
   previousUntil?: string;
+  /** The identity (rdv1:…) of the agent it was set for: a migrate or resume never moves it to another. */
+  agentId?: string;
 }
 
 export interface AgentNotifyState {
@@ -465,6 +467,7 @@ export function validateNotifyData(raw: unknown, path = NOTIFY_FILE): NotifyData
     if (!Array.isArray(cfg.insecureHosts) || cfg.insecureHosts.some((h) => typeof h !== 'string')) fail(`agent ${b}: bad insecureHosts`);
     if (!Array.isArray(cfg.events) || cfg.events.length === 0 || cfg.events.some((e) => !(NOTIFY_EVENTS as readonly unknown[]).includes(e))) fail(`agent ${b}: bad events`);
     if (!isTime(cfg.created) || (cfg.previousUntil !== undefined && !isTime(cfg.previousUntil))) fail(`agent ${b}: bad times`);
+    if (cfg.agentId !== undefined && !isAgentId(cfg.agentId)) fail(`agent ${b}: bad agentId`);
     try {
       const hosts = (cfg.insecureHosts as string[]).map(checkInsecureHost);
       if (hosts.join() !== (cfg.insecureHosts as string[]).join()) fail(`agent ${b}: insecureHosts not in normal form`);
@@ -594,7 +597,7 @@ export class NotifyStore {
    * secret than before keeps the old one as ….secret.prev, signing too for 24 h. Its cursor starts at the end of its
    * events (history is never sent).
    */
-  async set(binding: string, cfg: Pick<NotifyConfig, 'url' | 'events' | 'insecureHosts'>, secret: Buffer, cursor: number, now = new Date()): Promise<NotifyConfig> {
+  async set(binding: string, cfg: Pick<NotifyConfig, 'url' | 'events' | 'insecureHosts'>, secret: Buffer, cursor: number, now = new Date(), agentId?: string): Promise<NotifyConfig> {
     if (!isBinding(binding)) throw new NotifyError(`invalid agent binding ${JSON.stringify(binding)}`);
     const hosts = cfg.insecureHosts.map(checkInsecureHost);
     const url = checkNotifyUrl(cfg.url, hosts);
@@ -614,7 +617,15 @@ export class NotifyStore {
         previousUntil = new Date(now.getTime() + SECRET_OVERLAP_MS).toISOString();
       }
       if (!old || !old.equals(sec)) writeAtomic(path, sec.toString('latin1'), 0o600);
-      const next: NotifyConfig = { url, events: [...cfg.events], insecureHosts: hosts, created: prev?.created ?? now.toISOString(), ...(previousUntil ? { previousUntil } : {}) };
+      const id = agentId ?? prev?.agentId;
+      const next: NotifyConfig = {
+        url,
+        events: [...cfg.events],
+        insecureHosts: hosts,
+        created: prev?.created ?? now.toISOString(),
+        ...(previousUntil ? { previousUntil } : {}),
+        ...(id ? { agentId: id } : {}),
+      };
       d.agents[binding] = next;
       if (!Object.hasOwn(d.state, binding)) d.state[binding] = { cursor, expired: [] };
       return next;

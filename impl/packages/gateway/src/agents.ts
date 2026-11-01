@@ -57,6 +57,8 @@ export interface AgentIdentity extends AgentEntry {
 }
 
 const stamp = (now: Date) => now.toISOString().replace(/[:.]/g, '-');
+/** A folder `agent migrate` kept the originals in: .premigrate-<ISO time with : and . as ->. */
+const PREMIGRATE_RE = /^\.premigrate-(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})-(\d{3})Z$/;
 
 export class AgentRoot {
   readonly home: Home;
@@ -201,36 +203,42 @@ export class AgentRoot {
   }
 
   /**
-   * A migrate that stopped after moving the files and before the rebind (killed): the root holds no agent, and the
-   * newest .premigrate-<time>/ that reads as an agent is the identity of exactly one agent under agents/. Returns the
-   * old root name (`from`, for grant resources) and that agent's name (`to`), so `agent migrate` can finish the rebind.
+   * The newest .premigrate-<time>/ folder in the root (by name, which sorts by time), when the root holds no agent:
+   * where `agent migrate --resume` looks, and nowhere else. `at` is its time (epoch ms), `id` the identity it holds.
    */
-  interruptedMigrate(): { from: string; to: string; kept: string } | undefined {
+  newestPremigrate(): { dir: string; at: number; id?: string; from: string } | undefined {
     if (this.home.initialized()) return undefined;
-    let kepts: string[] = [];
+    let names: string[] = [];
     try {
-      kepts = readdirSync(this.dir).filter((f) => f.startsWith('.premigrate-')).sort().reverse();
+      names = readdirSync(this.dir).filter((f) => PREMIGRATE_RE.test(f)).sort();
     } catch {
       return undefined;
     }
-    for (const k of kepts) {
-      const old = new AgentRoot(join(this.dir, k));
-      let id: string;
-      try {
-        id = old.home.readAgentState().card.id;
-      } catch {
-        continue;
-      }
-      const same = this.list().filter((a) => {
+    const last = names.at(-1);
+    if (!last) return undefined;
+    const m = PREMIGRATE_RE.exec(last)!;
+    const at = Date.parse(`${m[1]}T${m[2]}:${m[3]}:${m[4]}.${m[5]}Z`);
+    const old = new AgentRoot(join(this.dir, last));
+    let id: string | undefined;
+    try {
+      id = old.home.readAgentState().card.id;
+    } catch {
+      id = undefined;
+    }
+    return { dir: old.dir, at, id, from: old.rootAgentName() ?? 'default' };
+  }
+
+  /** The agents under agents/ that hold this identity. */
+  holdersOf(id: string): string[] {
+    return this.list()
+      .filter((a) => {
         try {
           return !a.root && a.home.readAgentState().card.id === id;
         } catch {
           return false;
         }
-      });
-      if (same.length === 1) return { from: old.rootAgentName() ?? 'default', to: same[0].name, kept: old.dir };
-    }
-    return undefined;
+      })
+      .map((a) => a.name);
   }
 
   /**

@@ -705,7 +705,7 @@ describe('fairness and floods (re-review of PR #131)', () => {
     hang.closeAllConnections();
   });
 
-  it("a stranger flood (a new key per request) never evicts the agent's invite_redeemed; the cap holds and no request is lost uncounted", { timeout: 60_000 }, async () => {
+  it("a stranger flood (a new key per request) never evicts the agent's invite_redeemed; the cap holds and no request is lost uncounted", { timeout: 20_000 }, async () => {
     const { root, list } = await agents(['omer']);
     const rcv = await receiver(Array(10_000).fill(503));
     const store = new NotifyStore(new Home(root));
@@ -716,7 +716,16 @@ describe('fairness and floods (re-review of PR #131)', () => {
     await appendEvents(list[0].home, [redeemed()]);
     await round(n);
     const key = () => agentIdFromPublicKey(generateKey().publicKey);
-    const ROUNDS = OUTBOX_PER_AGENT + 50;
+    // Earlier rounds, already tried once each (one request apiece), fill the agent's outbox to near its cap.
+    const SEEDED = OUTBOX_PER_AGENT - 10;
+    await store.update((d) => {
+      for (let i = 0; i < SEEDED; i++) {
+        const id = evt(5000 + i);
+        d.outbox.push({ id, agent: 'omer', agentId: list[0].id, event: 'contact_request', key: 'contact_request', count: 1, attempts: 1, first: clock.t, next: 9e15,
+          body: eventBody({ id, event: 'contact_request', agent: list[0].id, agentName: 'omer', at: new Date(clock.t).toISOString(), data: { count: 1 } }) });
+      }
+    });
+    const ROUNDS = 15;
     for (let r = 0; r < ROUNDS; r++) {
       await appendEvents(
         list[0].home,
@@ -733,8 +742,10 @@ describe('fairness and floods (re-review of PR #131)', () => {
     // Every request is counted once: in a waiting item, or in one evicted to the dead letters (none dropped here).
     expect(evicted.length).toBeGreaterThan(0);
     expect(evicted.every((i) => i.reason === 'the outbox was full')).toBe(true);
-    expect([...reqs, ...evicted].reduce((sum, i) => sum + count(i), 0)).toBe(2 * ROUNDS);
-    expect(reqs.every((i) => count(i) === 2)).toBe(true);
+    expect([...reqs, ...evicted].reduce((sum, i) => sum + count(i), 0)).toBe(SEEDED + 2 * ROUNDS);
+    // Only the seeded (oldest) items were evicted; each new round's two requests are one item.
+    expect(evicted.every((i) => count(i) === 1)).toBe(true);
+    expect(reqs.filter((i) => count(i) === 2)).toHaveLength(ROUNDS);
     const body = JSON.parse(reqs.at(-1)!.body);
     expect(body.data.recent_fingerprints).toHaveLength(2);
     expect(body.data.from_fingerprint).toBe(body.data.recent_fingerprints[0]);
@@ -815,25 +826,76 @@ describe('agent migrate with a webhook (re-review H1)', () => {
     }
   });
 
-  it('a migrate killed between the file move and the rebind is finished by the next one (narrow review of PR #131)', { timeout: 60_000 }, async () => {
+  it('a migrate killed between the file move and the rebind: refused with the command, finished by --resume <name>', { timeout: 60_000 }, async () => {
     const root = tmp();
-    await initHome(new Home(root), { profile: 'omer', emails: ['omer@example.com'] });
+    const id = (await initHome(new Home(root), { profile: 'omer', emails: ['omer@example.com'] })).id;
     const tokens = new GatewayStore(new Home(root));
-    await tokens.createToken('sammie', ['read'], ROOT_BINDING);
+    await tokens.createToken('sammie', ['read'], ROOT_BINDING, id);
+    await tokens.createToken('legacy', ['read'], ROOT_BINDING);
     const store = new NotifyStore(new Home(root));
-    await store.set(ROOT_BINDING, { url: 'https://hooks.example.com/rdv', events: ['invite_redeemed'], insecureHosts: [] }, KEY, 0);
+    await store.set(ROOT_BINDING, { url: 'https://hooks.example.com/rdv', events: ['invite_redeemed'], insecureHosts: [] }, KEY, 0, new Date(), id);
     // The files move, then the process dies before the rebind: the bindings are left on a root with no agent.
-    await new AgentRoot(root).migrate(undefined, async () => {});
-    expect(new AgentRoot(root).interruptedMigrate()).toMatchObject({ from: 'omer', to: 'omer' });
-    expect(tokens.listTokens()[0].agent).toBe(ROOT_BINDING);
-    const r = await bin(['agent', 'migrate', '--home', root]);
+    await new AgentRoot(root).migrate(undefined, async () => {}, new Date(Date.now() + 60_000));
+    const plain = await bin(['agent', 'migrate', '--home', root]);
+    expect(plain.code).not.toBe(0);
+    expect(plain.stderr).toContain('rdv-gateway agent migrate --resume omer');
+    expect(tokens.listTokens().every((t) => t.agent === ROOT_BINDING)).toBe(true);
+    expect((await bin(['agent', 'migrate', '--resume', 'nobody', '--home', root])).stderr).toMatch(/not the agent the newest migrate moved/);
+    const r = await bin(['agent', 'migrate', '--resume', 'omer', '--home', root]);
     expect(r.code, r.stderr).toBe(0);
-    expect(r.stderr).toMatch(/Finished an earlier migrate that stopped halfway: 1 token\(s\), 0 OAuth grant\(s\) and the webhook now reach agent "omer"/);
-    expect(new GatewayStore(new Home(root)).listTokens()[0].agent).toBe('omer');
+    expect(r.stderr).toMatch(/Finished the migrate that stopped halfway: token tok_\w+, token tok_\w+, the webhook now reach agent "omer"/);
+    expect(new GatewayStore(new Home(root)).listTokens().every((t) => t.agent === 'omer')).toBe(true);
     expect(Object.keys(new NotifyStore(new Home(root)).read().agents)).toEqual(['omer']);
     expect(existsSync(join(root, 'notify-omer.secret'))).toBe(true);
-    // Nothing left to finish: the next migrate says there is no root agent.
     expect((await bin(['agent', 'migrate', '--home', root])).stderr).toMatch(/no agent in the root/);
+  });
+
+  // The narrow review's two scenarios: agent A migrated; then agent B was made at the root with its own ':root' token.
+  async function twoIdentities(variant: 'removed' | 'handdelete') {
+    const root = tmp();
+    const tokens = () => new GatewayStore(new Home(root));
+    await initHome(new Home(root), { profile: 'omer', emails: ['omer@example.com'] });
+    await tokens().createToken('for-a', ['read'], ROOT_BINDING);
+    await new AgentRoot(root).migrate(undefined, async (f, t) => void (await tokens().rebindAgent(f, t)), new Date('2026-01-01T00:00:00Z'));
+    await initHome(new Home(root), { profile: 'dana', emails: ['dana@example.com'] });
+    await tokens().createToken('for-b', ['read'], ROOT_BINDING);
+    if (variant === 'handdelete') {
+      rmSync(new Home(root).agentPath, { force: true });
+      rmSync(new Home(root).agentBackupPath, { force: true });
+    } else {
+      await new AgentRoot(root).migrate(undefined, async () => {}, new Date('2026-06-01T00:00:00Z'));
+      new AgentRoot(root).remove('dana');
+    }
+    return { root, tokens };
+  }
+
+  it("B's interrupted migrate, B then removed: nothing of B's is ever moved to A (scenario 1)", { timeout: 60_000 }, async () => {
+    const { root, tokens } = await twoIdentities('removed');
+    expect((await bin(['agent', 'migrate', '--home', root])).stderr).toContain('rdv-gateway agent migrate --resume <name>');
+    // Only the newest kept folder (B's) counts: no fallback to A's older one.
+    expect((await bin(['agent', 'migrate', '--resume', 'omer', '--home', root])).stderr).toMatch(/not the agent the newest migrate moved/);
+    expect(tokens().listTokens().find((t) => t.name === 'for-b')!.agent).toBe(ROOT_BINDING);
+  });
+
+  it("B's key deleted by hand: B's token, made after A's migrate, is never moved to A (scenario 2)", { timeout: 60_000 }, async () => {
+    const { root, tokens } = await twoIdentities('handdelete');
+    const r = await bin(['agent', 'migrate', '--resume', 'omer', '--home', root]);
+    expect(r.code).not.toBe(0);
+    expect(r.stderr).toMatch(/refused: token tok_\w+ \(made .*, after that migrate\) cannot belong/);
+    expect(tokens().listTokens().find((t) => t.name === 'for-b')!.agent).toBe(ROOT_BINDING);
+  });
+
+  it('a binding that records another identity is never moved, by --resume or by a plain migrate', { timeout: 60_000 }, async () => {
+    const root = tmp();
+    await initHome(new Home(root), { profile: 'omer', emails: ['omer@example.com'] });
+    const other = agentIdFromPublicKey(generateKey().publicKey);
+    await new GatewayStore(new Home(root)).createToken('stranger', ['read'], ROOT_BINDING, other);
+    const plain = await bin(['agent', 'migrate', '--home', root]);
+    expect(plain.code).not.toBe(0);
+    expect(plain.stderr).toMatch(/refused: token tok_\w+ were made for another identity than the root agent's/);
+    expect(existsSync(join(root, 'agents', 'omer'))).toBe(false);
+    await new AgentRoot(root).migrate(undefined, async () => {}, new Date(Date.now() + 60_000));
+    expect((await bin(['agent', 'migrate', '--resume', 'omer', '--home', root])).stderr).toMatch(/\(another identity\) cannot belong/);
   });
 
   it('a failure halfway puts everything back as it was, and says so once', async () => {

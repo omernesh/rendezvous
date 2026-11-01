@@ -91,6 +91,8 @@ export interface OAuthServerOptions {
   /** What a grant for an agent stores (the root marker for the root agent), and the agent a stored binding names now. */
   binding?: (agent: string) => string;
   nameOf?: (binding: string | undefined) => string | undefined;
+  /** The identity (rdv1:…) of an agent by name, recorded on the grant. */
+  identityOf?: (agent: string) => string | undefined;
 }
 
 class OAuthError extends Error {
@@ -465,7 +467,7 @@ export class OAuthServer {
     // The grant's id is known before the write, so a second presentation racing it still ends that grant.
     c.grantId = newGrantId();
     try {
-      const issued = await this.store.createGrant(client, c.scopes, c.resource, this.o.now(), c.consentAt, c.grantId, this.o.binding ? this.o.binding(c.agent) : c.agent);
+      const issued = await this.store.createGrant(client, c.scopes, c.resource, this.o.now(), c.consentAt, c.grantId, this.o.binding ? this.o.binding(c.agent) : c.agent, c.agent !== undefined ? this.o.identityOf?.(c.agent) : undefined);
       if (c.replayed) {
         // Presented again while this grant was being written: it ends now.
         await this.store.revokeGrant(issued.grant.id);
