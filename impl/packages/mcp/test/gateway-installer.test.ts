@@ -252,6 +252,23 @@ describe.skipIf(noSh !== null)('install-gateway.sh: helpers', () => {
     }
   });
 
+  it("lists each further agent's own MCP address (a multi-agent gateway)", () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'rdv-gw-agents-'));
+    try {
+      for (const a of ['kids', 'work', '.removed']) mkdirSync(join(tmp, 'data', 'agents', a), { recursive: true });
+      const t = process.platform === 'win32' ? spawnSync('cygpath', ['-u', tmp], { encoding: 'utf8' }).stdout.trim() : tmp;
+      const out = lib(`set -f; D="${t}" PUBLIC_URL=https://gw.example.com; agent_urls`).out;
+      expect(out).toContain('https://gw.example.com/a/kids/mcp');
+      expect(out).toContain('https://gw.example.com/a/work/mcp');
+      expect(out).not.toContain('.removed');
+      expect(lib(`D=/nonexistent-x PUBLIC_URL=https://gw.example.com; agent_urls; echo end`).out).toBe('end');
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+    // The helper passes agent commands to rdv-gateway (the human runs them, then restarts).
+    expect(src).toContain('pin | token | oauth | agent) exec');
+  });
+
   it('refuses to build or run code another user owns (./gw update would run it)', () => {
     // A stand-in `id` makes us someone who does not own the script file.
     const r = lib(`id() { if [ "$1" = -u ]; then echo 4242; else command id "$@"; fi; }; check_owned "${SH_PATH}"; echo reached`);

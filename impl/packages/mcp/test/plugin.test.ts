@@ -1296,7 +1296,7 @@ describe('the rdv-gateway-setup skill', () => {
     for (const f of new Set([...md.matchAll(/`(--[a-z-]+)/g)].map((m) => m[1]))) expect(installer, f).toContain(`  ${f}`);
   });
 
-  it.each(['./gw pin set', './gw token create --name x --scope read', '~/rendezvous-gateway/gw token revoke tok_1', './gw oauth revoke cli_x', './gw backup ~/b.rdvbackup', './gw rdv contact grant 0f1e'])(
+  it.each(['./gw pin set', './gw token create --name x --scope read', '~/rendezvous-gateway/gw token revoke tok_1', './gw oauth revoke cli_x', './gw backup ~/b.rdvbackup', './gw rdv contact grant 0f1e', './gw agent add kids new --email kids@example.com', './gw agent add kids --restore /backup/kids.backup', './gw agent remove kids', './gw agent migrate'])(
     'the guard refuses the installer helper: %s',
     (c) => expect(checkCommand(c)).toBeTruthy(),
   );
@@ -1425,7 +1425,7 @@ describe('the rdv-gateway-setup skill', () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
-  it.each(['rdv send rdv1:abc --text "$MSG"', 'rdv --home h whoami', './gw status', './gw logs tunnel', './gw logs "$SVC"', './gw rdv whoami', './gw token list', 'rdv-gateway serve --public-url "$URL" --client-ip-header cf-connecting-ip', 'cat install-gateway.sh', 'curl -fsSLo install-gateway.sh https://rendezvous.nesher.co/install-gateway.sh', 'sudo cp install-gateway.sh /opt/x', 'docker compose ps'])('the guard allows %s', (c) =>
+  it.each(['rdv send rdv1:abc --text "$MSG"', 'rdv --home h whoami', './gw status', './gw logs tunnel', './gw logs "$SVC"', './gw rdv whoami', './gw token list', './gw agent list', 'rdv-gateway serve --public-url "$URL" --client-ip-header cf-connecting-ip', 'cat install-gateway.sh', 'curl -fsSLo install-gateway.sh https://rendezvous.nesher.co/install-gateway.sh', 'sudo cp install-gateway.sh /opt/x', 'docker compose ps'])('the guard allows %s', (c) =>
     expect(checkCommand(c)).toBeUndefined(),
   );
 });
