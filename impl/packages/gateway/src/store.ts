@@ -59,6 +59,8 @@ function scrypt(pin: string, salt: Buffer): Promise<Buffer> {
 }
 
 export class StoreError extends Error {}
+/** The PIN in place is not the one the caller checked (a change landed in between). */
+export class PinChangedError extends StoreError {}
 
 /** Why a new PIN is refused (too short or long, one repeated character, a run of digits), if it is. */
 export function pinRuleError(pin: string): string | undefined {
@@ -126,7 +128,7 @@ export class GatewayStore {
    * the PIN and approve on the page.
    */
   async changePin(current: string | undefined, next: string, now: number): Promise<void> {
-    let checked: string | undefined;
+    let checked: string | null = null; // null: no PIN yet, so the first set must still find none
     if (this.hasPin()) {
       if (current === undefined) throw new StoreError('a PIN is set: give the current one to change it');
       const check = await this.checkPin(current, now);
@@ -140,16 +142,17 @@ export class GatewayStore {
     await this.setPin(next, checked);
   }
 
-  /** `onlyIfSetAt`: replace the PIN only while it is still the one that was checked (else StoreError, nothing written). */
-  async setPin(pin: string, onlyIfSetAt?: string): Promise<void> {
+  /** `onlyIfSetAt`: replace the PIN only while it is still the one that was checked, `null` only while there is none (else StoreError, nothing written). */
+  async setPin(pin: string, onlyIfSetAt?: string | null): Promise<void> {
     const why = pinRuleError(pin);
     if (why) throw new StoreError(why);
     const salt = randomBytes(16);
     const hash = await scrypt(pin, salt);
     await this.update((d) => {
-      if (onlyIfSetAt !== undefined && d.owner?.created !== onlyIfSetAt) throw new StoreError('the PIN changed meanwhile; nothing changed');
-      let created = new Date().toISOString();
-      if (created === d.owner?.created) created = new Date(Date.parse(created) + 1).toISOString();
+      if (onlyIfSetAt !== undefined && (d.owner?.created ?? null) !== onlyIfSetAt) throw new PinChangedError('the PIN changed meanwhile; nothing changed');
+      // Only ever grows, even when the clock steps back: a session compares this value to know the PIN changed.
+      const prev = d.owner ? Date.parse(d.owner.created) : Number.NEGATIVE_INFINITY;
+      const created = new Date(Math.max(Date.now(), prev + 1)).toISOString();
       d.owner = { salt: salt.toString('base64'), hash: hash.toString('base64'), created };
       d.lockout = { failures: 0 };
     });
@@ -206,7 +209,7 @@ export class GatewayStore {
   // --- API tokens ----------------------------------------------------------------
 
   /** A new token for one agent: returned once, stored only as its hash. */
-  async createToken(name: string, scopes: string[], agent?: string, agentId?: string): Promise<{ token: string; info: ApiToken }> {
+  async createToken(name: string, scopes: string[], agent?: string, agentId?: string, expectedPinSetAt?: string): Promise<{ token: string; info: ApiToken }> {
     const n = name.trim();
     if (!/^[A-Za-z0-9][A-Za-z0-9 ._-]{0,47}$/.test(n)) throw new StoreError('a token name is 1 to 48 letters, digits, spaces, dots, dashes or underscores');
     const bad = scopes.filter((s) => !isScope(s));
@@ -223,6 +226,7 @@ export class GatewayStore {
       ...(agentId !== undefined ? { agentId } : {}),
     };
     await this.update((d) => {
+      if (expectedPinSetAt !== undefined && d.owner?.created !== expectedPinSetAt) throw new PinChangedError('the PIN changed meanwhile');
       if (Object.keys(d.tokens).length >= MAX_TOKENS) throw new StoreError(`at most ${MAX_TOKENS} tokens; revoke one first`);
       // Names tell tokens apart on the approval page: one name, one token.
       if (Object.values(d.tokens).some((t) => t.name.toLowerCase() === n.toLowerCase())) throw new StoreError(`a token named "${n}" exists already; pick another name or revoke it first`);
