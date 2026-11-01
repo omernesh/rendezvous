@@ -22,7 +22,7 @@
 import '@rendezvous/core/safe-console';
 import { parseArgs } from 'node:util';
 import { describeBackup, Home, initHome, readBackupFile, readEvents, restoreBackup } from '@rendezvous/cli/lib';
-import { AgentError, AgentRoot, checkAgentName, ROOT_BINDING } from './agents.js';
+import { AgentError, AgentRoot, checkAgentName, isRootBinding, ROOT_BINDING } from './agents.js';
 import { checkInsecureHost, checkNotifyUrl, DEFAULT_NOTIFY_EVENTS, NOTIFY_EVENTS, type NotifyEvent, NotifyError, NotifyStore, readSecretFile, receiverName, secretFileName } from './notify.js';
 import { DEFAULT_PORT, Gateway } from './gateway.js';
 import { SCOPE_TEXT, SCOPES } from './scopes.js';
@@ -342,6 +342,24 @@ async function agentCommand(root: AgentRoot, store: GatewayStore, sub: string | 
     return;
   }
   if (sub === 'migrate') {
+    // A migrate killed between moving the files and the rebind left tokens, grants and the webhook on the root agent,
+    // which is no longer there: finish that rebind (the files are already where they belong).
+    const stopped = root.interruptedMigrate();
+    if (stopped) {
+      const tokens = store.listTokens().filter((t) => isRootBinding(t.agent)).length;
+      const grants = oauth.list().grants.filter((g) => isRootBinding(g.agent)).length;
+      const hook = notify.config(ROOT_BINDING) !== undefined;
+      if (tokens || grants || hook) {
+        if (values.name !== undefined && values.name !== stopped.to) die(`an earlier migrate moved the root agent into agents/${stopped.to}/ and stopped before its tokens followed; run "rdv-gateway agent migrate" (without --name) to finish it`, 2);
+        await store.rebindAgent(stopped.from, stopped.to);
+        await oauth.rebindAgent(stopped.from, stopped.to);
+        await notify.rebind(ROOT_BINDING, stopped.to);
+        process.stderr.write(
+          `Finished an earlier migrate that stopped halfway: ${tokens} token(s), ${grants} OAuth grant(s)${hook ? ' and the webhook' : ''} now reach agent "${stopped.to}" (its files were already in ${root.homeFor(stopped.to).dir}; the originals are in ${stopped.kept}).\n`,
+        );
+        return;
+      }
+    }
     const to = values.name ?? root.rootAgentName();
     if (to !== undefined) {
       // Stale bindings to the new name would reach the root agent once it takes that name.

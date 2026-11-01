@@ -31,8 +31,10 @@ import {
   eventBody,
   eventData,
   Gateway,
+  GatewayStore,
   Notifier,
   type NotifierOptions,
+  type OutboxItem,
   NotifyStore,
   OUTBOX_PER_AGENT,
   parseSecret,
@@ -281,6 +283,7 @@ describe('URL rules and SSRF', () => {
     expect(checkInsecureHost('[FD7A:115C:A1E0::]/48')).toBe('fd7a:115c:a1e0::/48');
     // IPv6 entries are stored in canonical form, so the same address is one entry and matches its own URL.
     expect(checkInsecureHost('FD7A:115C:A1E0:0:0:0:0:0/48')).toBe('fd7a:115c:a1e0::/48');
+    expect(() => checkInsecureHost('fe80::1%eth0')).toThrow(/no IPv6 zone id/);
     expect(checkInsecureHost('FD7A:0115:C0A8:0000:0000:0000:0000:0001')).toBe('fd7a:115:c0a8::1');
     expect(checkNotifyUrl('http://[fd7a:115:c0a8::1]:8080/rdv', [checkInsecureHost('FD7A:0115:C0A8:0:0:0:0:1')])).toBe('http://[fd7a:115:c0a8::1]:8080/rdv');
     for (const bad of ['http://x', 'x:8080', '10.0.0.0/33', '', 'a b']) expect(() => checkInsecureHost(bad), bad).toThrow(/--allow-insecure-host/);
@@ -702,34 +705,70 @@ describe('fairness and floods (re-review of PR #131)', () => {
     hang.closeAllConnections();
   });
 
-  it("a stranger flood (a new key per request) never evicts the agent's invite_redeemed: requests roll into one event", async () => {
+  it("a stranger flood (a new key per request) never evicts the agent's invite_redeemed; the cap holds and no request is lost uncounted", { timeout: 60_000 }, async () => {
     const { root, list } = await agents(['omer']);
     const rcv = await receiver(Array(10_000).fill(503));
     const store = new NotifyStore(new Home(root));
     await store.set('omer', local(rcv.url, ['invite_redeemed', 'contact_request']), KEY, 0);
+    // The clock stands still: a failed item is not due again, so each round's requests go into a new, never-tried item.
     const clock = { t: Date.now() };
     const n = notifier(store, list, clock);
     await appendEvents(list[0].home, [redeemed()]);
     await round(n);
-    const key = (_i: number) => agentIdFromPublicKey(generateKey().publicKey);
-    let k = 0;
-    for (let r = 0; r < 60; r++) {
+    const key = () => agentIdFromPublicKey(generateKey().publicKey);
+    const ROUNDS = OUTBOX_PER_AGENT + 50;
+    for (let r = 0; r < ROUNDS; r++) {
       await appendEvents(
         list[0].home,
-        Array.from({ length: 10 }, () => ({ event: 'request', id: '6f1c1d2e-3b4a-4c5d-8e9f-0a1b2c3d4e5f', from: key(k++), binding: 'claimed', greeting: 'hi' })),
+        Array.from({ length: 2 }, () => ({ event: 'request', id: '6f1c1d2e-3b4a-4c5d-8e9f-0a1b2c3d4e5f', from: key(), binding: 'claimed', greeting: 'hi' })),
       );
-      clock.t += 1000;
       await round(n);
     }
     const d = store.read();
     expect(d.outbox.some((i) => i.event === 'invite_redeemed')).toBe(true);
-    const req = d.outbox.filter((i) => i.event === 'contact_request');
-    expect(req).toHaveLength(1);
-    const body = JSON.parse(req[0].body);
-    expect(body.data.count).toBe(600);
-    expect(body.data.recent_fingerprints).toHaveLength(5);
+    expect(d.outbox.filter((i) => i.agent === 'omer').length).toBeLessThanOrEqual(OUTBOX_PER_AGENT);
+    const count = (i: OutboxItem) => (JSON.parse(i.body) as { data: { count: number } }).data.count;
+    const reqs = d.outbox.filter((i) => i.event === 'contact_request');
+    const evicted = d.dead.filter((i) => i.event === 'contact_request');
+    // Every request is counted once: in a waiting item, or in one evicted to the dead letters (none dropped here).
+    expect(evicted.length).toBeGreaterThan(0);
+    expect(evicted.every((i) => i.reason === 'the outbox was full')).toBe(true);
+    expect([...reqs, ...evicted].reduce((sum, i) => sum + count(i), 0)).toBe(2 * ROUNDS);
+    expect(reqs.every((i) => count(i) === 2)).toBe(true);
+    const body = JSON.parse(reqs.at(-1)!.body);
+    expect(body.data.recent_fingerprints).toHaveLength(2);
     expect(body.data.from_fingerprint).toBe(body.data.recent_fingerprints[0]);
-    expect(d.dead).toHaveLength(0);
+  });
+
+  it('a request never merges into an item that was tried: the receiver may hold it already (narrow review of PR #131)', async () => {
+    const { root, list } = await agents(['omer']);
+    const rcv = await receiver([503, 503]);
+    const store = new NotifyStore(new Home(root));
+    await store.set('omer', local(rcv.url, ['contact_request']), KEY, 0);
+    const clock = { t: Date.now() };
+    const n = notifier(store, list, clock);
+    await round(n);
+    const req = (from: string) => ({ event: 'request', id: '6f1c1d2e-3b4a-4c5d-8e9f-0a1b2c3d4e5f', from, binding: 'claimed' });
+    const [p1, p2, p3] = [0, 1, 2].map(() => agentIdFromPublicKey(generateKey().publicKey));
+    await appendEvents(list[0].home, [req(p1)]);
+    await round(n);
+    const tried = store.read().outbox[0];
+    expect(tried.attempts).toBe(1);
+    await appendEvents(list[0].home, [req(p2), req(p3)]);
+    await round(n);
+    const d = store.read();
+    // The tried item is byte for byte what the receiver got; the new requests are their own item.
+    const again = d.outbox.find((i) => i.id === tried.id)!;
+    expect(again.body).toBe(rcv.hits[0].body);
+    expect(JSON.parse(again.body).data.count).toBe(1);
+    const fresh = d.outbox.find((i) => i.id !== tried.id)!;
+    expect(JSON.parse(fresh.body).data.count).toBe(2);
+    // Delivered later: the receiver sees the first under its old id and the merged one under its own.
+    clock.t += 3_600_000;
+    await round(n);
+    const ids = rcv.hits.map((h) => JSON.parse(h.body).id);
+    expect(new Set(ids)).toEqual(new Set([tried.id, fresh.id]));
+    expect(rcv.hits.filter((h) => JSON.parse(h.body).id === tried.id).every((h) => h.body === rcv.hits[0].body)).toBe(true);
   });
 
   it('when over its cap an agent loses requests and messages first, invites last', async () => {
@@ -774,6 +813,27 @@ describe('agent migrate with a webhook (re-review H1)', () => {
     for (const dir of [join(root, 'agents', 'omer'), join(root, kept)]) {
       expect((await import('node:fs')).readdirSync(dir).filter((f) => f.startsWith('notify-')), dir).toEqual([]);
     }
+  });
+
+  it('a migrate killed between the file move and the rebind is finished by the next one (narrow review of PR #131)', { timeout: 60_000 }, async () => {
+    const root = tmp();
+    await initHome(new Home(root), { profile: 'omer', emails: ['omer@example.com'] });
+    const tokens = new GatewayStore(new Home(root));
+    await tokens.createToken('sammie', ['read'], ROOT_BINDING);
+    const store = new NotifyStore(new Home(root));
+    await store.set(ROOT_BINDING, { url: 'https://hooks.example.com/rdv', events: ['invite_redeemed'], insecureHosts: [] }, KEY, 0);
+    // The files move, then the process dies before the rebind: the bindings are left on a root with no agent.
+    await new AgentRoot(root).migrate(undefined, async () => {});
+    expect(new AgentRoot(root).interruptedMigrate()).toMatchObject({ from: 'omer', to: 'omer' });
+    expect(tokens.listTokens()[0].agent).toBe(ROOT_BINDING);
+    const r = await bin(['agent', 'migrate', '--home', root]);
+    expect(r.code, r.stderr).toBe(0);
+    expect(r.stderr).toMatch(/Finished an earlier migrate that stopped halfway: 1 token\(s\), 0 OAuth grant\(s\) and the webhook now reach agent "omer"/);
+    expect(new GatewayStore(new Home(root)).listTokens()[0].agent).toBe('omer');
+    expect(Object.keys(new NotifyStore(new Home(root)).read().agents)).toEqual(['omer']);
+    expect(existsSync(join(root, 'notify-omer.secret'))).toBe(true);
+    // Nothing left to finish: the next migrate says there is no root agent.
+    expect((await bin(['agent', 'migrate', '--home', root])).stderr).toMatch(/no agent in the root/);
   });
 
   it('a failure halfway puts everything back as it was, and says so once', async () => {
