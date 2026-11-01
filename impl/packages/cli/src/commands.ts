@@ -1490,6 +1490,9 @@ export async function contactRevoke({ home, out, positionals }: Ctx): Promise<vo
   out.emit({ event: 'revoked', peer }, `revoked ${peer}`);
 }
 
+/** --stdin reads a piped line; on a terminal it would echo the secret, so there the hidden prompt is used instead (issue #126). */
+const pipedStdin = (values: Ctx['values']): boolean => values.stdin === true && process.stdin.isTTY !== true;
+
 /** One line from stdin (`--stdin`: the human piped a passphrase in on purpose), without its line end. */
 async function stdinLine(): Promise<string> {
   let raw = '';
@@ -1502,7 +1505,7 @@ async function stdinLine(): Promise<string> {
 
 /** The backup passphrase: from the terminal itself (not echoed), or with --stdin from stdin; never an argument. */
 async function backupSecret(ctx: Ctx, question: string): Promise<string> {
-  if (ctx.values.stdin === true) return stdinLine();
+  if (pipedStdin(ctx.values)) return stdinLine();
   const term = ctx.tty ?? processTty();
   if (!term.interactive) {
     throw new CliError('the backup passphrase is read from your terminal (or, if you mean it, from stdin with --stdin); it is never an argument. Only you may do this, in your own terminal');
@@ -1519,14 +1522,14 @@ export async function backupCmd(ctx: Ctx): Promise<void> {
   const { home, out, positionals } = ctx;
   home.requireInit();
   const term = ctx.tty ?? processTty();
-  if (ctx.values.stdin !== true) {
+  if (!pipedStdin(ctx.values)) {
     if (!term.interactive) await backupSecret(ctx, ''); // refuses
     term.say(BACKUP_INTRO);
   }
   const first = await backupSecret(ctx, 'Backup passphrase (not shown): ');
   const weak = backupPassphraseProblem(first);
   if (weak) throw new CliError(`the backup passphrase needs ${weak}: nothing was written`, 2);
-  if (ctx.values.stdin !== true) {
+  if (!pipedStdin(ctx.values)) {
     const again = await backupSecret(ctx, 'Type it again: ');
     if (again !== first) throw new CliError('the two did not match: nothing was written', 2);
   }
@@ -1568,7 +1571,7 @@ export async function restoreCmd(ctx: Ctx): Promise<void> {
     throw new CliError(`an agent already exists at ${home.dir}: restoring would replace it, and its key, for good. Pass --replace if that is what you mean (or restore into another --home/--profile)`);
   }
   const { abs, bytes, header } = readBackupFile(home, positionals[0]);
-  if (values.stdin !== true) {
+  if (!pipedStdin(values)) {
     const term = ctx.tty ?? processTty();
     if (!term.interactive) await backupSecret(ctx, ''); // refuses
     term.say(['', 'Restore this agent from its backup:', describeBackup(header, abs), ...(replace ? ['', `  This REPLACES the agent at ${home.dir}, and its key, for good.`] : []), ''].join('\n'));

@@ -33,7 +33,8 @@ only in the user's own terminal: never run them yourself. The installer
 runs the first two for the user, in their terminal, where they type the
 answers. Never download or run the installer yourself: the user runs it.
 These commands refuse to run without an interactive terminal (stdin and
-stdout), so from your shell they fail anyway; when one is refused, never
+stdout), which stops a shell with none but not one running in a real
+terminal, so never run them even then; when one is refused, never
 look for a way around it (a pseudo-terminal, `docker exec`, a script): give
 the user the command to run in their own terminal (`ssh -t` for another
 machine; `docker exec -it`, never plain `docker exec`, in a container).

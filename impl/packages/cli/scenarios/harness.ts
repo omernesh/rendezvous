@@ -1,7 +1,9 @@
 // Drives real `rdv` processes (node dist/src/bin.js), each with its own home.
 import { type ChildProcessWithoutNullStreams, execFile, spawn } from 'node:child_process';
+import { realpathSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { basename, dirname, join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { basename, dirname, join, resolve, sep } from 'node:path';
 import { createInterface } from 'node:readline';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { humanOnlyArgv } from '../src/main.js';
@@ -35,7 +37,35 @@ const AS_HUMAN = [
 
 /** node's arguments for `rdv <args>`: bin.js, or for a human-only command the stand-in for the human's terminal (AS_HUMAN). */
 export function rdvArgv(args: string[]): string[] {
-  return humanOnlyArgv(args) === undefined ? [RDV_BIN, ...args] : [...AS_HUMAN, ...args];
+  if (humanOnlyArgv(args) === undefined) return [RDV_BIN, ...args];
+  assertTempHome(args);
+  return [...AS_HUMAN, ...args];
+}
+
+/** The real path of the nearest existing ancestor of `p`, with the rest appended (the home may not exist yet). */
+function realish(p: string): string {
+  const abs = resolve(p);
+  try {
+    return realpathSync.native(abs);
+  } catch {
+    const parent = dirname(abs);
+    return parent === abs ? abs : join(realish(parent), basename(abs));
+  }
+}
+
+/**
+ * This file ships in @rendezvous/cli and stands in for the human's terminal, so it must never act on a real home:
+ * the gated path refuses any --home (or $RDV_HOME) that is not under os.tmpdir() (issue #126).
+ */
+function assertTempHome(args: string[]): void {
+  const i = args.lastIndexOf('--home');
+  const home = i >= 0 ? args[i + 1] : process.env.RDV_HOME;
+  if (!home) throw new Error('the scenario harness runs human-only commands only on an explicit temporary --home');
+  const tmp = realish(tmpdir());
+  const real = realish(home);
+  if (real !== tmp && !real.startsWith(tmp.endsWith(sep) ? tmp : tmp + sep)) {
+    throw new Error(`the scenario harness refuses a home outside ${tmp}: ${home}`);
+  }
 }
 
 export type Line = Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
