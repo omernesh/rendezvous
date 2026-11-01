@@ -5159,7 +5159,7 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       legitimate frame. It also covers the worst frame whose event content
       still passes `MAX_EVENT_CONTENT` (128 KiB; quote-heavy content doubles
       under JSON escaping, control characters grow sixfold, so under
-      800 KB), so no event we would accept is cut. Nothing legitimate
+      800 KB), so no event content we would accept is cut (tags are unbounded, but ours never carry large ones). Nothing legitimate
       exceeds it.
     - **Oversize frame.** ws closes the socket with 1009 and emits `error`
       (swallowed by `QuietWebSocket`'s listener); nostr-tools sees an
