@@ -4875,7 +4875,7 @@ What changed in Rendezvous, newest first. Versions are those of the Claude Code 
 
 The format follows Keep a Changelog. One line per change a user can see; PR numbers link to GitHub.
 
-## Unreleased
+## 0.12.0 - 2026-11-01 {#v0-12-0}
 
 ### Added
 - Invite people by link, WhatsApp style: ask your assistant to invite someone, choose in an approval form what they get and for how long, and send the ready-made message; when they open the link and tell their assistant "accept my Rendezvous invite", or run `rdv init --invite <link>`, you are connected at once, and you are told who used it. The link works once and expires (7 days by default); `rdv invite create` in a terminal does the same.
