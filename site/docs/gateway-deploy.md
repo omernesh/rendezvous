@@ -198,11 +198,22 @@ The MCP address is `https://gw.example.com/mcp`.
 - **claude.ai:** Settings, Connectors, Add custom connector. Paste the URL. Leave the client ID and secret empty so it registers itself ("Register automatically").
 - **ChatGPT:** turn on developer mode (Settings, Connectors, Advanced), create a connector with the same URL, and choose OAuth.
 - **Claude Code:** `claude mcp add --transport http rendezvous https://gw.example.com/mcp`, then run `/mcp` inside Claude Code and authenticate.
-- **A Custom GPT Action, or a script:** these use a static bearer token instead of OAuth. Make one in your terminal with the `token create` command (see the gateway section of [CLI and library](https://rendezvous.nesher.co/docs/cli.md); give it the narrowest scopes: `read`, `send`, `contact:request`, `negotiate`). It is shown once. In the GPT's Action, import `https://gw.example.com/openapi.json` and set authentication to API key, Bearer. Revoke with `token revoke <id>`.
+- **A Custom GPT Action, or a script:** these use a static bearer token instead of OAuth. Make one on the gateway's settings page (`https://gw.example.com/approve/admin`, below), or in your terminal with the `token create` command (see the gateway section of [CLI and library](https://rendezvous.nesher.co/docs/cli.md)). Give it the narrowest scopes: `read`, `send`, `contact:request`, `negotiate`. It is shown once. In the GPT's Action, import `https://gw.example.com/openapi.json` and set authentication to API key, Bearer. Revoke it on the same page (or with `token revoke <id>`).
 
 OAuth connectors send your browser to the gateway's consent page. **Check the return address on that page before you approve**: anyone can register an app under any name, so trust the host it returns to (`claude.ai`, `chatgpt.com`), not the name. You unlock the page with your PIN, can untick scopes, and approve. Nothing is approved automatically, and no scope can approve a contact, a task or a dinner: those wait for you on the page.
 
-See and end connections with `./gw oauth list` and `./gw oauth revoke <cli_...|grt_...>`.
+See and end connections on the settings page, or with `./gw oauth list` and `./gw oauth revoke <cli_...|grt_...>`.
+
+#### The settings page
+
+Routine administration needs no terminal: open `https://gw.example.com/approve/admin` (or "Gateway settings" at the bottom of the approval page) and unlock it with your PIN. For each agent it shows:
+
+- **Access tokens**: name, id, scopes and when each was made (never the token itself). Make one (a name, the scopes you tick, nothing ticked to start, and your PIN again): the token is shown once, on that page only. Revoke one: the gateway refuses it at the next request and closes its open sessions.
+- **Connected apps (OAuth)**: each connection's app name (what the app called itself), where it returns, scopes and last refresh. Disconnect one, or remove a whole app with every connection it has.
+- **Webhook**: where it posts (scheme and host only), which events, how many wait and how many are dead letters. Turn it off. Setting a webhook stays in the terminal (`./gw notify set`), because it needs a secret file and, for a private address, an allowed host.
+- **Your PIN**: change it with the current one and the new one twice. Every unlocked page signs out.
+
+Changes apply to the running gateway at once, like the terminal commands. Your assistants cannot open the page: a request that carries a bearer token is refused there, whatever its scopes, and no tool or API call administers the gateway. Setting the first PIN, `pin unlock`, and adding, removing or migrating agents stay in the terminal. Anyone with your PIN and your address can now make tokens from the network, so keep the PIN as private as before (see the threat model).
 
 ### Several agents on one gateway
 
@@ -231,7 +242,7 @@ Your assistant only hears about an accepted invite when it next reads its inbox.
 openssl rand -hex 32 > data/notify.secret && chmod 600 data/notify.secret
 ./gw notify set omer --url https://hooks.example.com/rdv --secret-file /data/notify.secret
 ./gw notify set omer --url http://100.101.102.103:8080/rdv --allow-insecure-host 100.101.102.103 --secret-file /data/notify.secret
-./gw notify show                     # every agent's receiver (scheme and host), events, waiting events and dead letters
+./gw notify show                     # every agent's receiver (scheme and host), events, waiting events and dead letters (also on the settings page)
 ./gw notify dead-letter omer         # events given up on; --retry sends them again (same ids)
 ./gw notify clear omer
 ```

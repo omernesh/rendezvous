@@ -9,6 +9,7 @@
 //   /api/v1/tools/* the same tools over REST (bearer token); /openapi.json describes them
 //   /sse            the same MCP over the legacy HTTP+SSE transport (POSTs to /messages)
 //   /approve        the owner's PIN-locked approval page: the only place anything is approved
+//   /approve/admin  the owner's settings on the same page (tokens, OAuth apps, PIN, webhooks; NOTES 110); never a bearer
 //   /oauth/*, /.well-known/oauth-*   the built-in OAuth 2.1 authorization server (oauth.ts, slice 2)
 //
 // Consent never passes through the cloud assistant: the tools run in the MCP
@@ -57,8 +58,9 @@ import { openApi } from './openapi.js';
 import { BRAND_CSS, FAVICON_SVG } from './brand.js';
 import { type AgentLabel, approvalPage, consentCsp, consentPage, CSS, donePage, errorPage, type Flash, listPage, PAGE_CSP, unlockPage } from './pages.js';
 import { authorizeCall, SCOPES, type Scope, toolScopes } from './scopes.js';
-import { GatewayStore } from './store.js';
-import { Notifier, type NotifierOptions, NotifyStore } from './notify.js';
+import { GatewayStore, pinRuleError, StoreError } from './store.js';
+import { Notifier, type NotifierOptions, NotifyStore, receiverName } from './notify.js';
+import { type AdminAgent, type AdminGrant, type AdminToken, adminPage, tokenMadePage } from './admin.js';
 
 export const DEFAULT_PORT = 8787;
 export const API_BODY_MAX = 256 * 1024;
@@ -812,9 +814,34 @@ export class Gateway {
     sendHtml(res, status, html, PAGE_CSP, cookies.length ? { 'Set-Cookie': cookies } : {});
   }
 
-  private unlock(res: ServerResponse, next: string, message?: Flash, status = 200): void {
+  private unlock(res: ServerResponse, next: string, message?: Flash, status = 200, cookies: string[] = []): void {
     const pre = randomToken(18);
-    this.html(res, status, unlockPage({ csrf: this.csrfFor(`pre:${pre}`), next, message }), [this.cookie('rdvg_pre', pre, 600)]);
+    this.html(res, status, unlockPage({ csrf: this.csrfFor(`pre:${pre}`), next, message }), [this.cookie('rdvg_pre', pre, 600), ...cookies]);
+  }
+
+  /**
+   * The owner's PIN, checked the one way the page checks it (unlock, and the settings page's token create and PIN
+   * change): the unlock rate, the client's own backoff, the stored backoff, one check at a time. A miss is logged.
+   */
+  private async ownerPin(who: string, pin: string, where: string): Promise<{ ok: true } | { ok: false; status: number; text: string }> {
+    this.unlockLimiter.check(this.opts.clientIpHeader ? who : 'unlock', 'PIN attempts');
+    const perClient = this.opts.clientIpHeader !== undefined;
+    const wait = perClient ? this.clientWait(who) : 0;
+    if (wait) return { ok: false, status: 429, text: `Too many wrong PINs from here: try again in ${Math.ceil(wait / 1000)} s.` };
+    // Every miss counts globally too (distributed guessing); clients told apart get more global tries before the backoff.
+    const check = await this.store.checkPin(pin, this.now(), perClient ? GLOBAL_FREE_TRIES_PER_CLIENT_MODE : undefined);
+    if (!check.ok) {
+      if (perClient && !check.noPin && !check.lockedFor) this.clientFailed(who);
+      const text = check.lockedFor
+        ? `Too many wrong PINs: try again in ${Math.ceil(check.lockedFor / 60_000)} minute(s), or clear it in your own terminal (rdv-gateway pin unlock).`
+        : check.noPin
+          ? 'No PIN is set: set one in your own terminal (rdv-gateway pin set).'
+          : 'That is not the PIN.';
+      if (!check.lockedFor) this.log(`a wrong PIN was entered on the ${where}`);
+      return { ok: false, status: 403, text };
+    }
+    if (perClient) this.clientFailures.delete(who);
+    return { ok: true };
   }
 
   /** The client's address: the trusted tunnel header when configured (its last entry), else the socket's. */
@@ -864,31 +891,22 @@ export class Gateway {
       // Bound to this browser: a consent link forwarded to the owner (a stranger's own connect) opens nothing.
       return redirect(res, `/approve/oauth/${link.id}`, { 'Set-Cookie': this.consentCookie(link.nonce) });
     }
+    // The settings page is the owner's browser only: a request carrying a bearer token (an assistant's) is refused
+    // before any session or form is looked at, whatever the token's scopes (NOTES 110).
+    if (isAdminPath(path) && req.headers.authorization !== undefined) {
+      this.log('a request with an Authorization header was refused on the gateway settings page');
+      throw new HttpError(403, 'the gateway settings page is for the owner in a browser; no token reaches it', 'forbidden');
+    }
     const sid = this.ownerSession(req);
     if (path === '/approve/unlock') {
       if (req.method !== 'POST') return redirect(res, '/approve');
       const form = await readForm(req, FORM_BODY_MAX);
       const pre = parseCookies(req.headers.cookie).get('rdvg_pre') ?? '';
       this.checkPost(req, form, `pre:${pre}`);
+      const next = /^\/approve(\/apr_[A-Za-z0-9_-]{8,64}|\/oauth\/[A-Za-z0-9_-]{16,4000}\.[A-Za-z0-9_-]{43}|\/admin)?$/.test(form.get('next') ?? '') ? form.get('next')! : '/approve';
       // Only a post from our own unlock form spends the unlock budget, per client when clients are told apart.
-      this.unlockLimiter.check(this.opts.clientIpHeader ? who : 'unlock', 'PIN attempts');
-      const next = /^\/approve(\/apr_[A-Za-z0-9_-]{8,64}|\/oauth\/[A-Za-z0-9_-]{16,4000}\.[A-Za-z0-9_-]{43})?$/.test(form.get('next') ?? '') ? form.get('next')! : '/approve';
-      const perClient = this.opts.clientIpHeader !== undefined;
-      const wait = perClient ? this.clientWait(who) : 0;
-      if (wait) return this.unlock(res, next, { text: `Too many wrong PINs from here: try again in ${Math.ceil(wait / 1000)} s.`, bad: true }, 429);
-      // Every miss counts globally too (distributed guessing); clients told apart get more global tries before the backoff.
-      const check = await this.store.checkPin(form.get('pin') ?? '', this.now(), perClient ? GLOBAL_FREE_TRIES_PER_CLIENT_MODE : undefined);
-      if (!check.ok) {
-        if (perClient && !check.noPin && !check.lockedFor) this.clientFailed(who);
-        const text = check.lockedFor
-          ? `Too many wrong PINs: try again in ${Math.ceil(check.lockedFor / 60_000)} minute(s), or clear it in your own terminal (rdv-gateway pin unlock).`
-          : check.noPin
-            ? 'No PIN is set: set one in your own terminal (rdv-gateway pin set).'
-            : 'That is not the PIN.';
-        if (!check.lockedFor) this.log('a wrong PIN was entered on the approval page');
-        return this.unlock(res, next, { text, bad: true }, 403);
-      }
-      if (perClient) this.clientFailures.delete(who);
+      const check = await this.ownerPin(who, form.get('pin') ?? '', 'approval page');
+      if (!check.ok) return this.unlock(res, next, { text: check.text, bad: true }, check.status);
       while (this.owners.size >= MAX_OWNER_SESSIONS) this.owners.delete(this.owners.keys().next().value!);
       const id = randomToken(32);
       this.owners.set(id, { created: this.now(), lastSeen: this.now(), pinSetAt: this.store.pinSetAt() });
@@ -910,6 +928,7 @@ export class Gateway {
       return this.html(res, 200, listPage({ agents: this.agents.map((a) => ({ ...this.label(a), items: a.approvals.list() })), csrf }));
     }
     if (path.startsWith('/approve/oauth/')) return this.consent(req, res, path.slice('/approve/oauth/'.length), sid, csrf);
+    if (isAdminPath(path)) return this.admin(req, res, path, sid, csrf, who);
     const id = path.slice('/approve/'.length);
     let rt: AgentRuntime | undefined;
     let item: PendingApproval | undefined;
@@ -929,6 +948,187 @@ export class Gateway {
     const form = await readForm(req, FORM_BODY_MAX);
     this.checkPost(req, form, `owner:${sid}`);
     return this.decide(res, rt, item, form, csrf);
+  }
+
+  // --- the owner's settings page (NOTES 110) -------------------------------------------
+
+  /**
+   * /approve/admin: tokens, connected apps, the PIN and webhooks, per agent. Reached only through page(): the owner's
+   * unlocked session, the session's CSRF token on every post, same-origin checks, no bearer. Every write goes through
+   * the same stores (and locks) as the terminal's commands, which a serving gateway follows at once.
+   */
+  private async admin(req: IncomingMessage, res: ServerResponse, path: string, sid: string, csrf: string, who: string): Promise<void> {
+    const show = (status: number, message?: Flash) => this.html(res, status, adminPage({ ...this.adminView(), csrf, message }));
+    if (path === '/approve/admin') {
+      if (req.method !== 'GET') throw new HttpError(405, 'GET only', 'method_not_allowed');
+      return show(200);
+    }
+    if (req.method !== 'POST') return redirect(res, '/approve/admin');
+    const form = await readForm(req, FORM_BODY_MAX);
+    this.checkPost(req, form, `owner:${sid}`);
+    const action = path.slice('/approve/admin/'.length);
+    const agentName = form.get('agent') ?? '';
+    const bad = (status: number, text: string) => show(status, { text, bad: true });
+
+    if (action === 'pin') {
+      const next = form.get('next') ?? '';
+      if (next !== (form.get('again') ?? '')) return bad(400, 'The two new PINs differ; nothing changed.');
+      // The new PIN's rules first, so a refused one spends no PIN attempt.
+      const rule = pinRuleError(next);
+      if (rule) return bad(400, `${rule[0].toUpperCase()}${rule.slice(1)}; nothing changed.`);
+      const check = await this.ownerPin(who, form.get('current') ?? '', 'gateway settings page (PIN change)');
+      if (!check.ok) return bad(check.status, `${check.text} Nothing changed.`);
+      try {
+        await this.store.setPin(next);
+      } catch (err) {
+        if (err instanceof StoreError) return bad(400, `${err.message}; nothing changed.`);
+        throw err;
+      }
+      // A new PIN ends every unlocked session (ownerSession compares when the PIN was set), this one too.
+      this.owners.clear();
+      this.log('admin: the PIN was changed on the gateway settings page; every unlocked page is signed out');
+      return this.unlock(res, '/approve/admin', { text: 'Your PIN is changed. Unlock with the new one.' }, 200, [this.cookie(this.cookieName(), '', 0)]);
+    }
+
+    if (action === 'token/create') {
+      const rt = this.byName.get(agentName);
+      if (!rt) return bad(400, 'Choose an agent this gateway serves; nothing was made.');
+      const scopes = SCOPES.filter((s) => form.get(`s_${s}`) === '1');
+      if (!scopes.length) return bad(400, 'Tick at least one thing the token may do; nothing was made.');
+      // A token is lasting access: making one asks for the PIN again, with the same backoff as the unlock.
+      const check = await this.ownerPin(who, form.get('pin') ?? '', 'gateway settings page (token create)');
+      if (!check.ok) return bad(check.status, `${check.text} No token was made.`);
+      if (!rt.id) return bad(409, `Agent ${rt.name}'s identity cannot be read; no token was made.`);
+      let made;
+      try {
+        made = await this.store.createToken(form.get('name') ?? '', scopes, rt.root ? ROOT_BINDING : rt.name, rt.id);
+      } catch (err) {
+        if (err instanceof StoreError) return bad(400, `${err.message}; no token was made.`);
+        throw err;
+      }
+      const { token, info } = made;
+      this.log(`admin: token ${info.id} ("${info.name}") made for agent ${rt.name}, scopes ${info.scopes.join(', ')}, on the gateway settings page`);
+      return this.html(res, 200, tokenMadePage({ token, info, agent: this.label(rt), csrf }));
+    }
+
+    if (action === 'token/revoke') {
+      const id = form.get('id') ?? '';
+      const t = this.store.listTokens().find((x) => x.id === id);
+      if (!t || !this.bindingIsFor(t.agent, agentName)) return bad(404, 'No such token for that agent; nothing was revoked.');
+      await this.store.revokeToken(id);
+      this.endPrincipal(id);
+      this.log(`admin: token ${id} ("${t.name}") of ${this.agentText(agentName)} revoked on the gateway settings page`);
+      return show(200, { text: `Revoked "${t.name}" (${id}). It reaches nothing now, and its open sessions are closed.` });
+    }
+
+    if (action === 'oauth/revoke') {
+      const id = form.get('id') ?? '';
+      if (agentName === '*') {
+        // A whole app: every grant it has on every agent (the page says so).
+        if (!/^cli_[0-9a-f]{24}$/.test(id) || !this.oauth.store.client(id)) return bad(404, 'No such app; nothing was removed.');
+        const r = await this.oauth.store.revoke(id, this.now());
+        for (const g of r?.grants ?? []) this.endPrincipal(g.id);
+        this.log(`admin: OAuth client ${id} and its ${r?.grants.length ?? 0} grant(s) removed on the gateway settings page`);
+        return show(200, { text: `Removed the app (${id}) and its ${r?.grants.length ?? 0} connection(s).` });
+      }
+      const g = /^grt_/.test(id) ? this.oauth.store.grant(id) : undefined;
+      if (!g || !this.bindingIsFor(g.agent, agentName)) return bad(404, 'No such connection for that agent; nothing was disconnected.');
+      await this.oauth.store.revoke(id, this.now());
+      this.endPrincipal(id);
+      this.log(`admin: OAuth grant ${id} of ${this.agentText(agentName)} revoked on the gateway settings page`);
+      return show(200, { text: `Disconnected ${id}. Its tokens reach nothing now, and its open sessions are closed.` });
+    }
+
+    if (action === 'notify/clear') {
+      const rt = this.byName.get(agentName);
+      if (!rt) return bad(400, 'No such agent; nothing changed.');
+      const r = await this.notifyStore.clear(rt.root ? ROOT_BINDING : rt.name);
+      if (!r.had) return show(200, { text: `Agent ${rt.name} had no webhook.` });
+      this.log(`admin: the webhook of agent ${rt.name} was turned off on the gateway settings page (${r.dropped} waiting event(s) dropped)`);
+      return show(200, { text: `Agent ${rt.name} posts nothing now${r.dropped ? ` (${r.dropped} waiting event(s) dropped)` : ''}; its secret is deleted.` });
+    }
+    throw new HttpError(404, 'not found', 'not_found');
+  }
+
+  /** Whether a stored binding belongs under the agent a settings form names ("-": reaching no agent served here). */
+  private bindingIsFor(binding: string | undefined, agentName: string): boolean {
+    const a = this.boundAgent(binding);
+    if (agentName === '-') return a === undefined || !this.byName.has(a);
+    return a !== undefined && a === agentName && this.byName.has(a);
+  }
+
+  private agentText(agentName: string): string {
+    return agentName === '-' ? 'no agent served here' : `agent ${agentName}`;
+  }
+
+  /** What the settings page lists: never a token's value or hash, a PIN or a webhook secret. */
+  private adminView(): { agents: AdminAgent[]; orphans: { tokens: AdminToken[]; grants: AdminGrant[] }; clients: Array<{ id: string; name: string; hosts: string[]; created: string; agents: string[] }> } {
+    const tokens = this.store.listTokens();
+    const o = this.oauth.store.list();
+    const clientOf = (ref: string) => o.clients.find((c) => c.id === ref);
+    let notify: ReturnType<NotifyStore['read']> | undefined;
+    try {
+      notify = this.notifyStore.read();
+    } catch {
+      notify = undefined;
+    }
+    const tokenView = (t: (typeof tokens)[number], agent?: string): AdminToken => ({
+      id: t.id,
+      name: t.name,
+      scopes: t.scopes,
+      created: t.created,
+      ...(agent !== undefined && this.identityDiffers(t.agent, t.agentId, t.created, agent) ? { stale: true } : {}),
+    });
+    const grantView = (g: (typeof o.grants)[number], agent?: string): AdminGrant => {
+      const c = clientOf(g.clientId);
+      return {
+        id: g.id,
+        client: c?.name ?? '(app removed)',
+        clientId: g.clientId,
+        host: c ? c.redirectUris.map((u) => new URL(u).host).join(', ') : '',
+        scopes: g.scopes,
+        created: g.created,
+        lastUsed: g.lastUsed,
+        ...(agent !== undefined && this.identityDiffers(g.agent, g.agentId, g.created, agent) ? { stale: true } : {}),
+      };
+    };
+    const agents = this.agents.map((rt): AdminAgent => {
+      const binding = rt.root ? ROOT_BINDING : rt.name;
+      const cfg = notify && Object.hasOwn(notify.agents, binding) ? notify.agents[binding] : undefined;
+      const mine = (i: { agent: string; agentId: string }) => i.agent === binding && i.agentId === rt.id;
+      return {
+        ...this.label(rt),
+        tokens: tokens.filter((t) => this.bindingIsFor(t.agent, rt.name)).map((t) => tokenView(t, rt.name)),
+        grants: o.grants.filter((g) => this.bindingIsFor(g.agent, rt.name)).map((g) => grantView(g, rt.name)),
+        ...(cfg
+          ? {
+              webhook: {
+                receiver: receiverName(cfg.url),
+                events: cfg.events,
+                insecureHosts: cfg.insecureHosts,
+                since: cfg.created,
+                ...(cfg.previousUntil ? { previousUntil: cfg.previousUntil } : {}),
+                waiting: notify!.outbox.filter(mine).length,
+              },
+            }
+          : {}),
+        dead: notify ? notify.dead.filter(mine).length : 0,
+      };
+    });
+    return {
+      agents,
+      orphans: {
+        tokens: tokens.filter((t) => this.bindingIsFor(t.agent, '-')).map((t) => tokenView(t)),
+        grants: o.grants.filter((g) => this.bindingIsFor(g.agent, '-')).map((g) => grantView(g)),
+      },
+      clients: o.clients.map((c) => ({
+        id: c.id,
+        name: c.name,
+        hosts: c.redirectUris.map((u) => new URL(u).host),
+        created: c.created,
+        agents: [...new Set(o.grants.filter((g) => g.clientId === c.id).map((g) => this.boundAgent(g.agent)).filter((a): a is string => a !== undefined && this.byName.has(a)))],
+      })),
+    };
   }
 
   /** How the page names an agent: its name here and its fingerprint. */
@@ -1041,6 +1241,8 @@ export class Gateway {
     );
   }
 }
+
+const isAdminPath = (path: string) => path === '/approve/admin' || path.startsWith('/approve/admin/');
 
 /**
  * The key a client address is counted under: an IPv6 address by its /64 (one

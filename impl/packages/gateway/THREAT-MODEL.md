@@ -32,6 +32,8 @@ tokens) and 93 (slice 2: the built-in OAuth 2.1 authorization server).
 | Someone who stole an authorization code or a refresh token | present it at the token endpoint | use a code without the PKCE verifier; use a rotated refresh token without ending the whole grant; use a token at another resource |
 
 | A local assistant with a shell on the owner's machine (Claude Code, Codex, …) | run commands as the owner | set or clear the PIN, make tokens, then approve on 127.0.0.1 |
+| Any bearer token (static or OAuth), whatever its scopes, or the assistant holding it (NOTES 110) | call its tools | open the settings page; list, make or revoke tokens or apps; change the PIN; see or clear a webhook |
+| Someone who learned the PIN, from the network (NOTES 110) | unlock the page, so also the settings page | read a token's value or hash, a webhook secret or its path; set a webhook; add, remove or move an agent; clear the PIN wait |
 | A token or OAuth grant of one agent on a multi-agent gateway (NOTES 104), or whoever steers its assistant | everything its scopes allow on its own agent | call tools on, read the inbox of, see or answer approvals of, or take held results (invite links) of any other agent; open or reuse a session under another agent |
 | The owner's webhook receiver, the network to it, or a name it resolves through (NOTES 106) | receive, delay or refuse the agent's signed event notices | approve, grant or revoke anything; get an invite link, a key or message text; redirect the gateway to a private address; get another agent's events |
 
@@ -136,8 +138,8 @@ in the terminal. The page has no JavaScript; its CSP allows only our
 stylesheet and same-origin forms, and forbids framing.
 
 **The PIN.** At least six characters, stored as salted scrypt in
-`gateway.json` (mode 600), set only from a terminal, and changed only with
-the current PIN (see above). Wrong PINs back off,
+`gateway.json` (mode 600), first set only from a terminal, and changed only
+with the current PIN (see above), in the terminal or on the settings page. Wrong PINs back off,
 they never lock for good: after five misses (globally) each further miss
 waits one minute, doubling up to an hour, persisted across restarts; misses
 are forgotten after a day without one, and the owner clears the wait at once
@@ -365,6 +367,39 @@ assistant with a shell that writes the files under another name or path it
 cannot see still gets past it. The signature authenticates the gateway
 to the receiver, not the reverse. Tests: `notify.test.ts`.
 
+**The settings page** (NOTES 110, issue #102 item 7). *New surface:* before
+it, making tokens, ending OAuth connections, changing the PIN and clearing a
+webhook needed a terminal on the gateway host; the PIN only approved what an
+assistant had asked for. Now whoever holds the PIN and reaches the page can
+also, from the network, make a token with any scopes for any agent served
+(lasting access until revoked, still unable to approve anything), revoke
+tokens and connections, turn a webhook off, and change the PIN (locking the
+owner out until they set a new one in their terminal: `pin set` asks for
+the current PIN, so a lost PIN means editing `gateway.json` on the host).
+*Controls:* the page lives under `/approve/admin` and goes through the same
+code as the approval page: the PIN unlock with its rate, per-client and
+global backoff, the in-memory owner session (15 minutes idle, an hour at
+most, Path `/approve` or `__Host-` behind https), the session's HMAC CSRF
+token and the Origin and `Sec-Fetch-Site` checks on every post, the Host
+allow-list, no JavaScript, the page CSP and `no-store`. Any request to it
+that carries an `Authorization` header is refused (403) before the session
+is looked at, so a bearer never reaches it, even riding on the owner's
+cookie; there is no admin tool, no REST route and nothing under `/a/<name>/`
+(tests try every scope, REST, MCP and the agent URLs). Making a token asks
+for the PIN again (the same check and backoff), so a session left open is
+not enough for lasting access; changing the PIN asks for the current one and
+ends every unlocked session. Every action names the agent it is for, and the
+gateway checks the token or grant is bound to that agent (or to none served
+here, for the "reaching no agent" list) before it acts. A token's value is
+shown once, in the answer to the post that made it, never logged; the page
+never shows a hash, a webhook secret or the webhook URL's path. Writes go
+through the same stores and lock files as the terminal commands, which the
+serving gateway follows at once; a revoke also closes the principal's open
+sessions at once. Each action is logged to stderr (what, which agent, the
+token or grant id, never a value). *Not on the page, by design:* the first
+PIN, `pin unlock`, setting a webhook (it needs a secret file and an allowed
+host), dead-letter retry, and adding, removing or migrating agents.
+
 ## Known limits and open risks
 
 - Multi-agent: one PIN for all agents (per-agent PINs are not built), and
@@ -375,6 +410,10 @@ to the receiver, not the reverse. Tests: `notify.test.ts`.
   takes effect on the next restart, and until then a token for an agent added
   since is refused.
 
+- The PIN now also guards lasting access (tokens made on the settings page,
+  NOTES 110), not only approvals. A phished or shoulder-surfed PIN is worth
+  more than before; passkeys (a later slice) are the fix. Revoke what you do
+  not recognise on the settings page, and change the PIN there.
 - The PIN backoff trades guessing against lock-out. Without
   `--client-ip-header`, every request through a tunnel comes from 127.0.0.1,
   so the backoff is global: a stranger who reaches the page can make the owner

@@ -5169,6 +5169,85 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       envelope arrives; a frame one byte over the cap gets close code 1009
       and the transport re-joins.
 
+## The gateway settings page (issue #102 item 7)
+
+110. **Routine gateway administration is on the owner's PIN-locked page,
+    `/approve/admin`; the terminal is the fallback** (no spec change: the
+    gateway is the reference implementation's packaging, nothing on the
+    wire). Until now listing, making and revoking tokens, ending OAuth
+    connections, changing the PIN and clearing a webhook needed ssh and
+    `rdv-gateway` on the host.
+    - **What it does, per agent.** Tokens: listed by name, id, scopes and
+      creation time (tokens record no last use, and the page says "not
+      recorded"; never the value or its hash); made with a name, the scopes
+      the owner ticks (none ticked to start, at least one needed, the scope
+      table's own set: deny by default) and the PIN again; revoked. OAuth:
+      each grant (the client's registered name as untrusted text, its return
+      host, scopes, connection time, last refresh) disconnected, or a whole
+      client removed (every grant on every agent, and its old consent links
+      refused, as `oauth revoke cli_…` does). Webhook: scheme and host only
+      (a path may hold the receiver's token), events, allowed insecure
+      hosts, waiting events, dead letters and the previous secret's overlap;
+      turned off (`NotifyStore.clear`, dead letters kept, as `notify clear`).
+      PIN: the current one, the new one twice. Tokens and grants bound to no
+      agent served now are listed apart ("reaching no agent here"), revoke
+      only.
+    - **Not on the page.** The first PIN (`start()` still refuses without
+      one), `pin unlock`, `notify set` (it needs a secret file and, for a
+      private receiver, an allow-listed host: the page says so and names the
+      command), `notify dead-letter --retry`, and `agent add|remove|migrate`.
+    - **One page code path.** It is a branch of `Gateway.page()` under
+      `/approve/admin`, after the owner session check, so it gets the
+      approval page's unlock, session cookie (Path `/approve`, or `__Host-`
+      behind https), the `owner:<sid>` HMAC CSRF token checked by
+      `checkPost` (plus Origin and `Sec-Fetch-Site`) on every post, the Host
+      allow-list, the page rate limit, `PAGE_CSP` and the `no-store` every
+      response carries. No JavaScript; every value is escaped. The unlock's
+      `next` accepts `/approve/admin`.
+    - **Bearers never reach it.** A request to `/approve/admin*` carrying an
+      `Authorization` header is refused with 403 before the session is
+      looked at (and logged), so a token cannot use the page even riding on
+      the owner's cookie; without the header it is just a browser that has
+      to unlock. There is no admin tool in `RdvMcpServer`, no REST route and
+      no `/a/<name>/approve` (that path is 404). `admin.test.ts` tries a
+      token with every scope on every admin route, with and without the
+      owner's cookie and CSRF token, the REST names an admin tool would
+      have, and the MCP and REST tool lists.
+    - **The PIN check is shared.** `ownerPin` is the unlock's check moved
+      into a method (unlock rate, the per-client backoff with
+      `--client-ip-header`, the stored global backoff, one check at a time,
+      a logged miss), used by the unlock, token create and the PIN change.
+      Token create asks for the PIN again because a token outlives the
+      session: an unlocked page left open is not enough for lasting access.
+      The PIN change checks the new PIN's rules (`pinRuleError`, shared with
+      `setPin`) and that both copies match before it spends an attempt on
+      the current one, then ends every owner session (the new `pinSetAt`
+      would too) and shows the unlock form.
+    - **Bound to an agent.** Every post names the agent it is for; token
+      create binds the token to that agent's binding (the root marker for
+      the root agent) and records its identity, as `token create --agent`
+      does; a revoke checks that the token's or grant's binding resolves to
+      that agent (`bindingIsFor`, or `-` for one that reaches no agent
+      here) and answers 404 otherwise. Removing a client is gateway-wide and
+      the page says which agents it reaches.
+    - **At once, and beside the terminal.** Writes go through
+      `GatewayStore`, `OAuthStore` and `NotifyStore`, the same
+      read-modify-write under `gateway.lock`, `gateway-oauth.lock` and
+      `gateway-notify.lock` with atomic writes that the CLI uses, and reads
+      follow the file, so a token made or revoked on the page works or is
+      refused at the next request, as one from the terminal is. A revoke on
+      the page also closes the principal's MCP and SSE sessions at once
+      (`endPrincipal`) instead of at the next sweep. A test runs the
+      terminal's `token create` while the page makes five: all six are kept.
+    - **Shown once, logged never.** The token value is in the answer to the
+      post that made it (not a redirect target, so a reload re-posts and
+      the unique name refuses a second token), with `no-store`; the page
+      never shows it again and the log line names the id, name, agent and
+      scopes. Each action logs one `admin:` line to stderr (#124): token
+      made or revoked, grant or client removed, webhook off, PIN changed;
+      never a value, a PIN or a secret.
+    - **Covered by.** `gateway/test/admin.test.ts`.
+
 ## Not implemented yet
 
 

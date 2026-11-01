@@ -60,6 +60,15 @@ function scrypt(pin: string, salt: Buffer): Promise<Buffer> {
 
 export class StoreError extends Error {}
 
+/** Why a new PIN is refused (too short or long, one repeated character, a run of digits), if it is. */
+export function pinRuleError(pin: string): string | undefined {
+  if (pin.length < PIN_MIN || pin.length > PIN_MAX) return `the PIN must be ${PIN_MIN} to ${PIN_MAX} characters`;
+  if (/^(.)\1*$/.test(pin) || '0123456789012345678901234567890'.includes(pin) || '9876543210987654321098765432109'.includes(pin)) {
+    return 'pick a PIN that is not one repeated character or a run of digits';
+  }
+  return undefined;
+}
+
 export type PinCheck = { ok: true } | { ok: false; lockedFor?: number; noPin?: boolean };
 
 export class GatewayStore {
@@ -129,10 +138,8 @@ export class GatewayStore {
   }
 
   async setPin(pin: string): Promise<void> {
-    if (pin.length < PIN_MIN || pin.length > PIN_MAX) throw new StoreError(`the PIN must be ${PIN_MIN} to ${PIN_MAX} characters`);
-    if (/^(.)\1*$/.test(pin) || '0123456789012345678901234567890'.includes(pin) || '9876543210987654321098765432109'.includes(pin)) {
-      throw new StoreError('pick a PIN that is not one repeated character or a run of digits');
-    }
+    const why = pinRuleError(pin);
+    if (why) throw new StoreError(why);
     const salt = randomBytes(16);
     const hash = await scrypt(pin, salt);
     await this.update((d) => {
