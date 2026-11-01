@@ -248,7 +248,9 @@ export interface AuditEntry {
    * covers, issue #93); gate `owner-secret`: `set`, `changed` or `reset`;
    * gate `backup`: `create` or `restore`.
    */
-  action?: 'set' | 'extend' | 'off' | 'keep' | 'changed' | 'reset' | 'create' | 'restore';
+  action?: 'set' | 'extend' | 'off' | 'keep' | 'changed' | 'reset' | 'create' | 'restore' | 'disarm';
+  /** gate `auto-approve`, action `disarm`: the open invite whose "Don't ask again" choice the owner took off (NOTES 112). */
+  invite?: string;
   /** gate `auto-approve`, action `off`: why. */
   reason?: AutoApproveOff;
   /** gate `auto-approve`, set/extend: the expiry (null: until turned off) and the capabilities it covered then. */

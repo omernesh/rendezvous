@@ -49,10 +49,19 @@ export interface AdminAutoApproved {
   until: string | null;
 }
 
+/** An open invite link that would put whoever uses it on auto-approve (NOTES 112). Never the link or its secret. */
+export interface AdminArmedInvite {
+  id: string;
+  label?: string;
+  expires: string;
+  covers: string[];
+}
+
 export interface AdminAgent extends AgentLabel {
   tokens: AdminToken[];
   grants: AdminGrant[];
   autoApproved: AdminAutoApproved[];
+  armedInvites: AdminArmedInvite[];
   webhook?: AdminWebhook;
   dead: number;
 }
@@ -118,6 +127,18 @@ function autoRows(list: AdminAutoApproved[], agent: string, csrf: string): strin
     .join('')}</tbody></table>`;
 }
 
+/** Open invite links armed with "Don't ask again": Disarm leaves the link working as an ordinary invite. Never the link itself. */
+function armedRows(list: AdminArmedInvite[], agent: string, csrf: string): string {
+  if (!list.length) return '';
+  const covers = (u: string) => (u === MEETINGS_CAPABILITY ? 'dinners they propose' : `tasks that ask ${u}`);
+  return `<p class="muted">Open invite links that put whoever uses them on auto-approve. Disarm takes that off; the link keeps working as an ordinary invite.</p><table class="admin"><thead><tr><th>Invite</th><th>Would happen without asking you</th><th>Link works until</th><th></th></tr></thead><tbody>${list
+    .map(
+      (i) =>
+        `<tr><td>${i.label ? `<b>${e(i.label)}</b><br>` : ''}<span class="muted">${e(i.id)}</span></td><td>${i.covers.map((u) => e(covers(u))).join('<br>')}</td><td>${e(when(i.expires))}</td><td>${button('/approve/admin/invite/disarm', csrf, { agent, id: i.id }, 'Disarm')}</td></tr>`,
+    )
+    .join('')}</tbody></table>`;
+}
+
 function createForm(agent: string, csrf: string): string {
   const scopes = SCOPES.map((s) => `<label class="check"><input type="checkbox" name="s_${e(s)}" value="1"> <span><b>${e(s)}</b>: ${e(SCOPE_TEXT[s])}</span></label>`).join('');
   return `<details><summary>Make an access token</summary><form method="post" action="/approve/admin/token/create">${hidden('csrf', csrf)}${hidden('agent', agent)}
@@ -141,7 +162,7 @@ function agentPart(a: AdminAgent, csrf: string, multi: boolean): string {
   return `<section class="card">${multi ? `<h2>${agentTag(a)}</h2>` : `<p class="for">Agent ${agentTag(a)}</p>`}
 <h3>Access tokens</h3><p class="muted">For assistants that connect with a token. Each reaches only this agent.</p>${tokenRows(a.tokens, a.name, csrf)}${createForm(a.name, csrf)}
 <h3>Connected apps (OAuth)</h3>${grantRows(a.grants, a.name, csrf)}
-<h3>Auto-approved contacts</h3><p class="muted">These contacts no longer need your approval for what is listed. You turn this on only when you tick "Don't ask again" on an approval form; Turn off takes effect at once.</p>${autoRows(a.autoApproved, a.name, csrf)}
+<h3>Auto-approved contacts</h3><p class="muted">These contacts no longer need your approval for what is listed. You turn this on only when you tick "Don't ask again" on an approval form; Turn off takes effect at once.</p>${autoRows(a.autoApproved, a.name, csrf)}${armedRows(a.armedInvites, a.name, csrf)}
 <h3>Webhook</h3>${webhookPart(a, csrf)}</section>`;
 }
 

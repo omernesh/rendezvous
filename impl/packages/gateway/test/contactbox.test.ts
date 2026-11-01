@@ -2,7 +2,7 @@
 // PIN page that approves a contact or makes an invite, only the owner's answer
 // sets it, and the settings page lists who is on it, with a Turn off button
 // behind the session and CSRF checks that no bearer token reaches.
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fingerprint, MEETINGS_CAPABILITY } from '@rendezvous/core';
@@ -171,5 +171,79 @@ describe('the box on the gateway page', () => {
     expect((await s.b.post('/approve/admin/auto-approve/off', form)).status).toBe(404);
     expect((await s.b.post('/approve/admin/auto-approve/off', { ...form, peer: '<script>' })).status).toBe(404);
     expect((await s.b.post('/approve/admin/auto-approve/off', { ...form, agent: 'nobody' })).status).toBe(400);
+  });
+
+  it('an armed invite: the link is shown only to the owner, never held for the asking assistant, and a webhook-style event reaches the human', { timeout: 90_000 }, async () => {
+    const s = await setup();
+    const asked = await api(s.g.base, s.token, 'rdv_invite', { action: 'create' });
+    const { done } = await answer(s.b, asked.body.result.approve_url, { f_tier: 'friend', f_expires_days: '2', f_name: '', f_label: 'Dana', f_may_propose_meetings: '1', f_always_allow: '1' });
+    const link = linkIn(done);
+    const secret = link.split('#')[1];
+    expect(done).toContain('Dana'); // the owner's page still has everything it had
+    const ev = await waitApi(s.g.base, s.token, (e) => e.type === 'approval' && e.tool === 'rdv_invite', 'the invite');
+    expect(ev.result.auto_approve_when_used).toMatchObject({ state: 'chosen' });
+    expect(ev.held_for_you).toMatch(/not available to you at all/);
+    expect(ev.held_for_you).not.toMatch(/rdv_invite action "link"/);
+    // Nowhere in tool output or the shared log: no link, no url, no share_text.
+    expect(JSON.stringify(ev)).not.toContain(secret);
+    expect(JSON.stringify(ev)).not.toMatch(/share_text|"url"/);
+    expect(JSON.stringify(ev.result)).toMatch(/shown only to your user/);
+    expect(readFileSync(join(s.g.home.dir, 'events.jsonl'), 'utf8')).not.toContain(secret);
+    // rdv_invite "link" says so plainly and returns nothing, now or later.
+    for (let i = 0; i < 2; i++) {
+      const r = await api(s.g.base, s.token, 'rdv_invite', { action: 'link', approval_id: ev.approval_id });
+      expect(r.status).not.toBe(200);
+      expect(r.text).toMatch(/shown only to them on the approval page/);
+      expect(r.text).not.toContain(secret);
+    }
+    // The link still works for whoever the owner gives it to.
+    await ok(s.dana, 'rdv_accept_invite', { invite: link });
+    await waitApi(s.g.base, s.token, (e) => e.type === 'auto_approve_on' && e.agent_id === s.danaId, 'auto_approve_on');
+  });
+
+  it('an unarmed invite keeps handing the link to the asking assistant, once', { timeout: 90_000 }, async () => {
+    const s = await setup();
+    const asked = await api(s.g.base, s.token, 'rdv_invite', { action: 'create' });
+    const { done } = await answer(s.b, asked.body.result.approve_url, { f_tier: 'friend', f_expires_days: '2', f_name: '', f_label: '', f_may_propose_meetings: '1' });
+    const ev = await waitApi(s.g.base, s.token, (e) => e.type === 'approval' && e.tool === 'rdv_invite', 'the invite');
+    expect(ev.held_for_you).toMatch(/rdv_invite action "link"/);
+    const mine = await api(s.g.base, s.token, 'rdv_invite', { action: 'link', approval_id: ev.approval_id });
+    expect(mine.body.result.url).toBe(linkIn(done));
+  });
+
+  it('the settings page lists armed open invites and Disarm takes the choice off; no link, bearer refused, CSRF and agent checked', { timeout: 90_000 }, async () => {
+    const s = await setup();
+    const asked = await api(s.g.base, s.token, 'rdv_invite', { action: 'create' });
+    const { done } = await answer(s.b, asked.body.result.approve_url, { f_tier: 'friend', f_expires_days: '2', f_name: '', f_label: 'Dana <b>', f_may_propose_meetings: '1', f_always_allow: '1' });
+    const link = linkIn(done);
+    const ev = await waitApi(s.g.base, s.token, (e) => e.type === 'approval' && e.tool === 'rdv_invite', 'the invite');
+    const admin = await s.b.get('/approve/admin');
+    expect(admin.text).toContain('action="/approve/admin/invite/disarm"');
+    expect(admin.text).toContain(ev.result.invite_id);
+    expect(admin.text).toContain('Dana &lt;b&gt;');
+    expect(admin.text).toContain('dinners they propose');
+    expect(admin.text).not.toContain(link.split('#')[1]);
+    expect(admin.text).not.toContain('rendezvous.nesher.co/i#');
+    const form = { agent: 'omer', id: ev.result.invite_id as string, csrf: hidden(admin.text, 'csrf') };
+
+    const all = await s.g.token(['read', 'send', 'contact:request', 'negotiate'], 'all');
+    expect((await s.b.post('/approve/admin/invite/disarm', form, { authorization: `Bearer ${all}` })).status).toBe(403);
+    expect((await s.b.post('/approve/admin/invite/disarm', { ...form, csrf: 'nope' })).status).toBeGreaterThanOrEqual(400);
+    expect((await new Browser(s.g.base).post('/approve/admin/invite/disarm', form)).status).toBeGreaterThanOrEqual(400);
+    expect((await s.b.post('/approve/admin/invite/disarm', { ...form, agent: 'nobody' })).status).toBe(400);
+    expect((await s.b.post('/approve/admin/invite/disarm', { ...form, id: '<script>' })).status).toBe(404);
+    expect((await s.b.get('/approve/admin')).text).toContain('action="/approve/admin/invite/disarm"');
+
+    const off = await s.b.post('/approve/admin/invite/disarm', form);
+    expect(off.status).toBe(200);
+    expect(off.text).not.toContain('action="/approve/admin/invite/disarm"');
+    expect(s.g.log.some((l) => l.startsWith('admin: invite ') && l.includes(form.id) && l.includes('disarmed'))).toBe(true);
+    expect(s.g.home.readAudit().at(-1)).toMatchObject({ gate: 'auto-approve', action: 'disarm', via: 'settings', invite: form.id });
+    expect((await s.b.post('/approve/admin/invite/disarm', form)).status).toBe(404);
+
+    // The invite still works, as an ordinary one: its user becomes a contact and goes on nothing.
+    await ok(s.dana, 'rdv_accept_invite', { invite: link });
+    await waitApi(s.g.base, s.token, (e) => e.type === 'contact' || e.type === 'invite_redeemed', 'the redemption');
+    expect(autoFile(s.g)).toEqual({});
   });
 });

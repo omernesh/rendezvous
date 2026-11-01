@@ -141,8 +141,14 @@ invite, inert until redeemed, then applies to the redeemer alone under the
 passphrase record it was chosen under; a revoke, an exposure, an expiry or a
 restore drops it. *Limit:* an invite is a bearer link, so whoever gets it
 first gets the standing approval too, with nobody checking until the owner
-reads the `invite_redeemed` and `auto_approve_on` events. The box's text says
-so: send such a link only to the person you mean. The settings page lists each agent's auto-approved contacts (fingerprint,
+learns of it: the `invite_redeemed` and `auto_approve_on` events reach the
+owner through the assistant (`rdv_inbox`), or straight to the owner by webhook
+when one is set (`auto_approve_on` is in the default set). So that an injected
+assistant cannot hand the link on, an armed link is never given to the asking
+assistant: it is shown only on the owner's page, and `rdv_invite` "link"
+refuses it. The box's text says so: send such a link only to the person you
+mean. "Turn everything off" and the settings page's Disarm take the choice off
+open invites (reduce-only, `admin:` and audit lines). The settings page lists each agent's auto-approved contacts (fingerprint,
 the owner's label, escaped, and coverage) with a Turn off that takes the
 session's CSRF token, logs an `admin:` line, and is audited (`via: settings`);
 no bearer reaches it, and nothing there turns it on.
