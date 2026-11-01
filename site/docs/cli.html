@@ -339,7 +339,7 @@ npm run rdv -- --help                     # or: node packages/cli/dist/src/bin.j
 </tr>
 <tr>
 <td><code>rdv invite create [--tier friend] [--expires 7d] [--name Omer] [--label Dana] [--no-meetings] [--invoke &lt;uri&gt;]...</code></td>
-<td>Make a one-time invite link (<code>https://rendezvous.nesher.co/i#…</code>, the payload in the fragment) and a message ready to send by WhatsApp, SMS or email: whoever opens it first becomes your contact on these terms (tier <code>friend</code> or below, 1 to 30 days, default 7), without asking you again. Only a hash of its secret is kept, so the link is shown only now. Yours to run (an assistant uses <code>rdv_invite</code>, which asks you in a form). NOTES 101</td>
+<td>Make a one-time invite link (<code>https://rendezvous.nesher.co/i#…</code>, the payload in the fragment, about 106 characters; <code>--name</code> adds your name, unverified, and makes it longer) and a message ready to send by WhatsApp, SMS or email: whoever opens it first becomes your contact on these terms (tier <code>friend</code> or below, 1 to 30 days, default 7), without asking you again. Only a hash of its secret is kept, so the link is shown only now; send it whole (a shortened link does not work). Yours to run (an assistant uses <code>rdv_invite</code>, which asks you in a form). NOTES 101, 105</td>
 </tr>
 <tr>
 <td><code>rdv invite list</code> / <code>rdv invite revoke &lt;invite-id&gt;</code></td>

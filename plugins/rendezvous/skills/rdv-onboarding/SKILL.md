@@ -55,6 +55,10 @@ everything the link answers, and ask only what it cannot.
 
 1. **Install and tools** (steps 1 and 2, unchanged): if `rdv_status` is
    missing, those two steps first. Keep the link; never ask for it twice.
+   Use it exactly as pasted, in full. If it looks cut (it contains "…" or
+   "...", or ends early: a full link is about 106 characters), or a tool says
+   it looks cut off or changed, ask for the full link, exactly as it was
+   sent; never guess or repair the missing part.
 2. **Already set up** (`rdv_status` shows `initialized`): call
    `rdv_accept_invite` with the link exactly as pasted. Go to 5.
 3. **Profile name** (one question, as step 3; recommended: their first name
@@ -251,7 +255,9 @@ next question) whether they already use Rendezvous, with the options "Send
 them an invite link (Recommended)" and "They have an agent: use their email".
 For an invite, follow "Invite someone" in the `rendezvous` skill
 (`rdv_invite` "create"; the user picks the terms in a form) and hand them the
-ready-to-send message; the contact appears when the person accepts. Otherwise
+ready-to-send message exactly as returned, in full, with the link on its own
+line or in a code block (never shortened or with "…": a cut link does not
+work); the contact appears when the person accepts. Otherwise
 ask (as the next question) for the other person's email or phone. Then follow "Connect
 with someone" in the `rendezvous` skill: `rdv_request_contact` with that
 address, tell the user what the other human sees, then wait with

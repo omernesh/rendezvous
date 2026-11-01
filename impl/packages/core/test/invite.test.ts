@@ -1,5 +1,7 @@
 // Invite links (SPEC §5.2.3, NOTES 101): the payload, the inviter's book, and
 // the whole flow on the in-memory relay.
+import { readFileSync } from 'node:fs';
+import { sha256 } from '@noble/hashes/sha256';
 import { base64urlnopad } from '@scure/base';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
@@ -15,6 +17,11 @@ import {
   restoreRevokedInvites,
   createCard,
   createContactRequest,
+  DEFAULT_RELAYS,
+  encodeInviteV1,
+  type Invite,
+  INVITE_KNOWN_RELAYS,
+  keyFromSecret,
   generateKey,
   type InviteRedeemed,
   INVITE_TIERS,
@@ -35,43 +42,154 @@ import {
 import { startTestRelay, type TestRelay } from '../src/testing/relay.js';
 
 const DAY = 86_400_000;
+// v2 carries the expiry in whole minutes.
 const inv = (over: Partial<Parameters<typeof inviteUrl>[0]> = {}) => ({
   agentId: generateKey().id,
   relays: ['wss://relay.example.com'],
   secret: newInviteSecret(),
-  expires: new Date(Date.now() + 7 * DAY).toISOString().replace(/\.\d{3}Z$/, '.000Z'),
+  expires: new Date(Math.floor((Date.now() + 7 * DAY) / 60_000) * 60_000).toISOString(),
   name: 'Omer',
   ...over,
 });
 const payloadOf = (url: string) => url.slice(url.indexOf('#') + 1);
 const encodeRaw = (o: unknown) => base64urlnopad.encode(utf8ToBytes(typeof o === 'string' ? o : canonicalize(o)));
+const CUT = /looks cut off or changed.*ask the person who sent it for the full link, exactly as it was sent/;
+const VECTORS = JSON.parse(readFileSync(new URL('../vectors/invite-v2.json', import.meta.url), 'utf8')) as { valid: Array<{ name: string; url: string; invite: Invite }> };
+/** A v2 payload's bytes with a fresh check (to test the fields behind it). */
+const recheck = (body: Uint8Array) => {
+  const tag = utf8ToBytes('rdv1/invite-link\u0000');
+  const all = new Uint8Array(tag.length + body.length);
+  all.set(tag);
+  all.set(body, tag.length);
+  const out = new Uint8Array(body.length + 2);
+  out.set(body);
+  out.set(sha256(all).slice(0, 2), body.length);
+  return base64urlnopad.encode(out);
+};
+const bodyOf = (url: string) => base64urlnopad.decode(payloadOf(url)).slice(0, -2);
 
 describe('invite payload', () => {
-  it('round-trips through the link, the payload alone and rdv-invite:, and fits a text message', () => {
+  it('v2 round-trips through the link, the payload alone and rdv-invite:', () => {
     const i = inv();
     const url = inviteUrl(i);
-    expect(url.startsWith('https://rendezvous.nesher.co/i#')).toBe(true);
-    expect(url.length).toBeLessThan(400);
+    expect(url.startsWith('https://rendezvous.nesher.co/i#A')).toBe(true);
     const back = parseInvite(url);
-    expect(back).toEqual({ ...i, expires: new Date(Math.floor(Date.parse(i.expires) / 1000) * 1000).toISOString() });
+    expect(back).toEqual(i);
     expect(parseInvite(payloadOf(url))).toEqual(back);
     expect(parseInvite(`rdv-invite:${payloadOf(url)}`)).toEqual(back);
-    // Pasted in a sentence: surrounding space and trailing punctuation are not part of it.
+    // Pasted in a sentence: surrounding space, the words after it and trailing punctuation are not part of it.
     expect(parseInvite(`  ${url}.\n`)).toEqual(back);
     expect(parseInvite(`${url}")`)).toEqual(back);
+    expect(parseInvite(`${url} please`)).toEqual(back);
     // Any host: the payload is what counts (the inviter's agent checks the secret).
     expect(parseInvite(`https://example.org/x#${payloadOf(url)}`)).toEqual(back);
     const { name: _n, ...noName } = i;
-    expect(parseInvite(inviteUrl(noName)).name).toBeUndefined();
+    expect(parseInvite(inviteUrl(noName))).toEqual(noName);
+    // The expiry is kept to the minute (floored).
+    expect(parseInvite(inviteUrl({ ...noName, expires: '2026-11-08T12:00:59.999Z' })).expires).toBe('2026-11-08T12:00:00.000Z');
   });
 
-  it('refuses a tampered, cut, non-canonical or unknown payload', () => {
-    const i = inv();
-    const p = payloadOf(inviteUrl(i));
-    expect(() => parseInvite(p.slice(0, -6))).toThrow(/not an invite/);
+  it('v2 is short: about 106 characters with known relays, under 160 with a custom one', () => {
+    const base = { agentId: generateKey().id, secret: newInviteSecret(), expires: new Date(Date.now() + 30 * DAY).toISOString() };
+    // An agent on the default relays (the CLI's and rdv-mcp's), three of them in the link.
+    expect(inviteUrl({ ...base, relays: [...DEFAULT_RELAYS] }).length).toBeLessThanOrEqual(110);
+    expect(inviteUrl({ ...base, relays: ['wss://relay.nesher.co'] }).length).toBeLessThanOrEqual(110);
+    expect(inviteUrl({ ...base, relays: ['wss://relay.nesher.co', 'wss://relay.example.com'] }).length).toBeLessThanOrEqual(160);
+    expect(inviteUrl({ ...base, relays: ['wss://relay.nesher.co', 'wss://nos.lol', 'wss://relay.example.com'] }).length).toBeLessThanOrEqual(160);
+    // Known relays read back in table order, then the others in the order given.
+    expect(parseInvite(inviteUrl({ ...base, relays: ['wss://relay.example.com', 'wss://nos.lol', 'wss://relay.nesher.co'] })).relays).toEqual(['wss://relay.nesher.co', 'wss://nos.lol', 'wss://relay.example.com']);
+    expect(INVITE_KNOWN_RELAYS.length).toBeLessThanOrEqual(8);
+    for (const r of INVITE_KNOWN_RELAYS) expect(inviteRelayProblem(r)).toBeNull();
+  });
+
+  it('matches the v2 vectors exactly, both ways', () => {
+    expect(VECTORS.valid.length).toBeGreaterThan(0);
+    for (const v of VECTORS.valid) {
+      expect(parseInvite(v.url), v.name).toEqual(v.invite);
+      expect(inviteUrl(v.invite), v.name).toBe(v.url);
+    }
+    expect(keyFromSecret(new Uint8Array(32).fill(7)).id).toBe(VECTORS.valid[0].invite.agentId);
+  });
+
+  it('a link cut short, shortened with "…" or with a character changed says to ask for the full link', () => {
+    const url = inviteUrl(inv({ name: undefined }));
+    const p = payloadOf(url);
+    // The 2026-11-01 failure: an assistant showed the link with "…" in the middle.
+    expect(() => parseInvite(`${url.slice(0, 50)}…${url.slice(-20)}`)).toThrow(CUT);
+    expect(() => parseInvite(`${url.slice(0, 50)}...${url.slice(-20)}`)).toThrow(CUT);
+    expect(() => parseInvite(`${url.slice(0, 60)}…`)).toThrow(CUT);
+    expect(() => parseInvite(`${url.slice(0, 60)}...`)).toThrow(CUT);
+    for (let n = 1; n < p.length; n += 7) expect(() => parseInvite(url.slice(0, url.length - n)), `cut ${n}`).toThrow(CUT);
+    // Wrapped by a chat client: the second half is not part of the first word.
+    expect(() => parseInvite(`${url.slice(0, 70)}\n${url.slice(70)}`)).toThrow(CUT);
+    // One character changed anywhere: the check bytes catch it (2 bytes: 1 in 65536 slips through, by design never forgery-proof).
+    for (const at of [0, 5, 20, 40, 60, p.length - 3]) {
+      const c = p[at] === 'A' ? 'B' : 'A';
+      expect(() => parseInvite(`${p.slice(0, at)}${c}${p.slice(at + 1)}`), `at ${at}`).toThrow(/cut off or changed|not an invite|newer version|canonical/);
+    }
+    expect(() => parseInvite('https://rendezvous.nesher.co/i#')).toThrow(/missing\. Ask the person who sent it for the full link/);
     expect(() => parseInvite('')).toThrow(/not an invite/);
-    expect(() => parseInvite('https://rendezvous.nesher.co/i#')).toThrow(/not an invite/);
     expect(() => parseInvite('a'.repeat(2000))).toThrow(/not an invite/);
+    expect(() => parseInvite(`${p.slice(0, 10)}%${p.slice(11)}`)).toThrow(/not an invite/);
+  });
+
+  it('v2 refuses trailing bytes, a non-canonical encoding, unknown fields and bad values', () => {
+    const i = inv({ name: undefined, relays: ['wss://relay.nesher.co'] });
+    const body = bodyOf(inviteUrl(i));
+    const withByte = (b: Uint8Array, ...x: number[]) => Uint8Array.from([...b, ...x]);
+    expect(parseInvite(recheck(body))).toEqual(i);
+    // Bytes after the check, or extra bytes behind the header (with a valid check).
+    expect(() => parseInvite(base64urlnopad.encode(withByte(base64urlnopad.decode(recheck(body)), 0)))).toThrow(/cut off or changed/);
+    expect(() => parseInvite(recheck(withByte(body, 0)))).toThrow(/malformed/);
+    expect(() => parseInvite(recheck(withByte(body, 9, 1, 0x41)))).toThrow(/unknown or misplaced/);
+    // Stray low bits in the last character.
+    const p = recheck(body);
+    const last = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+    const bumped = p.slice(0, -1) + last[last.indexOf(p[p.length - 1]) + 1];
+    expect(() => parseInvite(bumped)).toThrow(/canonical|cut off/);
+    // A relay bit this version does not know, no relays, too many, a known relay written out, a repeat, a bad URL.
+    const masked = (m: number) => { const b = body.slice(); b[53] = m; return b; };
+    expect(() => parseInvite(recheck(masked(0x80)))).toThrow(/relays/);
+    expect(() => parseInvite(recheck(masked(0)))).toThrow(/relays/);
+    expect(() => parseInvite(recheck(masked(0x0f)))).toThrow(/relays/);
+    const rec = (type: number, s: string) => { const t = utf8ToBytes(s); return [type, t.length, ...t]; };
+    expect(parseInvite(recheck(withByte(body, ...rec(1, 'wss://relay.example.com')))).relays).toEqual(['wss://relay.nesher.co', 'wss://relay.example.com']);
+    expect(() => parseInvite(recheck(withByte(body, ...rec(1, 'wss://nos.lol'))))).toThrow(/relays/);
+    expect(() => parseInvite(recheck(withByte(body, ...rec(1, 'wss://a.example.com'), ...rec(1, 'wss://a.example.com'))))).toThrow(/relays/);
+    expect(() => parseInvite(recheck(withByte(body, ...rec(1, 'https://a.example.com'))))).toThrow(/relays/);
+    expect(() => parseInvite(recheck(withByte(masked(0x07), ...rec(1, 'wss://a.example.com'))))).toThrow(/relays/);
+    // A custom relay is still held to the public wss:// rules (and the DNS guard where it is dialled).
+    expect(() => parseInvite(recheck(withByte(body, ...rec(1, 'wss://192.168.0.2'))))).toThrow(/not a usable invite link/);
+    expect(() => parseInvite(recheck(withByte(body, ...rec(1, 'ws://relay.example.com'))))).toThrow(/not a usable invite link/);
+    // Names: canonical (trimmed, printable, at most 64), once, after the relays.
+    expect(parseInvite(recheck(withByte(body, ...rec(2, 'Omer')))).name).toBe('Omer');
+    expect(() => parseInvite(recheck(withByte(body, ...rec(2, ' Omer'))))).toThrow(/name/);
+    expect(() => parseInvite(recheck(withByte(body, ...rec(2, 'Omer‮'))))).toThrow(/name/);
+    expect(() => parseInvite(recheck(withByte(body, ...rec(2, 'x'.repeat(65)))))).toThrow(/name/);
+    expect(() => parseInvite(recheck(withByte(body, ...rec(2, 'A'), ...rec(2, 'B'))))).toThrow(/misplaced/);
+    expect(() => parseInvite(recheck(withByte(body, ...rec(2, 'A'), ...rec(1, 'wss://a.example.com'))))).toThrow(/misplaced/);
+    expect(() => parseInvite(recheck(withByte(body, 2, 2, 0xff, 0xfe)))).toThrow(/malformed/);
+    expect(() => parseInvite(recheck(withByte(body, 2, 0)))).toThrow(/malformed/);
+    expect(() => parseInvite(recheck(withByte(body, 2, 9, 0x41)))).toThrow(/malformed/);
+    // Not a curve point; no expiry; a newer version.
+    const keyed = body.slice(); keyed.set(new Uint8Array(32).fill(0xff), 1);
+    expect(() => parseInvite(recheck(keyed))).toThrow(/agent ID/);
+    const zero = body.slice(); zero.set([0, 0, 0, 0], 49);
+    expect(() => parseInvite(recheck(zero))).toThrow(/expiry/);
+    const v3 = body.slice(); v3[0] = 3;
+    expect(() => parseInvite(recheck(v3))).toThrow(/newer version/);
+    const junk = body.slice(); junk[0] = 0x99;
+    expect(() => parseInvite(recheck(junk))).toThrow(/not an invite link/);
+  });
+
+  it('still reads v1 links (canonical JSON), strictly', () => {
+    const i = { ...inv(), expires: new Date(Math.floor((Date.now() + 7 * DAY) / 1000) * 1000).toISOString() };
+    const v1 = `https://rendezvous.nesher.co/i#${encodeInviteV1(i)}`;
+    expect(v1.length).toBeGreaterThan(200);
+    expect(parseInvite(v1)).toEqual(i);
+    const p = payloadOf(v1);
+    expect(() => parseInvite(p.slice(0, -6))).toThrow(/not an invite|cut off/);
+    expect(() => parseInvite(`${v1.slice(0, 80)}…${v1.slice(-30)}`)).toThrow(CUT);
     const base = { v: 1, a: i.agentId, r: i.relays, s: i.secret, e: Math.floor(Date.parse(i.expires) / 1000), n: 'Omer' };
     expect(parseInvite(encodeRaw(base)).agentId).toBe(i.agentId);
     expect(() => parseInvite(encodeRaw({ ...base, v: 2 }))).toThrow(/newer version/);
@@ -85,14 +203,13 @@ describe('invite payload', () => {
     expect(() => parseInvite(encodeRaw({ ...base, s: `${i.secret.slice(0, 21)}B` }))).toThrow(/secret/); // stray low bits
     expect(() => parseInvite(encodeRaw({ ...base, e: 1.5 }))).toThrow(/expiry/);
     expect(() => parseInvite(encodeRaw({ ...base, e: '2026' }))).toThrow(/expiry/);
-    expect(() => parseInvite(encodeRaw({ ...base, n: 'Omer\u202e' }))).toThrow(/name/);
+    expect(() => parseInvite(encodeRaw({ ...base, n: 'Omer‮' }))).toThrow(/name/);
     expect(() => parseInvite(encodeRaw({ ...base, n: ' Omer' }))).toThrow(/name/);
     expect(() => parseInvite(encodeRaw({ ...base, n: 'x'.repeat(65) }))).toThrow(/name/);
     // The same fields, not in canonical form (whitespace, key order): one link per invite.
     expect(() => parseInvite(encodeRaw(JSON.stringify(base, null, 1)))).toThrow(/canonical/);
     expect(() => parseInvite(encodeRaw(JSON.stringify({ v: 1, a: base.a, r: base.r, s: base.s, e: base.e })))).toThrow(/canonical/);
     expect(() => parseInvite(encodeRaw('[1]'))).toThrow(/not an invite/);
-    expect(() => parseInvite(`${p.slice(0, 10)}%${p.slice(11)}`)).toThrow(/not an invite/);
   });
 
   it('says when it expired, and making one checks its fields', () => {

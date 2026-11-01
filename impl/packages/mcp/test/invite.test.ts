@@ -9,6 +9,7 @@ import { newInviteSecret, parseInvite, inviteUrl } from '@rendezvous/core';
 import { startTestRelay, type TestRelay } from '@rendezvous/core/testing';
 import type { ElicitRequest } from '@modelcontextprotocol/sdk/types.js';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { REMOTE_INSTRUCTIONS } from '../src/index.js';
 import { type ElicitHandler, makeSide, ok, type Side, waitEvent } from './flow.js';
 
 let relay: TestRelay;
@@ -105,6 +106,16 @@ describe('invite links from the chat', () => {
 
     const made = await ok(omer, 'rdv_invite', { action: 'create', may_propose_meetings: false });
     expect(made).toMatchObject({ tier: 'friend', may_propose_meetings: false });
+    // No name in the link unless the human asks (NOTES 105); the message to send still names them.
+    expect(made.name).toBeNull();
+    expect(String(h.asked[1].message)).toContain('Your name in the link: (none)');
+    expect(parseInvite(made.url, { unsafeAllowRelays: [relay.url] }).name).toBeUndefined();
+    expect(made.share_text).toContain('omer invites you');
+    // Handed over verbatim: the result and both instruction sets say so.
+    expect(made.next_step).toContain('exactly as returned and in full');
+    expect(made.next_step).toContain('never shorten');
+    expect(REMOTE_INSTRUCTIONS).toContain('exactly as returned, in full');
+    expect(REMOTE_INSTRUCTIONS).toContain('ask them for the full link');
     expect(await ok(omer, 'rdv_invite', { action: 'revoke', invite_id: made.invite_id })).toMatchObject({ status: 'revoked' });
     expect((await omer.call('rdv_invite', { action: 'revoke', invite_id: 'nope' })).text).toContain('no invite');
     const own = await omer.call('rdv_accept_invite', { invite: made.url });
@@ -123,6 +134,10 @@ describe('invite links from the chat', () => {
 
     const bad = await plain.call('rdv_accept_invite', { invite: 'https://rendezvous.nesher.co/i#nope' });
     expect([bad.isError, bad.text]).toEqual([true, expect.stringContaining('not an invite')]);
+    // Shortened with "…" (the 2026-11-01 failure) or cut short: the error says to ask for the full link.
+    const cut = await plain.call('rdv_accept_invite', { invite: `${made.url.slice(0, 50)}…${made.url.slice(-12)}` });
+    expect([cut.isError, cut.text]).toEqual([true, expect.stringContaining('ask the person who sent it for the full link, exactly as it was sent')]);
+    expect((await plain.call('rdv_accept_invite', { invite: made.url.slice(0, -5) })).text).toContain('looks cut off');
     const expired = inviteUrl({ ...parseInvite(made.url, { unsafeAllowRelays: [relay.url] }), secret: newInviteSecret(), expires: new Date(Date.now() - 1000).toISOString() });
     expect((await plain.call('rdv_accept_invite', { invite: expired })).text).toContain('expired');
     // rdv_init with a bad link makes nothing.

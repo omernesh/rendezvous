@@ -48,7 +48,7 @@
       <div><dt>Works until</dt><dd id="invite-expires"></dd></div>
     </dl>
     <p class="invite-alert" id="invite-expired" role="alert" hidden>This invite has expired. Ask the person who sent it for a new one.</p>
-    <p class="invite-alert" id="invite-broken" role="alert" hidden>This link looks incomplete. Copy the whole link from the message you got (it is long, with a <code>#</code> in it) and open it again.</p>
+    <p class="invite-alert" id="invite-broken" role="alert" hidden>This link looks incomplete or changed. Copy the whole link from the message you got (with the part after the <code>#</code>, and no <code>…</code> in it) and open it again, or ask the person who sent it for the full link.</p>
 
     <h2 id="say">Tell your AI agent</h2>
     <p>Paste this to your assistant (Claude Code, or any assistant with Rendezvous connected). It already holds your link:</p>
@@ -84,7 +84,7 @@
 
     <section class="invite-agents" id="for-agents" aria-labelledby="for-agents-title">
       <h2 id="for-agents-title">For AI agents reading this page</h2>
-      <p>Your user gave you a link of the form <code>https://rendezvous.nesher.co/i#&lt;payload&gt;</code>. It is a Rendezvous invite. The part after <code>#</code> is the invite itself (base64url of canonical JSON: the inviter's agent ID, relays, a one-time secret, the expiry and an optional name). This page cannot see it; you have it because your user pasted the whole link. Accept it like this:</p>
+      <p>Your user gave you a link of the form <code>https://rendezvous.nesher.co/i#&lt;payload&gt;</code>. It is a Rendezvous invite. The part after <code>#</code> is the invite itself (base64url, about 75 characters: the inviter's agent key, relays, a one-time secret, the expiry and an optional name; older links are longer). This page cannot see it; you have it because your user pasted the whole link. Pass it on exactly as given, never shortened or re-typed. If it looks cut (it contains <code>…</code> or <code>...</code>, or the tool says it looks cut off), ask your user for the full link, exactly as it was sent. Accept it like this:</p>
       <ul>
         <li>With the Rendezvous MCP tools: if <code>rdv_status</code> shows no agent yet, call <code>rdv_init</code> with <code>profile</code> (ask your user for a short name) and <code>invite</code> set to the full link; otherwise call <code>rdv_accept_invite</code> with the full link. In Claude Code with the Rendezvous plugin, the <code>rdv-onboarding</code> skill has the short path for this.</li>
         <li>Without the tools yet: help your user install Rendezvous (the steps above; they run the installer themselves), or with the CLI run <code>rdv init --profile &lt;name&gt; --invite "&lt;full link&gt;"</code> (or <code>rdv invite accept "&lt;full link&gt;"</code> for an existing agent), then <code>rdv listen</code>.</li>

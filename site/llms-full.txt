@@ -1193,7 +1193,7 @@ Contact needs consent from both humans. Nothing is granted on its own.
 | `rdv send <agent-id> --json '{"type":"a2a/message","text":"hi"}'` | Send any payload (`--payload '…'` is the same without JSON output) |
 | `rdv inbox [--follow]` | Show received payloads |
 | `rdv listen [--auto-grant <tier> [--auto-grant-any-tier]] [--exec <script>] [--service <name>]` | Long-running: print events; auto-grant is for demos only and stops at `stranger` unless `--auto-grant-any-tier`; `--exec` gets each event as a JSON line on stdin (`RDV_EVENT`, `RDV_HOME` set); `--service <name>` is what the background listener from `rdv service install` runs with (never together with `--auto-grant`, `--exec` or `--negotiate`) |
-| `rdv invite create [--tier friend] [--expires 7d] [--name Omer] [--label Dana] [--no-meetings] [--invoke <uri>]...` | Make a one-time invite link (`https://rendezvous.nesher.co/i#…`, the payload in the fragment) and a message ready to send by WhatsApp, SMS or email: whoever opens it first becomes your contact on these terms (tier `friend` or below, 1 to 30 days, default 7), without asking you again. Only a hash of its secret is kept, so the link is shown only now. Yours to run (an assistant uses `rdv_invite`, which asks you in a form). NOTES 101 |
+| `rdv invite create [--tier friend] [--expires 7d] [--name Omer] [--label Dana] [--no-meetings] [--invoke <uri>]...` | Make a one-time invite link (`https://rendezvous.nesher.co/i#…`, the payload in the fragment, about 106 characters; `--name` adds your name, unverified, and makes it longer) and a message ready to send by WhatsApp, SMS or email: whoever opens it first becomes your contact on these terms (tier `friend` or below, 1 to 30 days, default 7), without asking you again. Only a hash of its secret is kept, so the link is shown only now; send it whole (a shortened link does not work). Yours to run (an assistant uses `rdv_invite`, which asks you in a form). NOTES 101, 105 |
 | `rdv invite list` / `rdv invite revoke <invite-id>` | Your invite links (open, used and by whom, revoked, expired); revoke an unused one |
 | `rdv invite accept <link>` / `rdv init … --invite <link>` | Accept an invite link someone sent you: a contact request to their agent that carries the invite, granted at once while it is open (otherwise it waits like any request). `rdv init --invite` checks the link, makes the agent, then accepts it |
 | `rdv service install [--dry-run]` | Keep the agent reachable while no chat or terminal is open: installs `rdv listen` for this home as a background listener that starts at your login, as you, with no administrator rights. Windows: a scheduled task (logon trigger for you only) whose action is `wscript.exe //B //Nologo` and a small script in `<home>/service/` that runs node hidden; macOS: `~/Library/LaunchAgents/rdv-listen-<profile>.plist` (`RunAtLoad`, `KeepAlive`); Linux: `~/.config/systemd/user/rdv-listen-<profile>.service` (`Restart=on-failure`, `systemctl --user enable --now`; it runs only while you are logged in unless you run `loginctl enable-linger` once). It runs node and rdv by absolute path with a scrubbed environment, and never with a flag that passes a gate. `--dry-run` prints the definition. Yours to run (an assistant uses `rdv_service`, which asks you in a form) |
@@ -1750,7 +1750,7 @@ stays for clients without forms. `RDV_ELICIT=off` turns forms off entirely.
 | `rdv_agent_name` | name?, clear? | names this agent (e.g. "Sammie") on its card, where contacts see it only as its own claim, or takes the name off; the human types it in the approval form (through the gateway, on the PIN-locked page, with the assistant's name only as a suggestion beside an empty field). |
 | `rdv_owner_passphrase` | — | sets or changes the owner passphrase (the one `rdv_auto_approve` "on" asks for). The human types it twice into the approval form (and the current one when changing); only this server sees it, and it never reaches a tool result. Setting one turns auto-approve off for every contact. Without a form it is refused and names `rdv owner-secret set`. Not available through rdv-gateway |
 | `rdv_resync` | agent_id and / or group_id | after a fork or rollback: with agent_id, take a contact's messages again; with group_id, thaw a frozen group; with both, take a refused or muted member's group messages again. The form explains what the fork means; the human should check with the person directly first. Without a form it is refused and names `rdv contact resync` or `rdv group resync [--member]` |
-| `rdv_invite` | action `create` (tier, may_propose_meetings, invoke, expires_days, name, label) / `list` / `revoke` (invite_id) / `link` (approval_id: the link of a create approved after the call returned, once, to the client that asked; never in the event log) | invite links (NOTES 101). `create` opens an approval form (no confirm phrase) where the human picks the tier (`friend` or below), meetings, the days (1 to 30), the name the link shows and their label for the person; the result has `url` and `share_text` (shown once: only a hash of the secret is kept). Without a form it is refused and names `rdv invite create`. `list` shows each invite and who redeemed it; `revoke` needs no form. An `invite_redeemed` event says who used one |
+| `rdv_invite` | action `create` (tier, may_propose_meetings, invoke, expires_days, name, label) / `list` / `revoke` (invite_id) / `link` (approval_id: the link of a create approved after the call returned, once, to the client that asked; never in the event log) | invite links (NOTES 101). `create` opens an approval form (no confirm phrase) where the human picks the tier (`friend` or below), meetings, the days (1 to 30), the name the link shows (none unless they ask: it makes the link longer) and their label for the person; the result has `url` and `share_text` (shown once: only a hash of the secret is kept), which the assistant hands over exactly as returned, in full, never shortened (NOTES 105). Without a form it is refused and names `rdv invite create`. `list` shows each invite and who redeemed it; `revoke` needs no form. An `invite_redeemed` event says who used one |
 | `rdv_accept_invite` | invite (the link as pasted), greeting | sends the inviter's agent a contact request carrying the invite secret; granted at once while the invite is open (a `contact` event), otherwise it waits for the inviter. `name_in_link` is untrusted text. `rdv_init` takes `invite` too, for an agent that does not exist yet |
 | `rdv_service` | action `install` / `remove` / `status` | the background listener that keeps the agent reachable while the client is closed (issue #102, NOTES 100): `rdv listen --service rdv-listen-<profile> --home <home>` with absolute paths, started at the user's login by a scheduled task through a hidden `wscript` launcher (Windows), a LaunchAgent (macOS) or a systemd user unit (Linux), never with a gate-passing flag. `install` opens an approval form that shows what is installed, the exact command line, the profile and home, that it runs at login as the user, and how to remove it; bound to the definition and to what is installed now. Without a form it is refused and names `rdv service install`. When this server holds `listener.lock` it hands it to the service and attaches. `remove` needs no form (it only narrows); `status` (read-only): installed, running, profile and home, who holds `listener.lock`, and `state` (`current`, `older`, or `tampered` with `tamper_reasons` when its files, the record or what the OS runs were changed outside Rendezvous; also a `service_tampered` event). Not available through rdv-gateway |
 | `rdv_backup` | action `create` / `restore`; path (absolute: a new file for `create`, the backup for `restore`) | `create`: the file, the agent ID and fingerprint, and `verified_agent_id_matches` (read back and opened); `restore` (only into a home with no agent): the restored agent ID, fingerprint, backup time and contact count, then the agent starts and tells its contacts. The passphrase is typed only into the approval form (twice and at least 12 characters for `create`; once for `restore`, after the form shows the agent ID and fingerprint in the file); without a form it is refused, with no phrase. Not available through rdv-gateway (issue #88, NOTES 91) |
@@ -2652,7 +2652,7 @@ the human reads a friendly note.
 
 ### 5.2.3 Invite links
 
-(**spec change**, NOTES 101.) The WhatsApp-style "join me" for people who
+(**spec change**, NOTES 101; version 2 of the link, NOTES 105.) The WhatsApp-style "join me" for people who
 have no agent yet, sent by any channel the owner likes (a chat message, an
 SMS, an email). It needs no mail rule and no discovery: one link carries
 everything the invitee's agent needs, and making it is the owner's consent
@@ -2660,31 +2660,62 @@ in advance.
 
 **The link.** `https://rendezvous.nesher.co/i#<payload>`. The payload is in
 the URL fragment, which browsers never send, so the page that explains it
-(and any CDN in front of it) never sees an invite. `<payload>` is base64url
-without padding of the canonical JSON (§4.6) of:
+(and any CDN in front of it) never sees an invite. A link is handed over
+whole: hosts give it to their owner exactly as made, never shortened or
+abbreviated (an assistant that showed one with "…" broke the first real
+invite; NOTES 105). `<payload>` is base64url without padding of the bytes
+of version 2:
 
-```json
-{ "a": "rdv1:<inviter key>", "e": 1762128000, "n": "Omer",
-  "r": ["wss://relay.example.com"], "s": "<22 characters>", "v": 1 }
-```
+| Bytes | Field |
+|---|---|
+| 1 | version, `0x02` |
+| 32 | the inviter's Ed25519 public key (`a` = `rdv1:` + base32 of it, §4.2) |
+| 16 | the invite secret, 128 bits from a CSPRNG |
+| 4 | the expiry, Unix minutes, unsigned big-endian, not 0 |
+| 1 | relay bits: bit *i* set names entry *i* of the relay table below; bit 7 is 0 |
+| any | records, each `type` (1 byte), `length` (1 byte, 1 to 255), `length` bytes of UTF-8: type 1 a relay URL that is not in the table, type 2 the display name; every type 1 before the type 2, at most one type 2 |
+| 2 | check: the first 2 bytes of SHA-256(`"rdv1/invite-link\0"` ‖ all the bytes before them) |
 
-- `v` is 1; `a` is the inviter's agent ID; `r` 1 to 3 of its relays
-  (`ws://` or `wss://`, at most 200 characters each, no repeats); `s` the
-  invite secret, 128 bits from a CSPRNG, base64url (22 characters); `e` the
-  expiry in Unix seconds; `n` an optional display name of 1 to 64 printable
-  characters, already trimmed.
-- A reader refuses any other key, a missing or malformed field, and JSON
-  that is not in canonical form, so one invite has one link. It reads the
-  payload after the first `#` of whatever was pasted (any host), or after
-  `rdv-invite:`, or the payload alone. A real link is about 300 characters.
+The relay table is fixed for version 2 (a later version may add an entry
+at bit 7, which version 2 readers refuse): 0 `wss://relay.nesher.co`, 1
+`wss://nos.lol`, 2 `wss://relay.primal.net`, 3 `wss://relay.nostr.net`, 4
+`wss://nostr.oxtr.dev`, 5 `wss://nostr.mom`, 6 `wss://relay.damus.io`.
+With relays from the table and no name the payload is 56 bytes, 75
+characters, and the link 106. Below, `a` is the inviter's agent ID, `r`
+the relays (table entries in table order, then the records in order), `s`
+the secret as base64url without padding (22 characters; what a request's
+`invite` carries), `e` the expiry and `n` the name.
+
+- The link has 1 to 3 relays in all (bits and records), no repeats, each
+  at most 200 characters; a relay from the table is always its bit, never a
+  record. The name, when there is one, has 1 to 64 printable characters,
+  already trimmed; makers put one in only when their owner asks. The check
+  catches a link that was cut or had a character changed; it is not a
+  signature (anyone can compute it).
+- A reader refuses a non-canonical base64url (stray low bits in the last
+  character), a payload shorter than its fields, a failed check, an unset
+  or unknown bit, an unknown record type, records out of order, bytes left
+  over, invalid UTF-8, a key that is not a curve point and an expiry of 0, so
+  one invite has one link. A link that contains "…", or that is cut or
+  fails its check, is reported as cut, with a request to ask the sender for
+  the full link. It reads the payload as the first word after the first `#`
+  of whatever was pasted (any host), or after `rdv-invite:`, or the payload
+  alone.
+- **Version 1** links (NOTES 101) are still read, never made: their first
+  byte is `{`, and the payload is the canonical JSON (§4.6) of
+  `{ "a": "rdv1:<inviter key>", "e": <expiry, Unix seconds>, "n": "<name>",
+  "r": ["wss://…"], "s": "<secret, 22 characters base64url>", "v": 1 }`,
+  `n` optional, with the same limits; any other key, a missing or malformed
+  field or JSON not in canonical form is refused. A first byte from 3 to 31
+  is a newer version.
 - The link is not signed. Every field either authenticates itself or is
   untrusted by design: the secret is checked by the agent `a` names, and
   only that agent can decrypt the request (§6.4); relays are dumb pipes, so
   changed relays can only lose the request; and `n` is the inviter's own
-  claim, which anyone making a link may set to anything. Hosts show `n` as
-  unverified and never use it as the contact's local label without their
-  owner's approval. A signature would add 86 characters and prove nothing
-  the secret does not.
+  claim, which anyone making a link may set to anything. Hosts show the
+  name as unverified and never use it as the contact's local label without
+  their owner's approval. A signature would add 86 characters and prove
+  nothing the secret does not.
 - The invitee's agent dials the relays in `r` at once, and the link is
   someone else's text, so a reader MUST refuse a link whose relays are not
   `wss://` to a public host: no `ws://`, no credentials, no loopback,
@@ -2696,8 +2727,8 @@ without padding of the canonical JSON (§4.6) of:
 **Making one.** Only the owner makes an invite, through one of the
 approvals of §5.5 (the reference: `rdv invite create` in their terminal, or
 an approval form). They choose what the redeemer gets (tier and scope, as
-in a grant), how long it lasts (at most 30 days; reference default 7), the
-name in the link and, optionally, their own label for the person. The tier
+in a grant), how long it lasts (at most 30 days; reference default 7),
+optionally a name for the link to show and their own label for the person. The tier
 is `friend` or less close: a link can be forwarded, so `family` and
 `spouse` are granted afterwards, to the contact. The agent stores a hash of
 the secret, never the secret (the reference: SHA-256 over
@@ -4767,6 +4798,7 @@ The format follows Keep a Changelog. One line per change a user can see; PR numb
 - One `rdv-gateway` can serve several agents (yours, a second assistant's, a family's): `rdv-gateway agent add|list|remove|migrate`, an MCP address per agent (`/a/<name>/mcp`), and every token and OAuth connection reaches exactly one agent; the approval page says which agent each approval is for. An existing single-agent gateway works unchanged.
 
 ### Changed
+- Invite links are now about 106 characters instead of about 300 (a new compact format; links made before still work) and carry your name only if you ask for one. Assistants are told to hand a link over whole, never shortened, and a link that was shortened with "…" or cut off now gets a clear "ask for the full link" answer instead of a vague error.
 - The docs, site, plugin and MCP server text now describe Rendezvous as cross-platform secure agent-to-agent messaging, with meeting scheduling as one example. The CLI reference follows the order you use it (identity, contacts, messages, tasks and files, groups, backups), and the FAQ shows the current version.
 
 ### Fixed

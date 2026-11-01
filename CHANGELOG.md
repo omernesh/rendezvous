@@ -12,6 +12,7 @@ The format follows Keep a Changelog. One line per change a user can see; PR numb
 - One `rdv-gateway` can serve several agents (yours, a second assistant's, a family's): `rdv-gateway agent add|list|remove|migrate`, an MCP address per agent (`/a/<name>/mcp`), and every token and OAuth connection reaches exactly one agent; the approval page says which agent each approval is for. An existing single-agent gateway works unchanged.
 
 ### Changed
+- Invite links are now about 106 characters instead of about 300 (a new compact format; links made before still work) and carry your name only if you ask for one. Assistants are told to hand a link over whole, never shortened, and a link that was shortened with "…" or cut off now gets a clear "ask for the full link" answer instead of a vague error.
 - The docs, site, plugin and MCP server text now describe Rendezvous as cross-platform secure agent-to-agent messaging, with meeting scheduling as one example. The CLI reference follows the order you use it (identity, contacts, messages, tasks and files, groups, backups), and the FAQ shows the current version.
 
 ### Fixed

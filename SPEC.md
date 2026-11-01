@@ -616,7 +616,7 @@ the human reads a friendly note.
 
 ### 5.2.3 Invite links
 
-(**spec change**, NOTES 101.) The WhatsApp-style "join me" for people who
+(**spec change**, NOTES 101; version 2 of the link, NOTES 105.) The WhatsApp-style "join me" for people who
 have no agent yet, sent by any channel the owner likes (a chat message, an
 SMS, an email). It needs no mail rule and no discovery: one link carries
 everything the invitee's agent needs, and making it is the owner's consent
@@ -624,31 +624,62 @@ in advance.
 
 **The link.** `https://rendezvous.nesher.co/i#<payload>`. The payload is in
 the URL fragment, which browsers never send, so the page that explains it
-(and any CDN in front of it) never sees an invite. `<payload>` is base64url
-without padding of the canonical JSON (§4.6) of:
+(and any CDN in front of it) never sees an invite. A link is handed over
+whole: hosts give it to their owner exactly as made, never shortened or
+abbreviated (an assistant that showed one with "…" broke the first real
+invite; NOTES 105). `<payload>` is base64url without padding of the bytes
+of version 2:
 
-```json
-{ "a": "rdv1:<inviter key>", "e": 1762128000, "n": "Omer",
-  "r": ["wss://relay.example.com"], "s": "<22 characters>", "v": 1 }
-```
+| Bytes | Field |
+|---|---|
+| 1 | version, `0x02` |
+| 32 | the inviter's Ed25519 public key (`a` = `rdv1:` + base32 of it, §4.2) |
+| 16 | the invite secret, 128 bits from a CSPRNG |
+| 4 | the expiry, Unix minutes, unsigned big-endian, not 0 |
+| 1 | relay bits: bit *i* set names entry *i* of the relay table below; bit 7 is 0 |
+| any | records, each `type` (1 byte), `length` (1 byte, 1 to 255), `length` bytes of UTF-8: type 1 a relay URL that is not in the table, type 2 the display name; every type 1 before the type 2, at most one type 2 |
+| 2 | check: the first 2 bytes of SHA-256(`"rdv1/invite-link\0"` ‖ all the bytes before them) |
 
-- `v` is 1; `a` is the inviter's agent ID; `r` 1 to 3 of its relays
-  (`ws://` or `wss://`, at most 200 characters each, no repeats); `s` the
-  invite secret, 128 bits from a CSPRNG, base64url (22 characters); `e` the
-  expiry in Unix seconds; `n` an optional display name of 1 to 64 printable
-  characters, already trimmed.
-- A reader refuses any other key, a missing or malformed field, and JSON
-  that is not in canonical form, so one invite has one link. It reads the
-  payload after the first `#` of whatever was pasted (any host), or after
-  `rdv-invite:`, or the payload alone. A real link is about 300 characters.
+The relay table is fixed for version 2 (a later version may add an entry
+at bit 7, which version 2 readers refuse): 0 `wss://relay.nesher.co`, 1
+`wss://nos.lol`, 2 `wss://relay.primal.net`, 3 `wss://relay.nostr.net`, 4
+`wss://nostr.oxtr.dev`, 5 `wss://nostr.mom`, 6 `wss://relay.damus.io`.
+With relays from the table and no name the payload is 56 bytes, 75
+characters, and the link 106. Below, `a` is the inviter's agent ID, `r`
+the relays (table entries in table order, then the records in order), `s`
+the secret as base64url without padding (22 characters; what a request's
+`invite` carries), `e` the expiry and `n` the name.
+
+- The link has 1 to 3 relays in all (bits and records), no repeats, each
+  at most 200 characters; a relay from the table is always its bit, never a
+  record. The name, when there is one, has 1 to 64 printable characters,
+  already trimmed; makers put one in only when their owner asks. The check
+  catches a link that was cut or had a character changed; it is not a
+  signature (anyone can compute it).
+- A reader refuses a non-canonical base64url (stray low bits in the last
+  character), a payload shorter than its fields, a failed check, an unset
+  or unknown bit, an unknown record type, records out of order, bytes left
+  over, invalid UTF-8, a key that is not a curve point and an expiry of 0, so
+  one invite has one link. A link that contains "…", or that is cut or
+  fails its check, is reported as cut, with a request to ask the sender for
+  the full link. It reads the payload as the first word after the first `#`
+  of whatever was pasted (any host), or after `rdv-invite:`, or the payload
+  alone.
+- **Version 1** links (NOTES 101) are still read, never made: their first
+  byte is `{`, and the payload is the canonical JSON (§4.6) of
+  `{ "a": "rdv1:<inviter key>", "e": <expiry, Unix seconds>, "n": "<name>",
+  "r": ["wss://…"], "s": "<secret, 22 characters base64url>", "v": 1 }`,
+  `n` optional, with the same limits; any other key, a missing or malformed
+  field or JSON not in canonical form is refused. A first byte from 3 to 31
+  is a newer version.
 - The link is not signed. Every field either authenticates itself or is
   untrusted by design: the secret is checked by the agent `a` names, and
   only that agent can decrypt the request (§6.4); relays are dumb pipes, so
   changed relays can only lose the request; and `n` is the inviter's own
-  claim, which anyone making a link may set to anything. Hosts show `n` as
-  unverified and never use it as the contact's local label without their
-  owner's approval. A signature would add 86 characters and prove nothing
-  the secret does not.
+  claim, which anyone making a link may set to anything. Hosts show the
+  name as unverified and never use it as the contact's local label without
+  their owner's approval. A signature would add 86 characters and prove
+  nothing the secret does not.
 - The invitee's agent dials the relays in `r` at once, and the link is
   someone else's text, so a reader MUST refuse a link whose relays are not
   `wss://` to a public host: no `ws://`, no credentials, no loopback,
@@ -660,8 +691,8 @@ without padding of the canonical JSON (§4.6) of:
 **Making one.** Only the owner makes an invite, through one of the
 approvals of §5.5 (the reference: `rdv invite create` in their terminal, or
 an approval form). They choose what the redeemer gets (tier and scope, as
-in a grant), how long it lasts (at most 30 days; reference default 7), the
-name in the link and, optionally, their own label for the person. The tier
+in a grant), how long it lasts (at most 30 days; reference default 7),
+optionally a name for the link to show and their own label for the person. The tier
 is `friend` or less close: a link can be forwarded, so `family` and
 `spouse` are granted afterwards, to the contact. The agent stores a hash of
 the secret, never the secret (the reference: SHA-256 over

@@ -1,0 +1,36 @@
+{
+  "description": "Invite link v2 (SPEC 5.2.3, NOTES 105): fixed inputs and the exact link each must give. Agent seed: 32 bytes of 0x07. Secret: 16 bytes of 0xa5. Readers must parse each url to invite; writers must produce url from invite. The landing page (site/invite.js) is checked against the same file.",
+  "valid": [
+    {
+      "name": "known relay",
+      "url": "https://rendezvous.nesher.co/i#AupKbGPinFIKvvVQexMuxfmVR3auvr57kkIe6mkURtIspaWlpaWlpaWlpaWlpaWlpQHIRfABGvA",
+      "invite": {
+        "agentId": "rdv1:5jfgyy7ctrjavpxvkb5rglwf7gkuo5vox27hxescd3vgsfcg2iwa",
+        "relays": ["wss://relay.nesher.co"],
+        "secret": "paWlpaWlpaWlpaWlpaWlpQ",
+        "expires": "2026-11-08T12:00:00.000Z"
+      }
+    },
+    {
+      "name": "three known relays",
+      "url": "https://rendezvous.nesher.co/i#AupKbGPinFIKvvVQexMuxfmVR3auvr57kkIe6mkURtIspaWlpaWlpaWlpaWlpaWlpQHIRfAOd7E",
+      "invite": {
+        "agentId": "rdv1:5jfgyy7ctrjavpxvkb5rglwf7gkuo5vox27hxescd3vgsfcg2iwa",
+        "relays": ["wss://nos.lol", "wss://relay.primal.net", "wss://relay.nostr.net"],
+        "secret": "paWlpaWlpaWlpaWlpaWlpQ",
+        "expires": "2026-11-08T12:00:00.000Z"
+      }
+    },
+    {
+      "name": "known and custom relay, with a name",
+      "url": "https://rendezvous.nesher.co/i#AupKbGPinFIKvvVQexMuxfmVR3auvr57kkIe6mkURtIspaWlpaWlpaWlpaWlpaWlpQHIRfABARd3c3M6Ly9yZWxheS5leGFtcGxlLmNvbQIET21lciBF",
+      "invite": {
+        "agentId": "rdv1:5jfgyy7ctrjavpxvkb5rglwf7gkuo5vox27hxescd3vgsfcg2iwa",
+        "relays": ["wss://relay.nesher.co", "wss://relay.example.com"],
+        "secret": "paWlpaWlpaWlpaWlpaWlpQ",
+        "expires": "2026-11-08T12:00:00.000Z",
+        "name": "Omer"
+      }
+    }
+  ]
+}

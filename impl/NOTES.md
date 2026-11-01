@@ -4640,6 +4640,118 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       --agent, list, remove (refused while bound or running, kept with its
       key). The route check was removed once to see the test fail.
 
+## Short invite links (v2)
+
+105. **Invite links v2: a compact binary payload, about 106 characters, and
+    links handed over verbatim** (**spec change**: SPEC §5.2.3). First real
+    use, 2026-11-01: a v1 link was about 300 characters (base64url of the
+    canonical JSON with the agent ID, three relays, the secret, the expiry
+    and the name). The owner's assistant (a Hermes agent) showed it
+    shortened with "…" in the middle, the friend got the shortened text, and
+    his Claude rightly refused it. Long opaque strings get abbreviated by
+    models and some chat clients, so the fix is both a shorter link and a
+    rule that a link is never shortened.
+    - **Payload (v2).** base64url, no padding, of bytes: `0x02`; the
+      inviter's 32-byte Ed25519 public key (the agent ID is
+      `rdv1:` + base32 of it, §4.2); the 16 secret bytes; the expiry in Unix
+      **minutes**, uint32 big-endian (a link need not say seconds; an
+      invite's real expiry is the inviter's own record); one byte of relay
+      bits over a fixed table; then records, each `type, length, bytes`
+      (type 1 a relay URL not in the table, UTF-8; type 2 the name, UTF-8),
+      all relays before the name; then 2 check bytes, the first two of
+      SHA-256(`"rdv1/invite-link\0"` ‖ everything before them). 56 bytes = 75
+      characters with known relays, so the whole URL is 106 characters (one
+      custom relay: 139). v1 was 239 with one relay and a name, about 300
+      with three.
+    - **The relay table** (`INVITE_KNOWN_RELAYS`, fixed for v2; a later
+      version may add one at bit 7, which a v2 reader refuses): `wss://relay.nesher.co`, the four `DEFAULT_RELAYS`
+      (`nos.lol`, `relay.primal.net`, `relay.nostr.net`, `nostr.oxtr.dev`),
+      `nostr.mom`, `relay.damus.io`. Known relays read back in table order,
+      then the custom ones in link order (the order never mattered:
+      `acceptInvite` sends to all of them). Still 1 to 3 relays in all, and
+      every relay, known or not, goes through `checkInviteRelays` and, where
+      it is dialled, the pinned DNS guard (NOTES 101, L4) as before: the
+      table is a shorthand, not a trust list.
+    - **Check bytes** (an addition to the brief). The link is still not
+      signed (NOTES 101), and the check is no security feature: anyone can
+      recompute it. It catches accidents, which is the failure seen: a link
+      cut at a record boundary (which would otherwise parse with a relay or
+      the name missing) and a character a model re-typed wrong (which would
+      otherwise silently send the request to no one, or with a wrong secret,
+      to the inviter's pending queue). 2 bytes (3 characters) miss 1 in
+      65536. A failed check gives the same "cut off or changed" message as
+      a cut link.
+    - **Strict, one link per invite.** The reader refuses a non-canonical
+      base64url (stray low bits in the last character), fewer bytes than
+      the header and check, a check that fails, a relay bit outside the
+      table, no relays or more than 3, a known relay written out as text
+      (it must be its bit), a repeated relay, a record of length 0 or past
+      the end, an unknown record type, a second name or a relay after the
+      name, bytes that are not UTF-8, a name that is not already clean
+      (`cleanInviteName`, at most 64 characters), a key that is not a curve
+      point, expiry 0, and a version byte from 3 to 31 ("made by a newer
+      version"). Anything else that is not `{` (v1) is "not an invite link".
+    - **v1 still reads; nothing makes it.** The first decoded byte picks the
+      reader: `{` (v1, the JSON rules of NOTES 101 unchanged) or `0x02`.
+      `encodeInvite`/`inviteUrl` make v2 only; `encodeInviteV1` stays for
+      tests and interop. The secret is the same 16 bytes (base64url in
+      `Invite.secret`), so its hash, the book, the constant-time compare and
+      redeeming are unchanged, and `rdv/request`'s `invite` field is the
+      same string.
+    - **No name by default** (the brief). The name is unverified anyway, and
+      once connected the invitee's agent sees the inviter's card. `rdv invite
+      create` puts one in only with `--name`; `rdv_invite`'s form starts with
+      the field empty ("optional: … it makes the link longer"), prefilled
+      locally only when the model passed `name` (its description: only when
+      the user asks), and through the gateway the model's name stays a
+      suggestion as before. The cap stays 64 characters. The share text
+      still names the inviter by the profile name (`createInviteIn`'s
+      `from`): it is the owner's own message, not part of the link.
+    - **A cut link says so.** `parseInvite` throws `INVITE_CUT_MESSAGE`
+      ("this invite link looks cut off or changed (…): ask the person who
+      sent it for the full link, exactly as it was sent") for text with
+      "…" (or `%E2%80%A6`) anywhere, a payload with "...", base64url that
+      does not decode or ends with stray bits, a v2 payload too short or
+      failing its check, and v1 JSON that does not parse. The CLI and the
+      tools pass it on. The payload is now the first word after `#`, so a
+      link a chat client wrapped across lines reads as cut, not as junk, and
+      "accept <link> please" works.
+    - **Verbatim, everywhere a link is handed over.** `rdv_invite`'s
+      description, its `next_step` and its "link" note, the server
+      instructions (local and the gateway's, `INVITE_LINK_NOTE`), the
+      gateway's OpenAPI description and both skills say: give the user the
+      link and `share_text` exactly as returned, in full, the link on its
+      own line or in a code block, never shortened, abbreviated, summarized,
+      re-typed or with "…". `rdv_accept_invite`, `rdv_init`'s `invite` and
+      the skills say: if a link looks cut (it has "…" or "...", or is much
+      shorter than about 106 characters) or the tool says so, ask for the
+      full link and never guess the missing part. `rdv invite create` prints
+      "Send the whole link, exactly as it is".
+    - **Landing page.** `site/invite.js` reads v2 and v1 in the browser,
+      shows the fingerprint (base32 of the key, the same `rdv1:abcd…wxyz` as
+      `fingerprint`), the name only when the link has one and it is clean,
+      and the expiry; it verifies the check bytes with `crypto.subtle`
+      (resolving true where there is none: the agent checks anyway) and
+      shows "incomplete or changed" otherwise. Still `textContent` only, no
+      new sinks; the copy lines are built from the regex-checked fragment
+      only. Outside a browser it only exposes its decoder
+      (`rdvInviteDecode`, `rdvInviteCheck`) for the tests.
+    - **Vectors.** `vectors/invite-v2.json` (new; `v1.json` does not cover
+      invites and is untouched): fixed inputs (seed 32 × `0x07`, secret
+      16 × `0xa5`) and the exact URL for one known relay, three known
+      relays, and a known plus a custom relay with a name. The library
+      matches both ways; the landing page decodes the same file.
+    - **Tests.** core `invite.test.ts` (v2 round trip and minute flooring,
+      lengths: ≤ 110 with the default relays or `relay.nesher.co`, ≤ 160
+      with a custom relay; relay order; the vectors; "…" and "..." in the
+      middle or at the end, every cut, a wrapped line, changed characters;
+      trailing bytes, stray bits, every malformed field and record, the
+      relay rules for custom relays; v1 still read, strictly), core
+      `invite-page.test.ts` (the landing page against the vectors, a fresh
+      v2 and a v1 link, cut and changed links), cli and MCP `invite.test.ts`
+      (no name by default, `--name`, the share text, the verbatim
+      instructions, a shortened link's error).
+
 ## Not implemented yet
 
 

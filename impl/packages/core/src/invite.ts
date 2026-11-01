@@ -8,7 +8,7 @@ import { sha256 } from '@noble/hashes/sha256';
 import { base64urlnopad } from '@scure/base';
 import { canonicalize, parseTimestamp, utf8ToBytes } from './encoding.js';
 import { isBlockedAddress } from './filefetch.js';
-import { isAgentId } from './identity.js';
+import { agentIdFromPublicKey, isAgentId, publicKeyFromAgentId } from './identity.js';
 
 /** Where invite links point: the landing page, which reads the fragment in the browser only. */
 export const INVITE_BASE_URL = 'https://rendezvous.nesher.co/i';
@@ -32,8 +32,36 @@ export const INVITE_NAME_MAX = 64;
 export const INVITE_RELAYS_MAX = 3;
 /** Longest relay URL in a link. */
 export const INVITE_RELAY_MAX = 200;
-/** Longest payload (base64url) accepted from a link: well above a real one (about 300 characters). */
+/** Longest payload (base64url) accepted from a link: well above a real one (75 characters for v2 with known relays, about 300 for v1). */
 export const INVITE_PAYLOAD_MAX = 1024;
+
+/**
+ * Relays a v2 link names by one bit each (NOTES 105). Fixed for version 2
+ * (a later version may add one at bit 7, which v2 readers refuse): the
+ * project's own relay, then DEFAULT_RELAYS, then two widely used public relays.
+ */
+export const INVITE_KNOWN_RELAYS: readonly string[] = Object.freeze([
+  'wss://relay.nesher.co',
+  'wss://nos.lol',
+  'wss://relay.primal.net',
+  'wss://relay.nostr.net',
+  'wss://nostr.oxtr.dev',
+  'wss://nostr.mom',
+  'wss://relay.damus.io',
+]);
+
+/** What `parseInvite` says when a link was cut short or shortened with "…" (the 2026-11-01 failure: an assistant abbreviated a link). */
+export const INVITE_CUT_MESSAGE =
+  'this invite link looks cut off or changed (it was shortened, has "…" in it, or is missing its end): ask the person who sent it for the full link, exactly as it was sent';
+
+/** v2 header: version, Ed25519 public key, secret, expiry (Unix minutes, uint32 big-endian), relay bitmask. */
+const V2_VERSION = 2;
+const V2_HEADER = 1 + 32 + 16 + 4 + 1;
+/** v2 trailer: the first 2 bytes of SHA-256(tag ‖ everything before them); catches a cut or a changed character, not forgery. */
+const V2_CHECK = 2;
+const V2_RELAY = 1;
+const V2_NAME = 2;
+const V2_CHECK_TAG = utf8ToBytes('rdv1/invite-link\u0000');
 
 /** The secret: 128 random bits, base64url without padding (22 characters). */
 const SECRET_RE = /^[A-Za-z0-9_-]{22}$/;
@@ -50,7 +78,7 @@ function secretBytes(s: string): Uint8Array | null {
 }
 
 /**
- * The link's payload: canonical JSON, short keys (it has to fit an SMS).
+ * A v1 link's payload (NOTES 101; read, no longer made): canonical JSON, short keys.
  * `a` the inviter's agent ID, `r` its relays, `s` the secret, `e` the expiry
  * (Unix seconds), `n` an optional display name (the inviter's own words,
  * unverified: anyone can make a link with any name), `v` the version.
@@ -149,10 +177,49 @@ export function sameHash(a: string, b: string): boolean {
   return d === 0;
 }
 
-/** The payload (base64url of canonical JSON) for an invite. Checks every field. */
+/**
+ * The payload of a v2 link (NOTES 105): base64url of the compact binary form,
+ * 75 characters with known relays and no name. Checks every field. Relays from
+ * `INVITE_KNOWN_RELAYS` go in the bitmask (and read back in table order),
+ * others follow as text, then the name if there is one.
+ */
 export function encodeInvite(inv: Invite): string {
-  const p = payloadOf(inv);
-  return base64urlnopad.encode(utf8ToBytes(canonicalize(p)));
+  const relays = checkedRelays(inv);
+  const secret = isInviteSecret(inv.secret) ? secretBytes(inv.secret) : null;
+  if (!secret) throw new Error('not an invite secret');
+  const ms = parseTimestamp(inv.expires);
+  const minutes = ms === null ? 0 : Math.floor(ms / 60_000);
+  if (minutes <= 0 || minutes > 0xffffffff) throw new Error('an invite needs an RFC 3339 expiry');
+  const name = inv.name !== undefined ? utf8ToBytes(cleanInviteName(inv.name)) : undefined;
+  let mask = 0;
+  const custom: Uint8Array[] = [];
+  for (const r of relays) {
+    const i = INVITE_KNOWN_RELAYS.indexOf(r);
+    if (i >= 0) mask |= 1 << i;
+    else custom.push(utf8ToBytes(r));
+  }
+  const parts: number[] = [V2_VERSION, ...publicKeyFromAgentId(inv.agentId), ...secret, (minutes >>> 24) & 0xff, (minutes >>> 16) & 0xff, (minutes >>> 8) & 0xff, minutes & 0xff, mask];
+  for (const c of custom) parts.push(V2_RELAY, c.length, ...c);
+  if (name) parts.push(V2_NAME, name.length, ...name);
+  const body = Uint8Array.from(parts);
+  const out = new Uint8Array(body.length + V2_CHECK);
+  out.set(body);
+  out.set(v2Check(body), body.length);
+  return base64urlnopad.encode(out);
+}
+
+function checkedRelays(inv: Invite): string[] {
+  if (!isAgentId(inv.agentId)) throw new Error('an invite needs the inviter\'s agent ID');
+  const relays = [...new Set(inv.relays)].slice(0, INVITE_RELAYS_MAX);
+  if (relays.length === 0 || !relays.every(isRelayUrl)) throw new Error(`an invite needs 1 to ${INVITE_RELAYS_MAX} ws:// or wss:// relays of at most ${INVITE_RELAY_MAX} characters`);
+  return relays;
+}
+
+function v2Check(body: Uint8Array): Uint8Array {
+  const all = new Uint8Array(V2_CHECK_TAG.length + body.length);
+  all.set(V2_CHECK_TAG);
+  all.set(body, V2_CHECK_TAG.length);
+  return sha256(all).slice(0, V2_CHECK);
 }
 
 /** The full link: `https://rendezvous.nesher.co/i#<payload>`. */
@@ -160,14 +227,13 @@ export function inviteUrl(inv: Invite, base = INVITE_BASE_URL): string {
   return `${base}#${encodeInvite(inv)}`;
 }
 
-function payloadOf(inv: Invite): InvitePayload {
-  if (!isAgentId(inv.agentId)) throw new Error('an invite needs the inviter\'s agent ID');
-  const relays = [...new Set(inv.relays)].slice(0, INVITE_RELAYS_MAX);
-  if (relays.length === 0 || !relays.every(isRelayUrl)) throw new Error(`an invite needs 1 to ${INVITE_RELAYS_MAX} ws:// or wss:// relays of at most ${INVITE_RELAY_MAX} characters`);
+/** The v1 payload (canonical JSON, NOTES 101). Readers still take it; nothing makes one any more (tests and interop only). */
+export function encodeInviteV1(inv: Invite): string {
+  const relays = checkedRelays(inv);
   if (!isInviteSecret(inv.secret)) throw new Error('not an invite secret');
   const ms = parseTimestamp(inv.expires);
   if (ms === null) throw new Error('an invite needs an RFC 3339 expiry');
-  return {
+  const p: InvitePayload = {
     v: 1,
     a: inv.agentId,
     r: relays,
@@ -175,6 +241,7 @@ function payloadOf(inv: Invite): InvitePayload {
     e: Math.floor(ms / 1000),
     ...(inv.name !== undefined ? { n: cleanInviteName(inv.name) } : {}),
   };
+  return base64urlnopad.encode(utf8ToBytes(canonicalize(p)));
 }
 
 const PAYLOAD_KEYS = new Set(['v', 'a', 'r', 's', 'e', 'n']);
@@ -182,27 +249,104 @@ const PAYLOAD_KEYS = new Set(['v', 'a', 'r', 's', 'e', 'n']);
 /**
  * Read an invite from what a person pasted: the link (any host: the payload
  * is what counts, and the inviter's agent checks the secret), `rdv-invite:`
- * followed by the payload, or the payload alone. Strict: a field missing,
- * malformed or unknown, or non-canonical JSON, and it throws. It does not
+ * followed by the payload, or the payload alone; v2 (binary, NOTES 105) or
+ * v1 (JSON, NOTES 101). Strict: a field missing, malformed or unknown, bytes
+ * left over, or a non-canonical encoding, and it throws. A link cut short,
+ * shortened with "…", or with a character changed (v2's check bytes) throws
+ * `INVITE_CUT_MESSAGE`, which tells the user to ask for the full link. It does not
  * check the expiry (`inviteExpired`): an expired link still parses, so the
  * invitee can be told why it no longer works.
  */
 export function parseInvite(text: string, opts: { unsafeAllowRelays?: readonly string[] } = {}): Invite {
   if (typeof text !== 'string') throw new Error('not an invite link');
+  // An ellipsis means someone (often an assistant) shortened the link and its middle is gone (2026-11-01).
+  if (/…|%E2%80%A6/iu.test(text)) throw new Error(INVITE_CUT_MESSAGE);
   let s = text.trim();
   const hash = s.indexOf('#');
   if (hash >= 0) s = s.slice(hash + 1);
   else if (s.toLowerCase().startsWith('rdv-invite:')) s = s.slice('rdv-invite:'.length);
+  // The link is one word: what follows it in a sentence is not part of it.
+  s = s.trim().split(/\s/u)[0];
   // A link pasted at the end of a sentence: the punctuation is not part of it (base64url has none of these).
-  s = s.trim().replace(/[.,;:!?)\]}"'>’”]+$/u, '');
-  if (s.length === 0 || s.length > INVITE_PAYLOAD_MAX || !/^[A-Za-z0-9_-]+$/.test(s)) throw new Error('not an invite link: the part after "#" is missing or not an invite');
+  s = s.replace(/[.,;:!?)\]}"'>’”]+$/u, '');
+  if (s.includes('...')) throw new Error(INVITE_CUT_MESSAGE);
+  if (s.length === 0) throw new Error('not an invite link: the part after "#" is missing. Ask the person who sent it for the full link, exactly as it was sent');
+  if (s.length > INVITE_PAYLOAD_MAX || !/^[A-Za-z0-9_-]+$/.test(s)) throw new Error('not an invite link: the part after "#" is not an invite');
+  let bytes: Uint8Array;
+  try {
+    bytes = base64urlnopad.decode(s);
+  } catch {
+    // base64url of no length can be cut at a length no encoding has.
+    throw new Error(INVITE_CUT_MESSAGE);
+  }
+  // Stray low bits in the last character: one invite has one link. A cut payload usually ends like this.
+  if (base64urlnopad.encode(bytes) !== s) throw new Error(INVITE_CUT_MESSAGE);
+  const inv = bytes[0] === 0x7b ? parseV1(bytes) : bytes[0] === V2_VERSION ? parseV2(bytes) : versionProblem(bytes[0]);
+  checkInviteRelays(inv, opts.unsafeAllowRelays);
+  return inv;
+}
+
+function versionProblem(b: number | undefined): never {
+  if (b !== undefined && b > V2_VERSION && b < 0x20) throw new Error('this invite was made by a newer version of Rendezvous: update and try again');
+  throw new Error('not an invite link');
+}
+
+/** v2 (NOTES 105): the header, then records (custom relays, then at most one name), then the check bytes, and nothing else. */
+function parseV2(b: Uint8Array): Invite {
+  // Too short for its header and check, or a check that fails: cut (the common case) or changed.
+  if (b.length < V2_HEADER + V2_CHECK) throw new Error(INVITE_CUT_MESSAGE);
+  const body = b.subarray(0, b.length - V2_CHECK);
+  const check = v2Check(body);
+  if (check[0] !== b[b.length - 2] || check[1] !== b[b.length - 1]) throw new Error(INVITE_CUT_MESSAGE);
+  const agentId = agentIdFromPublicKey(body.slice(1, 33));
+  if (!isAgentId(agentId)) throw new Error('not an invite link (bad agent ID)');
+  const secret = base64urlnopad.encode(body.slice(33, 49));
+  const minutes = body[49] * 0x1000000 + body[50] * 0x10000 + body[51] * 0x100 + body[52];
+  if (minutes === 0) throw new Error('not an invite link (bad expiry)');
+  const mask = body[53];
+  if (mask >= 1 << INVITE_KNOWN_RELAYS.length) throw new Error('not an invite link (bad relays: a relay this version does not know)');
+  const relays = INVITE_KNOWN_RELAYS.filter((_, i) => (mask & (1 << i)) !== 0);
+  const utf8 = new TextDecoder('utf-8', { fatal: true });
+  let name: string | undefined;
+  for (let at = V2_HEADER; at < body.length; ) {
+    const type = body[at];
+    const len = body[at + 1];
+    if (len === undefined || len === 0 || at + 2 + len > body.length) throw new Error('not an invite link (malformed)');
+    let value: string;
+    try {
+      value = utf8.decode(body.subarray(at + 2, at + 2 + len));
+    } catch {
+      throw new Error('not an invite link (malformed)');
+    }
+    if (type === V2_RELAY && name === undefined) {
+      // A known relay goes in the bitmask, never as text: one invite has one link.
+      if (!isRelayUrl(value) || relays.includes(value) || INVITE_KNOWN_RELAYS.includes(value)) throw new Error('not an invite link (bad relays)');
+      relays.push(value);
+    } else if (type === V2_NAME && name === undefined) {
+      try {
+        name = cleanInviteName(value);
+      } catch {
+        throw new Error('not an invite link (bad name)');
+      }
+      if (name !== value) throw new Error('not an invite link (bad name)');
+    } else {
+      throw new Error('not an invite link (unknown or misplaced field)');
+    }
+    at += 2 + len;
+  }
+  if (relays.length === 0 || relays.length > INVITE_RELAYS_MAX) throw new Error('not an invite link (bad relays)');
+  return { agentId, relays, secret, expires: new Date(minutes * 60_000).toISOString(), ...(name !== undefined ? { name } : {}) };
+}
+
+/** v1 (NOTES 101): canonical JSON. */
+function parseV1(bytes: Uint8Array): Invite {
   let p: Record<string, unknown>;
   let json: string;
   try {
-    json = new TextDecoder('utf-8', { fatal: true }).decode(base64urlnopad.decode(s));
+    json = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
     p = JSON.parse(json);
   } catch {
-    throw new Error('not an invite link: the part after "#" does not decode (was it cut off?)');
+    throw new Error(INVITE_CUT_MESSAGE);
   }
   if (!p || typeof p !== 'object' || Array.isArray(p)) throw new Error('not an invite link');
   if (p.v !== 1) throw new Error('this invite was made by a newer version of Rendezvous: update and try again');
@@ -225,9 +369,7 @@ export function parseInvite(text: string, opts: { unsafeAllowRelays?: readonly s
   }
   // The canonical form only: one link per invite, so what a person compares is what the agent reads.
   if (canonicalize(p) !== json) throw new Error('not an invite link (not in canonical form)');
-  const inv: Invite = { agentId: p.a as string, relays: [...(p.r as string[])], secret: p.s as string, expires: new Date(p.e * 1000).toISOString(), ...(name !== undefined ? { name } : {}) };
-  checkInviteRelays(inv, opts.unsafeAllowRelays);
-  return inv;
+  return { agentId: p.a as string, relays: [...(p.r as string[])], secret: p.s as string, expires: new Date(p.e * 1000).toISOString(), ...(name !== undefined ? { name } : {}) };
 }
 
 export function inviteExpired(inv: Pick<Invite, 'expires'>, now = new Date()): boolean {

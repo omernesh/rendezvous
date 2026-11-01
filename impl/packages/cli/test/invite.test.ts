@@ -31,11 +31,15 @@ describe('rdv invite', () => {
     const omerId = (await rdv(['whoami'], omerHome)).lines[0].id as string;
 
     const made = (await rdv(['invite', 'create', '--tier', 'colleague', '--label', 'John', '--expires', '3d'], omerHome)).lines[0];
-    expect(made).toMatchObject({ event: 'invite', tier: 'colleague', name: 'omer', label: 'John' });
+    expect(made).toMatchObject({ event: 'invite', tier: 'colleague', label: 'John' });
+    // No name in the link by default (NOTES 105); the message to send names the profile.
+    expect(made.name).toBeUndefined();
+    expect(made.share_text).toContain('omer invites you');
     expect(made.url).toMatch(/^https:\/\/rendezvous\.nesher\.co\/i#[A-Za-z0-9_-]+$/);
     expect(made.share_text).toContain(made.url);
     const link = parseInvite(made.url, { unsafeAllowRelays: [relay.url] });
-    expect(link).toMatchObject({ agentId: omerId, relays: [relay.url], name: 'omer' });
+    expect(link).toMatchObject({ agentId: omerId, relays: [relay.url] });
+    expect(link.name).toBeUndefined();
     // Only a hash is kept: the secret is nowhere in the home.
     expect(readFileSync(join(omerHome, 'agent.json'), 'utf8')).not.toContain(link.secret);
 
@@ -47,7 +51,8 @@ describe('rdv invite', () => {
       // The new person: one command, no address, no publishing.
       const init = await rdv(['init', '--profile', 'john', '--relay', relay.url, '--invite', made.url], johnHome);
       expect(init.lines[0]).toMatchObject({ event: 'init' });
-      expect(init.lines[1]).toMatchObject({ event: 'request-sent', via: 'invite', to: omerId, name_in_link: 'omer' });
+      expect(init.lines[1]).toMatchObject({ event: 'request-sent', via: 'invite', to: omerId });
+      expect(init.lines[1].name_in_link).toBeUndefined();
       const johnId = init.lines[0].id as string;
 
       const red = await omerL.waitFor((l) => l.event === 'invite-redeemed', 'invite redeemed', 15_000);
@@ -82,6 +87,8 @@ describe('rdv invite', () => {
     const made = (await rdv(['invite', 'create', '--name', 'Ann', '--no-meetings'], home)).lines[0];
     expect(made.tier).toBe('friend');
     expect(made.scope.may_propose_meetings).toBe(false);
+    // --name puts a name in the link (the owner asked for it).
+    expect(parseInvite(made.url, { unsafeAllowRelays: [relay.url] }).name).toBe('Ann');
     expect((await rdv(['invite', 'revoke', made.invite_id], home)).lines[0]).toMatchObject({ status: 'revoked' });
     expect((await rdv(['invite', 'list'], home)).lines[0]).toMatchObject({ status: 'revoked' });
     expect((await rdv(['invite', 'revoke', 'nope'], home, { check: false })).stderr).toMatch(/no invite nope/);
@@ -97,6 +104,9 @@ describe('rdv invite', () => {
     // Nothing was made for a bad link.
     expect((await rdv(['whoami'], fresh, { check: false })).code).not.toBe(0);
 
+    // A link shortened with "…": the error says to ask for the full link.
+    const cut = await rdv(['invite', 'accept', `${made.url.slice(0, 50)}…${made.url.slice(-10)}`], home, { check: false });
+    expect([cut.code, cut.stderr]).toEqual([2, expect.stringMatching(/looks cut off.*ask the person who sent it for the full link/)]);
     const own = await rdv(['invite', 'accept', made.url], home, { check: false });
     expect(own.stderr).toMatch(/your own/);
 

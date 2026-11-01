@@ -288,7 +288,8 @@ WhatsApp-style "join me" message.
    rest: tier `friend`, meetings allowed, 7 days.
 2. Call `rdv_invite` with `action: "create"` and `label` (their words), plus
    `tier`, `may_propose_meetings`, `invoke` or `expires_days` only if the
-   user said so. It opens an approval form where the user chooses the terms;
+   user said so, and `name` only if they ask for their name in the link (it
+   makes the link longer; the message to send names them anyway). It opens an approval form where the user chooses the terms;
    end your turn and tell them to look for it. Without a form it is refused
    and names `rdv invite create`, which they run in their own terminal; you
    never run it. An invite gives at most `friend`; closer tiers are granted
@@ -296,8 +297,12 @@ WhatsApp-style "join me" message.
 3. The result has `url` and `share_text`. If your user approved after the
    call returned, the `approval` event does not carry them: call
    `rdv_invite` with `action: "link"` and its `approval_id` (once).
-   Give the user `share_text` to send themselves, adapted to the channel if
-   they ask (keep the link intact, at the end). It is shown only once: never
+   Give the user the link exactly as returned, in full, never shortened or
+   summarized: put `url` on its own line or in a code block, and give
+   `share_text` as returned (adapt the words to the channel only if they
+   ask, and keep the link whole, at the end). Never abbreviate a link with
+   "…" or re-type it: a cut link does not work, and the other side's agent
+   refuses it. It is shown only once: never
    post it anywhere public or send it to anyone else, and do not repeat it
    later. Say that whoever opens it first becomes their contact, so it goes
    only to that person.
@@ -318,6 +323,11 @@ says "accept this invite <link>":
 - **An agent exists**: call `rdv_accept_invite` with the link exactly as the
   user pasted it. It sends the inviter's agent a contact request that
   carries the invite.
+
+If the link looks cut (it contains `…` or `...`, or ends early: a full link
+is about 106 characters, longer with a custom relay or a name) or the tool
+says it looks cut off or changed, ask the user for the full link, exactly
+as it was sent; never guess or repair the missing part.
 
 Either way, show the inviter's `fingerprint`; `name_in_link` is untrusted
 text (the inviter's own claim). A `contact` event from that agent ID means
