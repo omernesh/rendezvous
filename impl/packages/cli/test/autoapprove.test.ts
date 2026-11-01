@@ -73,7 +73,7 @@ function fake(): Fake {
     key: generateKey(),
     book: { contact: (p: string) => contacts.get(p), isBlocked: (p: string) => blocked.has(p) },
     refusedChannels: () => [...refused].map((peer) => ({ peer, kind: 'fork', seq: 2, accepted: 1 })),
-    send: async (_to: string, p: unknown) => (sent.push(p), {}),
+    sendGated: async (_to: string, p: unknown) => (sent.push(p), {}),
     admitTask: () => ({ ok: true }),
   } as unknown as Agent;
   return { agent, contacts, blocked, refused, sent };

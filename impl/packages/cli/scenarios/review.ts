@@ -49,7 +49,7 @@ import { fetchIncoming } from '../src/files.js';
 import { Home } from '../src/home.js';
 import { Output } from '../src/output.js';
 import { relaysFromEnv } from './contact.js';
-import { assert, type Line, Listener, rdv } from './harness.js';
+import { assert, type Line, Listener, rawSend, rdv } from './harness.js';
 
 export const REVIEW_VARIANTS = ['ok', 'decline', 'cancel', 'rate', 'auto'] as const;
 export type ReviewVariant = (typeof REVIEW_VARIANTS)[number];
@@ -200,7 +200,7 @@ export async function runReviewScenario(opts: ReviewScenarioOptions): Promise<Re
           },
         };
         const before = omerL.lines.length;
-        await rdv(['send', omer, '--json', JSON.stringify(payload)], dirs.john, { timeoutMs: timeout });
+        await rawSend(dirs.john, omer, payload); // past john's engine and its outbound limit: rdv send refuses a2a payloads (issue #133)
         // Omer's listener reports the refusal (a task event) and never asks him.
         const refused = await omerL.waitFor((l) => l.event === 'task' && l.task === id && l.state === 'rejected', "omer's agent rejects it", timeout);
         assert(refused.code === 'rate', `rejected for rate (${JSON.stringify(refused)})`);

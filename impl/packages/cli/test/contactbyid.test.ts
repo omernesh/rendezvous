@@ -46,9 +46,9 @@ describe('rdv contact request <rdv1:…> with no prior lookup', () => {
 
       await johnL.waitFor((l) => l.event === 'contact', 'john grants', 10_000);
       await omerL.waitFor((l) => l.event === 'contact' && l.peer === johnId, 'omer contact', 10_000);
-      await rdv(['send', johnId, '--json', '{"type":"a2a/message","text":"found you by ID"}'], omerHome);
+      await rdv(['send', johnId, '--json', '{"type":"note","text":"found you by ID"}'], omerHome);
       const msg = await johnL.waitFor((l) => l.event === 'message', 'john gets the message', 10_000);
-      expect(msg.payload).toMatchObject({ type: 'a2a/message', text: 'found you by ID' });
+      expect(msg.payload).toMatchObject({ type: 'note', text: 'found you by ID' });
     } finally {
       await Promise.all([johnL.stop(), omerL.stop()]);
     }

@@ -175,7 +175,7 @@ export async function carryOut(agent: Agent, home: Home, calendarPath: string | 
   }
   for (const o of step.outgoing) {
     try {
-      await agent.send(o.to, o.payload as unknown as Payload);
+      await agent.sendGated(o.to, o.payload as unknown as Payload);
     } catch (err) {
       errors.push(`sending to ${o.to} failed: ${(err as Error).message}`);
     }

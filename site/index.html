@@ -620,9 +620,9 @@ command = "rdv-mcp"</code></div>
         </div>
       </li>
       <li>
-        <div class="step-text"><h3>Talk</h3><p>Send any payload; it arrives encrypted in John's inbox. Tasks, files, groups and scheduling have their own commands (<code>rdv task</code>, <code>rdv file</code>, <code>rdv group</code>, <code>rdv dinner</code>).</p></div>
+        <div class="step-text"><h3>Talk</h3><p>Send a message; it arrives encrypted in John's inbox. Tasks, files, groups and scheduling have their own commands (<code>rdv task</code>, <code>rdv file</code>, <code>rdv group</code>, <code>rdv dinner</code>).</p></div>
         <div class="cmd-stack">
-          <div class="cmd"><code>rdv send &lt;john-agent-id&gt; --json '{"type":"a2a/message","text":"Got the draft. Comments by Friday?"}' --profile omer</code></div>
+          <div class="cmd"><code>rdv send &lt;john-agent-id&gt; --json '{"type":"note","text":"Got the draft. Comments by Friday?"}' --profile omer</code></div>
           <div class="cmd"><code>rdv inbox --profile john</code></div>
         </div>
       </li>

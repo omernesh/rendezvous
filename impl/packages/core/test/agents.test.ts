@@ -11,11 +11,14 @@ import {
   idtopic,
   type Envelope,
   envelopeHash,
+  FREE_MESSAGE_TYPES,
   generateKey,
   MEETING_CAPABILITIES,
   MEETINGS_CAPABILITY,
   NostrTransport,
   openEnvelope,
+  plainSendFamily,
+  PlainSendRefused,
   type Payload,
   REVERSE_GRANT_LIMIT,
   sealEnvelope,
@@ -84,17 +87,46 @@ describe('two agents over a Nostr relay', () => {
     expect(omer.contacts().map((c) => c.peer)).toEqual([john.id]);
 
     const got = waitFor<[string, Payload, Envelope]>(john, 'message');
-    await omer.send(john.id, { type: 'a2a/message', text: 'Thursday 20:00?' });
+    await omer.send(john.id, { type: 'note', text: 'Thursday 20:00?' });
     const [from, payload] = await got;
     expect(from).toBe(omer.id);
-    expect(payload).toEqual({ type: 'a2a/message', text: 'Thursday 20:00?' });
+    expect(payload).toEqual({ type: 'note', text: 'Thursday 20:00?' });
 
     const reply = waitFor<[string, Payload]>(omer, 'message');
-    await john.send(omer.id, { type: 'a2a/message', text: 'Works for me.' });
+    await john.send(omer.id, { type: 'note', text: 'Works for me.' });
     expect((await reply)[1].text).toBe('Works for me.');
 
     // The relay only ever saw ciphertext.
     expect(relay.events.map((e) => e.content).join('')).not.toContain('Thursday');
+
+    // A plain send carries only free messages (issue #133): every gated flow's type is refused, nothing leaves.
+    const seqBefore = omer.channels.state[john.id].outSeq;
+    for (const [type, family] of [
+      ['a2a/message', 'a2a'],
+      ['a2a/task-update', 'a2a'],
+      ['a2a/artifact-update', 'a2a'],
+      ['meeting/accept', 'a2a'],
+      ['rdv/transfer', 'transfer'],
+      ['rdv/group-msg', 'group'],
+      ['rdv/group-invite', 'group'],
+      ['rdv/auto-approve', 'control'],
+      ['chat', 'other'],
+      ['NOTE', 'other'],
+    ] as const) {
+      const err = await omer.send(john.id, { type }).catch((e: unknown) => e);
+      expect(err, type).toBeInstanceOf(PlainSendRefused);
+      expect((err as PlainSendRefused).family, type).toBe(family);
+      expect(plainSendFamily(type), type).toBe(family);
+    }
+    expect(plainSendFamily('note')).toBe('free');
+    expect(FREE_MESSAGE_TYPES).toEqual(['note']);
+    expect(omer.channels.state[john.id].outSeq).toBe(seqBefore);
+    // An engine's own send (its gate already ran) still goes through; control types never do.
+    const viaEngine = waitFor<[string, Payload]>(john, 'message');
+    await omer.sendGated(john.id, { type: 'a2a/task-update', taskId: 'x' });
+    expect((await viaEngine)[1].type).toBe('a2a/task-update');
+    await expect(omer.sendGated(john.id, { type: 'rdv/revoke' })).rejects.toThrow(/dedicated method/);
+    await expect(omer.sendGated(john.id, { type: 'rdv/group-msg' })).rejects.toThrow(/dedicated method/);
   });
 
   it('finds a public pointer, contacts by card, and stops after revocation', async () => {
@@ -116,7 +148,7 @@ describe('two agents over a Nostr relay', () => {
     const revoked = waitFor(omer, 'revoked');
     await john.revoke(omer.id);
     await revoked;
-    await expect(omer.send(john.id, { type: 'a2a/message' })).rejects.toThrow(/no active contact/);
+    await expect(omer.send(john.id, { type: 'note' })).rejects.toThrow(/no active contact/);
   });
 
   it('ignores a probe re-posted on another address topic (security review L2)', async () => {
@@ -255,7 +287,7 @@ describe('two agents over a Nostr relay', () => {
     expect(restored.id).toBe(omer.id);
 
     const got = waitFor<[string, Payload]>(john, 'message');
-    await restored.send(john.id, { type: 'a2a/message', text: 'still me' });
+    await restored.send(john.id, { type: 'note', text: 'still me' });
     expect((await got)[1].text).toBe('still me');
   });
 
@@ -297,7 +329,7 @@ describe('two agents over a Nostr relay', () => {
     john.on('dropped', (reason) => drops.push(reason));
     const got: Payload[] = [];
     john.on('message', (_from, p) => got.push(p));
-    await expect(crashing.send(john.id, { type: 'a2a/message', text: 'first' })).rejects.toThrow('crash after send');
+    await expect(crashing.send(john.id, { type: 'note', text: 'first' })).rejects.toThrow('crash after send');
     crashing.close();
 
     // Without the fix the restart would reuse seq 1 from the stale state.
@@ -306,7 +338,7 @@ describe('two agents over a Nostr relay', () => {
 
     const restarted = Agent.fromJSON(disk, (key) => new NostrTransport({ key, relays: [relay.url] }));
     agents.push(restarted);
-    const env = await restarted.send(john.id, { type: 'a2a/message', text: 'second' });
+    const env = await restarted.send(john.id, { type: 'note', text: 'second' });
     expect(env.seq).toBe(2);
     const deadline = Date.now() + 5000;
     while (got.length < 2 && Date.now() < deadline) await new Promise((r) => setTimeout(r, 50));
@@ -372,8 +404,8 @@ describe('ordering over a lossy pipe', () => {
 
     const texts: string[] = [];
     john.on('message', (_p, payload) => texts.push(String(payload.text)));
-    await omer.send(john.id, { type: 'a2a/message', text: 'two' }); // seq 2, lost
-    await omer.send(john.id, { type: 'a2a/message', text: 'three' }); // seq 3 → gap → resend
+    await omer.send(john.id, { type: 'note', text: 'two' }); // seq 2, lost
+    await omer.send(john.id, { type: 'note', text: 'three' }); // seq 3 → gap → resend
     for (let i = 0; i < 20 && texts.length < 2; i++) {
       await new Promise((r) => setTimeout(r, 10));
       await john.idle();
@@ -434,8 +466,8 @@ describe('requester-side binding and restart safety', () => {
     john.start();
     await connect(omer, john);
 
-    await omer.send(john.id, { type: 'a2a/message', text: 'two' }); // seq 2, held
-    await omer.send(john.id, { type: 'a2a/message', text: 'three' }); // seq 3, buffered by john
+    await omer.send(john.id, { type: 'note', text: 'two' }); // seq 2, held
+    await omer.send(john.id, { type: 'note', text: 'three' }); // seq 3, buffered by john
     await new Promise((r) => setTimeout(r, 20));
     await john.idle();
     expect(john.toJSON().buffer?.[omer.id]?.map((e) => e.seq)).toEqual([3]);

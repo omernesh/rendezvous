@@ -251,7 +251,7 @@ describe('a request of ours with the owner’s files is held for the release gat
       outboundScope: { invoke: { [REQUEST_URI]: {} } },
       card: { capabilities: [TASKS_URI, REQUEST_URI, FILES_URI] },
     } as unknown as Contact;
-    const agent = { book: { contact: (p: string) => (p === PEER ? contact : undefined) }, send: async (to: string, payload: unknown) => (sent.push({ to, payload }), {}) } as unknown as Agent;
+    const agent = { book: { contact: (p: string) => (p === PEER ? contact : undefined) }, sendGated: async (to: string, payload: unknown) => (sent.push({ to, payload }), {}) } as unknown as Agent;
     return { agent, sent };
   }
 

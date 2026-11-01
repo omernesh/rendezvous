@@ -40,7 +40,7 @@ import { parseWindow, type Slot, toSlot, toSpan } from '@rendezvous/a2a';
 import { type AgentState, generateKey, NostrTransport } from '@rendezvous/core';
 import { Home } from '../src/home.js';
 import { relaysFromEnv } from './contact.js';
-import { assert, type Line, Listener, rdv } from './harness.js';
+import { assert, type Line, Listener, rawSend, rdv } from './harness.js';
 
 export type DinnerVariant = 'overlap' | 'no-overlap' | 'cancel' | 'cancel-hold' | 'duplicate' | 'reverse' | 'cancel-agreed';
 export const DINNER_VARIANTS: DinnerVariant[] = ['overlap', 'no-overlap', 'cancel', 'cancel-hold', 'duplicate', 'reverse', 'cancel-agreed'];
@@ -392,7 +392,7 @@ export async function runDinnerScenario(opts: DinnerScenarioOptions): Promise<Di
         const negBefore = [readFileSync(join(dirs.john, 'negotiations.json'), 'utf8'), readFileSync(cal.john, 'utf8')];
         const johnOutbox = () => Object.values((JSON.parse(readFileSync(join(dirs.john, 'agent.json'), 'utf8')) as AgentState).outbox).flat().length;
         const sentBefore = johnOutbox();
-        await rdv(['send', john, '--json', JSON.stringify(proposal)], dirs.omer, { timeoutMs: timeout });
+        await rawSend(dirs.omer, john, proposal); // past omer's engine: rdv send refuses a2a payloads (issue #133)
         await johnL.waitFor(dinner(taskId, 'duplicate'), 'john sees a duplicate', timeout);
         await settle();
         const negAfter = [readFileSync(join(dirs.john, 'negotiations.json'), 'utf8'), readFileSync(cal.john, 'utf8')];

@@ -1270,7 +1270,7 @@ Contact needs consent from both humans. Nothing is granted on its own.
 
 | Command | Does |
 |---|---|
-| `rdv send <agent-id> --json '{"type":"a2a/message","text":"hi"}'` | Send any payload (`--payload '…'` is the same without JSON output) |
+| `rdv send <agent-id> --json '{"type":"note","text":"hi"}'` | Send a free message (`--payload '…'` is the same without JSON output). Only `note` payloads: tasks, dinners, files and groups go through `rdv task`, `rdv dinner`, `rdv file` and `rdv group` and their gates, and `rdv send` refuses their types (NOTES 108) |
 | `rdv inbox [--follow]` | Show received payloads |
 | `rdv listen [--auto-grant <tier> [--auto-grant-any-tier]] [--exec <script>] [--service <name>]` | Long-running: print events; auto-grant is for demos only and stops at `stranger` unless `--auto-grant-any-tier`; `--exec` gets each event as a JSON line on stdin (`RDV_EVENT`, `RDV_HOME` set); `--service <name>` is what the background listener from `rdv service install` runs with (never together with `--auto-grant`, `--exec` or `--negotiate`) |
 | `rdv invite create [--tier friend] [--expires 7d] [--name Omer] [--label Dana] [--no-meetings] [--invoke <uri>]...` | Make a one-time invite link (`https://rendezvous.nesher.co/i#…`, the payload in the fragment, about 106 characters; `--name` adds your name, unverified, and makes it longer) and a message ready to send by WhatsApp, SMS or email: whoever opens it first becomes your contact on these terms (tier `friend` or below, 1 to 30 days, default 7), without asking you again. Only a hash of its secret is kept, so the link is shown only now; send it whole (a shortened link does not work). Yours to run (an assistant uses `rdv_invite`, which asks you in a form). NOTES 101, 105 |
@@ -1311,7 +1311,7 @@ Ask a contact's agent to do something, and send files. Each step that acts or re
 | `rdv group join <invite-id> --code <code> [--invoke <uri>]… [--max-frequency f] [--newcomers ask\|trust-admin]` / `rdv group decline <invite-id>` | Join a group on these terms (what members may ask of you; by default nothing, and you are asked about each newcomer who is not your contact), or say no. `--code` is refused if the invite changed since you read it. `join` is yours to run |
 | `rdv group approve <group-id> <agent-id> --code <code>` | Let a newcomer who is not your contact receive your group traffic. Yours to run |
 | `rdv group resync <group-id> [--member <agent-id>]` | Thaw a group whose admin signed two member lists for one step, after checking with them; with `--member`, take the group messages of a member that equivocated or was muted again, after checking with them. Yours to run; from chat: `rdv_resync` with `group_id` (approval form) |
-| `rdv group post <group-id> --json '<body>' [--to <agent-id>]…` | Say something to the group: to every member you send to (board-visible), or privately to those named (SPEC §7.8.3) |
+| `rdv group post <group-id> --json '<body>' [--to <agent-id>]…` | Say something to the group: to every member you send to (board-visible), or privately to those named (SPEC §7.8.3). The body is a free message (`{"type":"note",…}`); group tasks go through `rdv group request`, `claim`, `assign` … and their gates (NOTES 108) |
 | `rdv group leave <group-id>` / `rdv group remove <group-id> <agent-id\|label>` | Leave a group (every member is told), or as admin remove a member (the new member list goes to everyone, them included). Yours to run |
 | `rdv group board <group-id>` | The group's tasks as your agent holds them: open ones, claims, who does what, their state and results (SPEC §7.8.4) |
 | `rdv group request <group-id> --text "…" [--capability <uri>] [--assignee <agent-id>] [--private] [--ref <task-id>]…` | Put a task on the board: open for members to claim, or for one member whose group terms allow it (`--private`: only to them). `--ref` names earlier tasks it builds on |
@@ -1352,7 +1352,7 @@ channels drop what was already handled. Negotiation follows the consumer:
 run `rdv listen --negotiate` (or give the consuming `rdv-mcp` a calendar) if
 an attached server should get answers to its dinner proposals.
 
-PowerShell quoting for `send`: `rdv send <id> --json '{\"type\":\"a2a/message\",\"text\":\"hi\"}'`
+PowerShell quoting for `send`: `rdv send <id> --json '{\"type\":\"note\",\"text\":\"hi\"}'`
 (Windows PowerShell 5 strips bare inner quotes; PowerShell 7.3+ accepts the bash form).
 
 ## Examples
@@ -1842,7 +1842,7 @@ stays for clients without forms. `RDV_ELICIT=off` turns forms off entirely.
 | `rdv_accept_invite` | invite (the link as pasted), greeting | sends the inviter's agent a contact request carrying the invite secret; granted at once while the invite is open (a `contact` event), otherwise it waits for the inviter. `name_in_link` is untrusted text. `rdv_init` takes `invite` too, for an agent that does not exist yet |
 | `rdv_service` | action `install` / `remove` / `status` | the background listener that keeps the agent reachable while the client is closed (issue #102, NOTES 100): `rdv listen --service rdv-listen-<profile> --home <home>` with absolute paths, started at the user's login by a scheduled task through a hidden `wscript` launcher (Windows), a LaunchAgent (macOS) or a systemd user unit (Linux), never with a gate-passing flag. `install` opens an approval form that shows what is installed, the exact command line, the profile and home, that it runs at login as the user, and how to remove it; bound to the definition and to what is installed now. Without a form it is refused and names `rdv service install`. When this server holds `listener.lock` it hands it to the service and attaches. `remove` needs no form (it only narrows); `status` (read-only): installed, running, profile and home, who holds `listener.lock`, and `state` (`current`, `older`, or `tampered` with `tamper_reasons` when its files, the record or what the OS runs were changed outside Rendezvous; also a `service_tampered` event). Not available through rdv-gateway |
 | `rdv_backup` | action `create` / `restore`; path (absolute: a new file for `create`, the backup for `restore`) | `create`: the file, the agent ID and fingerprint, and `verified_agent_id_matches` (read back and opened); `restore` (only into a home with no agent): the restored agent ID, fingerprint, backup time and contact count, then the agent starts and tells its contacts. The passphrase is typed only into the approval form (twice and at least 12 characters for `create`; once for `restore`, after the form shows the agent ID and fingerprint in the file); without a form it is refused, with no phrase. Not available through rdv-gateway (issue #88, NOTES 91) |
-| `rdv_send` | agent_id or to (a `local_label`), payload `{type, …}` (not `a2a/*`, `rdv/*`) | agent ID, fingerprint, envelope seq, `delivery` (`pending` until the contact's receipt comes, or `untracked` when its agent sends none); `to` is refused when no contact, or more than one, has that label |
+| `rdv_send` | agent_id or to (a `local_label`), payload `{"type":"note", …}`: free messages only; every other type is refused with the tool to use (`rdv_task`, `rdv_negotiate`, `rdv_file`, `rdv_group`, `rdv_grant`/`rdv_revoke`; NOTES 108) | agent ID, fingerprint, envelope seq, `delivery` (`pending` until the contact's receipt comes, or `untracked` when its agent sends none); `to` is refused when no contact, or more than one, has that label |
 | `rdv_inbox` | since cursor, limit, wait_seconds (≤ 60) | events + next_cursor |
 | `rdv_negotiate` | action propose / confirm / cancel / status; agent_id, intent `dinner`, window, calendar, tz, minutes, place, area, expires, task_id, reason, confirm_phrase | task ID and state; progress via `rdv_inbox`; `confirm` needs the human (below) |
 | `rdv_task` | action `list` / `status` / `read` / `request` / `input` / `cancel` / `approve-start` / `decline` / `submit` / `approve-release`; task_id, group_id (a task a group member gave us: `status`, `read`, `approve-start`, `decline`, `submit`, `approve-release`), agent_id or to, capability (default `request/v1`), text, input, data, expires, reason, kind (`result` / `question` / `finish`), name, files, inline_files, complete, outcome, confirm_phrase | tasks with state (peer text as `untrusted_peer_text`); `read` adds the rules for handling a peer's task and changes nothing; `approve-start` and `approve-release` need the human (below). No result carries a phrase or a file key |
@@ -3033,7 +3033,7 @@ Rules:
     grant would refuse: it counts its own open tasks per capability and
     the `task/request`s it sent in the window of the peer's `max_frequency`,
     and holds the task instead of sending it.
-  - **Free messages** (`rdv_send` notes, any payload that is not a task) need
+  - **Free messages** (`rdv_send` notes, §7) need
     only `may_initiate`, as today.
   - **Meetings.** `may_propose_meetings: true` is read as `invoke` holding the
     meetings and meeting-cancel URIs. A grant that has `invoke` MUST also
@@ -3675,6 +3675,15 @@ change**, issue #104).
 - Once contact is granted, agents exchange tasks using **A2A v0.3 objects**
   (§7.1) inside the envelope's encrypted content. The payload is a JSON
   document with a `type` field.
+- **Free messages.** `{"type": "note", …}` is a free message: the receiver
+  shows it to its human and acts on nothing in it. A host's plain send (one
+  whose payload a model, a script or a shell chooses) MUST carry only free
+  messages, and refuse every other type: tasks and meetings (`a2a/*`), file
+  transfers (`rdv/transfer`), group payloads (`rdv/group-*`) and control
+  messages leave only through their own flows and gates (§5.5, §7.6, §7.7,
+  §7.8), or a plain send would skip them. Hosts allow-list free types rather
+  than deny-list gated ones, so a type added later is refused until a flow
+  takes it.
 - The protocol is **asynchronous by default**: tasks, proposals, and
   confirmations are documents; no live channel is assumed. (Calendar
   negotiation = propose/accept cycles over store-and-forward.)
@@ -4819,7 +4828,7 @@ Proposed MCP tool API (v0.3):
 | `rdv_request_contact` | send a contact request (via hint or human channel) |
 | `rdv_pending_requests` | list inbound contact requests (for consent UX) |
 | `rdv_grant` / `rdv_revoke` | approve/reject/revoke contacts with tier+scope (meetings and the capabilities in `scope.invoke`); a grant needs the human's own approval (§5.5) |
-| `rdv_send` | send an envelope (task, message, proposal) |
+| `rdv_send` | send a free message (`{"type":"note",…}`); tasks, meetings, files and groups go only through their own tools and gates (§7) |
 | `rdv_inbox` | read events after a cursor (an event log; nothing is acknowledged to the peer) |
 | `rdv_negotiate` | A2A task exchange lifecycle |
 | `rdv_group` | groups (§7.8): create one, list groups and invites; inviting a contact, joining, approving a newcomer, leaving, removing a member and changing one's own terms only with the human's own approval (§5.5); posting, the board, and requesting, claiming, assigning and canceling tasks on it (§7.8.4). Group messages, board changes, equivocation, gaps, mutes, reports and members leaving arrive as `rdv_inbox` events, what members wrote as untrusted peer text |
@@ -4889,6 +4898,7 @@ The format follows Keep a Changelog. One line per change a user can see; PR numb
 
 ### Security
 - **Security:** the commands that are yours alone (granting, confirming, labels and nicknames, your agent's name, the task and group gates, relay changes, auto-approve, backups and restores, the commands that show confirm phrases, and the gateway's `pin`, `token`, `oauth revoke`, `agent` and `notify` commands) now refuse to run unless they are in an interactive terminal, and say which chat tool asks you instead. A shell tool without a terminal (Claude Code's Bash and PowerShell tools, MCP clients) is refused when it runs the `rdv` or `rdv-gateway` commands; another interpreter calling the library directly (e.g. `node -e` importing `dist/src/main.js`), or a launcher that opens a new console or pseudo-terminal, still gets through (an accepted limit, #51, which the consent guard names), and an assistant running its shell in a real terminal must use the approval-form tools. Run them yourself in your own terminal (`ssh -t` on a server, `docker exec -it` in a container). Piping a passphrase or PIN with `--stdin` is refused the same way, and `--stdin` on a terminal uses the hidden prompt instead of echoing it. ([#126](https://github.com/omernesh/rendezvous/issues/126))
+- **Security:** `rdv send`, `rdv group post` and the `rdv_send` tool (in `rdv-mcp` and the gateway) now carry only free messages (`{"type":"note",…}`). Task results, meeting accepts, file transfers and group messages are refused with the command or tool to use instead (`rdv task` / `rdv_task`, `rdv dinner` / `rdv_negotiate`, `rdv file` / `rdv_file`, `rdv group` / `rdv_group`), so nothing can skip their approval gates. Scripts that sent `{"type":"a2a/message","text":…}` as a plain message must send `note` instead. ([#133](https://github.com/omernesh/rendezvous/issues/133))
 
 ## 0.12.0 - 2026-11-01 {#v0-12-0}
 

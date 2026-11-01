@@ -1518,10 +1518,12 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       list`, which prints every character with the phrase; the phrase is
       bound to the digest of exactly that.
     - **Honest limit** (as item 57): the release gate stops a result from
-      leaving through the task. A model with a shell can still run `rdv
-      send` with any payload, `a2a/*` included (`rdv_send` refuses those
-      types, the CLI does not), so where the model has a shell, keep it
-      away from the home or run `rdv-mcp` as another user.
+      leaving through the task. A model with a shell could still run `rdv
+      send` with any payload, `a2a/*` included (`rdv_send` refused those
+      types, the CLI did not); closed by item 108, which refuses every
+      gated type in core. A shell that imports the library is still the
+      #51 class, so where the model has a shell, keep it away from the home
+      or run `rdv-mcp` as another user.
     - **Not here:** quarantine guidance for the model that does a
       `free-form` task, and the hostile-text test (issue #27); requester-side
       release of the owner's files, since tasks carry no files from these
@@ -5080,6 +5082,60 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       above: exit 1, the message naming the chat tool, no stdout, every file
       in the home unchanged, also with environment variables set; the
       read-only ones still run; the seam runs the same command.
+
+## Plain sends carry only free messages
+
+108. **`rdv send`, `rdv group post` and `rdv_send` carry only free messages**
+    (issue #133, **spec change**: SPEC §7 "Free messages", the §13 tool row,
+    the §5.3 "Free messages" line). Before, `Agent.send` refused only
+    control types, and `rdv_send` only `a2a/*` and `rdv/*`, so `rdv send`
+    (not human-only) could put a task result, a `meeting/accept` (any
+    `a2a/message`) or an `rdv/transfer` on the wire, and `rdv group post` a
+    group task's payload, skipping the release and confirm gates of
+    `rdv_task`, `rdv_negotiate`, `rdv_file` and `rdv_group`.
+    - **An allow-list in core.** `FREE_MESSAGE_TYPES` is `['note']`, the
+      only type every host shows as a plain message (§7.8.3 calls a group
+      body "a free note"). `plainSendFamily(type)` says whose flow a type
+      belongs to: `free`, `a2a` (`a2a/*`, `meeting/*`), `transfer`
+      (`rdv/transfer`), `group` (`rdv/group-*`), `control` (any other
+      `rdv/`), `other`. `Agent.send` and `Agent.sendGroup` throw
+      `PlainSendRefused` (with the family) for everything but `free`; the
+      control types still say "use the dedicated method". A type added later
+      is refused until a flow takes it, and a custom type such as `chat` is
+      refused too: no host gave one any meaning, so `note` with extra fields
+      carries what an app needs.
+    - **The engines' own path.** `Agent.sendGated` (refuses only control
+      types, as `send` did) and `Agent.sendGroupGated` are for payloads an
+      engine produced after its gate ran: `cli/src/negotiate.ts` (listener
+      dinner replies), `commands.ts` `dinner propose`, `tasks.ts` (pairwise
+      and group lanes, `sendGroupGated` for the board), `files.ts`
+      (`rdv/transfer`), and the MCP server's `rdv_negotiate` propose. The MCP
+      and gateway tasks, files and groups reach the wire through those same
+      CLI library functions. Nothing a model or a shell picks the type of
+      calls them.
+    - **Front ends.** `rdv send` and `rdv group post` check first and exit 2
+      naming the command (`rdv task`, `rdv dinner`, `rdv file`, `rdv group`,
+      `rdv contact grant|revoke`); `rdv_send` names the tool (`rdv_task`,
+      `rdv_negotiate`, `rdv_file`, `rdv_group`, `rdv_grant`/`rdv_revoke`),
+      and the gateway's REST answers 422 with the same text. The core check
+      stays as the backstop.
+    - **Breaking for scripts.** The docs used `{"type":"a2a/message","text":…}`
+      as the plain-message example; `rdv send` now refuses it, and the docs,
+      the two-machine scenario and the tests send `note`. The adversarial
+      scenario steps that need a raw engine payload on the wire (the dinner
+      re-send, the review's sixth request past John's outbound limit) use
+      the harness's `rawSend` (`sendGated` under the home lock), as a peer
+      without our software would. Item 76's "honest limit" (`rdv send` with
+      `a2a/*`) is closed by this; a shell that imports the library can
+      still call `sendGated` (the #51 class).
+    - **Covered by.** core `agents.test.ts` (each family refused, nothing
+      sent, `sendGated` delivers, control types still refused) and
+      `groupmsg.test.ts`; `cli/test/plainsend.test.ts` (each family via
+      `rdv send`, exit 2, the next note goes at the next seq);
+      `cli/test/groups.test.ts` (`rdv group post` with an `a2a/message`);
+      `mcp/test/mcp.test.ts` (each family via `rdv_send`); `gateway/test/e2e.test.ts`
+      (MCP and REST, the agent's `outSeq` unchanged). The dinner, review,
+      tasks and groups scenarios cover the gated flows.
 
 ## Not implemented yet
 

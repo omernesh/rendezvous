@@ -360,7 +360,7 @@ export async function sendPosts(agent: Agent, posts: BoardPost[]): Promise<strin
   const errors: string[] = [];
   for (const p of posts) {
     try {
-      const r = await agent.sendGroup(p.group, p.payload as unknown as GroupBody, p.to ? { to: p.to } : {});
+      const r = await agent.sendGroupGated(p.group, p.payload as unknown as GroupBody, p.to ? { to: p.to } : {});
       for (const f of r.failed) errors.push(`posting to ${f.peer} in group ${p.group} failed: ${f.error}`);
     } catch (err) {
       errors.push(`posting to group ${p.group} failed: ${(err as Error).message}`);
@@ -515,7 +515,7 @@ async function sendAll(agent: Agent, step: TaskStep): Promise<string[]> {
     // No reply to a peer that is no longer a contact (the limiter just revoked it for abuse).
     if (!agent.book.contact(o.to)) continue;
     try {
-      await agent.send(o.to, o.payload as unknown as Payload);
+      await agent.sendGated(o.to, o.payload as unknown as Payload);
     } catch (err) {
       errors.push(`sending to ${o.to} failed: ${(err as Error).message}`);
     }

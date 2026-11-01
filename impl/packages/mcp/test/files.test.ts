@@ -105,7 +105,7 @@ async function prepareAndUpload(john: Side, text = REVIEW_TEXT, name = 'q4-revie
 
 /** Send a raw payload from one side's home (a peer that does not run our software's checks). */
 async function rawSend(from: Side, to: string, payload: unknown): Promise<void> {
-  await withAgent(from.home, (agent) => agent.send(to, payload as Payload));
+  await withAgent(from.home, (agent) => agent.sendGated(to, payload as Payload));
 }
 
 const keyOf = (side: Side, sha: string): string => (JSON.parse(readFileSync(join(side.home.dir, 'files.json'), 'utf8')) as { outgoing: Record<string, { enc: { key: string } }> }).outgoing[sha].enc.key;

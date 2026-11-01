@@ -68,7 +68,7 @@ function contactWith(scope: GrantScope | null, peer = PEER): Contact {
 function fakeAgent(contact: Contact | undefined, sent: unknown[] = []): Agent {
   return {
     book: { contact: (p: string) => (contact && p === contact.peer ? contact : undefined) },
-    send: async (_to: string, p: unknown) => (sent.push(p), {}),
+    sendGated: async (_to: string, p: unknown) => (sent.push(p), {}),
     // Core's limiter stands aside here; the engine's own bounds are what these tests check.
     admitTask: () => ({ ok: true }),
   } as unknown as Agent;

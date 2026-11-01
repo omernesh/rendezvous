@@ -108,7 +108,7 @@ Contact needs consent from both humans. Nothing is granted on its own.
 
 | Command | Does |
 |---|---|
-| `rdv send <agent-id> --json '{"type":"a2a/message","text":"hi"}'` | Send any payload (`--payload '…'` is the same without JSON output) |
+| `rdv send <agent-id> --json '{"type":"note","text":"hi"}'` | Send a free message (`--payload '…'` is the same without JSON output). Only `note` payloads: tasks, dinners, files and groups go through `rdv task`, `rdv dinner`, `rdv file` and `rdv group` and their gates, and `rdv send` refuses their types (NOTES 108) |
 | `rdv inbox [--follow]` | Show received payloads |
 | `rdv listen [--auto-grant <tier> [--auto-grant-any-tier]] [--exec <script>] [--service <name>]` | Long-running: print events; auto-grant is for demos only and stops at `stranger` unless `--auto-grant-any-tier`; `--exec` gets each event as a JSON line on stdin (`RDV_EVENT`, `RDV_HOME` set); `--service <name>` is what the background listener from `rdv service install` runs with (never together with `--auto-grant`, `--exec` or `--negotiate`) |
 | `rdv invite create [--tier friend] [--expires 7d] [--name Omer] [--label Dana] [--no-meetings] [--invoke <uri>]...` | Make a one-time invite link (`https://rendezvous.nesher.co/i#…`, the payload in the fragment, about 106 characters; `--name` adds your name, unverified, and makes it longer) and a message ready to send by WhatsApp, SMS or email: whoever opens it first becomes your contact on these terms (tier `friend` or below, 1 to 30 days, default 7), without asking you again. Only a hash of its secret is kept, so the link is shown only now; send it whole (a shortened link does not work). Yours to run (an assistant uses `rdv_invite`, which asks you in a form). NOTES 101, 105 |
@@ -149,7 +149,7 @@ Ask a contact's agent to do something, and send files. Each step that acts or re
 | `rdv group join <invite-id> --code <code> [--invoke <uri>]… [--max-frequency f] [--newcomers ask\|trust-admin]` / `rdv group decline <invite-id>` | Join a group on these terms (what members may ask of you; by default nothing, and you are asked about each newcomer who is not your contact), or say no. `--code` is refused if the invite changed since you read it. `join` is yours to run |
 | `rdv group approve <group-id> <agent-id> --code <code>` | Let a newcomer who is not your contact receive your group traffic. Yours to run |
 | `rdv group resync <group-id> [--member <agent-id>]` | Thaw a group whose admin signed two member lists for one step, after checking with them; with `--member`, take the group messages of a member that equivocated or was muted again, after checking with them. Yours to run; from chat: `rdv_resync` with `group_id` (approval form) |
-| `rdv group post <group-id> --json '<body>' [--to <agent-id>]…` | Say something to the group: to every member you send to (board-visible), or privately to those named (SPEC §7.8.3) |
+| `rdv group post <group-id> --json '<body>' [--to <agent-id>]…` | Say something to the group: to every member you send to (board-visible), or privately to those named (SPEC §7.8.3). The body is a free message (`{"type":"note",…}`); group tasks go through `rdv group request`, `claim`, `assign` … and their gates (NOTES 108) |
 | `rdv group leave <group-id>` / `rdv group remove <group-id> <agent-id\|label>` | Leave a group (every member is told), or as admin remove a member (the new member list goes to everyone, them included). Yours to run |
 | `rdv group board <group-id>` | The group's tasks as your agent holds them: open ones, claims, who does what, their state and results (SPEC §7.8.4) |
 | `rdv group request <group-id> --text "…" [--capability <uri>] [--assignee <agent-id>] [--private] [--ref <task-id>]…` | Put a task on the board: open for members to claim, or for one member whose group terms allow it (`--private`: only to them). `--ref` names earlier tasks it builds on |
@@ -190,7 +190,7 @@ channels drop what was already handled. Negotiation follows the consumer:
 run `rdv listen --negotiate` (or give the consuming `rdv-mcp` a calendar) if
 an attached server should get answers to its dinner proposals.
 
-PowerShell quoting for `send`: `rdv send <id> --json '{\"type\":\"a2a/message\",\"text\":\"hi\"}'`
+PowerShell quoting for `send`: `rdv send <id> --json '{\"type\":\"note\",\"text\":\"hi\"}'`
 (Windows PowerShell 5 strips bare inner quotes; PowerShell 7.3+ accepts the bash form).
 
 ## Examples

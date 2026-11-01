@@ -52,7 +52,7 @@ Start-Process node -ArgumentList $rdv,'listen','--home',$h -WindowStyle Hidden `
 node $rdv contact request john@doe.com --greeting "Omer's agent would like to plan dinner." --home $h
 # wait for "candidate" in $h\listen.log (John's auto-grant), check the fingerprint, then:
 node $rdv contact confirm <grant-id> --home $h
-node $rdv send <john-agent-id> --payload '{"type":"a2a/message","text":"Thursday 20:00?"}' --home $h
+node $rdv send <john-agent-id> --payload '{"type":"note","text":"Thursday 20:00?"}' --home $h
 ```
 
 (PowerShell 5 needs the inner quotes escaped: `'{\"type\":...}'`.)

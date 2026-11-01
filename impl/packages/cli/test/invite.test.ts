@@ -59,7 +59,7 @@ describe('rdv invite', () => {
       expect(red).toMatchObject({ invite_id: made.invite_id, invite_label: 'John', peer: johnId, tier: 'colleague', label: 'John' });
       johnL = new Listener('john', johnHome);
       await johnL.waitFor((l) => l.event === 'contact' && l.peer === omerId, 'john gets the grant', 15_000);
-      await rdv(['send', omerId, '--json', '{"type":"a2a/message","text":"hi from the invite"}'], johnHome);
+      await rdv(['send', omerId, '--json', '{"type":"note","text":"hi from the invite"}'], johnHome);
       const msg = await omerL.waitFor((l) => l.event === 'message', 'omer gets the message', 10_000);
       expect(msg.payload).toMatchObject({ text: 'hi from the invite' });
 

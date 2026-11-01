@@ -87,6 +87,9 @@ import {
   labelKey,
   MAX_ADDRESSES,
   parseAddress,
+  plainSendFamily,
+  FREE_MESSAGE_TYPES,
+  type ReservedFamily,
   type Payload,
   allowedCapabilities,
   grantScope,
@@ -804,6 +807,21 @@ function formLabel(content: Record<string, unknown> | undefined, shown: string |
   } catch (err) {
     throw new ToolError(`the label your user entered is not valid (${(err as Error).message}). Nothing was approved; ask them again.`);
   }
+}
+
+const RDV_SEND_FLOW: Record<ReservedFamily, string> = {
+  control: 'your agent sends it itself (contacts: rdv_grant, rdv_revoke)',
+  a2a: 'tasks and dinners wait for your user in their own tools: rdv_task, rdv_negotiate',
+  transfer: 'file transfers go through rdv_file',
+  group: 'group messages go through rdv_group',
+  other: 'it carries only free messages',
+};
+
+/** Why rdv_send refuses a payload type, or undefined for a free message (issue #133). */
+export function rdvSendRefusal(type: string): string | undefined {
+  const family = plainSendFamily(type);
+  if (family === 'free') return undefined;
+  return `rdv_send does not send "${safe(type)}": ${RDV_SEND_FLOW[family]}. rdv_send takes ${FREE_MESSAGE_TYPES.map((t) => `{"type":"${t}",…}`).join(' or ')}`;
 }
 
 /**
@@ -3020,8 +3038,9 @@ export class RdvMcpServer {
 
     this.tool(
       'rdv_send',
-      'Send an end-to-end encrypted payload ({"type": "...", ...}) to a contact, by agent_id or by "to": the local_label or a nickname your user gave the contact (rdv_status), also as "Ran\'s agent" or "agent of Ran". ' +
-        "A contact's card addresses (unverified_claims) and the name its agent calls itself never pick a recipient. For dinner use rdv_negotiate instead. " +
+      'Send an end-to-end encrypted free message ({"type": "note", "text": "...", ...}) to a contact, by agent_id or by "to": the local_label or a nickname your user gave the contact (rdv_status), also as "Ran\'s agent" or "agent of Ran". ' +
+        "A contact's card addresses (unverified_claims) and the name its agent calls itself never pick a recipient. " +
+        'Only "note" payloads: tasks go through rdv_task, dinner through rdv_negotiate, files through rdv_file, groups through rdv_group, contacts through rdv_grant/rdv_revoke. ' +
         '"delivery" in the result: "pending" (its receipt is awaited; rdv_status and rdv_inbox say when it is confirmed, resent or not confirmed) or "untracked" (that contact\'s agent sends no receipts).',
       {
         agent_id: z.string().max(128).optional(),
@@ -3035,9 +3054,8 @@ export class RdvMcpServer {
       async ({ agent_id, to, payload }) => {
         if (!!agent_id === !!to) throw new ToolError('give exactly one of agent_id or to');
         if (typeof payload.type !== 'string') throw new ToolError('payload needs a string "type"');
-        if (payload.type.startsWith('a2a/') || payload.type.startsWith('rdv/')) {
-          throw new ToolError(`"${payload.type}" is reserved: use rdv_negotiate for dinner, rdv_grant/rdv_revoke for contacts`);
-        }
+        const refused = rdvSendRefusal(payload.type);
+        if (refused) throw new ToolError(refused);
         const { peer, env, delivery } = await this.withAgent(async (agent) => {
           const peer = agent_id ?? resolveLabel(agent, to!);
           const env = await agent.send(peer, payload as Payload);
@@ -5321,7 +5339,7 @@ export class RdvMcpServer {
         throw err;
       }
       home.writeNegotiations(s.state); // before sending (issue #4)
-      for (const o of s.outgoing) await agent.send(o.to, o.payload as unknown as Payload);
+      for (const o of s.outgoing) await agent.sendGated(o.to, o.payload as unknown as Payload);
       return s;
     });
     await this.publishSteps(step.events);
