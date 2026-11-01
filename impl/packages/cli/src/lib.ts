@@ -306,3 +306,5 @@ export {
   setListenerYield,
 } from './service.js';
 export { longLockHolder } from './fsutil.js';
+// The human-only commands' terminal boundary (issue #126), shared with rdv-gateway.
+export { processIsInteractive, terminalRefusal } from './humanonly.js';

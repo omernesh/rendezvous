@@ -95,11 +95,13 @@ run() {
   recheck_dir
   "$@" </dev/null
 }
-# Run a command that asks the human something in this terminal.
+# Run a command that asks the human something in this terminal. Both its stdin and its stdout are the terminal:
+# rdv's and rdv-gateway's owner commands (pin set, restore) refuse to run without one (issue #126), even when this
+# script's own output goes to a pipe or a log.
 run_tty() {
   if [ "$DRY_RUN" = 1 ]; then show_cmd "$@"; return 0; fi
   recheck_dir
-  "$@" </dev/tty
+  "$@" </dev/tty >/dev/tty
 }
 
 # Write stdin to a file (mode $2) atomically, or show it with --dry-run.

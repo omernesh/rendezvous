@@ -1,13 +1,42 @@
 // Drives real `rdv` processes (node dist/src/bin.js), each with its own home.
 import { type ChildProcessWithoutNullStreams, execFile, spawn } from 'node:child_process';
+import { createRequire } from 'node:module';
 import { basename, dirname, join } from 'node:path';
 import { createInterface } from 'node:readline';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { humanOnlyArgv } from '../src/main.js';
 
 // Works from scenarios/*.ts (vitest) and from dist/scenarios/*.js (node).
 const here = dirname(fileURLToPath(import.meta.url));
 const pkgRoot = basename(dirname(here)) === 'dist' ? dirname(dirname(here)) : dirname(here);
 export const RDV_BIN = join(pkgRoot, 'dist', 'src', 'bin.js');
+const RDV_MAIN = pathToFileURL(join(pkgRoot, 'dist', 'src', 'main.js')).href;
+const SAFE_CONSOLE = pathToFileURL(createRequire(import.meta.url).resolve('@rendezvous/core/safe-console')).href;
+
+/**
+ * The human-only commands need an interactive terminal (issue #126), and a spawned rdv has none. The scenarios and
+ * tests stand in for the human at a terminal: those commands run, in a process of their own like any other, through
+ * `main`'s in-process `interactive` option (what bin.js does, plus that option). It is code in this file, passed to
+ * `node -e`: no flag, variable or file of rdv's turns the check off. Every other command runs bin.js itself.
+ */
+const AS_HUMAN = [
+  '--input-type=module',
+  '-e',
+  [
+    `await import(${JSON.stringify(SAFE_CONSOLE)});`,
+    `const { main } = await import(${JSON.stringify(RDV_MAIN)});`,
+    'const code = await main(process.argv.slice(1), { interactive: () => true });',
+    "await new Promise((r) => process.stdout.write('', () => r()));",
+    "await new Promise((r) => process.stderr.write('', () => r()));",
+    'process.exit(code);',
+  ].join(' '),
+  '--',
+];
+
+/** node's arguments for `rdv <args>`: bin.js, or for a human-only command the stand-in for the human's terminal (AS_HUMAN). */
+export function rdvArgv(args: string[]): string[] {
+  return humanOnlyArgv(args) === undefined ? [RDV_BIN, ...args] : [...AS_HUMAN, ...args];
+}
 
 export type Line = Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
 
@@ -28,7 +57,7 @@ export function rdv(
   return new Promise((resolve, reject) => {
     execFile(
       process.execPath,
-      [RDV_BIN, ...full],
+      rdvArgv(full),
       { timeout: opts.timeoutMs ?? 30_000, windowsHide: true, env: opts.env ? { ...process.env, ...opts.env } : undefined },
       (err, stdout, stderr) => {
         const code = err ? (typeof err.code === 'number' ? err.code : 1) : 0;
@@ -59,7 +88,7 @@ export class Listener {
     extraArgs: string[] = [],
     env?: NodeJS.ProcessEnv,
   ) {
-    this.child = spawn(process.execPath, [RDV_BIN, 'listen', '--json', '--home', home, ...extraArgs], {
+    this.child = spawn(process.execPath, rdvArgv(['listen', '--json', '--home', home, ...extraArgs]), {
       windowsHide: true,
       env: env ? { ...process.env, ...env } : undefined,
     });

@@ -81,7 +81,7 @@
 <ul>
 <li>A machine with Docker and the Compose plugin, and <code>git</code>.</li>
 <li>A public HTTPS name for it, such as <code>gw.example.com</code>, served by a TLS tunnel (Cloudflare Tunnel is what this guide shows) or a reverse proxy that forwards to <code>127.0.0.1:8787</code>.</li>
-<li>A terminal you control on that machine (over <code>ssh -t</code> is fine) for the owner-only commands.</li>
+<li>A terminal you control on that machine (over <code>ssh -t</code> is fine) for the owner-only commands. They refuse to run unless stdin and stdout are both a terminal (issue #126): <code>ssh</code> without <code>-t</code>, a script, a pipe, <code>docker compose run -T</code>, or <code>docker exec</code> without <code>-it</code> gets a refusal and changes nothing. That is what keeps an assistant with a shell from running them.</li>
 </ul>
 <h3 id="1-get-the-code-and-build-it">1. Get the code and build it<a class="anchor" href="#1-get-the-code-and-build-it" title="Link to this section" aria-label="Link to this section">#</a></h3>
 <p>Keep the deployment in its own checkout, separate from any development copy, so an update is a deliberate step.</p>
@@ -144,7 +144,7 @@ GW_CLIENT_IP_HEADER=cf-connecting-ip
       timeout: 5s
       retries: 3
 </code></pre></div>
-<p><code>gw</code>, a wrapper for the owner-only commands (then <code>chmod +x gw</code>):</p>
+<p><code>gw</code>, a wrapper for the owner-only commands (then <code>chmod +x gw</code>). Keep <code>docker compose run</code> without <code>-T</code>, so the command gets your terminal; if you run one in the running container instead, use <code>docker compose exec gateway …</code> (it gives the command your terminal unless you pass <code>-T</code>) or <code>docker exec -it &lt;container&gt; …</code> (plain <code>docker exec</code> without <code>-it</code> has no terminal and is refused):</p>
 <div class="codeblock"><pre tabindex="0"><code class="language-bash">#!/bin/sh
 # ./gw &lt;gateway command...&gt;      runs rdv-gateway against the deployed home
 # ./gw rdv &lt;rdv command...&gt;      runs the rdv CLI against the same home

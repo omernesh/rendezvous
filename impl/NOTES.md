@@ -5010,6 +5010,61 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       coalescing a 30-message burst into one event with a count, ten events
       out in one tick, and the guard on a multi-agent root.
 
+107. **The human-only commands need an interactive terminal** (issue #126).
+    The plugin's consent guard reads shell text and is, by its own header,
+    not a boundary: review rounds kept finding spellings it missed
+    (PowerShell expressions, awk `system()`, `Start-Process`, aliases).
+    Now the commands refuse by themselves unless `process.stdin.isTTY` and
+    `process.stdout.isTTY` are both true, before the home is resolved or
+    anything is read or written. An assistant's shell tool has no terminal,
+    so every spelling fails there; the guard stays as the second layer, and
+    its refusal of pseudo-terminal wrappers is what keeps the check honest.
+    - **Which.** The guard's list (`cli/src/humanonly.ts`): `contact grant |
+      confirm | resync | label | alias add | alias remove | pending |
+      auto-approve`, `dinner confirm | cancel | list`, `task approve |
+      release | list`, `file direct-transfer`, `owner-secret set | reset`,
+      `relays add | remove | list`, `group invite | join | approve | resync |
+      pending | leave | remove | terms | promote`, `service install` (not
+      `--dry-run`), `invite create`, `agent-name set | clear`, `backup`,
+      `restore`, `init --force | --agent-name`, `listen --auto-grant |
+      --auto-confirm`, `contact request --label` with an agent ID or card,
+      and `task request --file | --inline`. rdv-gateway
+      (`gateway/src/args.ts`): `pin set | unlock`, `token create | revoke`,
+      `oauth revoke`, `agent add | remove | migrate`, `notify set | clear |
+      dead-letter`. Open without a terminal: read-only commands that show no
+      secret, `contact alias list` among them (the guard refuses it with the
+      rest of `alias`; it only lists names `rdv_status` shows anyway).
+    - **Both stdin and stdout.** stdin alone would let `rdv … < /dev/tty |
+      cat` read the human's terminal while the output goes to the model.
+      The same check on Windows: a console (PowerShell, Windows Terminal,
+      cmd) reports `isTTY`, a pipe does not.
+    - **No way around it from a shell.** No flag, environment variable or
+      file turns the check off. `--stdin` (backup, restore, `pin set`,
+      `agent add --restore`) still reads stdin, but only when stdin is the
+      terminal: a piped passphrase or PIN is refused.
+    - **Tests.** `main(argv, { interactive })` (cli) and
+      `gatewayMain(argv, { interactive })` (gateway) take the answer
+      in-process; bin.js never passes it. The scenario harness (`rdvArgv`)
+      and the gateway test helper (`gatewayArgv`) run a human-only command
+      in a process of its own through `node -e` code that calls that entry
+      with `interactive: () => true`; every other command runs bin.js. A
+      shell could do the same with `node -e`, but such a shell can already
+      import the library and write the home directly: that class (another
+      interpreter) is accepted under #51, and the guard reads `node -e`
+      code for the same command words (argument arrays included). No
+      test-only bin is shipped in `dist/`.
+      No pty dependency (node-pty) was added.
+    - **Callers.** The installer runs `pin set` and `restore` with stdin and
+      stdout on `/dev/tty` (`run_tty`), so a log or pipe on its own output
+      does not trip the check; `./gw` runs `docker compose run` without
+      `-T`, which gives the container the terminal. The docs say `ssh -t`,
+      `docker compose run|exec` without `-T`, or `docker exec -it`.
+    - **Covered by.** `cli/test/terminal.test.ts` and
+      `gateway/test/terminal.test.ts` spawn the plain bin for each command
+      above: exit 1, the message naming the chat tool, no stdout, every file
+      in the home unchanged, also with environment variables set; the
+      read-only ones still run; the seam runs the same command.
+
 ## Not implemented yet
 
 

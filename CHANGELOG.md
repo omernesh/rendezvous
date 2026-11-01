@@ -4,6 +4,11 @@ What changed in Rendezvous, newest first. Versions are those of the Claude Code 
 
 The format follows Keep a Changelog. One line per change a user can see; PR numbers link to GitHub.
 
+## Unreleased
+
+### Security
+- **Security:** the commands that are yours alone (granting, confirming, labels and nicknames, your agent's name, the task and group gates, relay changes, auto-approve, backups and restores, the commands that show confirm phrases, and the gateway's `pin`, `token`, `oauth revoke`, `agent` and `notify` commands) now refuse to run unless they are in an interactive terminal, and say which chat tool asks you instead. An assistant's shell has no terminal, so it cannot run them whatever spelling gets past the plugin's consent guard; run them yourself in your own terminal (`ssh -t` on a server, `docker exec -it` in a container). Piping a passphrase or PIN with `--stdin` is refused the same way. ([#126](https://github.com/omernesh/rendezvous/issues/126))
+
 ## 0.12.0 - 2026-11-01 {#v0-12-0}
 
 ### Added

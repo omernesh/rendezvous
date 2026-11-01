@@ -29,7 +29,12 @@
 // (a script file, another interpreter, an alias defined earlier). The
 // security boundary is the MCP consent gate: rdv_grant and rdv_negotiate need
 // the human's form or confirm phrase (NOTES 57, 62), and only a hash of each
-// phrase is ever stored.
+// phrase is ever stored. Behind this guard, the human-only rdv and
+// rdv-gateway commands themselves refuse to run unless stdin and stdout are
+// both a terminal (issue #126, cli/src/humanonly.ts, gateway/src/args.ts),
+// which an assistant's shell tool is not: whatever spelling gets past the
+// guard fails there. Refusing pseudo-terminal wrappers here is what keeps
+// that check from being faked.
 //
 // Accepted limits (gateway installer folder): with Docker access on the gateway host, or a shell running inside
 // the install folder, the assistant can reach the tunnel token and the gateway's data. The rules here catch only the

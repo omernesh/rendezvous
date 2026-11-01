@@ -69,6 +69,8 @@ State lives in a directory: `--home <dir>`, else `$RDV_HOME`, else
 
 Commands follow the order you use them: set up an identity, find and connect to others, send and receive, tasks and files, groups, backups. Negotiating a meeting is an example, last.
 
+**"Yours to run" means your own terminal.** Those commands (granting, confirming, labels and nicknames, your agent's name, the commands that show confirm phrases such as `rdv contact pending`, `rdv dinner list`, `rdv task list`, `rdv group pending` and `rdv relays list`, relay changes, the task and group gates, auto-approve, the owner passphrase, `rdv service install`, `rdv invite create`, `rdv backup` and `rdv restore`, `rdv init --force` or `--agent-name`, `rdv listen --auto-grant` or `--auto-confirm`, a request by agent ID or card with `--label`, and `rdv task request --file` or `--inline`) refuse to run unless stdin and stdout are both a terminal, and say which chat tool asks you instead. An assistant's shell tool, a script or a pipe has no terminal, so they fail there whatever the spelling, and no flag, environment variable or file turns this off (issue #126). The same check holds on Windows: PowerShell, cmd and Windows Terminal are terminals (if an older Git Bash window is refused, use one of those). On a server, run them over `ssh -t`; in a container, with `docker compose run` or `docker compose exec` (without `-T`) or `docker exec -it`, never plain `docker exec` or piped input. Read-only commands that show no secret (`rdv whoami`, `rdv contact list`, `rdv contact alias list`, `rdv service install --dry-run`, …) run anywhere.
+
 ### Identity and setup
 
 | Command | Does |
@@ -160,7 +162,7 @@ Ask a contact's agent to do something, and send files. Each step that acts or re
 
 | Command | Does |
 |---|---|
-| `rdv backup <file> [--stdin]` | Write an encrypted backup of this agent to a new file (mode 600, never over a file, never inside a home): its key, contacts, grants, channels, settings, owner passphrase record and auto-approve entries, never open approvals or confirm phrases. The passphrase is typed twice in your terminal (not shown; at least 12 characters), or read from stdin with `--stdin`; never an argument. Keep the file in your password manager or a cloud drive, the passphrase apart from it: whoever has both can be your agent. Yours to run (issue #88, NOTES 91) |
+| `rdv backup <file> [--stdin]` | Write an encrypted backup of this agent to a new file (mode 600, never over a file, never inside a home): its key, contacts, grants, channels, settings, owner passphrase record and auto-approve entries, never open approvals or confirm phrases. The passphrase is typed twice in your terminal (not shown; at least 12 characters), or read from stdin with `--stdin` (still only in your own terminal: a pipe is refused, issue #126); never an argument. Keep the file in your password manager or a cloud drive, the passphrase apart from it: whoever has both can be your agent. Yours to run (issue #88, NOTES 91) |
 | `rdv restore <file> [--replace] [--stdin]` | Bring the agent back on a new machine: shows the agent ID, fingerprint and backup time in the file, asks for its passphrase, and refuses to replace an agent that exists here without `--replace`. On the next start (`rdv listen` or `rdv-mcp`) each contact is told (`rdv/restored`, SPEC §6.4.1), so conversations go on with no resync; `rdv whoami` shows who confirmed. Open tasks, dinners and pending requests are not in a backup. Yours to run |
 
 ### Output and locking
@@ -440,6 +442,14 @@ gateway's PIN-locked page. Threat model:
 [packages/gateway/THREAT-MODEL.md](packages/gateway/THREAT-MODEL.md); design
 choices: NOTES 89. To run it in a hardened Docker container behind a tunnel,
 see [the deploy guide](../docs/gateway-deploy.md).
+
+Its owner commands (`pin set|unlock`, `token create|revoke`, `oauth revoke`,
+`agent add|remove|migrate`, `notify set|clear|dead-letter`) run only in your
+own terminal: stdin and stdout must both be one, `--stdin` included, or they
+refuse before reading or writing anything (issue #126). Over ssh use `ssh -t`;
+in a container, `docker compose run` or `exec` without `-T`, or `docker exec -it`. The
+read-only ones (`serve`, `token list`, `oauth list`, `agent list`,
+`notify show`) run anywhere.
 
 ```bash
 node packages/gateway/dist/src/bin.js pin set --home ~/.rendezvous/omer

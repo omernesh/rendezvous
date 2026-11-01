@@ -17,7 +17,7 @@ import { type Capability, parseWindow, REQUEST_URI, type Slot, toSlot, toSpan } 
 import { type FetchTestOptions, Home } from '@rendezvous/cli/lib';
 import type { TestFileServer } from '@rendezvous/core/testing';
 import { expect } from 'vitest';
-import { RDV_BIN } from '../../cli/scenarios/harness.js';
+import { rdvArgv } from '../../cli/scenarios/harness.js';
 import { RdvMcpServer, type RdvMcpOptions } from '../src/index.js';
 
 export const TZ = '+02:00';
@@ -363,7 +363,7 @@ const execFileAsync = promisify(execFile);
 
 /** One `rdv` command in a side's home, as its human runs it in their own terminal (JSON lines out). */
 export async function terminal(side: Side, args: string[]): Promise<any[]> { // eslint-disable-line @typescript-eslint/no-explicit-any
-  const { stdout } = await execFileAsync(process.execPath, [RDV_BIN, ...args, '--home', side.home.dir, '--json'], { windowsHide: true, timeout: 30_000 });
+  const { stdout } = await execFileAsync(process.execPath, rdvArgv([...args, '--home', side.home.dir, '--json']), { windowsHide: true, timeout: 30_000 });
   return stdout
     .split('\n')
     .filter((l) => l.trim())

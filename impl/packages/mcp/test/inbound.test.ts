@@ -12,7 +12,7 @@ import type { AgentState } from '@rendezvous/core';
 import { startTestRelay, type TestRelay } from '@rendezvous/core/testing';
 import { Home } from '@rendezvous/cli/lib';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { RDV_BIN } from '../../cli/scenarios/harness.js';
+import { rdvArgv } from '../../cli/scenarios/harness.js';
 import { checkPhrase, inboundTarget, syncPhrases } from '../src/index.js';
 import { type ElicitHandler, makeSide, ok, phraseFromHumanLog, phraseFromTerminal, type Side, TZ, waitEvent, WINDOW, writeCalendars } from './flow.js';
 
@@ -189,7 +189,7 @@ describe('rdv_grant agent_id: grant an existing contact more (issue #1)', () => 
     expect(await rightsOf(omer, j.agent_id)).toContain('default');
 
     // The terminal shows the human the current phrase and what it approves; the one shown before is replaced.
-    const text = execFileSync(process.execPath, [RDV_BIN, 'contact', 'pending', '--home', omer.home.dir], { encoding: 'utf8' });
+    const text = execFileSync(process.execPath, rdvArgv(['contact', 'pending', '--home', omer.home.dir]), { encoding: 'utf8' });
     expect(text).toContain(`your assistant asks to grant contact ${j.agent_id}`);
     expect(text).toContain('it approves: tier friend, may propose meetings');
     const shown = phraseFromTerminal(text, j.agent_id);

@@ -37,13 +37,19 @@ tokens) and 93 (slice 2: the built-in OAuth 2.1 authorization server).
 
 The last row is the one the second review found: `echo 123456 | rdv-gateway
 pin set` followed by two posts to the page approved anything. What stops it
-now is the PIN itself: `pin set` reads from a terminal only (piped input needs
-an explicit `--stdin`, for scripts the owner runs), and once a PIN exists it
-asks for the current one first, checked with the same backoff as the page. A
-shell that has neither a terminal nor the PIN cannot change it. The plugin's
-consent guard also refuses `rdv-gateway pin set|unlock` and
-`token create|revoke` in any spelling it recognizes, but a guard is a speed
-bump (bypasses are tracked in #51); the PIN check is the boundary.
+now is the PIN itself: `pin set` reads from a terminal only, and once a PIN
+exists it asks for the current one first, checked with the same backoff as the
+page. A shell that has neither a terminal nor the PIN cannot change it. Since
+issue #126 every owner command (`pin set|unlock`, `token create|revoke`,
+`oauth revoke`, `agent add|remove|migrate`, `notify set|clear|dead-letter`)
+refuses to run unless stdin and stdout are both a terminal, `--stdin`
+included, before it reads or writes anything; no flag, environment variable
+or file turns that off. An assistant's shell tool has no terminal, so every
+spelling of these commands fails there. The plugin's consent guard also
+refuses them in any spelling it recognizes, but a guard is a speed bump
+(bypasses are tracked in #51); the terminal check and the PIN are the
+boundary. What is left is an assistant that can open a pseudo-terminal: the
+guard refuses the usual wrappers, and the PIN still holds for `pin set`.
 `pin unlock` only clears the wrong-PIN wait, and `token create` gives no
 approval rights.
 

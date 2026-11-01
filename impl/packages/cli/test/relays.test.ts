@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { DEFAULT_MIRROR_RELAYS, DEFAULT_RELAYS, relaysOf, verifyCard } from '@rendezvous/core';
 import { startTestRelay, type TestRelay } from '@rendezvous/core/testing';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { Listener, RDV_BIN, rdv } from '../scenarios/harness.js';
+import { Listener, rdv, rdvArgv } from '../scenarios/harness.js';
 import { checkPhrase, issuePhrase, relaysTarget } from '../src/consent.js';
 import { Home } from '../src/home.js';
 import { checkRelayUrl, mirrorRelaysOf } from '../src/transport.js';
@@ -119,7 +119,7 @@ describe('a relay change the assistant asked for (rdv_relays)', () => {
     const h = new Home(home);
     const target = relaysTarget('add', 'wss://relay.example.com', [one.url]);
     await h.locked(async () => issuePhrase(h, target));
-    const text = execFileSync(process.execPath, [RDV_BIN, 'relays', 'list', '--home', home], { encoding: 'utf8', windowsHide: true });
+    const text = execFileSync(process.execPath, rdvArgv(['relays', 'list', '--home', home]), { encoding: 'utf8', windowsHide: true });
     expect(text).toContain('Your assistant asks to change your relays: listen on wss://relay.example.com');
     const phrase = /confirm phrase \(relays\): ([a-z]+-[a-z]+-[a-z]+-\d{3})/.exec(text)?.[1];
     expect(phrase).toBeDefined();

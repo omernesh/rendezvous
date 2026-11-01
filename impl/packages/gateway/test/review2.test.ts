@@ -6,16 +6,14 @@ import { execFile } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import type { AgentState } from '@rendezvous/core';
 import { startTestRelay, type TestRelay } from '@rendezvous/core/testing';
 import { Home } from '@rendezvous/cli/lib';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { makeSide, ok, type Side } from '../../mcp/test/flow.js';
 import { Gateway, GatewayStore, MAX_MCP_SESSIONS_PER_TOKEN } from '../src/index.js';
-import { api, Browser, callJson, mcpClient, startGateway, type TestGateway, waitApi } from './helpers.js';
+import { api, Browser, callJson, gatewayArgv, mcpClient, startGateway, type TestGateway, waitApi } from './helpers.js';
 
-const BIN = fileURLToPath(new URL('../dist/src/bin.js', import.meta.url));
 
 let relay: TestRelay;
 let root: string;
@@ -46,7 +44,7 @@ async function gateway(opts: Parameters<typeof startGateway>[1] = {}): Promise<T
 /** The built bin with piped stdin (no terminal), as a model's shell would run it. */
 function bin(args: string[], input: string): Promise<{ code: number; stderr: string }> {
   return new Promise((resolve) => {
-    const child = execFile(process.execPath, [BIN, ...args], { timeout: 30_000 }, (err, _out, stderr) =>
+    const child = execFile(process.execPath, gatewayArgv(args), { timeout: 30_000 }, (err, _out, stderr) =>
       resolve({ code: err ? ((err as { code?: number }).code ?? 1) : 0, stderr: String(stderr) }),
     );
     child.stdin!.end(input);
