@@ -12,7 +12,7 @@
 // shell runs in a real terminal (some IDE agent modes) is not stopped here and
 // must use the approval-form tools.
 //
-// There is no way around it from a shell on purpose: no flag, no environment
+// No switch turns it off, on purpose: no flag, no environment
 // variable, no config file. Tests drive the allowed path through `main`'s
 // in-process `interactive` option, which bin.js never passes.
 

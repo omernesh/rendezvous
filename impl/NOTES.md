@@ -5047,7 +5047,7 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       cat` read the human's terminal while the output goes to the model.
       The same check on Windows: a console (PowerShell, Windows Terminal,
       cmd) reports `isTTY`, a pipe does not.
-    - **No way around it from a shell.** No flag, environment variable or
+    - **No switch turns it off.** No flag, environment variable or
       file turns the check off. `--stdin` (backup, restore, `pin set`,
       `agent add --restore`) only passes the gate when stdin is the
       terminal, and a terminal would echo the secret, so there `--stdin` is
