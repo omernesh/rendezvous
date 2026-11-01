@@ -65,7 +65,15 @@ reads `synoacltool`, which is how it refuses a share such as
 runs, because Docker resolves the bind paths again at every container start
 and `sudo ./gw update` runs the folder's `./gw`. And during a run it works
 from inside its folder by relative paths and re-checks it (owner, mode, ACL,
-real path) before every write and command.
+real path) before every write and command. ACLs it cannot read (a tool that
+fails, a format it does not know, NFSv4) count as unsafe.
+
+Residual risks it does not cover: the ancestor check runs at install and at
+update only, not when Docker starts the containers or the machine reboots,
+so a folder above the install whose permissions are loosened later is not
+noticed until the next update. NFS and bind mounts can misreport owners and
+modes. And `sudo /full/path/gw update` resolves that path before any check
+runs, so run `./gw` from inside the folder (or by a path you trust).
 
 **Accepted limits.** With Docker access on the gateway host, or a shell
 running inside the install folder, an assistant can reach the tunnel token
