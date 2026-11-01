@@ -12,7 +12,7 @@ import { SimplePool, useWebSocketImplementation } from 'nostr-tools/pool';
 import { type Event, finalizeEvent, getPublicKey } from 'nostr-tools/pure';
 import { normalizeURL } from 'nostr-tools/utils';
 import type { LookupFunction } from 'node:net';
-import WebSocket from 'ws';
+import WebSocket, { type ClientOptions } from 'ws';
 import { bytesToHex, canonicalize } from '../encoding.js';
 import type { Envelope } from '../envelope.js';
 import { envelopeHash, openEnvelope, sealEnvelope } from '../envelope.js';
@@ -88,9 +88,17 @@ export const MAX_EVENT_CONTENT = 128 * 1024;
 // timeout fires, after detaching its own handlers; `ws` then emits 'error' with
 // no listener, which crashes the process. Every socket gets a no-op listener;
 // nostr-tools still sees errors through `onerror` while it is attached.
+/**
+ * Largest WebSocket frame we take from any relay (ws closes the socket with
+ * 1009 on a bigger one; the pool treats that like any drop). The largest
+ * legitimate frame is about 46 KB, and the worst frame whose event content
+ * still passes MAX_EVENT_CONTENT is under 800 KB (NOTES 109).
+ */
+export const MAX_RELAY_FRAME_BYTES = 1 << 20;
+
 class QuietWebSocket extends WebSocket {
-  constructor(...args: ConstructorParameters<typeof WebSocket>) {
-    super(...args);
+  constructor(address: string | URL, protocols?: string | string[], options?: ClientOptions) {
+    super(address, protocols ?? [], { ...options, maxPayload: MAX_RELAY_FRAME_BYTES });
     this.on('error', () => {});
   }
 }
@@ -100,8 +108,7 @@ useWebSocketImplementation(QuietWebSocket);
 function lookupWebSocket(lookup: LookupFunction): typeof WebSocket {
   return class extends QuietWebSocket {
     constructor(address: string | URL, protocols?: string | string[]) {
-      // A relay someone else named: no frame larger than 1 MiB (an envelope is far smaller, MAX_EVENT_CONTENT).
-      super(address, Array.isArray(protocols) || typeof protocols === 'string' ? protocols : [], { lookup, maxPayload: 1 << 20 } as never);
+      super(address, Array.isArray(protocols) || typeof protocols === 'string' ? protocols : [], { lookup } as ClientOptions);
     }
   } as unknown as typeof WebSocket;
 }

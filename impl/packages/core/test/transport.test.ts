@@ -2,6 +2,7 @@
 // modes (NOTES 69), and the envelope size cap (SPEC §6.4, NOTES 70).
 import { finalizeEvent } from 'nostr-tools/pure';
 import { afterEach, describe, expect, it } from 'vitest';
+import { WebSocketServer } from 'ws';
 import {
   b64encode,
   classifyRelayError,
@@ -10,6 +11,7 @@ import {
   EnvelopeTooLargeError,
   generateKey,
   MAX_PLAINTEXT_BYTES,
+  MAX_RELAY_FRAME_BYTES,
   NostrTransport,
   type NostrTransportOptions,
   openEnvelope,
@@ -304,5 +306,63 @@ describe('envelope size cap (SPEC §6.4)', () => {
     await relayHandle.publish(ev(JSON.stringify({ small: true })));
     for (let i = 0; i < 30 && got.length < 2; i++) await new Promise((res) => setTimeout(res, 50));
     expect(got).toEqual([undefined, { small: true }]);
+  });
+});
+
+describe('relay frame cap (issue #125, NOTES 109)', () => {
+  const omer = generateKey();
+  const john = generateKey();
+  const until = async (cond: () => boolean, ms = 8000) => {
+    const end = Date.now() + ms;
+    while (!cond()) {
+      if (Date.now() > end) throw new Error('timed out waiting');
+      await new Promise((r) => setTimeout(r, 20));
+    }
+  };
+
+  it('a legitimate maximum-size envelope still arrives, and the cap leaves at least 20x headroom', async () => {
+    const r = await relay();
+    const got: unknown[] = [];
+    const rx = transport([r.url], { key: john });
+    rx.onEnvelopes(john.id, (env) => got.push(env));
+    await new Promise((res) => setTimeout(res, 200));
+    const env = sealEnvelope(omer, john.id, { type: 'note', text: 'x'.repeat(MAX_PLAINTEXT_BYTES - 25) }, { seq: 1, prev: null });
+    await transport([r.url]).sendEnvelope(env);
+    await until(() => got.length === 1);
+    expect(openEnvelope(john, got[0]).ok).toBe(true);
+    const frame = JSON.stringify(['EVENT', 'sub', r.events[0]]).length;
+    expect(frame * 20).toBeLessThan(MAX_RELAY_FRAME_BYTES);
+  });
+
+  it('a frame over the cap closes that socket (1009); the transport survives and re-joins', async () => {
+    const wss = new WebSocketServer({ port: 0, host: '127.0.0.1' });
+    await new Promise<void>((res) => wss.once('listening', () => res()));
+    open.push({ close: () => new Promise<void>((res) => wss.close(() => res())) });
+    let conns = 0;
+    const closes: number[] = [];
+    wss.on('connection', (ws) => {
+      const first = ++conns === 1;
+      ws.on('close', (code) => closes.push(code));
+      ws.on('message', (d) => {
+        const m = JSON.parse(String(d));
+        if (m[0] === 'REQ' && first) ws.send(JSON.stringify(['NOTICE', 'x'.repeat(MAX_RELAY_FRAME_BYTES + 1)]));
+        if (m[0] === 'REQ' && !first) ws.send(JSON.stringify(['EOSE', m[1]]));
+      });
+    });
+    const out: string[] = [];
+    const wo = process.stdout.write.bind(process.stdout);
+    (process.stdout as unknown as { write: unknown }).write = (c: unknown, ...a: unknown[]) => (out.push(String(c)), (wo as (...x: unknown[]) => boolean)(c, ...a));
+    try {
+      const url = `ws://127.0.0.1:${(wss.address() as { port: number }).port}`;
+      const t = transport([url], { reconnectBaseMs: 30, reconnectMinDownMs: 0 });
+      t.onEnvelopes(john.id, () => {});
+      await until(() => closes.includes(1009));
+      await until(() => conns >= 2);
+      expect(closes[0]).toBe(1009);
+      await new Promise((res) => setTimeout(res, 100));
+    } finally {
+      (process.stdout as unknown as { write: unknown }).write = wo;
+    }
+    expect(out.join('')).not.toContain('xxxx');
   });
 });
