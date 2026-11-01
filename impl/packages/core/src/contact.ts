@@ -556,6 +556,18 @@ export type RequestOutcome =
   | { status: 'blocked' | 'duplicate' | 'invalid' | 'already-contact' | 'rate-limited' };
 
 /**
+ * What our human chose for an invite on its approval form (NOTES 112): the
+ * contact that redeems it goes on their standing approval for `covers`, under
+ * the owner record `owner` as it was then. Local only, never in the link or on
+ * the wire, and core does nothing with it but keep it while the invite is open:
+ * the host applies it at `invite-redeemed`, and every other end drops it.
+ */
+export interface InviteStanding {
+  covers: string[];
+  owner: string;
+}
+
+/**
  * An invite link our human made (SPEC §5.2.3, NOTES 101): their consent, in
  * advance, to whoever redeems it first, on these terms. Only a hash of the
  * secret is kept; the link itself is shown once, when it is made.
@@ -584,6 +596,8 @@ export interface InviteRecord {
    * the agent itself because its secret was seen in the clear (`exposed`).
    */
   revokedBy?: 'owner' | 'restore' | 'exposed';
+  /** Only while the invite is open; gone once it was used, revoked or expired. */
+  standing?: InviteStanding;
 }
 
 /** An invite as `listInvites` shows it: never the hash. */
@@ -942,7 +956,7 @@ export class ContactBook {
    * is not stored (only its hash), so the link can only be shown now.
    */
   addInvite(
-    opts: { tier: Tier; scope: GrantScope; expires: string; name?: string; label?: string },
+    opts: { tier: Tier; scope: GrantScope; expires: string; name?: string; label?: string; standing?: InviteStanding },
     now = new Date(),
   ): { record: InviteRecord; secret: string } {
     if (!isTier(opts.tier)) throw new Error(`unknown tier ${String(opts.tier)}`);
@@ -968,6 +982,7 @@ export class ContactBook {
       scope,
       ...(opts.name !== undefined ? { name: cleanInviteName(opts.name) } : {}),
       ...(opts.label !== undefined ? { label: cleanLabel(opts.label) } : {}),
+      ...(opts.standing ? { standing: { covers: [...opts.standing.covers], owner: opts.standing.owner } } : {}),
     };
     invites[id] = record;
     return { record, secret };
@@ -989,6 +1004,7 @@ export class ContactBook {
       r.revoked = now.toISOString();
       r.revokedBy = 'owner';
     }
+    delete r.standing;
     return inviteView(r, now);
   }
 
@@ -1007,6 +1023,7 @@ export class ContactBook {
     if (!hit || inviteStatus(hit, now) !== 'open') return undefined;
     hit.revoked = now.toISOString();
     hit.revokedBy = 'exposed';
+    delete hit.standing;
     return inviteView(hit, now);
   }
 
@@ -1026,10 +1043,16 @@ export class ContactBook {
     return hit;
   }
 
+  /** An invite that ended keeps no standing choice (NOTES 112): none is left behind for anything to find later. */
+  dropEndedStanding(now = new Date()): void {
+    for (const r of Object.values(this.state.invites ?? {})) if (r.standing && inviteStatus(r, now) !== 'open') delete r.standing;
+  }
+
   /** Drop used, revoked and expired invites INVITE_KEEP_MS after they ended. */
   private pruneInvites(now: Date): void {
     const invites = this.state.invites;
     if (!invites) return;
+    this.dropEndedStanding(now);
     for (const [id, r] of Object.entries(invites)) {
       if (inviteStatus(r, now) === 'open') continue;
       const ended = parseTimestamp(r.used?.at ?? r.revoked ?? r.expires) ?? 0;

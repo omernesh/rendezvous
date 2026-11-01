@@ -110,6 +110,12 @@ digests and hashes, no peer text).
   dinners), with no passphrase. You never tick it and never suggest it;
   when a result's `auto_approve` or an `auto_approve_on` event says it was
   turned on, tell your user what it covers and that "off" ends it.
+- The forms that make a contact (`rdv_grant` for a request or a probe answer,
+  `rdv_invite` "create") carry the same box when the grant allows anything it
+  covers, and it lists what that is. The same rules: only your user ticks it,
+  and you never mention it first. An invite's applies when the link is used,
+  to the contact that uses it (an `auto_approve_on` event says so then); a
+  revoked or expired link leaves nothing.
 - `rdv_auto_approve` "off" (one contact, or `all_contacts`) needs no
   approval; use it whenever your user asks.
 - It never covers new contacts, grants, a dinner your user proposed,

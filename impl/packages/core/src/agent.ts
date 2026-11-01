@@ -11,6 +11,7 @@ import {
   type ContactRequest,
   type GrantCandidate,
   type GrantScope,
+  type InviteStanding,
   type InviteView,
   type ProbeOverflow,
   type PendingRequest,
@@ -827,11 +828,11 @@ export class Agent extends EventEmitter<AgentEvents> {
    * link carries our agent ID, up to three of our relays, the secret, the
    * expiry (default 7 days, at most 30) and an optional display name.
    */
-  createInvite(opts: { tier: Tier; scope?: GrantScope; expires?: string; name?: string; label?: string; baseUrl?: string }, now = new Date()): CreatedInvite {
+  createInvite(opts: { tier: Tier; scope?: GrantScope; expires?: string; name?: string; label?: string; baseUrl?: string; standing?: InviteStanding }, now = new Date()): CreatedInvite {
     const relays = relaysOf(this.card).slice(0, INVITE_RELAYS_MAX);
     if (relays.length === 0) throw new Error('this agent has no relay to put in an invite');
     const expires = opts.expires ?? new Date(now.getTime() + INVITE_TTL_MS).toISOString();
-    const { record, secret } = this.book.addInvite({ tier: opts.tier, scope: opts.scope ?? DEFAULT_GRANT_SCOPE, expires, name: opts.name, label: opts.label }, now);
+    const { record, secret } = this.book.addInvite({ tier: opts.tier, scope: opts.scope ?? DEFAULT_GRANT_SCOPE, expires, name: opts.name, label: opts.label, standing: opts.standing }, now);
     const link: Invite = { agentId: this.id, relays, secret, expires: record.expires, ...(record.name !== undefined ? { name: record.name } : {}) };
     const { hash: _hash, ...view } = record;
     return { invite: { ...view, status: 'open' }, link, url: inviteUrl(link, opts.baseUrl) };
@@ -1553,6 +1554,7 @@ export class Agent extends EventEmitter<AgentEvents> {
         const contact = await this.issueGrant(req, binding, { tier: outcome.tier, scope: outcome.scope, label: outcome.label });
         if (outcome.invite) {
           const { hash: _hash, ...view } = outcome.invite;
+          delete outcome.invite.standing; // the event carries it to the host, for this one contact; the record keeps nothing
           this.emit('invite-redeemed', { invite: { ...view, status: 'used' }, contact });
         }
         return;

@@ -621,6 +621,43 @@ describe('every envelope to an invite\'s relays goes through the guarded per-cal
   });
 });
 
+describe('an invite\'s standing choice (NOTES 112): only while it is open', () => {
+  const standing = { covers: ['https://example.com/ext/review/v1'], owner: 'none' };
+  const open = (book: ContactBook, expires = new Date(Date.now() + 3_600_000).toISOString()) => book.addInvite({ tier: 'friend', scope: { may_propose_meetings: true }, expires, standing });
+
+  it('is kept while the invite is open; a revoke or an exposure drops it', () => {
+    const book = new ContactBook();
+    const a = open(book);
+    expect(book.state.invites![a.record.id].standing).toEqual(standing);
+    expect(book.revokeInvite(a.record.id)!.standing).toBeUndefined();
+    expect(book.state.invites![a.record.id].standing).toBeUndefined();
+
+    const b = open(book);
+    expect(book.exposeInvite({ invite: b.secret } as never)!.standing).toBeUndefined();
+    expect(book.state.invites![b.record.id].standing).toBeUndefined();
+  });
+
+  it('expiry drops it, a listing and the listener\'s sweep alike; an open invite keeps it', () => {
+    const book = new ContactBook();
+    const a = open(book);
+    const b = open(book);
+    book.state.invites![a.record.id].expires = new Date(Date.now() - 1000).toISOString();
+    book.dropEndedStanding();
+    expect(book.state.invites![a.record.id].standing).toBeUndefined();
+    expect(book.state.invites![b.record.id].standing).toEqual(standing);
+    book.state.invites![a.record.id].standing = standing;
+    expect(book.listInvites().find((i) => i.id === a.record.id)!.standing).toBeUndefined();
+  });
+
+  it('never survives a restore, on any invite', () => {
+    const book = new ContactBook();
+    const a = open(book);
+    const out = restoredAgentState({ book: book.toJSON(), channels: {} } as never, { backupCreated: new Date().toISOString() });
+    expect(out.book.invites![a.record.id].revokedBy).toBe('restore');
+    expect(out.book.invites![a.record.id].standing).toBeUndefined();
+  });
+});
+
 describe('restore (L1, review of PR #120)', () => {
   it('revokes every invite still open in the backup and lists them; used and revoked ones stay as they were', () => {
     const a = Agent.create(() => ({ async sendEnvelope() {}, onEnvelopes: () => () => {}, async publishTopic() {}, onTopics: () => () => {}, fetchTopic: async () => [], close() {} }), {

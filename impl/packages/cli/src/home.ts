@@ -260,7 +260,7 @@ export interface AuditEntry {
   /** gate `meeting`: which step auto-approve took for our human (accepting the peer's time, or confirming our offer it accepted). */
   meeting?: 'accept' | 'confirm';
   /** gate `auto-approve`, a change our human made: from their terminal (`cli`) or through the MCP approval form (`mcp`, issue #44), or the "Don't ask again" box on a gate's approval form or the gateway's page (`form`, issue #103). */
-  via?: 'cli' | 'mcp' | 'form';
+  via?: 'cli' | 'mcp' | 'form' | 'settings';
 }
 
 /** One contact on auto-approve (autoapprove.json). Bound to the grant it was set on; `mac` keys it to this agent. */

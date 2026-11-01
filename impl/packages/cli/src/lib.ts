@@ -248,6 +248,9 @@ export { checkRelayUrl, mirrorRelaysOf, relaySets, relayTransport } from './tran
 export {
   allowAlways,
   alwaysAllowOffer,
+  contactAlwaysOffer,
+  coverageOf,
+  inviteStanding,
   type AlwaysAllowSeen,
   type AutoApproveSubject,
   UNBOUND_OWNER,

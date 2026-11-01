@@ -1,9 +1,10 @@
 // The owner's gateway settings page (issue #102 item 7, NOTES 110): access
-// tokens, connected OAuth apps, the PIN and the webhooks, per agent, behind
+// tokens, connected OAuth apps, auto-approved contacts (NOTES 112), the PIN and the webhooks, per agent, behind
 // the same PIN unlock, session, CSRF token and CSP as the approval page. No
 // JavaScript. Never shows a token's value (except once, on the page that made
 // it), a hash, the PIN or a webhook secret. Adding, removing and migrating
 // agents, setting a webhook and the first PIN stay in the terminal.
+import { MEETINGS_CAPABILITY } from '@rendezvous/core';
 import { agentTag, type AgentLabel, flash, type Flash, layout } from './pages.js';
 import { escapeHtml as e } from './http.js';
 import { SCOPE_TEXT, SCOPES, type Scope } from './scopes.js';
@@ -39,9 +40,19 @@ export interface AdminWebhook {
   waiting: number;
 }
 
+/** A contact on auto-approve now (NOTES 112). `label` is the owner's own name for it. */
+export interface AdminAutoApproved {
+  peer: string;
+  fingerprint: string;
+  label?: string;
+  capabilities: string[];
+  until: string | null;
+}
+
 export interface AdminAgent extends AgentLabel {
   tokens: AdminToken[];
   grants: AdminGrant[];
+  autoApproved: AdminAutoApproved[];
   webhook?: AdminWebhook;
   dead: number;
 }
@@ -95,6 +106,18 @@ function grantRows(grants: AdminGrant[], agent: string, csrf: string): string {
     .join('')}</tbody></table>`;
 }
 
+/** Only turning off is here: turning on stays on approval forms, in front of what it approves. */
+function autoRows(list: AdminAutoApproved[], agent: string, csrf: string): string {
+  if (!list.length) return '<p class="muted">No contact is on auto-approve: everything asks you.</p>';
+  const covers = (u: string) => (u === MEETINGS_CAPABILITY ? 'dinners they propose' : `tasks that ask ${u}`);
+  return `<table class="admin"><thead><tr><th>Contact</th><th>Happens without asking you</th><th>Until</th><th></th></tr></thead><tbody>${list
+    .map(
+      (c) =>
+        `<tr><td>${c.label ? `<b>${e(c.label)}</b><br>` : ''}<span class="muted">${e(c.fingerprint)}</span></td><td>${c.capabilities.map((u) => e(covers(u))).join('<br>')}</td><td>${c.until ? e(when(c.until)) : 'you turn it off'}</td><td>${button('/approve/admin/auto-approve/off', csrf, { agent, peer: c.peer }, 'Turn off')}</td></tr>`,
+    )
+    .join('')}</tbody></table>`;
+}
+
 function createForm(agent: string, csrf: string): string {
   const scopes = SCOPES.map((s) => `<label class="check"><input type="checkbox" name="s_${e(s)}" value="1"> <span><b>${e(s)}</b>: ${e(SCOPE_TEXT[s])}</span></label>`).join('');
   return `<details><summary>Make an access token</summary><form method="post" action="/approve/admin/token/create">${hidden('csrf', csrf)}${hidden('agent', agent)}
@@ -118,6 +141,7 @@ function agentPart(a: AdminAgent, csrf: string, multi: boolean): string {
   return `<section class="card">${multi ? `<h2>${agentTag(a)}</h2>` : `<p class="for">Agent ${agentTag(a)}</p>`}
 <h3>Access tokens</h3><p class="muted">For assistants that connect with a token. Each reaches only this agent.</p>${tokenRows(a.tokens, a.name, csrf)}${createForm(a.name, csrf)}
 <h3>Connected apps (OAuth)</h3>${grantRows(a.grants, a.name, csrf)}
+<h3>Auto-approved contacts</h3><p class="muted">These contacts no longer need your approval for what is listed. You turn this on only when you tick "Don't ask again" on an approval form; Turn off takes effect at once.</p>${autoRows(a.autoApproved, a.name, csrf)}
 <h3>Webhook</h3>${webhookPart(a, csrf)}</section>`;
 }
 

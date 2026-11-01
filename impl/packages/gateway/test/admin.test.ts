@@ -74,6 +74,7 @@ describe('gateway settings page: the owner only', () => {
       ['/approve/admin/token/revoke', { agent: 'omer', id: g.gw.store.listTokens()[0].id, csrf }],
       ['/approve/admin/pin', { current: PIN, next: 'new-pin-7731', again: 'new-pin-7731', csrf }],
       ['/approve/admin/notify/clear', { agent: 'omer', csrf }],
+      ['/approve/admin/auto-approve/off', { agent: 'omer', peer: 'rdv1:none', csrf }],
       ['/approve/admin/oauth/revoke', { agent: '*', id: 'cli_000000000000000000000000', csrf }],
     ] as const) {
       const cookie = [...b.cookies].map(([k, v]) => `${k}=${v}`).join('; ');

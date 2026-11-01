@@ -1089,15 +1089,21 @@ MAY set `auto_approve: "all"` on that contact, optionally with an expiry
   approval of a gate it would cover (issue #103): the form that asks the
   owner to start a task from that contact, release its result, or confirm
   a meeting that contact started MAY carry a "don't ask again for this
-  contact" choice. That choice starts unset, exists only in a form shown to
+  contact" choice. The form that makes a contact (approving its request or
+  a probe answer, or making an invite link) MAY carry the same choice, for
+  what the grant being approved lets the setting cover (listed in the
+  choice), and carries none when that is nothing. That choice starts unset,
+  exists only in a form shown to
   the owner (a host's consent form, or an approval page only the owner can
   unlock), never in a confirm phrase or a tool argument, says what it
-  covers (this contact, this capability, until turned off), how to turn it
-  off and the risk in one sentence, and is bound with the rest of the
+  covers (this contact, this capability or list, until turned off), how to
+  turn it off and the risk in one sentence, and is bound with the rest of the
   form. Chosen with an approval, it covers that capability once the
   approved step went through; no secret is asked, since the answer comes
   from the owner's own channel, which is what the secret stands for on the
-  other paths. Turning it off needs no confirmation (it only narrows), and
+  other paths. Chosen on an invite link's form, it takes effect only when
+  the invite is redeemed and only for the contact that redeems it; a revoked
+  or expired invite leaves nothing of it. Turning it off needs no confirmation (it only narrows), and
   a host MAY let a model do it. Hosts list the terminal command as
   human-only wherever they list the contact grant command.
 - **Warning at set time.** Before it is set the owner is shown, in plain
@@ -1106,7 +1112,7 @@ MAY set `auto_approve: "all"` on that contact, optionally with an expiry
   files from that contact reach this agent's model with its tools, so
   prompt injection from that contact gets the power of those tools; the
   expiry; and how to turn it off. A "don't ask again" choice on a gate's
-  form says the same in short, for its one capability.
+  form says the same in short, for what it lists.
 - **Bound to the grant.** The setting is bound to the grant it was set
   on. It is off at once when the owner turns it off (narrowing needs no
   confirmation), when it expires, and when the contact is revoked or

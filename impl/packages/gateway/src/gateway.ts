@@ -1041,6 +1041,17 @@ export class Gateway {
       return show(200, { text: `Disconnected ${id}. Its tokens reach nothing now, and its open sessions are closed.` });
     }
 
+    if (action === 'auto-approve/off') {
+      const rt = this.byName.get(agentName);
+      if (!rt) return bad(400, 'No such agent; nothing changed.');
+      const peer = form.get('peer') ?? '';
+      const shown = rt.server.autoApprovedContacts().find((c) => c.peer === peer);
+      if (!(await rt.server.turnOffAutoApproveFromSettings(peer))) return bad(404, 'That contact was not on auto-approve; nothing changed.');
+      const who = shown?.fingerprint ?? 'a contact';
+      this.log(`admin: auto-approve for ${who} of agent ${rt.name} turned off on the gateway settings page`);
+      return show(200, { text: `Auto-approve is off for ${shown?.label ?? who}. Everything from them asks you again.` });
+    }
+
     if (action === 'notify/clear') {
       const rt = this.byName.get(agentName);
       if (!rt) return bad(400, 'No such agent; nothing changed.');
@@ -1102,6 +1113,7 @@ export class Gateway {
         ...this.label(rt),
         tokens: tokens.filter((t) => this.bindingIsFor(t.agent, rt.name)).map((t) => tokenView(t, rt.name)),
         grants: o.grants.filter((g) => this.bindingIsFor(g.agent, rt.name)).map((g) => grantView(g, rt.name)),
+        autoApproved: rt.server.autoApprovedContacts(),
         ...(cfg
           ? {
               webhook: {
