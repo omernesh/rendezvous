@@ -22,7 +22,7 @@ describe('approval page field descriptions', () => {
         digest: 'd',
       },
     } as unknown as PendingApproval;
-    const html = approvalPage({ item, csrf: 'c' });
+    const html = approvalPage({ item, agent: { name: 'omer', fingerprint: 'abcd-efgh' }, csrf: 'c' });
     expect(html).toContain('Allow these requests');
     expect(html).toContain('They may also invoke: https://x.example/a&lt;b&gt;');
     expect(html).not.toContain('a<b>');

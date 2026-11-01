@@ -1041,6 +1041,23 @@ OAuth connectors send your browser to the gateway's consent page. **Check the re
 
 See and end connections with `./gw oauth list` and `./gw oauth revoke <cli_...|grt_...>`.
 
+## Several agents on one gateway
+
+One gateway can serve several agents: yours and a second one for another assistant, or a family's. `data/` becomes the gateway's root: the PIN, tokens and OAuth state stay there, and each further agent is a normal home in `data/agents/<name>/`. Your existing agent in `data/` keeps working as it is. Every token and every OAuth connection reaches exactly one agent and nothing of the others. One PIN unlocks the approval page for all of them, and every approval says which agent it is for (name and fingerprint), so only put agents on one gateway that you would trust to one machine.
+
+```bash
+./gw agent add kids new --email kids@example.com      # a new identity
+./gw agent list
+docker compose restart gateway                        # agents are read at start
+./gw token create --agent kids --name kids-claude --scope read,send
+```
+
+To bring an existing agent instead, restore its backup as a new agent, with the backup folder mounted as in "Moving to your real identity" above: `docker compose run --rm -v "$PWD/backup:/backup:ro" gateway node packages/gateway/dist/src/bin.js agent add kids --restore /backup/kids.backup --home /data`. Stop `rdv listen` or `rdv-mcp` for it on the old machine.
+
+Each agent has its own MCP address, `https://gw.example.com/a/kids/mcp` (REST under `/a/kids/api/v1`, OpenAPI at `/a/kids/openapi.json`). `https://gw.example.com/mcp` still works for any token, and serves that token's own agent. An OAuth client connected to an agent's address is fixed to it on the consent page; one connected to `/mcp` makes you pick the agent there. With several agents, give each its own calendar: `--calendar kids=/data/kids-cal.json`.
+
+`./gw agent remove kids` moves the agent to `data/agents/.removed/`, key and all (delete it yourself once you have a backup); it refuses while the gateway runs or while tokens or connections still reach it (`--force` revokes them). To have your first agent in `data/agents/` too, stop the gateway and run `./gw agent migrate`: it copies, checks the copy, and keeps the originals in `data/.premigrate-<time>/`. Migrating is optional.
+
 ## 7. Update
 
 ```bash
@@ -1544,6 +1561,20 @@ node packages/gateway/dist/src/bin.js oauth revoke <cli_…|grt_…> --home ~/.r
 node packages/gateway/dist/src/bin.js token create --name muse --scope read,send,contact:request --home ~/.rendezvous/omer
 node packages/gateway/dist/src/bin.js token list --home ~/.rendezvous/omer
 node packages/gateway/dist/src/bin.js token revoke <id> --home ~/.rendezvous/omer
+```
+
+**Several agents on one gateway** (NOTES 104). `--home` is the gateway's root:
+its PIN, tokens and OAuth state, and the agents it serves (the root itself if
+it is a home, plus `agents/<name>/`). Each token and OAuth grant reaches exactly
+one agent. Restart the gateway after adding or removing one.
+
+```bash
+node packages/gateway/dist/src/bin.js agent add kids new --email kids@example.com --home /data   # or: agent add kids --restore <backup-file>
+node packages/gateway/dist/src/bin.js agent list --home /data
+node packages/gateway/dist/src/bin.js token create --agent kids --name kids-claude --scope read,send --home /data
+node packages/gateway/dist/src/bin.js agent remove kids [--force] --home /data   # moved to agents/.removed/, key kept
+node packages/gateway/dist/src/bin.js agent migrate [--name omer] --home /data   # the root's own agent into agents/<name>/ (gateway stopped)
+# MCP: /a/kids/mcp, REST /a/kids/api/v1/tools/<tool>, OpenAPI /a/kids/openapi.json; /mcp serves each token's own agent
 ```
 
 ## Develop
@@ -4733,6 +4764,7 @@ The format follows Keep a Changelog. One line per change a user can see; PR numb
 ### Added
 - Invite people by link, WhatsApp style: ask your assistant to invite someone, choose in an approval form what they get and for how long, and send the ready-made message; when they open the link and tell their assistant "accept my Rendezvous invite", or run `rdv init --invite <link>`, you are connected at once, and you are told who used it. The link works once and expires (7 days by default); `rdv invite create` in a terminal does the same.
 - Nicknames for your contacts: tell your assistant "talk to joe" or "tell Ran's agent …" once you have given that contact the nickname (you type it in an approval form; at most 8 per contact, each name belongs to one contact). You can also name your own agent (e.g. "Sammie"): contacts see it as what your agent calls itself, never as a way to pick it, and your contact requests greet with it.
+- One `rdv-gateway` can serve several agents (yours, a second assistant's, a family's): `rdv-gateway agent add|list|remove|migrate`, an MCP address per agent (`/a/<name>/mcp`), and every token and OAuth connection reaches exactly one agent; the approval page says which agent each approval is for. An existing single-agent gateway works unchanged.
 
 ### Changed
 - The docs, site, plugin and MCP server text now describe Rendezvous as cross-platform secure agent-to-agent messaging, with meeting scheduling as one example. The CLI reference follows the order you use it (identity, contacts, messages, tasks and files, groups, backups), and the FAQ shows the current version.

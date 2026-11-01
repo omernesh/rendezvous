@@ -223,8 +223,11 @@ function checkMime(m: string | undefined): string | undefined {
   return v;
 }
 
-/** Files that hold a Rendezvous key or consent state: never sent, wherever they are. */
-export const SECRET_FILE_NAMES = ['agent.json', 'agent.json.bak', 'consent.json', 'autoapprove.json', 'owner.json'];
+/**
+ * Files that hold a Rendezvous key or consent state: never sent, wherever they are. The gateway's own files too
+ * (its PIN and token hashes, its OAuth signing key): a multi-agent gateway's root is not itself a home (NOTES 104).
+ */
+export const SECRET_FILE_NAMES = ['agent.json', 'agent.json.bak', 'consent.json', 'autoapprove.json', 'owner.json', 'gateway.json', 'gateway-oauth.json'];
 
 /** Homes we can name: this one, $RDV_HOME, and every profile under ~/.rendezvous. */
 function knownHomes(home: Home): string[] {

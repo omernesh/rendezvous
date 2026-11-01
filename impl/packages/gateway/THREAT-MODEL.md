@@ -1,4 +1,4 @@
-# rdv-gateway threat model (slices 1 and 2)
+# rdv-gateway threat model (slices 1 and 2, multi-agent)
 
 `rdv-gateway` puts the owner's Rendezvous agent behind an HTTPS endpoint so a
 cloud assistant (ChatGPT, Grok, Muse, …) can use it. It runs on the owner's
@@ -32,6 +32,7 @@ tokens) and 93 (slice 2: the built-in OAuth 2.1 authorization server).
 | Someone who stole an authorization code or a refresh token | present it at the token endpoint | use a code without the PKCE verifier; use a rotated refresh token without ending the whole grant; use a token at another resource |
 
 | A local assistant with a shell on the owner's machine (Claude Code, Codex, …) | run commands as the owner | set or clear the PIN, make tokens, then approve on 127.0.0.1 |
+| A token or OAuth grant of one agent on a multi-agent gateway (NOTES 104), or whoever steers its assistant | everything its scopes allow on its own agent | call tools on, read the inbox of, see or answer approvals of, or take held results (invite links) of any other agent; open or reuse a session under another agent |
 
 The last row is the one the second review found: `echo 123456 | rdv-gateway
 pin set` followed by two posts to the page approved anything. What stops it
@@ -226,7 +227,37 @@ label and capabilities for an invite are suggestions beside the fields; the
 page starts at `friend`, the profile name, no label and the capabilities
 unticked.
 
+**Several agents on one gateway** (NOTES 104). *Blast radius:* one process
+holds several keys, and so does one disk. Whatever reaches the process or
+the root folder (code execution in the gateway, the container's volume, a
+backup of `data/`) has every agent served there; so does the owner's PIN,
+which unlocks approvals for all of them. Put agents on one gateway only when
+one person (or household) would trust one machine with all of them.
+*Controls:* every token and grant stores the one agent it reaches; one made
+before multi-agent gateways reaches the root agent only, and nothing once the
+root holds none, so no principal ever falls through to "a default". Each agent
+has its own `RdvMcpServer` (home, listener, event log, held results) and its
+own pending approvals; a request reaches a server only through the
+principal's binding, and `/a/<name>/…` refuses any other agent's principal
+(403). MCP sessions are bound to principal and agent; session caps are per
+agent. OAuth: each agent is its own RFC 8707 resource; a consent for an
+agent's resource is fixed to it, a consent for the gateway's makes the owner
+pick (nothing preselected), the pick is checked server side and carried by the
+code, and the token endpoint refuses a resource naming another agent. The page
+names the agent (name and fingerprint) on the list, on every approval and on
+the done page that shows an invite link. Two folders with one identity refuse
+to start. `agent add|remove|migrate` are terminal-only (the consent guard
+refuses them); remove and migrate are refused while the agent listens, and
+both keep the key (`agents/.removed/`, `.premigrate-<time>/`). Tests:
+`multiagent.test.ts`.
+
 ## Known limits and open risks
+
+- Multi-agent: one PIN for all agents (per-agent PINs are not built), and
+  agent names are visible to anyone who reaches the gateway (an unknown name
+  is 404, a known one 401). Agents are read at start: one added or removed
+  takes effect on the next restart, and until then a token for an agent added
+  since is refused.
 
 - The PIN backoff trades guessing against lock-out. Without
   `--client-ip-header`, every request through a tunnel comes from 127.0.0.1,

@@ -40,6 +40,8 @@ export interface PendingConsent {
   redirectUri: string;
   scopes: Scope[];
   resource: string;
+  /** The agent the resource names (/a/<name>/mcp): fixed for this consent. Absent: the owner picks one on the page. */
+  agent?: string;
   codeChallenge: string;
   state?: string;
   created: number;
@@ -52,6 +54,8 @@ interface Code {
   redirectUri: string;
   scopes: Scope[];
   resource: string;
+  /** The agent the owner connected the client to. */
+  agent: string;
   codeChallenge: string;
   expires: number;
   /** When the consent page that made it was issued: a client revoked since gets nothing. */
@@ -82,6 +86,8 @@ export interface OAuthServerOptions {
   log: (line: string) => void;
   /** A grant ended (revoked, or its refresh token reused): the gateway drops its sessions. */
   onGrantEnded?: (grantId: string) => void;
+  /** The agents this gateway serves (NOTES 104): a grant reaches exactly one of them. */
+  agents?: () => readonly string[];
 }
 
 class OAuthError extends Error {
@@ -119,27 +125,33 @@ export class OAuthServer {
     this.tokenLimiter = new RateLimiter(60, 60_000, o.now);
   }
 
-  /** The protected resource every token is bound to: this gateway's MCP URL. */
-  resource(): string {
-    return `${this.o.base()}/mcp`;
+  /** The protected resource a token is bound to: this gateway's MCP URL, or one agent's (/a/<name>/mcp, NOTES 104). */
+  resource(agent?: string): string {
+    return `${this.o.base()}${agent === undefined ? '' : `/a/${agent}`}/mcp`;
   }
 
-  /** `resource` values that name this gateway (RFC 8707): its MCP URL, its legacy SSE URL, or its origin. */
-  private isOurResource(r: string): boolean {
+  /**
+   * The agent a `resource` value names (RFC 8707): `{}` for this gateway as a whole (its MCP URL, its legacy SSE
+   * URL, its origin), `{ agent }` for one served agent's MCP or SSE URL, undefined for anything else.
+   */
+  resourceAgent(r: string): { agent?: string } | undefined {
     const base = this.o.base();
-    return r === this.resource() || r === `${base}/sse` || r === base || r === `${base}/`;
+    if (r === this.resource() || r === `${base}/sse` || r === base || r === `${base}/`) return {};
+    if (!r.startsWith(`${base}/a/`)) return undefined;
+    const m = /^([a-z0-9][a-z0-9_-]{0,31})\/(mcp|sse)$/.exec(r.slice(base.length + 3));
+    return m && (this.o.agents?.() ?? []).includes(m[1]) ? { agent: m[1] } : undefined;
   }
 
   /** Where a client finds the metadata for the endpoint it called (the SDK checks that the resource covers its URL). */
-  resourceMetadataUrl(endpoint: 'mcp' | 'sse' = 'mcp'): string {
-    return `${this.o.base()}/.well-known/oauth-protected-resource/${endpoint}`;
+  resourceMetadataUrl(endpoint: 'mcp' | 'sse' = 'mcp', agent?: string): string {
+    return `${this.o.base()}/.well-known/oauth-protected-resource${agent === undefined ? '' : `/a/${agent}`}/${endpoint}`;
   }
 
   // --- metadata ----------------------------------------------------------------------
 
-  protectedResourceMetadata(endpoint: 'mcp' | 'sse' = 'mcp'): Record<string, unknown> {
+  protectedResourceMetadata(endpoint: 'mcp' | 'sse' = 'mcp', agent?: string): Record<string, unknown> {
     return {
-      resource: `${this.o.base()}/${endpoint}`,
+      resource: `${this.o.base()}${agent === undefined ? '' : `/a/${agent}`}/${endpoint}`,
       authorization_servers: [this.o.base()],
       scopes_supported: [...SCOPES],
       bearer_methods_supported: ['header'],
@@ -268,11 +280,23 @@ export class OAuthServer {
     // Never more than the client registered for, when it said.
     const scopes = asked?.filter((s) => !client.scope || client.scope.includes(s));
     if (!scopes || scopes.length === 0) return back('invalid_scope', `scope: some of ${(client.scope ?? SCOPES).join(' ')}`);
-    const resource = q.get('resource') ?? this.resource();
-    if (!this.isOurResource(resource)) return back('invalid_target', 'resource: this gateway only');
+    const target = this.resourceAgent(q.get('resource') ?? this.resource());
+    if (!target) return back('invalid_target', 'resource: this gateway, or one of its agents, only');
     const nonce = randomToken(16);
     const payload = Buffer.from(
-      JSON.stringify({ v: 1, k: client.ref, nm: client.name, r: redirectUri, s: scopes, res: this.resource(), ch: codeChallenge, ...(state !== undefined ? { st: state } : {}), t: this.o.now(), n: nonce }),
+      JSON.stringify({
+        v: 1,
+        k: client.ref,
+        nm: client.name,
+        r: redirectUri,
+        s: scopes,
+        res: this.resource(target.agent),
+        ...(target.agent !== undefined ? { ag: target.agent } : {}),
+        ch: codeChallenge,
+        ...(state !== undefined ? { st: state } : {}),
+        t: this.o.now(),
+        n: nonce,
+      }),
     ).toString('base64url');
     return { id: `${payload}.${this.linkMac('consent', payload)}`, nonce };
   }
@@ -290,7 +314,7 @@ export class OAuthServer {
   consent(id: string): PendingConsent | undefined {
     const m = CONSENT_ID.exec(id);
     if (!m || !safeEqual(m[2], this.linkMac('consent', m[1]))) return undefined;
-    let x: { v: number; k: string; nm: string; r: string; s: Scope[]; res: string; ch: string; st?: string; t: number; n: string };
+    let x: { v: number; k: string; nm: string; r: string; s: Scope[]; res: string; ag?: string; ch: string; st?: string; t: number; n: string };
     try {
       x = JSON.parse(Buffer.from(m[1], 'base64url').toString('utf8'));
     } catch {
@@ -300,7 +324,20 @@ export class OAuthServer {
     if (x.v !== 1 || now - x.t > CONSENT_TTL_MS || x.t > now + 60_000) return undefined;
     this.sweepDecided();
     if (this.decided.has(x.n)) return undefined;
-    const p: PendingConsent = { id, nonce: x.n, clientId: x.k, clientName: x.nm, redirectUri: x.r, scopes: x.s, resource: x.res, codeChallenge: x.ch, state: x.st, created: x.t, digest: '' };
+    const p: PendingConsent = {
+      id,
+      nonce: x.n,
+      clientId: x.k,
+      clientName: x.nm,
+      redirectUri: x.r,
+      scopes: x.s,
+      resource: x.res,
+      ...(x.ag !== undefined ? { agent: x.ag } : {}),
+      codeChallenge: x.ch,
+      state: x.st,
+      created: x.t,
+      digest: '',
+    };
     p.digest = consentDigest(p);
     return p;
   }
@@ -308,9 +345,11 @@ export class OAuthServer {
   /**
    * The owner's answer on the consent page, bound to the digest of what the
    * page showed. Approve: a one-time code for the scopes the owner kept (a
-   * subset of those asked). Returns the URL to send the browser back to.
+   * subset of those asked) and the one agent the owner picked (the one the
+   * resource names, when it names one). Returns the URL to send the browser
+   * back to.
    */
-  decide(p: PendingConsent, digest: string, decision: 'approve' | 'decline', kept: Scope[]): { redirect: string } | { error: string; stale?: boolean } {
+  decide(p: PendingConsent, digest: string, decision: 'approve' | 'decline', kept: Scope[], agent?: string): { redirect: string } | { error: string; stale?: boolean } {
     this.sweepDecided();
     if (this.decided.has(p.nonce)) return { error: 'This was answered already.' };
     if (!safeEqual(digest, p.digest)) return { error: 'This changed since you opened the page. Nothing was done; review it again.', stale: true };
@@ -323,6 +362,11 @@ export class OAuthServer {
     const scopes = SCOPES.filter((s) => kept.includes(s) && p.scopes.includes(s));
     if (decision === 'approve' && (scopes.length === 0 || kept.some((s) => !p.scopes.includes(s)))) {
       return { error: 'Keep at least one of the permissions it asked for (you cannot add others).' };
+    }
+    // Exactly one agent: one this gateway serves, and the one the resource names when it names one.
+    const served = this.o.agents?.() ?? [];
+    if (decision === 'approve' && (agent === undefined || !served.includes(agent) || (p.agent !== undefined && agent !== p.agent))) {
+      return { error: p.agent !== undefined && agent !== undefined && agent !== p.agent ? 'This client asked for another agent; nothing was approved.' : 'Choose the agent it connects to.' };
     }
     // Decided: remembered until the link expires, so the same answer can never run again.
     this.decided.set(p.nonce, p.created + CONSENT_TTL_MS);
@@ -340,11 +384,12 @@ export class OAuthServer {
       redirectUri: p.redirectUri,
       scopes,
       resource: p.resource,
+      agent: agent!,
       codeChallenge: p.codeChallenge,
       expires: this.o.now() + CODE_TTL_MS,
       used: false,
     });
-    this.o.log(`OAuth: you approved ${JSON.stringify(p.clientName)} (${p.clientId}) for ${scopes.join(', ')}`);
+    this.o.log(`OAuth: you approved ${JSON.stringify(p.clientName)} (${p.clientId}) for ${scopes.join(', ')}, agent ${agent}`);
     return { redirect: withParams(p.redirectUri, { code, state: p.state, iss }) };
   }
 
@@ -405,11 +450,13 @@ export class OAuthServer {
       throw new OAuthError(400, 'invalid_grant', 'the PKCE code_verifier does not match');
     }
     const resource = form.get('resource');
-    if (resource !== null && !this.isOurResource(resource)) throw new OAuthError(400, 'invalid_target', 'resource: this gateway only');
+    const target = resource === null ? {} : this.resourceAgent(resource);
+    // A resource naming an agent names the one the owner connected, never another.
+    if (!target || (target.agent !== undefined && target.agent !== c.agent)) throw new OAuthError(400, 'invalid_target', 'resource: this gateway, or the agent you were connected to, only');
     // The grant's id is known before the write, so a second presentation racing it still ends that grant.
     c.grantId = newGrantId();
     try {
-      const issued = await this.store.createGrant(client, c.scopes, c.resource, this.o.now(), c.consentAt, c.grantId);
+      const issued = await this.store.createGrant(client, c.scopes, c.resource, this.o.now(), c.consentAt, c.grantId, c.agent);
       if (c.replayed) {
         // Presented again while this grant was being written: it ends now.
         await this.store.revokeGrant(issued.grant.id);
@@ -433,8 +480,9 @@ export class OAuthServer {
       if (!scopes) throw new OAuthError(400, 'invalid_scope', `scope: some of ${SCOPES.join(' ')}`);
     }
     const resource = form.get('resource');
-    if (resource !== null && !this.isOurResource(resource)) throw new OAuthError(400, 'invalid_target', 'resource: this gateway only');
-    const r = await this.store.refresh(ref, token, scopes, resource === null ? undefined : this.resource(), this.o.now());
+    const target = resource === null ? {} : this.resourceAgent(resource);
+    if (!target) throw new OAuthError(400, 'invalid_target', 'resource: this gateway only');
+    const r = await this.store.refresh(ref, token, scopes, resource === null ? undefined : this.resource(target.agent), this.o.now());
     if ('error' in r) {
       if (r.reused) {
         this.o.onGrantEnded?.(r.reused.id);
@@ -468,12 +516,13 @@ export class OAuthServer {
     }
   }
 
-  /** The principal behind an OAuth access token for this gateway, if it is live. */
-  verifyAccess(token: string): { id: string; name: string; scopes: Scope[] } | undefined {
+  /** The principal behind an OAuth access token for this gateway, if it is live, and the agent its grant reaches. */
+  verifyAccess(token: string): { id: string; name: string; scopes: Scope[]; agent?: string } | undefined {
     const hit = this.store.findAccess(token, this.o.now());
-    // Bound to this gateway's resource: a token minted for another (or before the public URL changed) is refused.
-    if (!hit || hit.grant.resource !== this.resource()) return undefined;
-    return { id: hit.grant.id, name: `${hit.client.name} (OAuth ${hit.grant.id})`, scopes: hit.scopes };
+    // Bound to this gateway's resource, or its own agent's: one minted for another (or before the public URL changed) is refused.
+    const g = hit?.grant;
+    if (!hit || !g || (g.resource !== this.resource() && (g.agent === undefined || g.resource !== this.resource(g.agent)))) return undefined;
+    return { id: g.id, name: `${hit.client.name} (OAuth ${g.id})`, scopes: hit.scopes, ...(g.agent !== undefined ? { agent: g.agent } : {}) };
   }
 
   // --- helpers -----------------------------------------------------------------------

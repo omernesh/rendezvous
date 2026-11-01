@@ -4526,6 +4526,98 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       The default greeting of a contact request names it: "Sammie, omer's
       agent, would like to get in touch."
 
+## Several agents on one gateway
+
+104. **One `rdv-gateway` serves several agents; every principal reaches
+    exactly one of them.** The owner's main agent (used by Sammie and
+    claude.ai), a second one for Claude Code, or a family's agents, on one
+    NAS gateway. No wire change: each agent is an ordinary home with its own
+    key, relays, listener and contacts; only the gateway's HTTP side changed.
+    - **Layout.** `--home` is the gateway's root. It holds the gateway's own
+      state (`gateway.json`: the PIN, the tokens; `gateway-oauth.json`: the
+      OAuth key, clients, grants) and the agents: the root itself when it is
+      a home (every gateway before this), and `agents/<name>/` (`agents.ts`).
+      Names are 1 to 32 lowercase letters, digits, `-`, `_`: one URL segment
+      and one folder on every filesystem. The root agent's name is its
+      profile, lowercased (else `default`). Agents are read at start; adding
+      or removing one takes a restart. Two folders with one identity (a
+      copied home, a migration stopped halfway) refuse to start: two
+      receivers for one key would fork its channels.
+    - **Backward compatible, no silent move.** A single-home `/data` runs
+      exactly as before, as one agent. A token or grant from before this has
+      no `agent`: it reaches the root agent only, and nothing once the root
+      holds none (deny by default, never "the default agent", so a token
+      can never drift to an agent added later). New tokens and grants always
+      store their agent. `rdv-gateway agent migrate [--name]` moves the root
+      agent into `agents/<name>/` only when asked: refused while anything
+      holds the root's `listener.lock`, done under its state lock, copy
+      first, check the copy's `agent.json` is byte-identical, put it in
+      place, rebind the root's tokens and grants, then move the originals to
+      `.premigrate-<time>/` (kept, not deleted). Mixed layouts (a root agent
+      plus `agents/…`) are fine, so migrating is optional. The root agent's
+      name follows its profile, so restoring a backup with another profile
+      over the root renames it, and tokens made for the old name are then
+      refused (fail closed) until made again.
+    - **Routes.** `/mcp`, `/sse`, `/api/v1` serve the caller's own agent;
+      `/a/<name>/mcp|sse|messages|api/v1|openapi.json` serve the named
+      agent, and only to its own principals (another agent's token gets 403
+      `wrong_agent`, an unknown name 404). We considered "/mcp is the default
+      agent", as asked, and chose "/mcp is your token's agent": identical for
+      a gateway of one agent and for every existing client, one URL works for
+      any token, and there is no default for a token to fall into. Agent
+      names are visible to anyone who reaches the gateway (404 vs 401):
+      they are not secrets.
+    - **Isolation by construction.** One `RdvMcpServer` per agent (its own
+      home, listener, event log, held results), one `Approvals` per agent,
+      and a request reaches a server only through `runtimeFor(principal,
+      route)`. MCP sessions record their agent and principal; a session id
+      used by another token, or under another agent, is 404. Pending
+      approvals of a principal that no longer reaches that agent are dropped.
+      Session caps are per agent (32 each, 4 per principal), so one agent's
+      clients never use up another's. The held invite link stays in the
+      asking agent's server, for the asking principal.
+    - **OAuth.** The authorization server stays one (issuer = the origin).
+      Each agent is its own protected resource, `<origin>/a/<name>/mcp`, with
+      its own RFC 9728 metadata at `/.well-known/oauth-protected-resource/a/
+      <name>/mcp|sse` and that URL in the 401 challenge. A client that asks
+      for an agent's resource gets a consent page fixed to that agent; one
+      that asks for `<origin>/mcp` gets a choice, nothing preselected when
+      there are several. The owner's pick is checked server side (served,
+      and equal to the resource's agent when it names one), carried by the
+      code into the grant, and the token endpoint refuses a `resource`
+      naming another agent. A grant's access token is accepted for its own
+      agent's resource or the gateway's.
+    - **The page.** One PIN unlocks it for every agent. The list groups
+      approvals per agent, each with its name and fingerprint; an approval
+      page and its done page (with a held invite link) name the agent at the
+      top. Per-agent PINs (a family member approving only their own agent)
+      are not built; they would be a per-agent owner session.
+    - **Calendars.** A calendar is one person's: with several agents a bare
+      `--calendar` is refused at start; `--calendar <agent>=<file>` per agent.
+    - **Admin.** `rdv-gateway agent list | add <name> (new … | --restore
+      <file>) | remove <name> [--force] | migrate [--name]`, the owner's, in
+      a terminal; the consent guard refuses add, remove and migrate. `add
+      --restore` refuses a backup of an identity the gateway already serves.
+      `remove` refuses the root agent and a running agent, refuses while
+      tokens or grants are bound unless `--force` (which revokes them), and
+      moves the folder, key and all, to `agents/.removed/<name>-<time>/`;
+      deleting it is the owner's. `token create --agent <name>` is required
+      once there are several agents. `gateway.json` and `gateway-oauth.json`
+      are now secret file names for `rdv file` too, since a multi-agent root
+      is not itself a home for the "inside a home" check.
+    - **Tests.** `multiagent.test.ts`: two agents, a token each: REST and
+      MCP, prefixed and not, inbox events, the approval list and pages, the
+      held invite link, a session id from another token; both agents listen
+      in one process and exchange messages over the relay after a contact
+      approved on the page; OAuth grants fixed to the resource's agent,
+      picked on the page, forged picks refused, per-agent metadata;
+      duplicate identity and shared calendar refused; a single-home root
+      unchanged (an old token reaches the root agent, not one added later);
+      migrate (refused while serving, byte-identical key, originals kept,
+      tokens rebound); add new / restore / twin restore, token create
+      --agent, list, remove (refused while bound or running, kept with its
+      key). The route check was removed once to see the test fail.
+
 ## Not implemented yet
 
 
