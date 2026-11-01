@@ -44,12 +44,16 @@ issue #126 every owner command (`pin set|unlock`, `token create|revoke`,
 `oauth revoke`, `agent add|remove|migrate`, `notify set|clear|dead-letter`)
 refuses to run unless stdin and stdout are both a terminal, `--stdin`
 included, before it reads or writes anything; no flag, environment variable
-or file turns that off. An assistant's shell tool has no terminal, so every
-spelling of these commands fails there. The plugin's consent guard also
-refuses them in any spelling it recognizes, but a guard is a speed bump
-(bypasses are tracked in #51); the terminal check and the PIN are the
-boundary. What is left is an assistant that can open a pseudo-terminal: the
-guard refuses the usual wrappers, and the PIN still holds for `pin set`.
+or file turns that off. This raises the bar; it is not a proof. A shell tool
+without a terminal (Claude Code's Bash and PowerShell tools, MCP clients) is
+refused in any spelling, but a launcher that opens a new console (Windows
+`Start-Process -WindowStyle Hidden`, `cmd /c start`) or a pseudo-terminal
+(tmux, screen, python `pty`) passes `isTTY`; that stays an accepted limit
+under #51, and the consent guard is the layer that names those launchers. An
+assistant that runs its shell in a real terminal (some IDE agent modes) is
+not stopped by the check and must use the approval-form tools. The plugin's
+consent guard also refuses these commands in any spelling it recognizes, but
+a guard is a speed bump; for `pin set` the PIN itself still holds.
 `pin unlock` only clears the wrong-PIN wait, and `token create` gives no
 approval rights.
 

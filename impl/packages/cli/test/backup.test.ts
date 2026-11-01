@@ -138,6 +138,18 @@ describe('rdv backup and rdv restore', () => {
     }
     expect(existsSync(join(root, 'piped.rdvbackup'))).toBe(false);
     expect(readFileSync(dst.agentPath, 'utf8')).toBe(agentBefore);
+    // --stdin with stdin ON a terminal would echo the secret: the hidden prompt (twice for backup) is used instead.
+    const ttyDesc = Object.getOwnPropertyDescriptor(process.stdin, 'isTTY');
+    Object.defineProperty(process.stdin, 'isTTY', { value: true, configurable: true });
+    try {
+      const prompted = tty([PASS, PASS]);
+      await backupCmd({ home: dst, out: capture().out, values: { stdin: true }, positionals: [join(root, 'tty.rdvbackup')], tty: prompted });
+      expect(prompted.secrets).toBe(2);
+      expect(existsSync(join(root, 'tty.rdvbackup'))).toBe(true);
+    } finally {
+      if (ttyDesc) Object.defineProperty(process.stdin, 'isTTY', ttyDesc);
+      else delete (process.stdin as { isTTY?: boolean }).isTTY;
+    }
     // --replace, explicitly, with --stdin in the human's own terminal.
     const again = await rdvStdin(['restore', file, '--replace', '--stdin'], dst.dir, `${PASS}\n`);
     expect([again.code, again.stderr]).toEqual([0, '']);

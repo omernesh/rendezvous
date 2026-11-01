@@ -5016,9 +5016,17 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
     (PowerShell expressions, awk `system()`, `Start-Process`, aliases).
     Now the commands refuse by themselves unless `process.stdin.isTTY` and
     `process.stdout.isTTY` are both true, before the home is resolved or
-    anything is read or written. An assistant's shell tool has no terminal,
-    so every spelling fails there; the guard stays as the second layer, and
-    its refusal of pseudo-terminal wrappers is what keeps the check honest.
+    anything is read or written. **This raises the bar; it is not a proof.**
+    A shell tool without a terminal (Claude Code's Bash and PowerShell
+    tools, MCP clients) is refused in any spelling. A launcher that opens a
+    new console (Windows `Start-Process -WindowStyle Hidden`, `cmd /c start
+    /min`, conhost) or a pseudo-terminal (tmux, screen, python `pty`) passes
+    `isTTY`, and that stays an accepted limit under #51; the consent guard is
+    the layer that names those launchers. A typed confirmation prompt was
+    considered and rejected: an agent can drive tmux `send-keys` or a pty
+    master, so it adds friction and no safety. An assistant that runs its
+    shell in a real terminal (some IDE agent modes) is not stopped by this
+    check and must use the approval-form tools (`rdv_grant` and the rest).
     - **Which.** The guard's list (`cli/src/humanonly.ts`): `contact grant |
       confirm | resync | label | alias add | alias remove | pending |
       auto-approve`, `dinner confirm | cancel | list`, `task approve |
@@ -5040,8 +5048,15 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       cmd) reports `isTTY`, a pipe does not.
     - **No way around it from a shell.** No flag, environment variable or
       file turns the check off. `--stdin` (backup, restore, `pin set`,
-      `agent add --restore`) still reads stdin, but only when stdin is the
-      terminal: a piped passphrase or PIN is refused.
+      `agent add --restore`) only passes the gate when stdin is the
+      terminal, and a terminal would echo the secret, so there `--stdin` is
+      ignored and the hidden prompt is used (same path as without it); a
+      piped passphrase or PIN is refused. The in-process seam is what lets
+      tests feed a pipe.
+    - **The shipped harness.** `dist/scenarios/harness.js` ships in
+      `@rendezvous/cli` and stands in for the human; its gated path now
+      refuses a `--home` (or `$RDV_HOME`) that is not under `os.tmpdir()`
+      (real paths compared), so it is no shortcut on a real home.
     - **Tests.** `main(argv, { interactive })` (cli) and
       `gatewayMain(argv, { interactive })` (gateway) take the answer
       in-process; bin.js never passes it. The scenario harness (`rdvArgv`)

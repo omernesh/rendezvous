@@ -93,6 +93,9 @@ const die = (msg: string, code = 1): never => {
   process.exit(code);
 };
 
+/** --stdin reads piped lines; on a terminal it would echo the secret, so there the hidden prompt is used (issue #126). */
+const pipedStdin = (): boolean => values.stdin === true && process.stdin.isTTY !== true;
+
 /** stdin's lines, for --stdin. */
 let piped: Promise<string[]> | undefined;
 const pipedLines = (): Promise<string[]> =>
@@ -105,7 +108,7 @@ const pipedLines = (): Promise<string[]> =>
 /** A line from the terminal without echo, or (only with --stdin) the next line of stdin. */
 async function secretLine(prompt: string): Promise<string> {
   const stdin = process.stdin;
-  if (values.stdin) return (await pipedLines()).shift() ?? '';
+  if (pipedStdin()) return (await pipedLines()).shift() ?? '';
   if (!stdin.isTTY) die('this needs your own terminal');
   process.stderr.write(prompt);
   stdin.setRawMode(true);
@@ -148,7 +151,7 @@ async function main(): Promise<void> {
     // Changing a PIN needs the current one, so whoever reaches this terminal can't take over the approval page.
     const current = store.hasPin() ? await secretLine('Current approval PIN: ') : undefined;
     const pin = await secretLine('New approval PIN (6 or more characters): ');
-    if (!values.stdin && (await secretLine('Again: ')) !== pin) die('the two PINs differ; nothing changed');
+    if (!pipedStdin() && (await secretLine('Again: ')) !== pin) die('the two PINs differ; nothing changed');
     await store.changePin(current, pin, Date.now());
     process.stderr.write(`PIN set for ${home.dir}. A serving gateway uses it at once.\n`);
     return;
@@ -316,7 +319,7 @@ async function agentCommand(root: AgentRoot, store: GatewayStore, sub: string | 
       // One identity, one agent: a second copy of an agent here would be two receivers for one key.
       const twin = root.holdsIdentity(header.agent);
       if (twin) die(`that backup is agent "${twin}", which this gateway serves already; nothing was restored`);
-      if (!values.stdin) process.stderr.write(['', `Restore this agent as "${name}":`, describeBackup(header, abs), ''].join('\n') + '\n');
+      if (!pipedStdin()) process.stderr.write(['', `Restore this agent as "${name}":`, describeBackup(header, abs), ''].join('\n') + '\n');
       const pass = await secretLine('Backup passphrase (not shown; Enter cancels): ');
       if (pass === '') die('canceled: nothing was restored');
       const r = await restoreBackup(home, bytes, pass, { via: 'cli', expectAgent: header.agent });
