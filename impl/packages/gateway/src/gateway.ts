@@ -56,7 +56,7 @@ import {
 import { OAuthServer } from './oauth.js';
 import { openApi } from './openapi.js';
 import { BRAND_CSS, FAVICON_SVG } from './brand.js';
-import { type AgentLabel, approvalPage, consentCsp, consentPage, CSS, donePage, errorPage, type Flash, listPage, PAGE_CSP, unlockPage } from './pages.js';
+import { type AgentLabel, approvalPage, consentCsp, consentPage, CSS, donePage, errorPage, type Flash, COPY_PAGE_CSP, listPage, PAGE_CSP, unlockPage } from './pages.js';
 import { authorizeCall, SCOPES, type Scope, toolScopes } from './scopes.js';
 import { GatewayStore, PinChangedError, pinRuleError, StoreError } from './store.js';
 import { Notifier, type NotifierOptions, NotifyStore, receiverName } from './notify.js';
@@ -810,8 +810,8 @@ export class Gateway {
     if (!safeEqual(sent, this.csrfFor(scope))) throw new HttpError(403, 'the form expired; reload the page', 'csrf');
   }
 
-  private html(res: ServerResponse, status: number, html: string, cookies: string[] = []): void {
-    sendHtml(res, status, html, PAGE_CSP, cookies.length ? { 'Set-Cookie': cookies } : {});
+  private html(res: ServerResponse, status: number, html: string, cookies: string[] = [], csp = PAGE_CSP): void {
+    sendHtml(res, status, html, csp, cookies.length ? { 'Set-Cookie': cookies } : {});
   }
 
   private unlock(res: ServerResponse, next: string, message?: Flash, status = 200, cookies: string[] = []): void {
@@ -1240,6 +1240,8 @@ export class Gateway {
         csrf,
         ...(!no && out.held ? { held: out.held } : {}),
       }),
+      [],
+      !no && out.held ? COPY_PAGE_CSP : PAGE_CSP,
     );
   }
 }

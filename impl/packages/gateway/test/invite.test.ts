@@ -8,6 +8,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startTestRelay, type TestRelay } from '@rendezvous/core/testing';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { createHash } from 'node:crypto';
+import { COPY_PAGE_CSP, COPY_SCRIPT, PAGE_CSP } from '../src/pages.js';
 import { api, Browser, hidden, startGateway, type TestGateway, waitApi } from './helpers.js';
 
 let relay: TestRelay;
@@ -63,6 +65,29 @@ describe('rdv_invite through the gateway', () => {
     const link = /<pre class="msg">(https:\/\/rendezvous\.nesher\.co\/i#[A-Za-z0-9_-]+)<\/pre>/.exec(done.text)?.[1];
     expect(link).toBeTruthy();
     expect(done.text).toContain('Message ready to send');
+
+    // Copy buttons (NOTES 111): hidden without JS, no whitespace around the value, one hash-allowed inline script.
+    expect(done.text).toContain('Invite link');
+    const boxes = done.text.match(/<pre class="msg">[^<\s][^<]*[^<\s]<\/pre><button type="button" class="copy" hidden>Copy<\/button><span class="copystatus" role="status" aria-live="polite"><\/span>/g);
+    expect(boxes).toHaveLength(2);
+    const scripts = [...done.text.matchAll(/<script>([^<]*)<\/script>/g)];
+    expect(scripts).toHaveLength(1);
+    expect(scripts[0][1]).toBe(COPY_SCRIPT);
+    const hash = createHash('sha256').update(scripts[0][1], 'utf8').digest('base64');
+    const csp = done.headers.get('content-security-policy')!;
+    expect(csp).toContain(`script-src 'sha256-${hash}'`);
+    expect(csp).toBe(COPY_PAGE_CSP);
+    expect(csp).not.toContain('unsafe-inline');
+    expect(csp.replace(/ script-src 'sha256-[^']+';/, '')).toBe(PAGE_CSP);
+    // Every other page keeps the page CSP, which allows no script at all.
+    expect(PAGE_CSP).not.toContain('script-src');
+    for (const path of ['/approve', '/approve/admin']) {
+      const o = await b.get(path);
+      expect(o.status).toBe(200);
+      expect(o.headers.get('content-security-policy')).toBe(PAGE_CSP);
+      expect(o.text).not.toContain('<script');
+    }
+    expect((await new Browser(g.base).get('/approve')).headers.get('content-security-policy')).toBe(PAGE_CSP);
 
     // Every token sees the approval event, and none of them sees the link in it.
     const ev = await waitApi(g.base, reader, (e) => e.type === 'approval' && e.tool === 'rdv_invite', 'the approval event');

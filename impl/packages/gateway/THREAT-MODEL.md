@@ -134,8 +134,14 @@ when the suggested tier is closer than the default.
 
 **Peer text is inert.** Everything on the page is HTML-escaped; peer text
 appears only inside the form message, quoted and labeled untrusted, as it is
-in the terminal. The page has no JavaScript; its CSP allows only our
-stylesheet and same-origin forms, and forbids framing.
+in the terminal. The pages have no JavaScript, with one exception: the page
+that shows a held invite link after an approval carries one small static
+inline script for its Copy buttons. Its CSP allows that script only by the
+`sha256` hash of its exact text (no `unsafe-inline`, no nonce); the script
+does no network and reads only the text of the box beside its button, and
+every other page's CSP has no `script-src` (so `default-src 'none'`). Apart
+from that, the CSP allows only our stylesheet and same-origin forms, and
+forbids framing.
 
 **The PIN.** At least six characters, stored as salted scrypt in
 `gateway.json` (mode 600), first set only from a terminal, and changed only
@@ -381,7 +387,8 @@ code as the approval page: the PIN unlock with its rate, per-client and
 global backoff, the in-memory owner session (15 minutes idle, an hour at
 most, Path `/approve` or `__Host-` behind https), the session's HMAC CSRF
 token and the Origin and `Sec-Fetch-Site` checks on every post, the Host
-allow-list, no JavaScript, the page CSP and `no-store`. Any request to it
+allow-list, no JavaScript (the settings page has none; the Copy script is
+only on the approval result page), the page CSP and `no-store`. Any request to it
 that carries an `Authorization` header is refused (403) before the session
 is looked at, so a bearer never reaches it, even riding on the owner's
 cookie; there is no admin tool, no REST route and nothing under `/a/<name>/`
