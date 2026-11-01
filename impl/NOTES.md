@@ -5137,6 +5137,38 @@ Independent review of the implementation; H1/H2 are under items 15 and 18.
       (MCP and REST, the agent's `outSeq` unchanged). The dinner, review,
       tasks and groups scenarios cover the gated flows.
 
+## Relay frame cap
+
+109. **The main relay pool caps WebSocket frames at 1 MiB** (issue #125).
+    `QuietWebSocket` used ws's default `maxPayload` of 100 MiB, so a relay
+    named in a peer's card could push 100 MiB frames at the agent. Every
+    socket core opens to a relay now gets `maxPayload: MAX_RELAY_FRAME_BYTES`
+    (`1 << 20`, `transport/nostr.ts`), the same figure the per-invite
+    isolated sockets already used (one constant for both).
+    - **Largest legitimate frame, measured.** An envelope with the maximum
+      plaintext (`MAX_PLAINTEXT_BYTES` = 32 KiB) has a ciphertext of 43,712
+      base64 characters; the signed envelope JSON, wrapped as event content
+      and in `["EVENT", subId, event]`, is under 50,000 bytes (the existing
+      transport test pins `< 50_000`). A card is at most `MAX_CARD_BYTES` =
+      16 KiB (12 addresses' worth at most, 16 relays), group state is one
+      envelope (16 members), and a resend is one event per frame, so the
+      envelope is the largest. An inline file is at most 16 KiB decoded
+      (`MAX_INLINE_FILE_BYTES`), inside the same 32 KiB plaintext. Larger
+      files travel as references, never in a frame.
+    - **Arithmetic.** The cap is 1,048,576 bytes: over 20 times the largest
+      legitimate frame. It also covers the worst frame whose event content
+      still passes `MAX_EVENT_CONTENT` (128 KiB; quote-heavy content doubles
+      under JSON escaping, control characters grow sixfold, so under
+      800 KB), so no event we would accept is cut. Nothing legitimate
+      exceeds it.
+    - **Oversize frame.** ws closes the socket with 1009 and emits `error`
+      (swallowed by `QuietWebSocket`'s listener); nostr-tools sees an
+      ordinary close, and the pool's reconnect and backoff run as for any
+      drop. Nothing is logged to stdout (#124).
+    - **Covered by.** `core/test/transport.test.ts`: a maximum-size
+      envelope arrives; a frame one byte over the cap gets close code 1009
+      and the transport re-joins.
+
 ## Not implemented yet
 
 
