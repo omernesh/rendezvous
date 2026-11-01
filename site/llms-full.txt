@@ -2688,8 +2688,8 @@ the secret as base64url without padding (22 characters; what a request's
 
 - The link has 1 to 3 relays in all (bits and records), no repeats, each
   in its canonical spelling (the WHATWG URL serialization: lowercase host,
-  punycode, no default port, without a lone `/` path; ASCII, at most 200
-  characters); a relay from the table is always its bit, never a record.
+  punycode, no default port, without a lone `/` path, no credentials, no
+  trailing-dot host; ASCII, at most 200 characters); a relay from the table is always its bit, never a record.
   The expiry is at most the year 3000. The name, when there is one, has 1 to 64 printable characters
   (no control, format, line or paragraph separator, private-use or
   unassigned characters), already trimmed; makers put one in only when their owner asks. The check
@@ -2702,9 +2702,12 @@ the secret as base64url without padding (22 characters; what a request's
   one invite has one link. A link that contains "…", or that is cut or
   fails its check, is reported as cut, with a request to ask the sender for
   the full link. It reads the payload from whatever was pasted (a whole message
-  may hold other `#`s): the first word after each `/i#`, then after each
-  other `#` (any host), then after `rdv-invite:`, then the text alone; the
-  first that reads is the invite.
+  may hold other `#`s): the base64url after each `/i#` and after
+  `rdv-invite:`, and after any other `#` (any host) when it has a payload's
+  shape; with none of these, the text alone. Every such candidate must read
+  (a cut or failing one refuses the whole text, never falls through to
+  another), and they must all be the same invite: two different ones are
+  refused as ambiguous.
 - **Version 1** links (NOTES 101) are still read, never made: their first
   byte is `{`, and the payload is the canonical JSON (§4.6) of
   `{ "a": "rdv1:<inviter key>", "e": <expiry, Unix seconds>, "n": "<name>",

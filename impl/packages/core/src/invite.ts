@@ -115,7 +115,7 @@ const isRelayUrl = (r: unknown): r is string => typeof r === 'string' && r.lengt
 /**
  * A relay URL's one spelling in a v2 link (security review of PR #129, L3/L4):
  * the WHATWG href (lowercase host, punycode, default port dropped, ASCII
- * only) without the lone "/" path, so `wss://RELAY.nesher.co/` is the table's
+ * only, no credentials, no trailing-dot host) without a lone "/" path, so `wss://RELAY.nesher.co/` is the table's
  * `wss://relay.nesher.co` and a record's length always fits one byte. Null
  * when it is not a ws:// or wss:// URL of at most 200 characters.
  */
@@ -128,7 +128,11 @@ export function canonicalInviteRelay(r: string): string | null {
     return null;
   }
   if (u.protocol !== 'wss:' && u.protocol !== 'ws:') return null;
-  const href = u.pathname === '/' && !u.search && !u.hash ? u.href.slice(0, -1) : u.href;
+  // No credentials and no trailing-dot host: neither has a second spelling we would have to match (narrow review).
+  if (u.username || u.password || u.hostname.endsWith('.')) return null;
+  // Only a lone trailing "/" goes (not an empty "?" or "#"), so canonicalInviteRelay(x) is x for every result.
+  const root = `${u.protocol}//${u.host}/`;
+  const href = u.href === root ? root.slice(0, -1) : u.href;
   return href.length <= INVITE_RELAY_MAX && /^[\x21-\x7e]+$/.test(href) ? href : null;
 }
 
@@ -283,44 +287,82 @@ const PAYLOAD_KEYS = new Set(['v', 'a', 'r', 's', 'e', 'n']);
 export function parseInvite(text: string, opts: { unsafeAllowRelays?: readonly string[] } = {}): Invite {
   if (typeof text !== 'string') throw new Error('not an invite link');
   // A whole pasted message may hold other "#"s ("Re issue #12: <link>", "Team #3 invites you … <link>") and "…"
-  // (security review of PR #129, L1): a Rendezvous link's "/i#" first, then each "#" in turn, and the first that reads
-  // wins; with none, `rdv-invite:` or the text itself. Only the candidate word is checked for an ellipsis.
-  const words = inviteCandidates(text);
-  let first: unknown;
-  for (const w of words) {
-    try {
-      const inv = parsePayload(w);
-      checkInviteRelays(inv, opts.unsafeAllowRelays);
-      return inv;
-    } catch (err) {
-      first ??= err;
-    }
+  // (security review of PR #129, L1). Every candidate that looks like an invite must read, and they must all be the
+  // same invite (narrow review, MED): a cut or failing link is never skipped for another one later in the text, and
+  // two different invites are refused, so the user never connects to a link they did not choose.
+  const found: Invite[] = [];
+  for (const c of inviteCandidates(text)) {
+    // Another "#" (a hashtag, "#12", a page's "#section"): an invite only if it has an invite's shape, or "…" after it.
+    if (!c.strong && !(c.run.length >= 8 && CUT_AFTER.test(c.rest)) && !looksLikePayload(c.run)) continue;
+    const inv = parsePayload(c);
+    checkInviteRelays(inv, opts.unsafeAllowRelays);
+    found.push(inv);
   }
-  throw first instanceof Error ? first : new Error('not an invite link');
+  if (found.length === 0) throw new Error('not an invite link');
+  const inv = found[0];
+  if (found.some((f) => f.agentId !== inv.agentId || f.secret !== inv.secret)) {
+    throw new Error('this text holds more than one invite link: paste just the one link you mean');
+  }
+  return inv;
 }
 
-/** The words after "/i#", then after every other "#", then after `rdv-invite:`, then the text alone. */
-function inviteCandidates(text: string): string[] {
-  const after = (i: number) => text.slice(i).split(/\s/u)[0];
-  const out: string[] = [];
-  for (const m of text.matchAll(/\/i#/g)) out.push(after(m.index! + 3));
-  for (const m of text.matchAll(/#/g)) if (text.slice(Math.max(0, m.index! - 2), m.index!) !== '/i') out.push(after(m.index! + 1));
-  const lower = text.toLowerCase();
-  const tag = lower.indexOf('rdv-invite:');
-  if (tag >= 0) out.push(text.slice(tag + 'rdv-invite:'.length).trim().split(/\s/u)[0]);
-  if (out.length === 0) out.push(text.trim().split(/\s/u)[0] ?? '');
+/** At least 16 characters of canonical base64url whose first byte is a version this reader knows. */
+function looksLikePayload(run: string): boolean {
+  if (run.length < 16 || run.length > INVITE_PAYLOAD_MAX) return false;
+  try {
+    const b = base64urlnopad.decode(run);
+    return base64urlnopad.encode(b) === run && (b[0] === V2_VERSION || b[0] === 0x7b);
+  } catch {
+    return false;
+  }
+}
+
+/** An ellipsis right after a payload: someone shortened the link (2026-11-01). */
+const CUT_AFTER = /^(…|\.\.\.|%E2%80%A6)/iu;
+const B64_RUN = /[A-Za-z0-9_-]*/y;
+
+/** A payload candidate: its base64url run, the few characters after it, and whether it is surely meant as an invite. */
+interface Candidate {
+  run: string;
+  rest: string;
+  strong: boolean;
+}
+
+/**
+ * The base64url run after each "/i#" (strong), after every other "#" (only
+ * when it looks like a payload), after `rdv-invite:` (strong) and, with none
+ * of those, the text alone. Linear in the text (narrow review, LOW).
+ */
+function inviteCandidates(text: string): Candidate[] {
+  const at = (i: number, strong: boolean): Candidate => {
+    B64_RUN.lastIndex = i;
+    const run = B64_RUN.exec(text)![0];
+    return { run, rest: text.slice(i + run.length, i + run.length + 9), strong };
+  };
+  const out: Candidate[] = [];
+  for (let i = text.indexOf('#'); i >= 0; i = text.indexOf('#', i + 1)) out.push(at(i + 1, i >= 2 && text[i - 2] === '/' && text[i - 1] === 'i'));
+  const tag = text.toLowerCase().indexOf('rdv-invite:');
+  if (tag >= 0) {
+    let i = tag + 'rdv-invite:'.length;
+    while (i < text.length && /\s/u.test(text[i])) i++;
+    out.push(at(i, true));
+  }
+  if (out.length === 0) {
+    // The payload alone: the whole first word, nothing else in it.
+    const word = text.trim().split(/\s/u)[0] ?? '';
+    const c = at(text.indexOf(word), true);
+    if (word.replace(/[.,;:!?)\]}"'>’”]+$/u, '') !== c.run && !CUT_AFTER.test(c.rest)) throw new Error('not an invite link');
+    out.push(c);
+  }
   return out;
 }
 
-/** One candidate word: an ellipsis or cut says so; sentence punctuation after it is dropped. */
-function parsePayload(word: string): Invite {
-  // An ellipsis means someone (often an assistant) shortened the link and its middle is gone (2026-11-01).
-  // Checked before the trailing punctuation goes, so "…#abc..." is a cut link, not "…#abc" (review L2).
-  if (/…|%E2%80%A6|\.\.\./iu.test(word)) throw new Error(INVITE_CUT_MESSAGE);
-  // A link pasted at the end of a sentence: the punctuation is not part of it (base64url has none of these).
-  const s = word.replace(/[.,;:!?)\]}"'>’”]+$/u, '');
+/** One candidate: an ellipsis right after it or a cut says so. */
+function parsePayload(c: Candidate): Invite {
+  if (CUT_AFTER.test(c.rest)) throw new Error(INVITE_CUT_MESSAGE);
+  const s = c.run;
   if (s.length === 0) throw new Error('not an invite link: the part after "#" is missing. Ask the person who sent it for the full link, exactly as it was sent');
-  if (s.length > INVITE_PAYLOAD_MAX || !/^[A-Za-z0-9_-]+$/.test(s)) throw new Error('not an invite link: the part after "#" is not an invite');
+  if (s.length > INVITE_PAYLOAD_MAX) throw new Error('not an invite link: the part after "#" is not an invite');
   let bytes: Uint8Array;
   try {
     bytes = base64urlnopad.decode(s);

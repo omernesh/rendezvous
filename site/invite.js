@@ -45,7 +45,9 @@
   function canonRelay(r) {
     if (r.length > 200 || !/^wss?:\/\/[^\s/?#]+[^\s]*$/.test(r)) return null;
     var u = new URL(r);
-    var href = u.pathname === '/' && !u.search && !u.hash ? u.href.slice(0, -1) : u.href;
+    if (u.username || u.password || /\.$/.test(u.hostname)) return null;
+    var root = u.protocol + '//' + u.host + '/';
+    var href = u.href === root ? root.slice(0, -1) : u.href;
     return href.length <= 200 && /^[\x21-\x7e]+$/.test(href) ? href : null;
   }
 
