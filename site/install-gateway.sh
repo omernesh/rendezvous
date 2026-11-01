@@ -477,7 +477,7 @@ write_ctl() {
 #   ./gw status | logs [tunnel] | start | stop | restart | update | uninstall
 #   ./gw rdv <command...>        the rdv CLI on the gateway's agent (e.g. ./gw rdv whoami)
 #   ./gw backup <file>           an encrypted backup of the agent (you type a new passphrase)
-#   ./gw pin|token|oauth ...     rdv-gateway's owner commands, in your own terminal
+#   ./gw pin|token|oauth|agent ...  rdv-gateway's owner commands, in your own terminal (agent add: then ./gw restart)
 set -eu
 DIR=\$(CDPATH= cd -- "\$(dirname -- "\$0")" && pwd)
 $MINE_FUNC
@@ -496,7 +496,7 @@ case \$cmd in
   update) mine "\$DIR" && mine "\$DIR/install-gateway.sh" || { echo "gw: \$DIR or its installer copy is not yours alone (owner, symlink, group or other write, or an ACL); not running it" >&2; exit 1; }
     exec sh "\$DIR/install-gateway.sh" --dir "\$DIR" --update $ROOT_FLAGS"\$@" ;;
   rdv) exec compose run --rm --no-deps gateway node packages/cli/dist/src/bin.js "\$@" --home /data ;;
-  pin | token | oauth) exec compose run --rm --no-deps gateway node packages/gateway/dist/src/bin.js "\$cmd" "\$@" --home /data ;;
+  pin | token | oauth | agent) exec compose run --rm --no-deps gateway node packages/gateway/dist/src/bin.js "\$cmd" "\$@" --home /data ;;
   backup)
     [ \$# -eq 1 ] || { echo 'usage: ./gw backup <file>' >&2; exit 2; }
     out=\$(CDPATH= cd -- "\$(dirname -- "\$1")" && pwd)
@@ -516,7 +516,7 @@ EOF
 #   ./gw status | logs [tunnel] | start | stop | restart | update | uninstall
 #   ./gw rdv <command...>        the rdv CLI on the gateway's agent (e.g. ./gw rdv whoami)
 #   ./gw backup <file>           an encrypted backup of the agent (you type a new passphrase)
-#   ./gw pin|token|oauth ...     rdv-gateway's owner commands, in your own terminal
+#   ./gw pin|token|oauth|agent ...  rdv-gateway's owner commands, in your own terminal (agent add: then ./gw restart)
 set -eu
 DIR=\$(CDPATH= cd -- "\$(dirname -- "\$0")" && pwd)
 $MINE_FUNC
@@ -533,7 +533,7 @@ case \$cmd in
   update) mine "\$DIR" && mine "\$DIR/install-gateway.sh" || { echo "gw: \$DIR or its installer copy is not yours alone (owner, symlink, group or other write, or an ACL); not running it" >&2; exit 1; }
     exec sh "\$DIR/install-gateway.sh" --dir "\$DIR" --update "\$@" ;;
   rdv) exec "\$NODE" "\$DIR/repo/impl/packages/cli/dist/src/bin.js" "\$@" --home "\$DIR/data" ;;
-  pin | token | oauth) exec "\$NODE" "\$DIR/repo/impl/packages/gateway/dist/src/bin.js" "\$cmd" "\$@" --home "\$DIR/data" ;;
+  pin | token | oauth | agent) exec "\$NODE" "\$DIR/repo/impl/packages/gateway/dist/src/bin.js" "\$cmd" "\$@" --home "\$DIR/data" ;;
   backup) exec "\$NODE" "\$DIR/repo/impl/packages/cli/dist/src/bin.js" backup "\$@" --home "\$DIR/data" ;;
   uninstall)
     svc_remove
@@ -916,7 +916,7 @@ choose_public_address() {
       [ -n "$CLIENT_IP_HEADER" ] || CLIENT_IP_HEADER=cf-connecting-ip
       ;;
     own-url)
-      say "Your proxy must terminate TLS on this machine and forward to http://127.0.0.1:$PORT, with response buffering off."
+      say "Your proxy must terminate TLS on this machine and forward every path to http://127.0.0.1:$PORT (including /a/<agent>/... and /.well-known/...), with response buffering off."
       if [ -z "$PUBLIC_URL" ]; then
         ask --public-url 'Its public https address (e.g. https://gw.example.com)' ''
         PUBLIC_URL=$ANSWER
@@ -1254,13 +1254,26 @@ start_services() {
   done_step 7
 }
 
+# Each further agent on this gateway (data/agents/<name>/, from ./gw agent add) and its own MCP address.
+agent_urls() {
+  [ -d "$D/data/agents" ] || return 0
+  set +f # main turns globbing off for the word-split lists; this one glob is ours
+  for a in "$D"/data/agents/*/; do
+    [ -d "$a" ] || continue
+    n=$(basename "$a")
+    case $n in .* | *[!A-Za-z0-9_-]*) continue ;; esac
+    printf '  agent %-10s %s/a/%s/mcp\n' "$n" "$PUBLIC_URL" "$n"
+  done
+  set -f
+}
+
 next_steps() {
   cat <<EOF
 
 The Rendezvous gateway is running.
 
 Your MCP address:  $PUBLIC_URL/mcp
-
+$(agent_urls)
 Connect your assistants (each one sends you to the gateway's page; unlock it with your PIN,
 and check that the return address is claude.ai or chatgpt.com before you approve):
   claude.ai     Settings, Connectors, Add custom connector: paste the MCP address,
@@ -1280,6 +1293,8 @@ Manage it from $DIR:
   ./gw stop | ./gw start
   ./gw rdv whoami        the agent's ID and fingerprint
   ./gw oauth list        connected assistants (./gw oauth revoke <id> to cut one off)
+  ./gw agent add <name> new --email <address>   another agent on this gateway, then ./gw restart
+                         (in your own terminal; its address is $PUBLIC_URL/a/<name>/mcp)
   ./gw uninstall         stop and remove the service; your agent stays in data/
 
 Keep data/ private and backed up (./gw backup <file>): it holds the agent's key.
