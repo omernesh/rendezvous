@@ -4991,7 +4991,7 @@ What changed in Rendezvous, newest first. Versions are those of the Claude Code 
 
 The format follows Keep a Changelog. One line per change a user can see; PR numbers link to GitHub.
 
-## Unreleased
+## 0.14.1 - 2026-11-02 {#v0-14-1}
 
 ### Fixed
 - The consent guard no longer refuses a harmless `cat` or `tee` that writes a document or script with a quoted heredoc (`<<'EOF'`) because a line in it looks like a command, such as a table row saying "Task `Foo`". Pipes onward, unquoted heredocs, heredocs fed to shells and interpreters, and bodies that name `rdv` are checked as before. ([#149](https://github.com/omernesh/rendezvous/issues/149))
