@@ -1143,6 +1143,74 @@ function checkCode(code, ctx, depth) {
   checkWords(code.split(/[^\w@.\/\:+$-]+/).filter(Boolean), { cwd: ctx.cwd }, depth);
 }
 
+// --- heredocs that are only data ------------------------------------------------
+
+const HD_WORD = String.raw`(?:[\w./:~-]+|"[^"$\x60\\\n]*"|'[^'\n]*')`;
+const HD_SETUP = String.raw`(?:cd|mkdir)(?:[ \t]+${HD_WORD})*`;
+const HD_AND = String.raw`[ \t]*&&[ \t]*`;
+const HD_OUT = String.raw`[ \t]*>>?[ \t]*${HD_WORD}`;
+/** A blank line, or plain `cd` and `mkdir`: nothing that could open a string or a group, or change what `cat` is or where its output goes. */
+const HD_SETUP_LINE = new RegExp(String.raw`^[ \t]*$|^${HD_SETUP}(?:${HD_AND}${HD_SETUP})*$`);
+/** All of a line: `cat` or `tee` itself, plain arguments, a file for its output, one heredoc with a quoted name. No pipe, substitution or second command fits. */
+const HD_HEADER = new RegExp(String.raw`^(?:${HD_SETUP}${HD_AND})*(?:cat|tee)(?:[ \t]+${HD_WORD}|${HD_OUT})*[ \t]+<<[ \t]*(['"])([A-Za-z_]\w*)\1(?:${HD_OUT})?$`);
+/** Text that names Rendezvous, or something else the parser would refuse by name, once quotes and escapes are gone. A substring on purpose: a false match only means the body is parsed as before. */
+const HD_NAMES = new RegExp(String.raw`rdv|rendezvous|install-gateway|bin\.js|(^|[^\w-])gw($|[^\w-])|auto[-_]?approve|(files|tasks)\.json|(set|import)-environment|setenv|${GATEWAY_MENTION.source}`, 'i');
+/** docker where a command starts: the parser's rules for it read the words after it. In a sentence it is prose. */
+const HD_DOCKER = /(^|[;&|(])[ \t]*(sudo[ \t]+)?(docker|docker-compose|podman)\b/m;
+const HD_ALL_GROUPS = [...HUMAN_GROUPS, ...GATEWAY_GROUPS];
+const hdAny = (words) => String.raw`(?:${words.join('|')})(?=$|[^\w-])`;
+const HD_GROUP = hdAny([...HD_ALL_GROUPS.map(([g]) => g), ...ONE_WORD_HUMAN]);
+/** `contact grant` as words, however they are separated. */
+const hdPair = (sep) => new RegExp(HD_ALL_GROUPS.map(([g, subs]) => String.raw`(^|[^\w-])${g}${sep}${hdAny(Object.keys(subs))}`).join('|'), 'i');
+const HD_PAIR = hdPair(String.raw`[ \t"',\[\]]+`);
+/** `"contact", "grant"`: an argument list in a script, never prose. */
+const HD_ARGV_PAIR = hdPair(String.raw`["']?[ \t]*,[ \t]*["']?`);
+const HD_HUMAN_WORD = new RegExp(String.raw`(^|[^\w-])${hdAny([...HD_ALL_GROUPS.flatMap(([g, subs]) => [g, ...Object.keys(subs)]), ...ONE_WORD_HUMAN])}`, 'i');
+const HD_BUILT = /\$[\w{(@*#?!$'"-]|%\w+%/;
+/** A backtick substitution where a command starts, then a command word. Mid-sentence it is Markdown (`` the `x` task ``). */
+const HD_BACKTICK_THEN_GROUP = new RegExp(String.raw`(^|[;&|(!]|\b(?:then|do|else)\b)[ \t]*["']?\x60[^\x60\n]*\x60["']?[ \t]+${HD_GROUP}`, 'im');
+
+/**
+ * Could the text between a heredoc's header and its end line be a command after all, once it is stored and run? Yes if
+ * it names a Rendezvous program or file, or a human-only command could be spelled in it under a name built at run time:
+ * `$R contact grant x`, `$R contact $S`, `$A grant`, `` `printf x` contact grant x ``, `["contact", "grant"]` after
+ * `chr(114)+…`. A command word next to a backtick anywhere else (`Task `Foo``, `the `x` task`) is prose.
+ */
+function heredocIsData(text) {
+  const joined = text.replace(/\\\r?\n/g, '');
+  if (HD_NAMES.test(joined.replace(/['"`\\^+]/g, ''))) return false;
+  if (HD_DOCKER.test(joined) || HD_ARGV_PAIR.test(joined) || HD_BACKTICK_THEN_GROUP.test(joined)) return false;
+  if (HD_PAIR.test(joined) && (HD_BUILT.test(joined) || joined.includes('`'))) return false;
+  return !joined.split('\n').some((line) => HD_BUILT.test(line) && HD_HUMAN_WORD.test(line));
+}
+
+/**
+ * `src` without the bodies of heredocs that are only data, so that a Markdown table saying "Task `Foo`" is not read as
+ * `rdv task <built at run time>`. Only for the Bash tool's own command (depth 0, after the raw scans in check()), and
+ * only when a shell certainly reads a body as text: scanning from the first line, every line up to the heredoc is
+ * HD_SETUP_LINE (so no string, comment, group, pipe or `exec` began before it), its header is exactly HD_HEADER, and an
+ * exact end line exists. The first line that doesn't fit ends the scan and everything from it is parsed as commands. A
+ * mistake must only ever leave a body parsed. PowerShell refuses `<<` when it parses the whole script, so nothing runs.
+ */
+function dropDataHeredocs(src) {
+  if (src.includes(SUB)) return src;
+  const lines = src.split('\n');
+  const kept = [];
+  let i = 0;
+  while (i < lines.length) {
+    if (HD_SETUP_LINE.test(lines[i])) {
+      kept.push(lines[i++]);
+      continue;
+    }
+    const m = HD_HEADER.exec(lines[i]);
+    const end = m ? lines.indexOf(m[2], i + 1) : -1;
+    if (end < 0 || !heredocIsData(lines.slice(i, end).join('\n'))) break;
+    kept.push(lines[i]);
+    i = end + 1;
+  }
+  return [...kept, ...lines.slice(i)].join('\n');
+}
+
 function check(src, ctx, depth) {
   if (depth > MAX_DEPTH) throw new Refusal(NESTED);
   if (SECRET_MENTION.test(src)) throw new Refusal(SECRET_REFUSAL);
@@ -1163,9 +1231,10 @@ function check(src, ctx, depth) {
   if (PTY_CODE.test(src)) throw new Refusal(PTY_RDV);
   // Parse it both ways: the hook can't be sure which shell runs it, and a word
   // hidden from one parser (a backtick, a backslash) is plain to the other.
+  const commands = depth === 0 ? dropDataHeredocs(src) : src;
   for (const mode of ['sh', 'ps']) {
     const c = { cwd: ctx.cwd };
-    for (const words of parseCommands(src, mode, depth)) checkWords(words, c, depth);
+    for (const words of parseCommands(commands, mode, depth)) checkWords(words, c, depth);
   }
 }
 

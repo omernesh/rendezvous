@@ -5578,6 +5578,31 @@ and `rdv/forget`.
       text. Older events and state have no field and parse as before.
     - **Covered by.** `mcp/test/inviteaccepted.test.ts`.
 
+116. **A quoted heredoc fed to `cat` or `tee` is data to the consent guard (issue #149)**
+    - **Choice.** `check()` still scans the whole command in raw source first.
+      Then, for the tool's own command only (depth 0), `dropDataHeredocs` removes
+      bodies from what the parser reads. It scans from the first line and stops
+      for good at the first line that isn't blank, plain `cd`/`mkdir`, or an
+      exact `cat`/`tee` header with one quoted delimiter and an exact end line.
+      Whatever is left is parsed as commands, so every mistake leaves a body
+      parsed, as before.
+    - **The serious threat: the shell and the guard disagree on what is a body.**
+      `{`/`(`/`if`/`f() {` before the header pipes its output onward from a later
+      line; `exec > >(bash)` sends it to a shell; a `"` opened earlier makes the
+      header plain text and runs the "body". So the check is on all that comes
+      before, not on the header alone. Measured: generated heredoc variants that
+      the guard allows were run in real bash, and none ran its body line.
+    - **Write, then run.** A body the shell stores can run later, in this command
+      or the next. So it isn't data when it names Rendezvous after quotes and
+      escapes are removed, or a human-only command could be spelled in it under a
+      name built at run time (`$R contact grant x`). The words ``Task `Foo` `` alone
+      are prose. Not caught, as before this change: a name and a subcommand both
+      built by string operations. That is the header's accepted limit, and #126
+      stands behind it.
+    - **Other shells.** PowerShell refuses `<<` when it parses the script, so
+      nothing in such a command runs there (measured on pwsh 7).
+    - **Covered by.** `mcp/test/guardheredoc.test.ts`.
+
 ## Not implemented yet
 
 
