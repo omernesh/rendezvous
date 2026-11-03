@@ -70,12 +70,19 @@ const GATEWAY_MENTION = /gateway(-oauth|-notify)?\.json|notify(-[a-z0-9_][a-z0-9
 /** A file of the owner's in a home or gateway root, by name (normalized: fileName). */
 const isOwnerFile = (name) => OWNER_FILES.includes(name.toLowerCase()) || NOTIFY_SECRET_FILE.test(name);
 /**
- * Could a wildcard's last part name a webhook secret? Conservatively: any wildcard last part that mentions "secret"
- * or starts with "n" (`notify-*.secret`, `n*`, `*secret*`), case-insensitive (review of PR #131).
+ * Could a wildcard's last part name a webhook secret? A last part that mentions "secret" or starts with "n"
+ * (`notify-*.secret`, `n*`, `*secret*`), case-insensitive (review of PR #131), when the text before its first wildcard
+ * and after its last one fit such a name: `n*` and `notif[y].secret` do, `node_modules*` and `n[0-9]+` don't (issue #150).
+ * Conservative about the middle: `n*x*` still counts. The name is cut as fileName cuts it (`x.secret.`, `x.secret::$DATA`).
  */
 function couldBeNotifySecret(last) {
-  const w = String(last).toLowerCase();
-  return GLOB_CHARS.test(w) && (w.includes('secret') || w.startsWith('n'));
+  const w = String(last).toLowerCase().split(':')[0].replace(/[. ]+$/, '');
+  if (!GLOB_CHARS.test(w) || !(w.includes('secret') || w.startsWith('n'))) return false;
+  const before = w.slice(0, w.search(GLOB_CHARS));
+  const tail = w.slice(w.search(/[^*?[\]]*$/));
+  const fitsStart = before.startsWith('notify-') || ['notify-', 'notify.secret.prev'].some((n) => n.startsWith(before));
+  const fitsEnd = ['.secret', '.secret.prev'].some((n) => n.endsWith(tail) || tail.endsWith(n));
+  return fitsStart && fitsEnd;
 }
 /**
  * The name Windows opens for `p`: its 8.3 short form expanded (realpath, where the file exists), cut at the first ':'
@@ -811,6 +818,7 @@ function checkEmbedded(words, ctx, depth) {
 
 /** Programs that start another with its arguments joined into one command line (final review of PR #122). */
 const STARTERS = new Set(['start-process', 'saps', 'start']);
+const PS_OPERATOR = /^-[ci]?(eq|ne|gt|ge|lt|le|like|notlike|match|notmatch|contains|notcontains|in|notin|replace|split|join|is|isnot|as)$/i;
 /** Start-Process's own switches, which are not the started program's arguments. */
 const STARTER_SWITCHES = /^-(argumentlist|args|filepath|nonewwindow|wait|passthru|noprofile)$/i;
 
@@ -834,20 +842,53 @@ function startedArgv(words) {
  * space and checked as a command line with its target (`Start-Process cmd -ArgumentList '/c rdv contact grant x'`,
  * `saps pwsh '-c rdv …'`). A target that is only known when it runs (`Start-Process $r …`, `& $r …`, or the first
  * argument of `[Diagnostics.Process]::Start($r, …)`) gets nothing that names rdv or a human-only subcommand.
+ * Not a target (issue #150): a variable assignment before it, or a value before a PowerShell operator
+ * (`$_ -notmatch 'a b'`), unless the text names rdv or a human-only command. A built word with a path separator or `=`
+ * (`$sp\x.py`, `n=$x`) can't be a subcommand, so only the arguments after it are read as one.
  */
 function checkStarted(words, ctx, depth) {
   const sAt = words.findIndex((w) => STARTERS.has(progName(w)));
-  const tAt = sAt >= 0 ? words.findIndex((w, k) => k > sAt && !STARTER_SWITCHES.test(w)) : 0;
+  const tAt = sAt >= 0 ? words.findIndex((w, k) => k > sAt && !STARTER_SWITCHES.test(w)) : words.findIndex((w) => !/^[A-Za-z_]\w*=/.test(w));
   const target = words[tAt];
   if (target === undefined) return;
   const args = words.slice(tAt + 1).filter((w) => !STARTER_SWITCHES.test(w));
   const line = args.join(' ').trim();
   if (dynamic(target) && (sAt >= 0 || args.some((w) => /\s/.test(w)))) {
+    // Start-Process exists only in PowerShell, whose reading of it is checked too; the sh reading takes its backtick escapes for substitutions.
+    if (ctx.mode === 'sh' && sAt >= 0 && progName(words[sAt]) !== 'start') return;
     if (mentionsRdv(line)) throw new Refusal(OPAQUE);
-    checkWords(['rdv', ...line.split(/\s+/).filter(Boolean)], { cwd: ctx.cwd }, depth + 1);
+    if (sAt < 0 && PS_OPERATOR.test(args[0] ?? '') && !HD_PAIR.test(line)) return;
+    const argv = line.split(/\s+/).filter((w) => w && !(dynamic(w) && /[\\/=]/.test(w)));
+    checkWords(['rdv', ...argv], { cwd: ctx.cwd }, depth + 1);
   } else if (sAt >= 0 && line) {
     check(`${target} ${line}`, { cwd: ctx.cwd }, depth + 1);
   }
+}
+
+/**
+ * Why `words` could be an owner command of the gateway behind a word the guard can't read, or undefined. After such a
+ * word, the first two positional words must read as one: a group and its subcommand, a group and a word built at run
+ * time, or a word built at run time and a subcommand. So `$G pin set` and `$G $X create` count, and `$GH pr create -R $R`
+ * doesn't, since the gateway has no `pr` (issue #150). An unknown option may or may not take the next word, so both
+ * readings are tried (`$G -x y pin set`).
+ */
+function builtGatewayCommand(words, cwd) {
+  for (let k = 0; k < words.length; k++) {
+    if (!opaqueWord(words[k])) continue;
+    const rest = words.slice(k + 1);
+    const noOptions = rest.filter((w) => !w.startsWith('-'));
+    const noValues = rest.filter((w, i) => !w.startsWith('-') && !(i > 0 && rest[i - 1].startsWith('-') && !rest[i - 1].includes('=')));
+    for (const [first, second] of [noOptions, noValues]) {
+      if (first === undefined || second === undefined) continue;
+      for (const [cmd, subs] of GATEWAY_GROUPS) {
+        for (const [s, why] of Object.entries(subs)) {
+          if (couldBe(second, s, cwd) && (dynamic(first) || couldBe(first, cmd, cwd))) return why;
+          if (dynamic(second) && couldBe(first, cmd, cwd)) return why;
+        }
+      }
+    }
+  }
+  return undefined;
 }
 
 function checkWords(words, ctx, depth) {
@@ -948,11 +989,10 @@ function checkWords(words, ctx, depth) {
   // rdv-gateway's pin and token commands: anywhere after an rdv-gateway word, in any order, since options may sit
   // between them (`rdv-gateway pin --stdin set`). Only after it: `pin` and `token` are common words (npm token create).
   // A program the guard cannot read (`"$G" pin set`, `./g? token create`, `node …/b*.js oauth revoke`) could be the
-  // gateway too: its owner commands after it are refused the same way.
+  // gateway too: see builtGatewayCommand.
   const gwAt = words.findIndex(isGateway);
-  const gwOrOpaque = gwAt >= 0 ? gwAt : words.findIndex(opaqueWord);
-  if (gwOrOpaque >= 0) {
-    const later = words.slice(gwOrOpaque + 1);
+  if (gwAt >= 0) {
+    const later = words.slice(gwAt + 1);
     const anyDynamic = later.some(dynamic);
     for (const [cmd, subs] of GATEWAY_GROUPS) {
       const named = later.some((w) => couldBe(w, cmd, ctx.cwd));
@@ -961,6 +1001,9 @@ function checkWords(words, ctx, depth) {
         if ((named && (sub || anyDynamic)) || (anyDynamic && sub)) throw new Refusal(why);
       }
     }
+  } else {
+    const why = builtGatewayCommand(words, ctx.cwd);
+    if (why) throw new Refusal(why);
   }
   if (gwAt >= 0) {
     const anyDynamic = words.slice(gwAt + 1).some(dynamic);
@@ -1233,7 +1276,7 @@ function check(src, ctx, depth) {
   // hidden from one parser (a backtick, a backslash) is plain to the other.
   const commands = depth === 0 ? dropDataHeredocs(src) : src;
   for (const mode of ['sh', 'ps']) {
-    const c = { cwd: ctx.cwd };
+    const c = { cwd: ctx.cwd, mode };
     for (const words of parseCommands(commands, mode, depth)) checkWords(words, c, depth);
   }
 }

@@ -5603,6 +5603,29 @@ and `rdv/forget`.
       nothing in such a command runs there (measured on pwsh 7).
     - **Covered by.** `mcp/test/guardheredoc.test.ts`.
 
+117. **The consent guard judges a word by what it could be, not by its look (issue #150)**
+    - **Measured.** Recent real commands replayed on 0.8.0 and 0.14.1: about 5%
+      newly refused, those read all unrelated to Rendezvous. A guard that blocks
+      a secret scan of a staged diff teaches people to work around it.
+    - **Wildcards.** A last part still counts only if it mentions "secret" or
+      starts with "n", and now the literal text before its first wildcard and
+      after its last must also fit `notify[-…].secret[.prev]`. The middle isn't
+      checked, so `n*x*` counts: the cost of a wrong match is one refused command.
+    - **A program behind a variable.** After an unreadable word, the first two
+      positional words must read as a gateway command: group and subcommand, group
+      and a built word, or a built word and a subcommand. An unknown option may
+      take the next word or not, so both readings are tried. A literal
+      `rdv-gateway` or `gw` keeps the wider rule, in any order.
+    - **Process starts.** A leading assignment is not the target. A value before a
+      PowerShell operator is an expression, unless the text names rdv or a
+      human-only pair. A built word holding a path separator or `=` (a script path,
+      an assignment) is not a subcommand, and what follows it still is. `Start-Process` and `saps` are judged only in
+      PowerShell's reading, because sh takes their backtick escapes for
+      substitutions; `start` keeps both readings.
+    - **Not caught, as before.** `rdv-gateway set pin` with the words swapped behind
+      a variable (`$G set pin`) is now allowed: the gateway rejects that order itself.
+    - **Covered by.** `mcp/test/guardeveryday.test.ts`.
+
 ## Not implemented yet
 
 
