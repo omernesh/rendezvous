@@ -4,7 +4,7 @@ What changed in Rendezvous, newest first. Versions are those of the Claude Code 
 
 The format follows Keep a Changelog. One line per change a user can see; PR numbers link to GitHub.
 
-## Unreleased
+## 0.14.2 - 2026-11-03 {#v0-14-2}
 
 ### Fixed
 - The consent guard no longer refuses everyday commands that touch nothing of Rendezvous's: a `grep` or `find` with a wildcard word that only starts with "n" or holds "secret", another tool behind a variable (`$GH pr create -R $R`), and PowerShell expressions and script starts (`$_ -notmatch 'two words'`, `Start-Process $py "$dir\scan.py"`). Webhook secrets, the gateway's owner commands and human-only commands under a built name stay refused. ([#150](https://github.com/omernesh/rendezvous/issues/150))
